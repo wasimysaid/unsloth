@@ -13,7 +13,7 @@ import sys
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import torch
-from utils.hardware import clear_gpu_cache, safe_num_proc
+from utils.hardware import clear_gpu_cache, safe_num_proc, get_device_map, get_visible_gpu_count
 
 torch._dynamo.config.recompile_limit = 64
 from unsloth import FastLanguageModel, FastVisionModel, is_bfloat16_supported
@@ -601,6 +601,9 @@ class UnslothTrainer:
                         self._update_progress(error = friendly, is_training = False)
                         return False
 
+            device_map = get_device_map()
+            logger.info(f"Using device_map='{device_map}' ({get_visible_gpu_count()} GPU(s) visible)")
+
             # Branch based on model type
             if self._audio_type == "csm":
                 # CSM: FastModel + auto_model=CsmForConditionalGeneration + load_in_4bit=False
@@ -613,6 +616,7 @@ class UnslothTrainer:
                     dtype = None,
                     auto_model = CsmForConditionalGeneration,
                     load_in_4bit = False,
+                    device_map = device_map,
                     full_finetuning = full_finetuning,
                     token = hf_token,
                     trust_remote_code = trust_remote_code,
@@ -628,6 +632,7 @@ class UnslothTrainer:
                     model_name = model_name,
                     dtype = None,
                     load_in_4bit = False,
+                    device_map = device_map,
                     full_finetuning = full_finetuning,
                     auto_model = WhisperForConditionalGeneration,
                     whisper_language = "English",
@@ -649,6 +654,7 @@ class UnslothTrainer:
                     max_seq_length = max_seq_length,
                     dtype = None,
                     load_in_4bit = load_in_4bit,
+                    device_map = device_map,
                     full_finetuning = full_finetuning,
                     token = hf_token,
                     trust_remote_code = trust_remote_code,
@@ -688,6 +694,7 @@ class UnslothTrainer:
                     max_seq_length = max_seq_length,
                     dtype = torch.float32,  # Spark-TTS requires float32
                     load_in_4bit = False,
+                    device_map = device_map,
                     full_finetuning = full_finetuning,
                     token = hf_token,
                     trust_remote_code = trust_remote_code,
@@ -702,6 +709,7 @@ class UnslothTrainer:
                     model_name,
                     max_seq_length = max_seq_length,
                     load_in_4bit = False,
+                    device_map = device_map,
                     full_finetuning = full_finetuning,
                     token = hf_token,
                     trust_remote_code = trust_remote_code,
@@ -718,6 +726,7 @@ class UnslothTrainer:
                     max_seq_length = max_seq_length,
                     dtype = None,
                     load_in_4bit = load_in_4bit,
+                    device_map = device_map,
                     full_finetuning = full_finetuning,
                     token = hf_token,
                     trust_remote_code = trust_remote_code,
@@ -731,6 +740,7 @@ class UnslothTrainer:
                     max_seq_length = max_seq_length,
                     dtype = None,  # Auto-detect
                     load_in_4bit = load_in_4bit,
+                    device_map = device_map,
                     full_finetuning = full_finetuning,
                     token = hf_token,
                     trust_remote_code = trust_remote_code,
@@ -763,6 +773,7 @@ class UnslothTrainer:
                     max_seq_length = max_seq_length,
                     dtype = None,  # Auto-detect
                     load_in_4bit = load_in_4bit,
+                    device_map = device_map,
                     full_finetuning = full_finetuning,
                     token = hf_token,
                     trust_remote_code = trust_remote_code,

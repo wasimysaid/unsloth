@@ -21,6 +21,7 @@ from .hardware import (
     get_physical_gpu_count,
     get_visible_gpu_count,
     safe_num_proc,
+    get_device_map,
 )
 
 __all__ = [
@@ -39,4 +40,5 @@ __all__ = [
     "get_physical_gpu_count",
     "get_visible_gpu_count",
     "safe_num_proc",
+    "get_device_map",
 ]
