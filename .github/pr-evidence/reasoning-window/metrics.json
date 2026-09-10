@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "comparison": "immutable baseline vs final nav-outside-scroller implementation",
+  "before": {
+    "label": "before",
+    "sha": "89b7ff009d93a3eaf4fa332d4fa6610607c27433"
+  },
+  "final": {
+    "label": "final",
+    "sha": "c6430c6c13d98ead272bb9f2f086d7ff7e6fe72b"
+  },
+  "browser": {
+    "browserName": "MiniBrowser",
+    "browserVersion": "2.50.4",
+    "platformName": "linux",
+    "acceptInsecureCerts": false,
+    "strictFileInteractability": false,
+    "setWindowRect": true,
+    "unhandledPromptBehavior": "dismiss and notify",
+    "pageLoadStrategy": "normal",
+    "proxy": {},
+    "timeouts": {
+      "script": 30000,
+      "pageLoad": 300000,
+      "implicit": 0
+    }
+  },
+  "trace": {
+    "fileBytes": 125031,
+    "fileSha256": "520cbc14a2182571da3e707f291402b6c12b7d900831940b5120f2fe79fc8f86",
+    "reasoningChars": 79366,
+    "reasoningSha256": "ce5c75aaf94b604ca36de7af0cfb5e1b1923a6a1b9e048422c5958bf17ca8d3f",
+    "reasoningParts": 1
+  },
+  "workloads": [
+    {
+      "chars": 8000,
+      "sourceSha256": "abe927874e67eebd9f9bd8cfe68995d57392fab59877301eb5e4a84c155ef601",
+      "before": {
+        "reasoningDomChars": 7970,
+        "reasoningTextNodes": 42,
+        "replayDurationMs": 175.0,
+        "rafWorstGapMs": 73.0,
+        "rafP95GapMs": 53,
+        "navPresent": false
+      },
+      "final": {
+        "reasoningDomChars": 7970,
+        "reasoningTextNodes": 42,
+        "replayDurationMs": 182,
+        "rafWorstGapMs": 74,
+        "rafP95GapMs": 55,
+        "navPresent": false,
+        "navLabel": ""
+      },
+      "reductionPct": {
+        "reasoningDomChars": 0.0,
+        "reasoningTextNodes": 0.0,
+        "replayDurationMs": -4.0,
+        "rafWorstGapMs": -1.4,
+        "rafP95GapMs": -3.8
+      }
+    },
+    {
+      "chars": 100000,
+      "sourceSha256": "514bfef1a9a5406d742aeca12dd84992e92975dfd294d4d74243d8634abc09ca",
+      "before": {
+        "reasoningDomChars": 99195,
+        "reasoningTextNodes": 1001,
+        "replayDurationMs": 9159,
+        "rafWorstGapMs": 1360,
+        "rafP95GapMs": 768,
+        "navPresent": false
+      },
+      "final": {
+        "reasoningDomChars": 7427,
+        "reasoningTextNodes": 93,
+        "replayDurationMs": 3580.0,
+        "rafWorstGapMs": 1323,
+        "rafP95GapMs": 254,
+        "navPresent": true,
+        "navLabel": "Earlier Newer Latest 92480\u2013100000 of 100000"
+      },
+      "reductionPct": {
+        "reasoningDomChars": 92.5,
+        "reasoningTextNodes": 90.7,
+        "replayDurationMs": 60.9,
+        "rafWorstGapMs": 2.7,
+        "rafP95GapMs": 66.9
+      }
+    },
+    {
+      "chars": 250000,
+      "sourceSha256": "e44dadea2f330a7a63ccafc4c0df9f95253307bec7f0a33f7f9c1cbe5a40d02e",
+      "before": {
+        "reasoningDomChars": 247986,
+        "reasoningTextNodes": 2580,
+        "replayDurationMs": 89241.0,
+        "rafWorstGapMs": 5107,
+        "rafP95GapMs": 4222,
+        "navPresent": false
+      },
+      "final": {
+        "reasoningDomChars": 7923,
+        "reasoningTextNodes": 47,
+        "replayDurationMs": 3436,
+        "rafWorstGapMs": 337,
+        "rafP95GapMs": 64,
+        "navPresent": true,
+        "navLabel": "Earlier Newer Latest 242043\u2013250000 of 250000"
+      },
+      "reductionPct": {
+        "reasoningDomChars": 96.8,
+        "reasoningTextNodes": 98.2,
+        "replayDurationMs": 96.1,
+        "rafWorstGapMs": 93.4,
+        "rafP95GapMs": 98.5
+      }
+    }
+  ],
+  "savedTraceUX": {
+    "copy": {
+      "characters": 79366,
+      "sha256": "ce5c75aaf94b604ca36de7af0cfb5e1b1923a6a1b9e048422c5958bf17ca8d3f"
+    },
+    "transitions": [
+      {
+        "direction": "earlier",
+        "ms": 116,
+        "label": "Earlier\nNewer\nLatest\n63130\u201371253 of 79366"
+      },
+      {
+        "direction": "earlier",
+        "ms": 131,
+        "label": "Earlier\nNewer\nLatest\n54948\u201363129 of 79366"
+      },
+      {
+        "direction": "earlier",
+        "ms": 83,
+        "label": "Earlier\nNewer\nLatest\n46771\u201354947 of 79366"
+      },
+      {
+        "direction": "newer",
+        "ms": 109,
+        "label": "Earlier\nNewer\nLatest\n54948\u201363129 of 79366"
+      },
+      {
+        "direction": "newer",
+        "ms": 70,
+        "label": "Earlier\nNewer\nLatest\n63130\u201371253 of 79366"
+      },
+      {
+        "direction": "newer",
+        "ms": 138,
+        "label": "Earlier\nNewer\nLatest\n71254\u201379366 of 79366"
+      }
+    ],
+    "keyboard": true,
+    "latestRoundTrip": true,
+    "reopenBounded": true,
+    "mountedCharacters": 8049
+  },
+  "liveStreamingUX": {
+    "before": {
+      "total": 24875,
+      "characters": 7617
+    },
+    "stable": {
+      "contentStable": true,
+      "scrollStable": true,
+      "total": 26879,
+      "mounted": 7654
+    },
+    "latest": "Earlier\nNewer\nLatest\n21526\u201326879 of 26879",
+    "verifiedWhileStreaming": true
+  }
+}
