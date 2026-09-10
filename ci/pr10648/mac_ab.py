@@ -244,10 +244,13 @@ def installed_dependencies(studio_home: Path, env: dict[str, str]) -> list[dict[
 def inventory(studio_home: Path, env: dict[str, str]) -> dict[str, Any]:
     markers: dict[str, Any] = {}
     binaries: dict[str, Any] = {}
+    runtime_payload: dict[str, str] = {}
     for path in sorted(studio_home.rglob("*")):
         if not path.is_file() or path.is_symlink():
             continue
         relative = path.relative_to(studio_home).as_posix()
+        if (relative.startswith(("llama.cpp/", "whisper.cpp/")) and path.name.endswith(".dylib")) or relative.startswith("node/lib/node_modules/npm/"):
+            runtime_payload[relative] = digest(path)
         component = MARKERS.get(path.name)
         if component:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -276,11 +279,14 @@ def inventory(studio_home: Path, env: dict[str, str]) -> dict[str, Any]:
                 "size": path.stat().st_size,
                 "loader_check": safe_output([str(path), argument], env, studio_home, accepted=accepted),
             }
-    return {"markers": markers, "binaries": binaries, "dependencies": installed_dependencies(studio_home, env)}
+    return {"markers": markers, "binaries": binaries, "runtime_payload": runtime_payload, "dependencies": installed_dependencies(studio_home, env)}
 
 
 def hashes(snapshot: dict[str, Any]) -> dict[str, str]:
-    return {name: data["sha256"] for name, data in snapshot["binaries"].items()}
+    return {
+        **{name: data["sha256"] for name, data in snapshot["binaries"].items()},
+        **{f"payload:{name}": value for name, value in snapshot.get("runtime_payload", {}).items()},
+    }
 
 
 def marker_evidence(snapshot: dict[str, Any]) -> dict[str, bool]:
@@ -484,15 +490,19 @@ def main() -> int:
         if not summary["comparability"]["interpretable"]:
             raise RuntimeError("A/B environments are not comparable; timing interpretation refused")
 
-        # npm remains intentionally executed by head; only llama validation is
-        # expected to disappear. Counting all native processes would mislabel it.
+        # macos_dyld_load_issues still executes both binaries even on the marker
+        # fast path. Measure that retained safety work, rather than assume it vanished.
         a_probe_total = sum(count for item in summary["sides"]["A"]["sample_audits"] for key, count in item["native_probe_counts"].items() if key.startswith("llama-"))
         b_probe_total = sum(count for item in summary["sides"]["B"]["sample_audits"] for key, count in item["native_probe_counts"].items() if key.startswith("llama-"))
         summary["assertions"]["base_A_default_path_runs_llama_probes"] = a_probe_total > 0
-        summary["assertions"]["head_B_fastpath_skips_llama_probes"] = b_probe_total == 0
+        summary["assertions"]["head_B_preserves_macos_dyld_probes"] = b_probe_total >= 2 * args.repetitions
+        summary["hypotheses"] = {"head_eliminates_macos_dyld_probes": b_probe_total == 0}
+        a_release_api = sum(item["urllib_host_counts"].get("api.github.com", 0) for item in summary["sides"]["A"]["sample_audits"])
+        b_release_api = sum(item["urllib_host_counts"].get("api.github.com", 0) for item in summary["sides"]["B"]["sample_audits"])
+        summary["assertions"]["head_reduces_release_API_requests"] = b_release_api < a_release_api
 
         # Causal control: the same B install after timing, changing only the documented
-        # full-check switch, must restore native validation without changing binaries.
+        # full-check switch, must restore release selection without changing binaries.
         b_state = states["B"]
         control_log = private / "B-full-check-control.log"
         control_audit_file = private / "B-full-check-control-audit.jsonl"
@@ -508,12 +518,17 @@ def main() -> int:
             "switch": "UNSLOTH_PREBUILT_FULL_CHECK=1",
         }
         control_llama_probes = sum(count for key, count in control_audit["native_probe_counts"].items() if key.startswith("llama-"))
-        summary["assertions"]["B_full_check_restores_llama_probes"] = control_llama_probes > 0
+        summary["assertions"]["B_full_check_preserves_macos_dyld_probes"] = control_llama_probes >= 2
+        control_release_api = control_audit["urllib_host_counts"].get("api.github.com", 0)
+        summary["assertions"]["B_full_check_restores_release_API_requests"] = control_release_api > b_release_api / args.repetitions
         summary["assertions"]["B_full_check_binary_hashes_unchanged"] = hashes(control_snapshot) == hashes(final_snapshots["B"])
         summary["causal_fastpath_observation"] = {
             "base_A_default_llama_probe_total": a_probe_total,
             "head_B_default_llama_probe_total": b_probe_total,
             "head_B_forced_full_check_llama_probe_total": control_llama_probes,
+            "base_A_release_API_requests_total": a_release_api,
+            "head_B_release_API_requests_total": b_release_api,
+            "head_B_forced_full_check_release_API_requests": control_release_api,
         }
 
         write_json(summary_path, summary)
@@ -539,6 +554,7 @@ def main() -> int:
             log=migration_log,
         )
         migrated = inventory(state["home"], state["env"])
+        summary["assertions"]["migration_native_loaders_pass"] = expected_native_binaries_present(migrated) and all(item["loader_check"]["ok"] for item in migrated["binaries"].values())
         evidence = marker_evidence(migrated)
         if not all(evidence.values()):
             raise RuntimeError("head migration did not populate all three marker evidence groups")
@@ -575,11 +591,15 @@ def main() -> int:
         write_json(summary_path, summary)
         repair_seconds = run(update_argv(state["home"]), cwd=head, env=state["env"], log=private / "A-repair.log")
         repaired = quantize.is_file() and quantize.stat().st_size > 0 and digest(quantize) == original_hash
+        repaired_snapshot = inventory(state["home"], state["env"])
+        summary["assertions"]["repaired_native_loaders_pass"] = expected_native_binaries_present(repaired_snapshot) and all(item["loader_check"]["ok"] for item in repaired_snapshot["binaries"].values())
+        summary["assertions"]["repaired_entire_native_payload_matches"] = hashes(repaired_snapshot) == post_migration_hashes
         live, _ = live_check(state["home"], state["env"], private / "A-server-after-migration.log", state["password"])
         summary["migration"].update({
             "repair_seconds": repair_seconds,
             "repair_excerpt": diagnostic_excerpt(private / "A-repair.log"),
             "live_after_repair": live,
+            "inventory_after_repair": repaired_snapshot,
 
             "auth_persisted_after_migration": live["auth_credential_persisted"],
         })
@@ -608,6 +628,7 @@ def main() -> int:
     except Exception as exc:
         summary["result"] = "FAIL"
         summary["failure"] = {"type": type(exc).__name__, "message": str(exc)[:500]}
+        summary["failure"]["phase_diagnostics"] = {log.name: diagnostic_excerpt(log) for log in sorted(private.glob("*.log")) if "server" not in log.name}
         write_json(summary_path, summary)
         emit("complete", "FAIL")
         return 1
