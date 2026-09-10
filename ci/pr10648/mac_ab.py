@@ -28,12 +28,17 @@ from typing import Any
 
 BASE_SHA = "191b69c12b4434b5247f1fd7a455b4a760b169ae"
 HEAD_SHA = "b2d65068d7cbc9c5e3a5acf70c2c3600a97eadf7"
-MARKERS = {
-    "UNSLOTH_PREBUILT_INFO.json": "llama",
-    "UNSLOTH_NODE_PREBUILT_INFO.json": "node",
-    "UNSLOTH_WHISPER_PREBUILT_INFO.json": "whisper",
+MARKER_PATHS = {
+    "llama.cpp/UNSLOTH_PREBUILT_INFO.json": "llama",
+    "node/UNSLOTH_NODE_PREBUILT_INFO.json": "node",
+    "whisper.cpp/UNSLOTH_WHISPER_PREBUILT_INFO.json": "whisper",
 }
-BINARIES = {"llama-server", "llama-quantize", "whisper-server", "node", "npm"}
+BINARY_PATHS = {
+    "llama.cpp/build/bin/llama-server",
+    "llama.cpp/build/bin/llama-quantize",
+    "whisper.cpp/build/bin/whisper-server",
+    "node/bin/node",
+}
 SECRET_ENV = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|AUTH|COOKIE|CREDENTIAL|AWS_|AZURE_|GCP_|SSH_|NETRC|GH_", re.I)
 
 
@@ -144,6 +149,16 @@ def audit_summary(path: Path) -> dict[str, Any]:
     }
 
 
+
+def native_probe_total(audits: list[dict[str, Any]], prefix: str) -> int:
+    return sum(
+        count
+        for audit in audits
+        for key, count in audit["native_probe_counts"].items()
+        if key.startswith(prefix)
+    )
+
+
 def audit_environment(env: dict[str, str], audit_file: Path) -> dict[str, str]:
     observed = dict(env)
     audit_dir = Path(__file__).with_name("audit").resolve()
@@ -251,7 +266,7 @@ def inventory(studio_home: Path, env: dict[str, str]) -> dict[str, Any]:
         relative = path.relative_to(studio_home).as_posix()
         if (relative.startswith(("llama.cpp/", "whisper.cpp/")) and path.name.endswith(".dylib")) or relative.startswith("node/lib/node_modules/npm/"):
             runtime_payload[relative] = digest(path)
-        component = MARKERS.get(path.name)
+        component = MARKER_PATHS.get(relative)
         if component:
             payload = json.loads(path.read_text(encoding="utf-8"))
             markers[component] = {
@@ -271,7 +286,7 @@ def inventory(studio_home: Path, env: dict[str, str]) -> dict[str, Any]:
                     "paired_llama_ggml_tree": bool(payload.get("paired_llama_ggml_tree")),
                 },
             }
-        if path.name in BINARIES and os.access(path, os.X_OK):
+        if relative in BINARY_PATHS and os.access(path, os.X_OK):
             accepted = {0, 1} if path.name == "llama-quantize" else {0}
             argument = "--version" if path.name in {"node", "npm", "llama-quantize"} else "--help"
             binaries[relative] = {
@@ -492,8 +507,8 @@ def main() -> int:
 
         # macos_dyld_load_issues still executes both binaries even on the marker
         # fast path. Measure that retained safety work, rather than assume it vanished.
-        a_probe_total = sum(count for item in summary["sides"]["A"]["sample_audits"] for key, count in item["native_probe_counts"].items() if key.startswith("llama-"))
-        b_probe_total = sum(count for item in summary["sides"]["B"]["sample_audits"] for key, count in item["native_probe_counts"].items() if key.startswith("llama-"))
+        a_probe_total = native_probe_total(summary["sides"]["A"]["sample_audits"], "llama-")
+        b_probe_total = native_probe_total(summary["sides"]["B"]["sample_audits"], "llama-")
         summary["assertions"]["base_A_default_path_runs_llama_probes"] = a_probe_total > 0
         summary["assertions"]["head_B_preserves_macos_dyld_probes"] = b_probe_total >= 2 * args.repetitions
         summary["hypotheses"] = {"head_eliminates_macos_dyld_probes": b_probe_total == 0}
@@ -517,7 +532,7 @@ def main() -> int:
             "diagnostic_excerpt": diagnostic_excerpt(control_log),
             "switch": "UNSLOTH_PREBUILT_FULL_CHECK=1",
         }
-        control_llama_probes = sum(count for key, count in control_audit["native_probe_counts"].items() if key.startswith("llama-"))
+        control_llama_probes = native_probe_total([control_audit], "llama-")
         summary["assertions"]["B_full_check_preserves_macos_dyld_probes"] = control_llama_probes >= 2
         control_release_api = control_audit["urllib_host_counts"].get("api.github.com", 0)
         summary["assertions"]["B_full_check_restores_release_API_requests"] = control_release_api > b_release_api / args.repetitions
@@ -556,8 +571,6 @@ def main() -> int:
         migrated = inventory(state["home"], state["env"])
         summary["assertions"]["migration_native_loaders_pass"] = expected_native_binaries_present(migrated) and all(item["loader_check"]["ok"] for item in migrated["binaries"].values())
         evidence = marker_evidence(migrated)
-        if not all(evidence.values()):
-            raise RuntimeError("head migration did not populate all three marker evidence groups")
         post_migration_hashes = hashes(migrated)
 
         summary["migration"] = {
@@ -567,7 +580,10 @@ def main() -> int:
             "marker_evidence_groups": evidence,
             "inventory_after_migration": migrated,
         }
+        summary["assertions"]["migration_marker_evidence_complete"] = all(evidence.values())
         write_json(summary_path, summary)
+        if not summary["assertions"]["migration_marker_evidence_complete"]:
+            raise RuntimeError("head migration did not populate all three marker evidence groups")
         migration_noop_log = private / "A-migrate-noop.log"
         noop_seconds = run(update_argv(state["home"]), cwd=head, env=state["env"], log=migration_noop_log)
         after_noop = inventory(state["home"], state["env"])
