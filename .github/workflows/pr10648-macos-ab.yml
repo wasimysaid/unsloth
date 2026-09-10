@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: PR 10648 macOS matched A-B
+on:
+  push:
+    branches: [mimir-pr10648-macos-ab-20260910T102616]
+permissions:
+  contents: read
+concurrency:
+  group: pr10648-macos-ab-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  mac-ab:
+    name: ${{ matrix.os }} real install-update A-B
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - name: Checkout measurement harness
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          path: harness
+          persist-credentials: false
+      - name: Checkout immutable pre-PR base
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: unslothai/unsloth
+          ref: 191b69c12b4434b5247f1fd7a455b4a760b169ae
+          path: baseline
+          persist-credentials: false
+      - name: Checkout immutable PR head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: unslothai/unsloth
+          ref: b2d65068d7cbc9c5e3a5acf70c2c3600a97eadf7
+          path: candidate
+          persist-credentials: false
+      - name: Set up harness Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: '3.12'
+      - name: Run actual matched macOS lifecycles
+        shell: bash
+        env:
+          PROBE_ROOT: ${{ runner.temp }}/pr10648-macos-ab
+        run: |
+          set -euo pipefail
+          python3 harness/ci/pr10648/mac_ab.py \
+            --base-dir "$GITHUB_WORKSPACE/baseline" \
+            --head-dir "$GITHUB_WORKSPACE/candidate" \
+            --root "$PROBE_ROOT" --repetitions 3
+      - name: Upload sanitized measurements
+        if: always()
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with:
+          name: pr10648-macos-ab-${{ matrix.os }}
+          path: ${{ runner.temp }}/pr10648-macos-ab/results/
+          if-no-files-found: error
+          retention-days: 14
