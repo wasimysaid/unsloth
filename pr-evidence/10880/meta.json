@@ -1,0 +1,52 @@
+{
+  "pr": 10880,
+  "tested_pr_head": "4d1428028e53edd90dbcf40b09ab8930eb3c9be3",
+  "workflow_head": "704b0ace6f8d402278f3b02a911a459196d52296",
+  "runner": "GitHub Actions 1000029285",
+  "runner_os": "macOS",
+  "screenshot_size": [
+    1024,
+    768
+  ],
+  "menu_height_scanned": 96,
+  "light_candidate": {
+    "box": [
+      767,
+      5,
+      787,
+      24
+    ],
+    "changed": 176
+  },
+  "dark_candidate": {
+    "box": [
+      767,
+      5,
+      787,
+      25
+    ],
+    "changed": 141
+  },
+  "light_direction": {
+    "changed_pixels": 176,
+    "darker_fraction": 1.0,
+    "lighter_fraction": 0.0,
+    "with_app_median_luminance": 53.0
+  },
+  "dark_direction": {
+    "changed_pixels": 141,
+    "darker_fraction": 0.0,
+    "lighter_fraction": 1.0,
+    "with_app_median_luminance": 129.0
+  },
+  "light_menu_bar_median_luminance": 218.0,
+  "dark_menu_bar_median_luminance": 32.0,
+  "evidence_crop": [
+    726,
+    0,
+    828,
+    37
+  ],
+  "same_process_across_appearance_change": true,
+  "expectation": "The same live Unsloth process adds black tray artwork on the light menu bar and white tray artwork after the menu bar changes to dark."
+}
