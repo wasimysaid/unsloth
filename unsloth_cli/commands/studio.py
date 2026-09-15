@@ -25,10 +25,10 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Literal, Optional, Sequence, Tuple
+from typing import Dict, List, Literal, Optional, Sequence, Tuple
 import typer
 
-from unsloth_cli import _studio_deps, _studio_runtime_gate, _studio_stage
+from unsloth_cli import _studio_deps, _studio_prefetch, _studio_runtime_gate, _studio_stage
 from unsloth_cli._inference import SpeculativeType
 from unsloth_cli.commands import _password_prompt
 
@@ -3353,107 +3353,79 @@ def _backfill_uv_cache_marker(env: Optional[dict]) -> None:
         pass
 
 
-def _uv_is_store_name(name: str) -> bool:
-    """The kinds `uv pip install` writes: _uv_is_bucket_name answers warmth, this answers what a
-    write probe has to cover. Narrower than install.sh's list on purpose, since install.sh also
-    runs uv venv and uv python; re-read uv-cache/src/lib.rs on a pin bump."""
-    kind, marker, version = name.rpartition("-v")
-    return bool(marker) and version.isascii() and version.isdigit() and kind in _UV_PIP_STORES
+def _with_prefetched_core_pins(env: Optional[dict], cwd: Optional[Path] = None) -> Optional[dict]:
+    """Name the core pins a current prefetch cached, so the installer's core step can retry
+    them --offline when the index is unreachable. Only a marker written for THIS venv and
+    THIS cache counts: a prefetch that warmed another cache proves nothing about this one.
+    """
+    marker = _studio_prefetch.read_marker(STUDIO_HOME)
+    if marker is None:
+        return env
+    python = _studio_venv_python()
+    cache_dir = _studio_prefetch.resolved_cache_dir((env or os.environ).get("UV_CACHE_DIR"), cwd)
+    if python is None or not cache_dir:
+        return env
+    floor = (os.environ.get("UNSLOTH_DESKTOP_BACKEND_VERSION") or "").strip()
+    if not _studio_prefetch.marker_is_current(
+        marker, floor = floor, python = str(python), cache_dir = cache_dir
+    ):
+        return env
+    # One mode per plan: a with-dependencies plan given to a no-torch update installs torch.
+    planned_mode = marker.get("no_torch")
+    if isinstance(planned_mode, bool) and planned_mode != _studio_prefetch.no_torch_mode(
+        _studio_prefetch.managed_venv(STUDIO_HOME)
+    ):
+        return env
+    # Not behind what is installed: old pins would downgrade a later setup or manual upgrade.
+    names = _studio_prefetch.planned_core_names(marker) or ["unsloth", "unsloth-zoo"]
+    installed = _installed_versions_in(python, names)
+    if not _studio_prefetch.plan_is_not_behind(marker, installed):
+        return env
+    pins = _studio_prefetch.prefetched_core_pins(marker)
+    if not pins:
+        return env
+    return {**(env or os.environ), _studio_prefetch.CORE_PINS_ENV: " ".join(pins)}
 
 
-def _uv_cache_folds_case(cache_dir: Path) -> bool:
-    """Measured on the cache filesystem, not assumed from the platform, exactly as install.sh
-    does it: default APFS folds, ext4 does not, and a Mac can have either mounted."""
-    probe = cache_dir / f".unsloth-case-probe.{os.getpid()}-A"
+def _installed_version_in(python: Path, name: str) -> Optional[str]:
+    return _installed_versions_in(python, [name]).get(name)
+
+
+def _installed_versions_in(python: Path, names) -> Dict[str, Optional[str]]:
+    """Installed version of each name in the managed venv, in one probe; None when unknown."""
+    names = [name for name in names if isinstance(name, str) and name]
+    answers: Dict[str, Optional[str]] = {name: None for name in names}
+    if not names:
+        return answers
+    code = (
+        "import importlib.metadata as m, json, sys\n"
+        "out = {}\n"
+        "for name in sys.argv[1:]:\n"
+        "    try:\n"
+        "        out[name] = m.version(name)\n"
+        "    except m.PackageNotFoundError:\n"
+        "        out[name] = None\n"
+        "print(json.dumps(out))\n"
+    )
     try:
-        probe.mkdir()
-    except OSError:
-        return False
+        result = subprocess.run(
+            [str(python), "-I", "-c", code, *names],
+            capture_output = True,
+            text = True,
+            timeout = 60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return answers
+    if result.returncode != 0:
+        return answers
     try:
-        return (cache_dir / f".unsloth-case-probe.{os.getpid()}-a").is_dir()
-    finally:
-        try:
-            probe.rmdir()
-        except OSError:
-            pass
-
-
-def _uv_cache_is_writable(cache_dir: Path) -> bool:
-    """A real create, as install.sh's write probe does: mode bits do not answer for a network mount, and uv aborts on a cache it
-    cannot write rather than falling back.
-
-    The stores too, not just the root: uv writes into them, so a root-only probe passes on a
-    cache uv then aborts on. Mirrors install.sh's _uv_cache_is_writable."""
-    probes = [cache_dir]
-    folds = _uv_cache_folds_case(cache_dir)
-    try:
-        # Only the directories uv OWNS: an unrelated read-only one must not disqualify a
-        # usable cache, and that is what the kind list above is for.
-        for entry in cache_dir.iterdir():
-            if not _uv_is_store_name(entry.name):
-                # On APFS or NTFS `Python-V0` is the same path uv opens as `python-v0`, so
-                # skipping it would report a cache writable that uv then aborts on.
-                if not (folds and _uv_is_store_name(entry.name.lower())):
-                    continue
-            if not entry.is_dir():
-                # A file, or a symlink dangling or not, is an existing path to mkdir, so uv
-                # cannot make the store and aborts. Skipping it would report the cache writable.
-                return False
-            probes.append(entry)
-            # One level inside the index stores, and only those. uv REWRITES this metadata on
-            # every resolve, so a shard another account owns aborts it. Measured on BOTH the
-            # pinned uv 0.12.1 and 0.10.7: a 0555 `simple-*/pypi` or `wheels-*/pypi` gives
-            # "Failed to write to the client cache", exit 2. One level is the leaf on both:
-            # 0.12.1 lays this out as `simple-v24/pypi`, not `simple-v24/index/<hash>`, and a
-            # 0555 `wheels-v6/pypi/requests` one deeper installs fine. Bounded on purpose.
-            if entry.name.lower().startswith(("simple-", "wheels-")):
-                # `index/<hash>`, one per CUSTOM index, is where uv puts metadata when
-                # --index-url is set, which Studio does for the torch wheels. Measured on the
-                # pinned uv 0.12.1: a 0555 `simple-v24/index/<hash>` passes a one-level probe
-                # and then aborts with "Failed to write to the client cache".
-                shards = list(entry.iterdir())
-                index_dir = entry / "index"
-                if index_dir.is_dir():
-                    shards.extend(index_dir.iterdir())
-                for shard in shards:
-                    if not shard.is_dir():
-                        # Same rule as the store level: a file, or a symlink dangling or not, is
-                        # an existing path uv can neither open nor mkdir. Measured on the pinned
-                        # uv 0.12.1, both abort with "Failed to write to the client cache".
-                        return False
-                    probes.append(shard)
-    except OSError:
-        return False
-    for target in probes:
-        try:
-            with tempfile.NamedTemporaryFile(dir = target, prefix = ".unsloth-write-probe."):
-                pass
-        except OSError:
-            return False
-    # Only the names uv is measured to need writable: rejecting more throws away the warm cache
-    # this path exists to find. Every control file at 0444 against uv 0.10.7: the root .lock
-    # aborts (exit 2) and sdists-v9/.git aborts (exit 2); root CACHEDIR.TAG and .gitignore, and
-    # .git/.gitignore/.lock under archive-v0, interpreter-v4, simple-v20 and wheels-v6, all
-    # install fine. uv creates only the three root files, so a per-store .git is someone else's.
-    for target in probes:
-        if target == cache_dir:
-            names = (".lock",)
-        elif target.name.lower().startswith("sdists-"):
-            # The one store measured to abort on a read-only .git. Rejecting a cache uv accepts
-            # costs the warm cache this path exists to find, so the rest are left alone.
-            names = (".git",)
-        else:
-            continue
-        for name in names:
-            control = target / name
-            if not control.exists() and not control.is_symlink():
-                continue
-            # Not a regular file, so uv cannot open it at all: measured on uv 0.10.7, a `.lock`
-            # DIRECTORY or a symlink to one exits 2 with "Could not acquire lock ... Is a
-            # directory". is_file() alone skipped it and reported the cache usable.
-            if not control.is_file() or not os.access(control, os.R_OK | os.W_OK):
-                return False
-    return True
+        found = json.loads(result.stdout.strip() or "{}")
+    except ValueError:
+        return answers
+    for name in names:
+        value = found.get(name) if isinstance(found, dict) else None
+        answers[name] = value.strip() if isinstance(value, str) and value.strip() else None
+    return answers
 
 
 def _with_studio_uv_cache(env: Optional[dict], cwd: Optional[Path] = None) -> Optional[dict]:
@@ -3527,6 +3499,7 @@ def _run_setup_script(*, verbose: bool = False, repo_root: Optional[Path] = None
     # Where setup runs uv from: setup.sh cds into its own directory, setup.ps1 keeps this cwd.
     setup_cwd = None if platform.system() == "Windows" else script.parent
     env = _with_studio_uv_cache(env, cwd = setup_cwd)
+    env = _with_prefetched_core_pins(env, cwd = setup_cwd)
 
     if platform.system() == "Windows":
         # Resolved, not bare: PATH is not trusted here (#9440) and the Popen below has no OSError handler.
@@ -3986,6 +3959,8 @@ def update(
             launcher_update.validate_launcher()
             if verify:
                 _fail_if_install_damaged(package)
+    # Only on success: a failed update keeps the prefetch for its retry.
+    _studio_prefetch.discard_after_update(STUDIO_HOME)
     # Tauri desktop owns its own bundle entries; refreshing here would duplicate shortcuts.
     if staging or os.environ.get("UNSLOTH_TAURI_UPDATE") == "1":
         if verbose:
@@ -4042,6 +4017,46 @@ def _refuse_staged_update() -> None:
     # stdout, not stderr: update.rs promotes a [TAURI:ERROR] line off the child's stdout.
     typer.echo("[TAURI:ERROR] background staging is no longer supported; run the standard update")
     raise typer.Exit(1)
+
+
+@studio_app.command("prefetch-update", hidden = True)
+def prefetch_update() -> None:
+    """Warm the uv cache for the next update. Does not touch the environment.
+
+    A separate command, not an `update` flag: the gate, idle scan and launcher transaction
+    exist because `update` rewrites the venv, and this only downloads.
+    """
+    _ensure_studio_env_exported()
+    floor = (os.environ.get("UNSLOTH_DESKTOP_BACKEND_VERSION") or "").strip()
+    shell_version = (os.environ.get(_studio_stage.SHELL_VERSION_ENV) or "").strip() or None
+    # The cache and working directory _run_setup_script uses, so both uv runs read the same uv.toml.
+    script = _find_setup_script(None)
+    setup_cwd = None if (platform.system() == "Windows" or script is None) else script.parent
+    env = _with_studio_uv_cache(None, cwd = setup_cwd)
+    try:
+        with _studio_prefetch.prefetch_lock(STUDIO_HOME):
+            payload = _studio_prefetch.run(
+                studio_home = STUDIO_HOME,
+                floor = floor,
+                shell_version = shell_version,
+                env = env,
+                echo = typer.echo,
+                cwd = setup_cwd,
+            )
+    except _studio_prefetch.PrefetchBusy:
+        typer.echo("[TAURI:STEP] prefetch already running")
+        raise typer.Exit(_studio_prefetch.EXIT_BUSY)
+    except _studio_prefetch.PrefetchSkipped as reason:
+        typer.echo(f"[TAURI:STEP] prefetch skipped: {reason}")
+        return
+    except _studio_prefetch.PrefetchError as failure:
+        # stdout: update.rs promotes a [TAURI:ERROR] line from there.
+        typer.echo(f"[TAURI:ERROR] {failure}")
+        raise typer.Exit(1)
+    except Exception as unexpected:
+        typer.echo(f"[TAURI:ERROR] could not prepare the update: {unexpected}")
+        raise typer.Exit(1)
+    typer.echo(f"[TAURI:DIAG] prefetch state={payload.get('state')}")
 
 
 class _WindowsLauncherUpdateTransaction:
