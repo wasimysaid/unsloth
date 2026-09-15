@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from unsloth_pwsh_runner import pwsh_env
+
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -43,15 +45,24 @@ def _code_lines(name: str):
     for number, line in enumerate(_text(name).splitlines(), start = 1):
         stripped = line.strip()
         if in_here_string:
-            if stripped in ("'@", '"@'):
+            # PowerShell wants the terminator in column 0, and install.ps1 has
+            # indented `"@echo off",` array entries that a stripped comparison
+            # closes on.
+            if line.startswith(("'@", '"@')):
                 in_here_string = False
             continue
-        if re.search(r"@[\"']$", stripped):
+        # Quoted literals first. Both install.ps1 and studio/setup.ps1 redact
+        # credentials with `-replace ..., '$1<redacted>@'`, whose raw line ends
+        # in `@'`; opening a here-string there swallowed everything up to the
+        # next terminator -- 780 lines of setup.ps1, 740 of install.ps1 -- and
+        # every check below silently stopped looking at them.
+        blanked = _QUOTED.sub('""', line)
+        if re.search(r"@[\"']$", blanked.strip()):
             in_here_string = True
             continue
         if stripped.startswith("#"):
             continue
-        yield number, _QUOTED.sub('""', line)
+        yield number, blanked
 
 
 @pytest.mark.parametrize("name", ALL_SCRIPTS)
@@ -111,9 +122,8 @@ def test_a_hidden_window_never_pairs_with_a_bypassed_policy(name: str) -> None:
 
 
 # Every native import left in the installers, however it is declared. Both scripts define theirs through reflection
-# emit now, which costs no compile at all: install.ps1 the path resolver, the console thunk, the icon refresh and the
-# process-image lookup, studio/setup.ps1 the console thunk. A new entry still needs a reason, and a PowerShell
-# equivalent usually exists.
+# emit now, which costs no compile: install.ps1 the path resolver, console thunk, icon refresh and process-image
+# lookup, studio/setup.ps1 the console thunk. A new entry needs a reason; a PowerShell equivalent usually exists.
 ALLOWED_PINVOKES = {
     # Canonicalising linked ancestors of security-relevant paths.
     # No PS 5.1 equivalent: ResolveLinkTarget is .NET 6+, and .Target misses a linked ancestor of a non-link leaf.
@@ -132,9 +142,9 @@ ALLOWED_PINVOKES = {
     # ie4uinit.exe -show is the global broadcast, which alone does not recover a stale .lnk, so it is not a substitute.
     "SHChangeNotify",
     # Naming the image behind a pid, so a venv Unsloth still has open is not overwritten.
-    # PROCESS_QUERY_LIMITED_INFORMATION only, and it is the rung the others cannot replace: Process.Path goes through
-    # MainModule, which needs PROCESS_VM_READ and is refused across users and across bitness, and Win32_Process needs a
-    # working WMI service. Without this the scan can find nothing and let the install proceed over an open venv.
+    # PROCESS_QUERY_LIMITED_INFORMATION only, and the others cannot replace it: Process.Path goes through MainModule,
+    # which needs PROCESS_VM_READ and is refused across users and bitness, and Win32_Process needs a working WMI
+    # service. Without it the scan can find nothing and proceed over an open venv.
     "OpenProcess",
     "QueryFullProcessImageNameW",
     # Closing the handles CreateFileW and OpenProcess opened.
@@ -142,9 +152,9 @@ ALLOWED_PINVOKES = {
 }
 
 
-# The two ways a native import can be declared. Add-Type takes C# and runs csc.exe; DefinePInvokeMethod builds the
-# same stub in memory. The second is invisible to a DllImport regex, so without this the inventory above would silently
-# stop covering install.ps1 the moment it stopped compiling.
+# Both ways a native import can be declared: Add-Type runs csc.exe over C#, DefinePInvokeMethod builds the same stub
+# in memory. The second is invisible to a DllImport regex, so without it the inventory above would stop covering
+# install.ps1 the moment it stopped compiling.
 def _native_imports(text: str) -> set:
     imported = set()
     for match in re.finditer(
@@ -174,15 +184,14 @@ def test_no_new_native_imports(name: str) -> None:
 def test_virtual_terminal_answers_a_redirected_stream_without_defining_a_type(name: str) -> None:
     """The answer we already know must come first, before any native work at all.
 
-    Only the redirected case is decided early, and it is decided FALSE. A redirected stdout is
-    not a console, GetConsoleMode fails on a non-console handle, and the native path could
-    only have returned false too. Anything that claimed VT here would put raw escape sequences
-    in the Unsloth log panel, which is a pipe.
+    Only the redirected case is decided early, and it is decided FALSE: a redirected stdout is
+    not a console, GetConsoleMode fails on a non-console handle, and the native path could only
+    have returned false too. Anything claiming VT here would put raw escape sequences in the
+    Unsloth log panel, which is a pipe.
 
-    This used to guard an Add-Type, back when the redirect check was the only thing keeping the
-    desktop app off csc.exe. Nothing here compiles now, so the ordering is no longer load-bearing
-    against a scanner; it is still the cheaper answer, and getting it wrong still corrupts the
-    log panel.
+    This used to guard an Add-Type, when the redirect check was all that kept the desktop app
+    off csc.exe. Nothing compiles now, so the ordering no longer matters to a scanner, but it is
+    still the cheaper answer and getting it wrong still corrupts the log panel.
     """
     text = _text(name)
     start = text.index("function Enable-StudioVirtualTerminal")
@@ -245,12 +254,10 @@ def test_the_installer_never_runs_the_c_sharp_compiler(name: str) -> None:
     no source on disk, no DLL, nothing in %TEMP%.
 
     Add-Type in full, not only -TypeDefinition: -MemberDefinition wraps its argument in a class
-    and compiles that, so it reaches csc.exe by the same road. -AssemblyName is the exception,
-    and the only one: it loads an assembly that already exists on disk and never reaches a
-    compiler. Both scripts, not only the bundled one: leaving a compile anywhere means the answer
-    to "does this run a compiler" depends on which entrypoint ran and whether an early return
-    happened to come first, and a guard that holds only conditionally is what let this reach the
-    field.
+    and compiles that too. -AssemblyName is the only exception, since it loads an assembly that
+    already exists on disk. Both scripts, because a compile left anywhere makes "does this run a
+    compiler" depend on which entrypoint ran and whether an early return came first, and a guard
+    that holds only conditionally is what let this reach the field.
     """
     text = _text(name)
     hits = re.findall(r"(?m)^[ \t]*Add-Type\b(?![^\r\n]*-AssemblyName).*", text)
@@ -262,10 +269,10 @@ def test_the_installer_never_runs_the_c_sharp_compiler(name: str) -> None:
     assert (
         "DefinePInvokeMethod" in text
     ), f"{name} no longer emits its native imports; update this guard"
-    # The private-%TEMP% retry is gone with it. Redirecting TEMP to compile again after a block
-    # cannot beat a filter driver, and "blocked writing an executable to TEMP, change TEMP, write
-    # it again" is itself an evasion heuristic. Scoped to the resolver: Initialize-StudioTempEnvironment
-    # legitimately redirects an unusable inherited TEMP, and that is a different thing.
+    # The private-%TEMP% retry is gone with it: redirecting TEMP to compile again cannot beat a
+    # filter driver, and "blocked writing an executable to TEMP, change TEMP, write it again" is
+    # itself an evasion heuristic. Scoped to the resolver, since Initialize-StudioTempEnvironment
+    # legitimately redirects an unusable inherited TEMP.
     # Only install.ps1 has the path resolver; setup.ps1 emits the console thunk and nothing else.
     if "function Initialize-StudioFinalPathNativeType" not in text:
         return
@@ -279,14 +286,13 @@ def test_the_installer_never_runs_the_c_sharp_compiler(name: str) -> None:
 def test_a_ci_lane_fails_when_a_compiler_actually_runs() -> None:
     """The behavioural half of the guard above.
 
-    Reading the scripts cannot see a compile reached through a module, a dot-sourced
-    file or a generated here-string, and it cannot see one a dependency performs while
-    our process tree is what a scanner scores. Bitdefender scored the chain, not the
-    bytes, so there has to be a lane that runs the installer and fails on the process.
+    Reading the scripts cannot see a compile reached through a module, a dot-sourced file
+    or a generated here-string, nor one a dependency performs while our process tree is
+    what a scanner scores. Bitdefender scored the chain, not the bytes, so a lane has to
+    run the installer and fail on the process.
 
-    The positive control is the part worth asserting from here: a detector that sees
-    nothing reads exactly like a clean run, and auditing can silently fail to apply. If
-    the lane ever loses the control, every later green result stops meaning anything.
+    The positive control is what is worth asserting from here: a detector that sees
+    nothing reads exactly like a clean run, and auditing can silently fail to apply.
     """
     workflow = REPO / ".github" / "workflows" / "windows-no-compiler-ci.yml"
     assert workflow.is_file(), "the runtime guard lane is gone; the text check is alone again"
@@ -309,11 +315,51 @@ def test_a_ci_lane_fails_when_a_compiler_actually_runs() -> None:
 
 _WATCHER = REPO / ".github" / "scripts" / "Watch-ForCompiler.ps1"
 
+# The .NET host tearing itself down, as opposed to the script under test deciding something.
+# Seen on a hosted runner as `System.IO.FileLoadException: The given assembly name was
+# invalid.` out of AssemblyName.ParseAsAssemblySpec, followed by "The PowerShell process will
+# exit" and SIGABRT, on a probe that passes everywhere else and had no assembly of its own.
+_PWSH_HOST_FAULT = (
+    "An error has occurred that was not properly handled",
+    "System.IO.FileLoadException",
+    "Unhandled exception.",
+)
+
+
+def _run_pwsh(script: Path, *, timeout: int):
+    """Run `script` under pwsh, skipping rather than failing when the HOST aborts.
+
+    Only an abnormal termination is forgiven, and only with a fault banner on stderr to back
+    it up: a clean non-zero exit, or the wrong answer on stdout, is the script under test
+    being wrong and still fails. Retried once first, because the fault has never repeated.
+
+    pwsh_env, not run_pwsh: this function's whole job is to look at a crashed
+    CompletedProcess and decide, and run_pwsh raises PwshInterpreterCrash instead of
+    returning one, so it cannot be the caller here. What it can still take is the private
+    startup cache -- and the FileLoadException named in _PWSH_HOST_FAULT above is exactly
+    the torn-cache shape that cache directory removes, so this is the call site that most
+    needed it. See tests/_shared/unsloth_pwsh_runner.py.
+    """
+    command = ["pwsh", "-NoProfile", "-NonInteractive", "-File", str(script)]
+    env = pwsh_env()
+    for attempt in range(2):
+        result = subprocess.run(command, capture_output = True, text = True, timeout = timeout, env = env)
+        crashed = result.returncode < 0 and any(
+            marker in result.stderr for marker in _PWSH_HOST_FAULT
+        )
+        if not crashed:
+            return result
+        if attempt:
+            pytest.skip(f"pwsh host aborted ({result.returncode}): {result.stderr.strip()[:400]}")
+    raise AssertionError("unreachable")
+
+
 _FAKE_EVENTS = r"""
 function New-FakeEvent {
-    param([string]$Image, [string]$CommandLine)
+    param([string]$Image, [string]$CommandLine, [string]$Parent = 'C:\Windows\System32\cmd.exe')
     $xml = "<Event><EventData>" +
         "<Data Name='NewProcessName'>$Image</Data>" +
+        "<Data Name='ParentProcessName'>$Parent</Data>" +
         "<Data Name='CommandLine'>$CommandLine</Data>" +
         "</EventData></Event>"
     $record = [pscustomobject]@{
@@ -340,12 +386,10 @@ function New-FakeEvent {
 def test_the_watcher_scores_the_image_that_ran_not_the_words_in_the_message(
     tmp_path, image: str, command_line: str, expected: int
 ) -> None:
-    """4688 renders the command line into the message, so a message search is not a detector.
-
-    It scored `cmd.exe /c echo csc.exe` as a compile, and this job's whole output is a
-    yes or no about whether a compiler ran under the installer. The record names the
-    image it created in its own field; that is what gets read, and matched whole against
-    the leaf name rather than as a substring.
+    """4688 renders the command line into the message, so a message search is not a detector:
+    it scored `cmd.exe /c echo csc.exe` as a compile. The record names the image it created
+    in its own field; that is what gets read, matched whole against the leaf name rather
+    than as a substring.
     """
     script = tmp_path / "probe.ps1"
     script.write_text(
@@ -361,22 +405,252 @@ def test_the_watcher_scores_the_image_that_ran_not_the_words_in_the_message(
         ),
         encoding = "utf-8",
     )
-    result = subprocess.run(
-        ["pwsh", "-NoProfile", "-NonInteractive", "-File", str(script)],
-        capture_output = True,
-        text = True,
-        timeout = 120,
-    )
+    result = _run_pwsh(script, timeout = 120)
     assert result.returncode == 0, result.stderr + result.stdout
     assert f"HITS:{expected}" in result.stdout, result.stdout
+
+
+_CSC = r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+_CVTRES = r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\cvtres.exe"
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason = "needs PowerShell")
+@pytest.mark.parametrize(
+    ("image", "parent", "expected"),
+    [
+        (_CSC, r"C:\Program Files\PowerShell\7\pwsh.exe", 1),
+        (_CVTRES, r"C:\Program Files\PowerShell\7\pwsh.exe", 1),
+        (_CVTRES, _CSC, 0),
+    ],
+    ids = [
+        "a-compile-the-shell-started",
+        "a-resource-step-with-no-compiler-parent",
+        "a-resource-step-the-compiler-started",
+    ],
+)
+def test_a_compiler_started_by_a_compiler_is_one_compile_not_two(
+    tmp_path, image: str, parent: str, expected: int
+) -> None:
+    """csc.exe shells out to cvtres.exe, so a single compile creates two 4688 records and
+    scoring both says the action compiled twice.
+
+    It also decides the cross-step bleed the timestamp baseline could not. The Security log
+    is written with latency: the positive control's csc.exe started before the installer's
+    window opened, its cvtres.exe child landed just inside, and neither was in the log yet
+    when the baseline was read, so the subtraction had nothing to subtract and the
+    installer was failed for a compile one step earlier.
+
+    A compile the action really starts is still caught, because its ROOT compiler is
+    spawned by the installer's shell and the window opens before the action does. That is
+    the middle case here: an orphaned resource step with a non-compiler parent still counts.
+    """
+    script = tmp_path / "probe.ps1"
+    script.write_text(
+        "\n".join(
+            [
+                '$ErrorActionPreference = "Stop"',
+                f'. "{_WATCHER}"',
+                _FAKE_EVENTS,
+                f"$e = New-FakeEvent -Image '{image}' -CommandLine 'x' -Parent '{parent}'",
+                "$hits = Select-StudioCompilerHits -Events @($e)",
+                'Write-Output "HITS:$($hits.Count)"',
+            ]
+        ),
+        encoding = "utf-8",
+    )
+    result = _run_pwsh(script, timeout = 120)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"HITS:{expected}" in result.stdout, result.stdout
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason = "needs PowerShell")
+def test_a_record_with_no_parent_field_is_still_scored(tmp_path) -> None:
+    """The whole chain is reported when the schema does not carry ParentProcessName. An
+    absent field reads as empty, and empty must not be mistaken for a compiler parent, or a
+    log that predates the field would report nothing at all."""
+    script = tmp_path / "probe.ps1"
+    script.write_text(
+        "\n".join(
+            [
+                '$ErrorActionPreference = "Stop"',
+                f'. "{_WATCHER}"',
+                # The pre-parent schema: NewProcessName and nothing else.
+                "function New-OldEvent {",
+                "    param([string]$Image)",
+                "    $xml = \"<Event><EventData><Data Name='NewProcessName'>$Image</Data>\" +",
+                '        "</EventData></Event>"',
+                "    $record = [pscustomobject]@{",
+                "        TimeCreated = [datetime]'2026-01-01T00:00:00Z'",
+                '        Message     = "New Process Name: $Image"',
+                "    }",
+                "    $body = [scriptblock]::Create(\"return @'`n$xml`n'@\")",
+                "    return ($record | Add-Member -MemberType ScriptMethod -Name ToXml "
+                "-Value $body -PassThru)",
+                "}",
+                f"$e = New-OldEvent -Image '{_CSC}'",
+                "$hits = Select-StudioCompilerHits -Events @($e)",
+                'Write-Output "HITS:$($hits.Count)"',
+            ]
+        ),
+        encoding = "utf-8",
+    )
+    result = _run_pwsh(script, timeout = 120)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "HITS:1" in result.stdout, result.stdout
+
+
+_FAKE_WINEVENT = r"""
+function Get-WinEvent {
+    # Off Windows there is no such cmdlet, so this resolves the call. Empty rather than
+    # throwing: this exercises the artefact half, and the 4688 half has its own tests.
+    param([Parameter(ValueFromRemainingArguments = $true)]$Rest)
+    return @()
+}
+"""
+
+
+def _run_watch(tmp_path, action: str) -> tuple[str, list[str]]:
+    """Drive the real Invoke-WithCompilerWatch over $Action, with TEMP pointed at tmp_path."""
+    temp_root = tmp_path / "temp"
+    temp_root.mkdir()
+    evidence = tmp_path / "evidence"
+    script = tmp_path / "probe.ps1"
+    script.write_text(
+        "\n".join(
+            [
+                '$ErrorActionPreference = "Stop"',
+                f'$env:TEMP = "{temp_root.as_posix()}"',
+                f'$env:TMP = "{temp_root.as_posix()}"',
+                _FAKE_WINEVENT,
+                f'. "{_WATCHER}"',
+                f"$action = {{ {action} }}",
+                "$seen = Invoke-WithCompilerWatch -Name 'probe' -Action $action "
+                f'-EvidenceRoot "{evidence.as_posix()}"',
+                'foreach ($lib in $seen.TempLibraries) { Write-Output "LIB:$lib" }',
+                'Write-Output "COUNT:$($seen.TempLibraries.Count)"',
+            ]
+        ),
+        encoding = "utf-8",
+    )
+    result = _run_pwsh(script, timeout = 300)
+    assert result.returncode == 0, result.stderr + result.stdout
+    libraries = [
+        line[len("LIB:") :] for line in result.stdout.splitlines() if line.startswith("LIB:")
+    ]
+    return result.stdout, libraries
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason = "needs PowerShell")
+def test_the_watcher_sees_intermediates_the_compiler_cleaned_up(tmp_path) -> None:
+    """The failure this replaces: the positive control compiled a type, 4688 recorded
+
+        csc.exe /noconfig /fullpaths @"...\\Temp\\vpmyd5eq\\vpmyd5eq.cmdline"
+
+    and the artefact half reported nothing, because CodeDom deletes its intermediate
+    directory once the assembly is loaded. Comparing a listing taken before against one
+    taken after cannot see a file that no longer exists, so the job failed as a broken
+    detector on every run since it was added.
+    """
+    action = (
+        '$dir = Join-Path $env:TEMP "abcd1234"; '
+        "New-Item -ItemType Directory -Force -Path $dir | Out-Null; "
+        'Set-Content -LiteralPath (Join-Path $dir "abcd1234.cmdline") -Value "/noconfig"; '
+        'Set-Content -LiteralPath (Join-Path $dir "abcd1234.dll") -Value "MZ"; '
+        "Start-Sleep -Milliseconds 400; "
+        # The whole point: gone before the action returns, exactly as CodeDom leaves it.
+        "Remove-Item -LiteralPath $dir -Recurse -Force"
+    )
+    stdout, libraries = _run_watch(tmp_path, action)
+    assert libraries, f"a compile that cleaned up after itself was missed again: {stdout}"
+    assert any(lib.endswith(".cmdline") for lib in libraries), libraries
+    assert any(lib.endswith(".dll") for lib in libraries), libraries
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason = "needs PowerShell")
+def test_the_watcher_still_reports_intermediates_that_were_left_behind(tmp_path) -> None:
+    """The listing half must keep working; the watcher is added to it, not swapped for it.
+
+    A compile that was NOT cleaned up, so the response file is still next to the assembly.
+    This asserted a bare ``leftover.dll`` before, which read as "any DLL under TEMP is a
+    compiler artefact"; that is the rule the job died on, and it is not what this test is
+    for. The vehicle changed, the listing half it checks did not.
+    """
+    action = (
+        '$dir = Join-Path $env:TEMP "leftover"; '
+        "New-Item -ItemType Directory -Force -Path $dir | Out-Null; "
+        'Set-Content -LiteralPath (Join-Path $dir "leftover.cmdline") -Value "/noconfig"; '
+        'Set-Content -LiteralPath (Join-Path $dir "leftover.dll") -Value "MZ"'
+    )
+    _, libraries = _run_watch(tmp_path, action)
+    assert any(lib.endswith("leftover.dll") for lib in libraries), libraries
+    assert any(lib.endswith("leftover.cmdline") for lib in libraries), libraries
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason = "needs PowerShell")
+def test_an_unpacked_archive_is_not_scored_as_a_compile(tmp_path) -> None:
+    """What actually ran on every red run of this job.
+
+    The installer unpacks llama.cpp's checksum-verified prebuilt release into a staging
+    directory under TEMP, which lands ~25 DLLs there with no compiler anywhere near them.
+    The shape under test is ``csc.exe -> %TEMP%\\<random>.dll``; an unpacked archive is a
+    different thing and must not read as one, or the job can never pass and stops meaning
+    anything.
+    """
+    action = (
+        '$dir = Join-Path $env:TEMP "unsloth-llama-prebuilt-ay5ptbfd"; '
+        '$dir = Join-Path $dir "extract-w613j_am"; '
+        "New-Item -ItemType Directory -Force -Path $dir | Out-Null; "
+        'foreach ($n in @("ggml.dll", "llama.dll", "mtmd.dll", "ggml-cpu-x64.dll")) { '
+        '    Set-Content -LiteralPath (Join-Path $dir $n) -Value "MZ" '
+        "}; "
+        # A README ships in the archive too, and must stay just as uninteresting.
+        'Set-Content -LiteralPath (Join-Path $dir "LICENSE.txt") -Value "MIT"; '
+        "Start-Sleep -Milliseconds 400"
+    )
+    stdout, libraries = _run_watch(tmp_path, action)
+    assert not libraries, f"an unpacked release archive was scored as a compile: {stdout}"
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason = "needs PowerShell")
+def test_a_compile_beside_an_unpacked_archive_is_still_caught(tmp_path) -> None:
+    """The narrowing is per-directory, so unpacking an archive cannot cover a real compile."""
+    action = (
+        '$extract = Join-Path $env:TEMP "unsloth-llama-prebuilt-zz\\extract-zz"; '
+        "New-Item -ItemType Directory -Force -Path $extract | Out-Null; "
+        'Set-Content -LiteralPath (Join-Path $extract "ggml.dll") -Value "MZ"; '
+        '$compile = Join-Path $env:TEMP "vpmyd5eq"; '
+        "New-Item -ItemType Directory -Force -Path $compile | Out-Null; "
+        'Set-Content -LiteralPath (Join-Path $compile "vpmyd5eq.cmdline") -Value "/noconfig"; '
+        'Set-Content -LiteralPath (Join-Path $compile "vpmyd5eq.dll") -Value "MZ"; '
+        "Start-Sleep -Milliseconds 400"
+    )
+    _, libraries = _run_watch(tmp_path, action)
+    assert any(lib.endswith("vpmyd5eq.dll") for lib in libraries), libraries
+    assert not any(lib.endswith("ggml.dll") for lib in libraries), libraries
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason = "needs PowerShell")
+def test_an_action_that_compiles_nothing_reports_nothing(tmp_path) -> None:
+    """Otherwise the real measurement, which requires neither detector to fire, can never pass.
+
+    A text file is written so the action is not a no-op: the watcher sees the creation and
+    must still discard it, because the extension is not one a compiler writes.
+    """
+    action = (
+        'Set-Content -LiteralPath (Join-Path $env:TEMP "notes.txt") -Value "hello"; '
+        "Start-Sleep -Milliseconds 400"
+    )
+    stdout, libraries = _run_watch(tmp_path, action)
+    assert "COUNT:0" in stdout, stdout
+    assert not libraries, libraries
 
 
 def test_an_unreadable_security_log_is_void_rather_than_clean() -> None:
     """Get-WinEvent throws both for "nothing matched" and for "could not read".
 
     Swallowing both made a job that could not open the Security log print "no compiler"
-    and pass. The positive control does not cover it: it runs in an earlier step, and
-    says nothing about whether the log was still readable during the measurement.
+    and pass. The positive control runs in an earlier step and says nothing about whether
+    the log was still readable during the measurement.
     """
     body = _WATCHER.read_text(encoding = "utf-8")
     assert (
@@ -385,10 +659,27 @@ def test_an_unreadable_security_log_is_void_rather_than_clean() -> None:
     assert "void rather than as clean" in body
 
 
+def test_the_compiler_window_is_cut_to_size_by_timecreated() -> None:
+    """The 4688 window has to be exact at the floor, or it scores the step before it.
+
+    Observed on unslothai/unsloth#10626: a csc.exe recorded at 17:51:57.107 came back from
+    a window whose floor was 17:51:57.58 and failed a measurement whose step had not
+    printed its first line until 17:51:58.58. The compile belonged to the positive control
+    one step earlier. $prior is meant to subtract exactly that, and did not, so the filter
+    itself has to hold to the precision it was given rather than to the hashtable's.
+    """
+    body = _WATCHER.read_text(encoding = "utf-8")
+    assert "StartTime = $Since.AddSeconds(-1)" in body
+    assert "EndTime   = $Until.AddSeconds(1)" in body
+    assert "$_.TimeCreated -ge $Since -and $_.TimeCreated -le $Until" in body, (
+        "the padded query is no longer cut back to the real window, so it reports "
+        "compiles from before the action began"
+    )
+
+
 def test_the_native_resolver_still_has_a_lexical_fallback() -> None:
-    """The point of the change is the acquisition, not the ladder. A host where emit fails has to
-    degrade exactly as a host that could not compile already did, which is a path the installer
-    has always taken and still completes on.
+    """The point of the change is the acquisition, not the ladder: a host where emit fails must
+    degrade exactly as one that could not compile already did.
     """
     text = _text("install.ps1")
     assert "Write-StudioFinalPathDegraded" in text
