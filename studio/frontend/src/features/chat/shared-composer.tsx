@@ -63,7 +63,7 @@ import {
 import { isTauri } from "@/lib/api-base";
 import { classifiedAttachmentFiles, isVideoFile } from "@/lib/video-utils";
 import { isDownloadCancelled } from "@/lib/native-files";
-import { isMultimodalResponse } from "./types/api";
+import { isMultimodalResponse, type InferenceStatusResponse } from "./types/api";
 import { getImageInputUnavailableReason } from "./utils/image-input-support";
 import {
   modelIdsMatch,
@@ -256,6 +256,9 @@ function isNativeComposing(event: Event) {
 const IME_STUCK_TIMEOUT_MS = 2500;
 /** Poll cadence while waiting for an aborted compare load to leave the backend. */
 const COMPARE_CANCEL_STATUS_POLL_MS = 750;
+/** A status read that never answers must not hold a round forever: a hung backend would
+ *  otherwise stop the per-round retry below from ever running again. */
+const COMPARE_CANCEL_STATUS_TIMEOUT_MS = COMPARE_CANCEL_STATUS_POLL_MS * 4;
 /** Consecutive status reads without the cancelled model in `loading` before it counts as settled. */
 const COMPARE_CANCEL_SETTLED_OBSERVATIONS = 3;
 /** Upper bound on the status poll. A load hidden behind another one is never settled, so
@@ -287,6 +290,31 @@ function newCompareLoadRequestId(): string {
   return typeof globalThis.crypto?.randomUUID === "function"
     ? globalThis.crypto.randomUUID()
     : `compare-load-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** Read the status, or report "no answer", so one pending read cannot stall the poll.
+ *
+ * A read that never answers is not proof the cancelled load is gone: the round still has to
+ * end so the next one -- and its scoped retry -- can run, and the bounded poll has to reach
+ * its failure instead of waiting forever. A rejection and a timeout are the same outcome:
+ * neither settles a round, and neither is rethrown. */
+async function readInferenceStatusWithinPollBudget(): Promise<InferenceStatusResponse | null> {
+  const controller = new AbortController();
+  let timer: number | undefined;
+  const expiry = new Promise<null>((resolve) => {
+    timer = window.setTimeout(() => {
+      // Also release the unanswered read; the next round starts its own.
+      controller.abort();
+      resolve(null);
+    }, COMPARE_CANCEL_STATUS_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([getInferenceStatus(controller.signal), expiry]);
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 /** Reconcile an aborted compare `/load` with the backend.
@@ -330,18 +358,11 @@ async function cancelCompareBackendLoad(
       pollRounds < COMPARE_CANCEL_MAX_STATUS_POLLS
     ) {
       pollRounds += 1;
-      let reported: string[] | null = null;
-      try {
-        const status = await getInferenceStatus();
-        reported = (status.loading ?? []).map((id) => id.trim().toLowerCase());
-      } catch {
-        // A status outage must not skip the retry below: the aborted load can still
-        // register and finish, so absence of a report settles nothing this round.
-      }
       if (loadRequestId) {
-        // Every round, whatever the status read returned: the first /unload can fail before
+        // Every round, whatever the status read returns: the first /unload can fail before
         // the load registers, and onRequestStart fires before the request is sent, so a
         // delayed load could otherwise settle unseen. Scoped, so it is safe to re-issue.
+        // Sequenced before the status await so a status read that hangs cannot postpone it.
         try {
           await unloadModel({
             model_path: modelId,
@@ -353,6 +374,12 @@ async function cancelCompareBackendLoad(
           // Not cancellable yet; retried on the next round while the budget lasts.
         }
       }
+      // Null on a status outage or a read that never answered: neither is proof the
+      // aborted load is gone, so neither settles a round.
+      const status = await readInferenceStatusWithinPollBudget();
+      const reported = status
+        ? (status.loading ?? []).map((id) => id.trim().toLowerCase())
+        : null;
       if (reported === null) {
         settledObservations = 0;
       } else {

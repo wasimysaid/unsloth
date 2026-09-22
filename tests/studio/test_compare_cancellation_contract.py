@@ -36,7 +36,7 @@ def test_composer_aborts_the_load_and_reconciles_the_backend():
     # The unload is the backend's cancellation path; without it the aborted fetch
     # leaves the server-side load running.
     assert "await unloadModel({" in composer
-    assert "getInferenceStatus()" in composer
+    assert "readInferenceStatusWithinPollBudget()" in composer
     assert "COMPARE_CANCEL_SETTLED_OBSERVATIONS" in composer
     assert "status.loading" in composer
 
@@ -337,13 +337,38 @@ def test_cancellation_retry_survives_a_status_outage():
     cancel = composer.split("async function cancelCompareBackendLoad(", 1)[1]
     cancel = cancel.split("function newCompareLoadRequestId", 1)[0]
     loop = cancel.split("while (", 1)[1].split("if (retriedCancellation) {", 1)[0]
-    # The status read is its own try, and the retry is sequenced after it -- not nested.
-    assert "let reported: string[] | null = null;" in loop
-    status_try = loop.split("const status = await getInferenceStatus();", 1)[1]
-    status_try = status_try.split("} catch {", 1)[0]
-    assert "unloadModel(" not in status_try
+    # The retry is sequenced ahead of the status read and is not nested inside it, so a
+    # status outage -- or a read that never answers -- cannot skip it.
+    assert "let reported: string[] | null = null;" not in loop
     retry_at = loop.index("if (loadRequestId) {")
-    assert retry_at > loop.index("const status = await getInferenceStatus();")
+    status_at = loop.index("await readInferenceStatusWithinPollBudget();")
+    assert retry_at < status_at
+    retry_block = loop[retry_at:status_at]
+    assert "unloadModel(" in retry_block
     # An unknown status settles nothing.
     assert "if (reported === null) {" in loop
     assert "settledObservations = 0;" in loop.split("if (reported === null) {", 1)[1]
+
+
+def test_a_status_read_that_never_answers_cannot_stall_the_poll():
+    """A pending status read must expire, so the round -- and its retry -- still advance.
+
+    Without a bound, a status request that never settles (rather than rejecting) holds the
+    round forever: the per-round scoped retry stops running, the poll-count bound never
+    applies, and the compare stays busy while the aborted load can still finish.
+    """
+    composer = _read("shared-composer.tsx")
+    cancel = composer.split("async function cancelCompareBackendLoad(", 1)[1]
+    cancel = cancel.split("function newCompareLoadRequestId", 1)[0]
+    loop = cancel.split("while (", 1)[1].split("if (retriedCancellation) {", 1)[0]
+    # The read is bounded by its own expiry, and that expiry also aborts the request.
+    assert "const expiry = new Promise<null>((resolve) => {" in composer
+    assert "controller.abort();" in composer
+    assert "getInferenceStatus(controller.signal)" in composer
+    assert "COMPARE_CANCEL_STATUS_TIMEOUT_MS" in composer
+    # The loop awaits the bounded helper, not the raw request.
+    assert "await getInferenceStatus()" not in loop
+    assert "await readInferenceStatusWithinPollBudget();" in loop
+    # A bounded read that answered nothing settles nothing this round.
+    assert "const reported = status" in loop
+    assert ": null;" in loop
