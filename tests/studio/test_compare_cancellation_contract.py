@@ -174,6 +174,10 @@ def test_compare_end_re_lists_history_without_a_run_transition():
     assert "void listStoredChatThreads({ pairId })" in handler
     assert "resolveComparePaneThreadIds(threads)" in handler
     assert "if (compareSubmittingRef.current !== submittedAt) return;" in handler
+    # The callback's own lookup is not effect-owned, so an unmount between the
+    # request and its response must not set state on a dead component.
+    assert "if (!compareMountedRef.current) return;" in handler
+    assert "compareMountedRef.current = false;" in page
     # The lookup effect's own settle edge is untouched, so the existing
     # `anyRunning`-driven re-list still runs for a compare that did generate.
     assert page.count("}, [pairId, anyRunning]);") == 2

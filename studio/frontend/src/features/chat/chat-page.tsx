@@ -1071,6 +1071,10 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
   const listedPairRef = useRef<string | null>(null);
   // Bumped by every compare submission so a lookup that started before it cannot apply.
   const compareSubmittingRef = useRef(0);
+  // The settle-edge re-list is owned by its effect; this one is a bare callback, so
+  // it needs its own window guard. The parent remounts this path per pair, so this
+  // covers an unmount mid-request rather than a pair swap.
+  const compareMountedRef = useRef(true);
   // Bumped only for a submission that actually starts a compare run -- the composer
   // claims the panes once the run is accepted -- so a send it rejects before that
   // cannot invalidate a pending lookup. A real run still flips `anyRunning`, whose
@@ -1121,6 +1125,7 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
       const submittedAt = compareSubmittingRef.current;
       void listStoredChatThreads({ pairId })
         .then((threads) => {
+          if (!compareMountedRef.current) return;
           if (compareSubmittingRef.current !== submittedAt) return;
           const pair = resolveComparePaneThreadIds(threads);
           setModel1ThreadId(pair.first);
@@ -1134,6 +1139,13 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
     },
     [pairId],
   );
+
+  useEffect(() => {
+    compareMountedRef.current = true;
+    return () => {
+      compareMountedRef.current = false;
+    };
+  }, []);
 
   const handleModelsChange = useCallback(
     (deletedModel?: DeletedModelRef) => {
