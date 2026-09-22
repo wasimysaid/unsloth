@@ -315,10 +315,9 @@ async function cancelCompareBackendLoad(
     await resyncInferenceStatusAfterServerModelChange().catch(() => undefined);
     return;
   } catch (unloadError) {
-    // The fallback drops the selection this cancellation may have invalidated, but only
-    // a LOCAL one: an external-provider checkpoint has no llama.cpp mirror, so cancelling
-    // a local backend load cannot invalidate it. The successful path preserves it through
-    // the same guard inside resyncInferenceStatusAfterServerModelChange.
+    // Only a local selection can be invalidated by cancelling a local load; an external
+    // provider has no llama.cpp mirror and stays valid, as the successful path already
+    // assumes.
     if (!isExternalModelId(useChatRuntimeStore.getState().params.checkpoint)) {
       useChatRuntimeStore.getState().clearCheckpoint();
     }
@@ -343,11 +342,9 @@ async function cancelCompareBackendLoad(
         const targetStillLoading = reported.some((id) => statusIds.includes(id));
         const anotherLoadVisible = reported.length > 0 && !targetStillLoading;
         if (loadRequestId) {
-          // Retried on EVERY round, including an empty report: the first /unload can fail
-          // before the load reaches its attempt registration, and `onRequestStart` fires
-          // before the request is sent, so a delayed request could register after three
-          // empty reads and load without a cancellation tombstone. The retry is scoped and
-          // idempotent, so it is safe on a load this client has not seen yet.
+          // Every round, including an empty report: the first /unload can fail before the
+          // load registers, and onRequestStart fires before the request is sent, so a
+          // delayed load could otherwise settle unseen. Scoped, so it is safe to re-issue.
           try {
             await unloadModel({
               model_path: modelId,
@@ -374,12 +371,9 @@ async function cancelCompareBackendLoad(
       }
     }
     if (retriedCancellation) {
-      // A scoped retry landed after the first /unload failed transiently, so the attempt
-      // is already cancelled: finish exactly like the initially successful path.
-      // Reporting the original error would claim the cancellation failed and leave the UI
-      // unselected after a cancellation that actually took effect -- and consulting this
-      // after the timeout below would report that failure for a retry that succeeded while
-      // an unrelated load kept the poll unsettled.
+      // The retry landed: finish like the successful path instead of reporting a failure
+      // for a cancellation that took effect. Checked before the timeout throw, which would
+      // otherwise fire while an unrelated load keeps the poll unsettled.
       await resyncInferenceStatusAfterServerModelChange().catch(() => undefined);
       return;
     }
