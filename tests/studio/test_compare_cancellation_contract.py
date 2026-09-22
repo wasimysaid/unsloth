@@ -159,7 +159,7 @@ def test_unload_failure_never_settles_against_a_hidden_queued_attempt():
     # that becomes visible is cancelled rather than merely waited out.
     assert "if (reported.length > 0 && loadRequestId) {" in composer
     retry = composer.split("if (reported.length > 0 && loadRequestId) {", 1)[1]
-    retry = retry.split("}).catch(() => undefined);", 1)[0]
+    retry = retry.split("retriedCancellation = true;", 1)[0]
     assert "cancel_load_request_id: loadRequestId," in retry
     assert "unloadModel({" in retry
     # The poll is bounded, so an unrelated load cannot hang the run forever.
@@ -195,15 +195,28 @@ def test_cancellation_phase_starts_before_the_preparatory_awaits():
     gpu_cache = prep.index("await ensureGpuDeviceCache();")
     claimed = prep.index("ownedCompareRun = compareRunsRef.current.begin();")
     assert claimed < confirmation and claimed < gpu_cache
-    # The pre-generation entry must not begin a second run.
+    # The pre-generation entry must not begin a second run, and must not throw past the
+    # cleanup scope: the cancellation gate sits inside the try, so a Stop taken during
+    # those preparatory awaits unwinds through the catch/finally instead of stranding the
+    # run, the lifecycle lease and the busy state.
     entry = prep.split('const toastId = toast("Comparing models…"', 1)[1]
-    entry = entry.split("try {", 1)[0]
-    assert "compareRunsRef.current.begin()" not in entry
-    assert "throwIfCompareCancelled(compareSignal)" in entry
-    # Every early return inside that window abandons the claimed run.
+    before_try = entry.split("try {", 1)[0]
+    assert "compareRunsRef.current.begin()" not in before_try
+    assert "throwIfCompareCancelled(" not in before_try
+    protected = entry.split("try {", 1)[1]
+    assert "throwIfCompareCancelled(compareSignal);" in protected
+    # Every early return inside that window abandons the claimed run: the confirmation
+    # throwing, it declining, and the GPU device-cache failing each release directly,
+    # while both draft-changed exits go through the shared helper.
     window = prep[: prep.index("const handle1 = handlesRef.current[")]
-    # Confirmation threw, confirmation declined, draft changed, GPU cache failed.
-    assert window.count("abandonCompareRun();") == 4
+    helper = prep.split("const keepChangedDraft = () => {", 1)[1].split("\n    };", 1)[0]
+    assert "abandonCompareRun();" in helper
+    # Both draft-changed exits route through that helper, so neither can forget it.
+    assert window.count("keepChangedDraft();") == 2
+    # Excluding the helper's own call, the three direct exits release themselves:
+    # confirmation threw, confirmation declined, GPU device cache failed.
+    direct = window.replace(helper, "")
+    assert direct.count("abandonCompareRun();") == 3
 
 
 def test_composer_releases_ownership_only_after_reconciliation():
@@ -251,3 +264,31 @@ def test_pending_compare_history_survives_a_rejected_send():
     assert "const compareSubmittingRef = useRef(0);" in page
     assert "if (compareSubmittingRef.current !== submittedAt) return;" in page
     assert "}, [pairId, anyRunning]);" in page
+
+
+def test_cancellation_retry_that_lands_reports_success():
+    """A scoped retry that succeeds must finish like the successful path.
+
+    The fallback cleared the checkpoint, so rethrowing the first /unload error would
+    leave the UI unselected and report a failed cancellation that actually worked.
+    """
+    composer = _read("shared-composer.tsx")
+    cancel = composer.split("async function cancelCompareBackendLoad(", 1)[1]
+    cancel = cancel.split("function newCompareLoadRequestId", 1)[0]
+    fallback = cancel.split("} catch (unloadError) {", 1)[1]
+
+    assert "let retriedCancellation = false;" in fallback
+    retry = fallback.split("if (reported.length > 0 && loadRequestId) {", 1)[1]
+    retry = retry.split("retriedCancellation = true;", 1)[0]
+    assert "cancel_load_request_id: loadRequestId," in retry
+
+    # The success path is entered only once the attempt is proven settled, and it
+    # re-derives residency exactly like the initially successful unload.
+    settled = fallback.split(
+        "if (settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS) {", 1
+    )[1]
+    settled = settled.split("if (retriedCancellation) {", 1)[1]
+    assert "resyncInferenceStatusAfterServerModelChange()" in settled
+    assert "return;" in settled
+    # The original error survives only for the no-retry case, after that early return.
+    assert "Could not cancel the backend model load: ${detail}" in settled

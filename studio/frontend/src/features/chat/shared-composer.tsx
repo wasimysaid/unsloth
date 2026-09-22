@@ -318,6 +318,7 @@ async function cancelCompareBackendLoad(
     const statusIds = compareLoadingStatusIds(modelId);
     let settledObservations = 0;
     let pollRounds = 0;
+    let retriedCancellation = false;
     while (
       settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS &&
       pollRounds < COMPARE_CANCEL_MAX_STATUS_POLLS
@@ -335,10 +336,15 @@ async function cancelCompareBackendLoad(
         const targetStillLoading = reported.some((id) => statusIds.includes(id));
         const anotherLoadVisible = reported.length > 0 && !targetStillLoading;
         if (reported.length > 0 && loadRequestId) {
-          await unloadModel({
-            model_path: modelId,
-            cancel_load_request_id: loadRequestId,
-          }).catch(() => undefined);
+          try {
+            await unloadModel({
+              model_path: modelId,
+              cancel_load_request_id: loadRequestId,
+            });
+            retriedCancellation = true;
+          } catch {
+            // Still reported; retried on the next round while the attempt stays visible.
+          }
         }
         // Both visibility cases stay unsettled: neither proves this attempt is gone.
         settledObservations =
@@ -360,6 +366,14 @@ async function cancelCompareBackendLoad(
       throw new Error(
         `Could not cancel the backend model load: ${modelId} is still queued behind another load.`,
       );
+    }
+    if (retriedCancellation) {
+      // A scoped retry landed after the first /unload failed transiently, so the attempt
+      // is gone: finish exactly like the initially successful path. Reporting the original
+      // error would claim the cancellation failed and leave the UI unselected after a
+      // cancellation that actually took effect.
+      await resyncInferenceStatusAfterServerModelChange().catch(() => undefined);
+      return;
     }
     const detail =
       unloadError instanceof Error
@@ -1351,6 +1365,9 @@ export function SharedComposer({
       pendingImagesRef.current === submittedImages &&
       pendingAudioRef.current === submittedAudio;
     const keepChangedDraft = () => {
+      // Shared by both draft-changed exits in the preparatory window, so the compare
+      // run is abandoned here rather than being repeated (and forgotten) per call site.
+      abandonCompareRun();
       releaseCompareModelLifecycle();
       resetPromptQueue();
       toast.info("Message changed while preparing", {
@@ -1414,7 +1431,6 @@ export function SharedComposer({
       }
     }
     if (!submittedDraftIsCurrent()) {
-      abandonCompareRun();
       keepChangedDraft();
       return;
     }
@@ -2027,13 +2043,13 @@ export function SharedComposer({
       const name1 = model1?.id ? compareModelDisplayName(model1.id) : "";
       const name2 = model2?.id ? compareModelDisplayName(model2.id) : "";
       const toastId = toast("Comparing models…", { duration: Infinity });
-      // The run was claimed before the preparatory awaits above; a compare that is not
-      // the owned one anymore (stopped during them) must not run generations.
-      throwIfCompareCancelled(compareSignal);
       // Non-null here: this branch only runs for a generalized compare, which claimed
       // the run above and abandons it on every early return before this point.
       const run = ownedCompareRun as CompareRun<CompareModelSelection>;
       try {
+        // Inside the protected scope: a Stop during the preparatory awaits above must
+        // unwind through the catch/finally below, which releases the run, the model
+        // lifecycle lease and the busy state. Throwing before the try stranded all three.
         throwIfCompareCancelled(compareSignal);
         if (handle1 && model1?.id) {
           toast("Loading Model 1…", {
