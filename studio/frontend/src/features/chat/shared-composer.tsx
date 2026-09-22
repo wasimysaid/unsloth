@@ -1642,10 +1642,10 @@ export function SharedComposer({
           }
         }
         applyCompareStopDecision();
-        // Claim this run's identity before the request starts, so a Stop landing
-        // mid-load owns exactly this request's reconciliation.
+        // Resolve the run that owns this load, but do not name its cancellation
+        // target yet: token validation and the approval dialogs run first, and a
+        // Stop landing there must not unload a model no request has replaced.
         const run = compareRunsRef.current.current();
-        if (run) compareRunsRef.current.setLoadingModel(run, sel);
         const compareSignal = run?.controller.signal;
         if (compareSignal) throwIfCompareCancelled(compareSignal);
         const resp = await loadModel(

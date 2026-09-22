@@ -48,6 +48,21 @@ def test_composer_aborts_the_load_and_reconciles_the_backend():
     assert "compareRunsRef.current.begin()" in composer
 
 
+def test_unload_target_is_named_only_at_the_request_boundary():
+    """Stop during token validation must not unload a model no request replaced."""
+    composer = _read("shared-composer.tsx")
+    load = composer.split("const resp = await loadModel(", 1)[1]
+    # The only pre-request assignment may resolve the owning run; naming the
+    # cancellation target before the request would let Stop evict a resident
+    # same-ID model while the load is still validating its token.
+    preamble = composer.split("const resp = await loadModel(", 1)[0]
+    preamble = preamble.split("async function ensureModelLoaded(", 1)[1]
+    assert "setLoadingModel" not in preamble
+    assert "const run = compareRunsRef.current.current();" in preamble
+    boundary = load.split("onRequestStart: () => {", 1)[1].split("},", 1)[0]
+    assert "setLoadingModel(run, sel)" in boundary
+
+
 def test_composer_releases_ownership_only_after_reconciliation():
     composer = _read("shared-composer.tsx")
     catch = composer.split("} catch (err) {", 1)[1].split("} finally {", 1)[0]
