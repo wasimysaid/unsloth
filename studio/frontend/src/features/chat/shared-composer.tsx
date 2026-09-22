@@ -342,6 +342,7 @@ async function cancelCompareBackendLoad(
               cancel_load_request_id: loadRequestId,
             });
             retriedCancellation = true;
+            break;
           } catch {
             // Still reported; retried on the next round while the attempt stays visible.
           }
@@ -360,20 +361,22 @@ async function cancelCompareBackendLoad(
         });
       }
     }
+    if (retriedCancellation) {
+      // A scoped retry landed after the first /unload failed transiently, so the attempt
+      // is already cancelled: finish exactly like the initially successful path.
+      // Reporting the original error would claim the cancellation failed and leave the UI
+      // unselected after a cancellation that actually took effect -- and consulting this
+      // after the timeout below would report that failure for a retry that succeeded while
+      // an unrelated load kept the poll unsettled.
+      await resyncInferenceStatusAfterServerModelChange().catch(() => undefined);
+      return;
+    }
     // Bounded: a backend that keeps reporting an unrelated load is reported as an
     // unsettled cancellation rather than as a settled one this run never proved.
     if (settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS) {
       throw new Error(
         `Could not cancel the backend model load: ${modelId} is still queued behind another load.`,
       );
-    }
-    if (retriedCancellation) {
-      // A scoped retry landed after the first /unload failed transiently, so the attempt
-      // is gone: finish exactly like the initially successful path. Reporting the original
-      // error would claim the cancellation failed and leave the UI unselected after a
-      // cancellation that actually took effect.
-      await resyncInferenceStatusAfterServerModelChange().catch(() => undefined);
-      return;
     }
     const detail =
       unloadError instanceof Error

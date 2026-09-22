@@ -271,6 +271,11 @@ def test_cancellation_retry_that_lands_reports_success():
 
     The fallback cleared the checkpoint, so rethrowing the first /unload error would
     leave the UI unselected and report a failed cancellation that actually worked.
+
+    The case that matters is a successful retry while an UNRELATED load stays visible:
+    those reads never settle, so the timeout is reached with the cancellation already
+    effective. The success check therefore sits before that throw, and a landed retry
+    ends the poll instead of spending the whole budget on a settled cancellation.
     """
     composer = _read("shared-composer.tsx")
     cancel = composer.split("async function cancelCompareBackendLoad(", 1)[1]
@@ -281,14 +286,18 @@ def test_cancellation_retry_that_lands_reports_success():
     retry = fallback.split("if (reported.length > 0 && loadRequestId) {", 1)[1]
     retry = retry.split("retriedCancellation = true;", 1)[0]
     assert "cancel_load_request_id: loadRequestId," in retry
+    # A landed retry ends the poll instead of waiting out an unrelated load.
+    assert "retriedCancellation = true;\n            break;" in fallback
 
-    # The success path is entered only once the attempt is proven settled, and it
-    # re-derives residency exactly like the initially successful unload.
-    settled = fallback.split(
-        "if (settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS) {", 1
-    )[1]
-    settled = settled.split("if (retriedCancellation) {", 1)[1]
+    # The success path is consulted BEFORE the timeout throw, so a retry that lands
+    # while an unrelated load keeps the poll unsettled still reports success rather
+    # than a cancellation failure that did not happen. Anchored on the throw itself:
+    # the loop's own settle wait uses the same condition text.
+    success_at = fallback.index("if (retriedCancellation) {")
+    timeout_at = fallback.index("is still queued behind another load.")
+    assert success_at < timeout_at
+    settled = fallback[success_at:timeout_at]
     assert "resyncInferenceStatusAfterServerModelChange()" in settled
     assert "return;" in settled
     # The original error survives only for the no-retry case, after that early return.
-    assert "Could not cancel the backend model load: ${detail}" in settled
+    assert "Could not cancel the backend model load: ${detail}" in fallback[timeout_at:]
