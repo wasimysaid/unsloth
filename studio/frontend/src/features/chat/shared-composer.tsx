@@ -156,6 +156,7 @@ import {
   CompareRunOwnership,
   isCompareCancellation,
   throwIfCompareCancelled,
+  type CompareRun,
 } from "./compare-run-ownership";
 import {
   loadedContextForParams,
@@ -1364,6 +1365,29 @@ export function SharedComposer({
       textareaRef.current?.focus();
     };
 
+    // The owned, cancellable phase starts here rather than at the first /load: these
+    // preparatory awaits can block (a confirmation dialog, a cold system-info request)
+    // while the model-lifecycle lease is already held and further sends are rejected.
+    // Without this, that whole window showed no Stop control at all.
+    let ownedCompareRun: CompareRun<CompareModelSelection> | null = null;
+    let compareSignal = new AbortController().signal;
+    if (isGeneralizedCompare) {
+      setComparing(true);
+      ownedCompareRun = compareRunsRef.current.begin();
+      compareSignal = ownedCompareRun.controller.signal;
+      onComparingChange?.(true);
+    }
+    const abandonCompareRun = () => {
+      if (ownedCompareRun === null) {
+        return;
+      }
+      if (compareRunsRef.current.release(ownedCompareRun)) {
+        setComparing(false);
+        onComparingChange?.(false);
+      }
+      ownedCompareRun = null;
+    };
+
     let compareStopDecision: Awaited<
       ReturnType<typeof confirmStopRunningChatsIfNeeded>
     > | null = null;
@@ -1374,6 +1398,7 @@ export function SharedComposer({
           "reload",
         );
       } catch (error) {
+        abandonCompareRun();
         releaseCompareModelLifecycle();
         resetPromptQueue();
         toast.error("Compare failed", {
@@ -1382,12 +1407,14 @@ export function SharedComposer({
         return;
       }
       if (!compareStopDecision.proceed) {
+        abandonCompareRun();
         releaseCompareModelLifecycle();
         resetPromptQueue();
         return;
       }
     }
     if (!submittedDraftIsCurrent()) {
+      abandonCompareRun();
       keepChangedDraft();
       return;
     }
@@ -1408,6 +1435,7 @@ export function SharedComposer({
           await ensureGpuDeviceCache();
         }
       } catch (error) {
+        abandonCompareRun();
         releaseCompareModelLifecycle();
         resetPromptQueue();
         toast.error("Compare failed", {
@@ -1999,12 +2027,12 @@ export function SharedComposer({
       const name1 = model1?.id ? compareModelDisplayName(model1.id) : "";
       const name2 = model2?.id ? compareModelDisplayName(model2.id) : "";
       const toastId = toast("Comparing models…", { duration: Infinity });
-      setComparing(true);
-      const run = compareRunsRef.current.begin();
-      const compareSignal = run.controller.signal;
-      // The panes are claimed only now, past every early return: a send that never
-      // starts a run must not invalidate a pending compare-history lookup.
-      onComparingChange?.(true);
+      // The run was claimed before the preparatory awaits above; a compare that is not
+      // the owned one anymore (stopped during them) must not run generations.
+      throwIfCompareCancelled(compareSignal);
+      // Non-null here: this branch only runs for a generalized compare, which claimed
+      // the run above and abandons it on every early return before this point.
+      const run = ownedCompareRun as CompareRun<CompareModelSelection>;
       try {
         throwIfCompareCancelled(compareSignal);
         if (handle1 && model1?.id) {

@@ -183,6 +183,29 @@ def test_compare_end_re_lists_history_without_a_run_transition():
     assert page.count("}, [pairId, anyRunning]);") == 2
 
 
+def test_cancellation_phase_starts_before_the_preparatory_awaits():
+    """The Stop control must exist while the confirmation/GPU-cache waits run.
+
+    Those awaits hold the model-lifecycle lease and reject further sends, so a
+    run that is only claimed afterwards leaves that whole window uncancellable.
+    """
+    composer = _read("shared-composer.tsx")
+    prep = composer.split("async function sendImpl(", 1)[1]
+    confirmation = prep.index("await confirmStopRunningChatsIfNeeded(")
+    gpu_cache = prep.index("await ensureGpuDeviceCache();")
+    claimed = prep.index("ownedCompareRun = compareRunsRef.current.begin();")
+    assert claimed < confirmation and claimed < gpu_cache
+    # The pre-generation entry must not begin a second run.
+    entry = prep.split('const toastId = toast("Comparing models…"', 1)[1]
+    entry = entry.split("try {", 1)[0]
+    assert "compareRunsRef.current.begin()" not in entry
+    assert "throwIfCompareCancelled(compareSignal)" in entry
+    # Every early return inside that window abandons the claimed run.
+    window = prep[: prep.index("const handle1 = handlesRef.current[")]
+    # Confirmation threw, confirmation declined, draft changed, GPU cache failed.
+    assert window.count("abandonCompareRun();") == 4
+
+
 def test_composer_releases_ownership_only_after_reconciliation():
     composer = _read("shared-composer.tsx")
     catch = composer.split("} catch (err) {", 1)[1].split("} finally {", 1)[0]
@@ -208,10 +231,11 @@ def test_compare_layout_keeps_the_pane_identity():
 def test_pending_compare_history_survives_a_rejected_send():
     """History invalidation must follow an accepted run, not every send attempt."""
     composer = _read("shared-composer.tsx")
-    # The panes are claimed only after the early returns, i.e. once the run starts.
+    # The panes are claimed only once the run is accepted, past the cheap pre-flight
+    # returns that can still reject a send before any compare state is entered.
     acceptance = composer.split(
-        "const run = compareRunsRef.current.begin();", 1
-    )[1].split("try {", 1)[0]
+        "ownedCompareRun = compareRunsRef.current.begin();", 1
+    )[1].split("\n    }", 1)[0]
     assert "onComparingChange?.(true);" in acceptance
     # The claim is released with the run's ownership, and not around the whole send.
     release = composer.split("if (compareRunsRef.current.release(run)) {", 1)[1]
