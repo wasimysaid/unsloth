@@ -1,0 +1,79 @@
+{
+  "commit": "f3cbf84f047c74c9c69fe261bf8da737a597c8cb",
+  "kind": "Synthetic production Chromium regression; not a new GPU generation",
+  "viewport": {
+    "width": 1280,
+    "height": 900
+  },
+  "stream": {
+    "targetCharacters": 250000,
+    "chunkCharacters": 512,
+    "gapMilliseconds": 12
+  },
+  "result": {
+    "passed": true,
+    "streaming": {
+      "done": true,
+      "duration": 6763.5,
+      "p95": 16.799999999999955,
+      "worst": 133.3,
+      "mounted": 4932,
+      "fragments": 9,
+      "transfers": {
+        "initialSourceCharacters": [
+          16787
+        ],
+        "deltaRequests": 631,
+        "largestDeltaCharacters": 512,
+        "totalDeltaCharacters": 233093
+      }
+    },
+    "longLineSelectionLength": 16384,
+    "tallParagraphDrift": 0
+  },
+  "existingSuite": {
+    "passed": true,
+    "checks": [
+      "bounded saved trace",
+      "no pagination chrome",
+      "canonical copy",
+      "collapse/reopen",
+      "live collapse/reopen",
+      "threshold anchor",
+      "streaming anchor",
+      "resize anchor",
+      "long prompt reflow",
+      "selection",
+      "resume following",
+      "narrow code",
+      "light/dark",
+      "document reference links",
+      "list continuation markers"
+    ]
+  },
+  "frontendTests": {
+    "passed": 8355,
+    "failed": 0
+  },
+  "indexOnlyPairedMicrobenchmark": {
+    "baselineCommit": "0a5cd4904",
+    "initialCodeCharacters": 220000,
+    "lineAppends": 500,
+    "runs": 5,
+    "baselineMedianAppendMilliseconds": [
+      0.769488,
+      0.690109,
+      0.707161,
+      0.709316,
+      0.688606
+    ],
+    "fixedMedianAppendMilliseconds": [
+      0.13355,
+      0.13354,
+      0.133629,
+      0.129872,
+      0.131366
+    ],
+    "note": "Index-only timing, not browser FPS; full-source string operations and worker grammar work still exist."
+  }
+}
