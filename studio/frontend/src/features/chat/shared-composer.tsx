@@ -330,39 +330,43 @@ async function cancelCompareBackendLoad(
       pollRounds < COMPARE_CANCEL_MAX_STATUS_POLLS
     ) {
       pollRounds += 1;
+      let reported: string[] | null = null;
       try {
         const status = await getInferenceStatus();
-        const reported = (status.loading ?? []).map((id) => id.trim().toLowerCase());
-        // The backend publishes at most ONE attempt: the running one, else a single
-        // queued one. So this list names the target both when the retried cancellation
-        // has not taken effect yet and when ANOTHER load is hiding the queued target,
-        // and its absence proves nothing in either case. Only an empty list settles the
-        // run; a nonempty one retries the scoped cancellation, which takes effect as
-        // soon as this attempt becomes the visible one.
+        reported = (status.loading ?? []).map((id) => id.trim().toLowerCase());
+      } catch {
+        // A status outage must not skip the retry below: the aborted load can still
+        // register and finish, so absence of a report settles nothing this round.
+      }
+      if (loadRequestId) {
+        // Every round, whatever the status read returned: the first /unload can fail before
+        // the load registers, and onRequestStart fires before the request is sent, so a
+        // delayed load could otherwise settle unseen. Scoped, so it is safe to re-issue.
+        try {
+          await unloadModel({
+            model_path: modelId,
+            cancel_load_request_id: loadRequestId,
+          });
+          retriedCancellation = true;
+          break;
+        } catch {
+          // Not cancellable yet; retried on the next round while the budget lasts.
+        }
+      }
+      if (reported === null) {
+        settledObservations = 0;
+      } else {
+        // The backend publishes at most ONE attempt: the running one, else a single queued
+        // one. So this list names the target both when the retried cancellation has not
+        // taken effect yet and when ANOTHER load is hiding the queued target, and its
+        // absence proves nothing in either case. Only an empty list settles the run.
         const targetStillLoading = reported.some((id) => statusIds.includes(id));
         const anotherLoadVisible = reported.length > 0 && !targetStillLoading;
-        if (loadRequestId) {
-          // Every round, including an empty report: the first /unload can fail before the
-          // load registers, and onRequestStart fires before the request is sent, so a
-          // delayed load could otherwise settle unseen. Scoped, so it is safe to re-issue.
-          try {
-            await unloadModel({
-              model_path: modelId,
-              cancel_load_request_id: loadRequestId,
-            });
-            retriedCancellation = true;
-            break;
-          } catch {
-            // Not cancellable yet; retried on the next round while the budget lasts.
-          }
-        }
         // Both visibility cases stay unsettled: neither proves this attempt is gone.
         settledObservations =
           targetStillLoading || anotherLoadVisible
             ? 0
             : settledObservations + 1;
-      } catch {
-        settledObservations = 0;
       }
       if (settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS) {
         await new Promise<void>((resolve) => {

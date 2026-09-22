@@ -291,7 +291,8 @@ def test_cancellation_retry_that_lands_reports_success():
     retry = retry.split("retriedCancellation = true;", 1)[0]
     assert "cancel_load_request_id: loadRequestId," in retry
     # A landed retry ends the poll instead of waiting out an unrelated load.
-    assert "retriedCancellation = true;\n            break;" in fallback
+    assert "retriedCancellation = true;" in fallback
+    assert "break;" in fallback.split("retriedCancellation = true;", 1)[1].split("}", 1)[0]
 
     # The success path is consulted BEFORE the timeout throw, so a retry that lands
     # while an unrelated load keeps the poll unsettled still reports success rather
@@ -323,3 +324,26 @@ def test_fallback_preserves_an_unrelated_external_selection():
         "if (!isExternalModelId(useChatRuntimeStore.getState().params.checkpoint)) {", 1
     )[1]
     assert "clearCheckpoint();" in guarded.split("}", 1)[0]
+
+
+def test_cancellation_retry_survives_a_status_outage():
+    """A failing status read must not skip the scoped retry.
+
+    The retry used to sit inside the status try, so a status-specific outage jumped
+    straight to the outer catch: the aborted load could then register and finish with
+    no cancellation tombstone while the run was released on an unproven "settled".
+    """
+    composer = _read("shared-composer.tsx")
+    cancel = composer.split("async function cancelCompareBackendLoad(", 1)[1]
+    cancel = cancel.split("function newCompareLoadRequestId", 1)[0]
+    loop = cancel.split("while (", 1)[1].split("if (retriedCancellation) {", 1)[0]
+    # The status read is its own try, and the retry is sequenced after it -- not nested.
+    assert "let reported: string[] | null = null;" in loop
+    status_try = loop.split("const status = await getInferenceStatus();", 1)[1]
+    status_try = status_try.split("} catch {", 1)[0]
+    assert "unloadModel(" not in status_try
+    retry_at = loop.index("if (loadRequestId) {")
+    assert retry_at > loop.index("const status = await getInferenceStatus();")
+    # An unknown status settles nothing.
+    assert "if (reported === null) {" in loop
+    assert "settledObservations = 0;" in loop.split("if (reported === null) {", 1)[1]
