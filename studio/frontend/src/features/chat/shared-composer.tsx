@@ -1644,6 +1644,7 @@ export function SharedComposer({
         if (targetIsGguf && resolvedIsDiffusion === undefined) {
           const preparedToken = await prepareHfTokenForUse(
             currentStore.hfToken,
+            { signal: stoppedSignal },
           );
           if (!preparedToken.proceed) {
             throw new Error("Model load cancelled.");

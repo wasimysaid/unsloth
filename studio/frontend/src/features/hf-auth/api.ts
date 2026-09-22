@@ -20,6 +20,7 @@ export interface HfTokenValidationResult {
 
 export async function validateHfToken(
   token: string | null | undefined,
+  options?: { signal?: AbortSignal },
 ): Promise<HfTokenValidationResult> {
   const normalized = token?.trim() ?? "";
   if (!normalized) {
@@ -28,6 +29,7 @@ export async function validateHfToken(
   const response = await authFetch("/api/hub/token/validate", {
     method: "POST",
     headers: hubTokenHeader(normalized),
+    signal: options?.signal,
   });
   if (!response.ok) {
     return { status: "unavailable", retryAfterSeconds: null };

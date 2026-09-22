@@ -13,11 +13,16 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CHAT = ROOT / "studio" / "frontend" / "src" / "features" / "chat"
+FEATURES = ROOT / "studio" / "frontend" / "src" / "features"
+CHAT = FEATURES / "chat"
 
 
 def _read(*parts: str) -> str:
     return (CHAT.joinpath(*parts)).read_text()
+
+
+def _read_feature(feature: str, *parts: str) -> str:
+    return (FEATURES.joinpath(feature, *parts)).read_text()
 
 
 def test_ownership_module_keeps_one_active_run():
@@ -468,6 +473,31 @@ def test_staged_metadata_and_validate_carry_the_cancellation_signal():
     # Both preparatory requests in that helper are issued under the submitting signal.
     assert "{ signal: stoppedSignal }," in helper
     assert "}, { signal: stoppedSignal });" in helper
+
+
+def test_hf_token_preparation_is_cancellable():
+    """Token validation must expire with the compare, not outlive the Stop.
+
+    `prepareHfTokenForUse` awaits `/api/hub/token/validate` for any nonempty token, and
+    that await precedes every later gate, so a pending validation would otherwise hold
+    `comparing` and the model-lifecycle lease open with no way to unwind.
+    """
+    api = _read_feature("hf-auth", "api.ts")
+    validate = api.split("export async function validateHfToken(", 1)[1]
+    assert "options?: { signal?: AbortSignal }," in validate
+    assert "signal: options?.signal," in validate
+
+    prepare = _read_feature("hf-auth", "confirm-token.ts")
+    assert "signal?: AbortSignal;" in prepare
+    # A supplied signal must bypass the shared burst cache: that promise is one request
+    # for every caller, so racing it against this caller's Stop cannot abort anything.
+    assert "? await validateHfToken(normalized, { signal: options.signal })" in prepare
+    assert ": await validateOncePerBurst(normalized);" in prepare
+
+    composer = _read("shared-composer.tsx")
+    helper = composer.split("async function ensureModelLoaded(", 1)[1]
+    helper = helper.split("const staged = await fetchGgufStagedMetadata(", 1)[0]
+    assert "{ signal: stoppedSignal }," in helper
 
 
 def test_compare_pane_classifies_adapters_by_normalized_identity():
