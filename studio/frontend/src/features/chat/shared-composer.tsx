@@ -395,6 +395,7 @@ async function cancelCompareBackendLoad(
     let settledObservations = 0;
     let pollRounds = 0;
     let retriedCancellation = false;
+    let observedRegistration = false;
     const pollDeadline = Date.now() + COMPARE_CANCEL_TOTAL_DEADLINE_MS;
     while (
       settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS &&
@@ -449,9 +450,14 @@ async function cancelCompareBackendLoad(
         // absence proves nothing in either case. Only an empty list settles the run.
         const targetStillLoading = reported.some((id) => statusIds.includes(id));
         const anotherLoadVisible = reported.length > 0 && !targetStillLoading;
-        // Both visibility cases stay unsettled: neither proves this attempt is gone.
+        if (targetStillLoading) {
+          observedRegistration = true;
+        }
+        // Every failure here stays unsettled. An empty list proves nothing on its own:
+        // a load delayed before its attempt registers can still appear later, and only a
+        // registration that was watched appear and then retire is known to be gone.
         settledObservations =
-          targetStillLoading || anotherLoadVisible
+          targetStillLoading || anotherLoadVisible || !observedRegistration
             ? 0
             : settledObservations + 1;
       }
@@ -482,7 +488,7 @@ async function cancelCompareBackendLoad(
     // unsettled cancellation rather than as a settled one this run never proved.
     if (settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS) {
       throw new Error(
-        `Could not cancel the backend model load: ${modelId} is still queued behind another load.`,
+        `Could not cancel the backend model load: ${modelId} was never confirmed cancelled.`,
       );
     }
     const detail =
@@ -1642,11 +1648,14 @@ export function SharedComposer({
           if (!preparedToken.proceed) {
             throw new Error("Model load cancelled.");
           }
-          const staged = await fetchGgufStagedMetadata({
-            model_path: sel.id,
-            gguf_variant: sel.ggufVariant ?? null,
-            hf_token: preparedToken.token,
-          });
+          const staged = await fetchGgufStagedMetadata(
+            {
+              model_path: sel.id,
+              gguf_variant: sel.ggufVariant ?? null,
+              hf_token: preparedToken.token,
+            },
+            { signal: stoppedSignal },
+          );
           resolvedIsDiffusion = staged.isDiffusion;
           diffusionUnknown = staged.diffusionUnknown;
         }
@@ -1832,7 +1841,7 @@ export function SharedComposer({
                 ...serverTuningLoadPayload(ownConfig),
               }
             : {}),
-        });
+        }, { signal: stoppedSignal });
         throwIfCompareCancelled(stoppedSignal);
         // Upgrade dialog first (mirrors the primary load path).
         if (validation.requires_transformers_upgrade) {

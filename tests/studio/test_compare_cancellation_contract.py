@@ -312,7 +312,7 @@ def test_cancellation_retry_that_lands_reports_success():
     # than a cancellation failure that did not happen. Anchored on the throw itself:
     # the loop's own settle wait uses the same condition text.
     success_at = fallback.index("if (retriedCancellation) {")
-    timeout_at = fallback.index("is still queued behind another load.")
+    timeout_at = fallback.index("was never confirmed cancelled.")
     assert success_at < timeout_at
     settled = fallback[success_at:timeout_at]
     assert "resyncInferenceStatusAfterServerModelChange(signal)" in settled
@@ -361,6 +361,13 @@ def test_cancellation_retry_survives_a_status_outage():
     # An unknown status settles nothing.
     assert "if (reported === null) {" in loop
     assert "settledObservations = 0;" in loop.split("if (reported === null) {", 1)[1]
+    # Empty status alone settles nothing either: every scoped retry may have rejected while
+    # the load was still delayed before its attempt registered, and such an attempt can
+    # appear later. Only a registration that was watched appear and then retire counts.
+    assert "let observedRegistration = false;" in cancel
+    assert "if (targetStillLoading) {" in loop
+    assert "observedRegistration = true;" in loop
+    assert "targetStillLoading || anotherLoadVisible || !observedRegistration" in loop
 
 
 def test_a_status_read_that_never_answers_cannot_stall_the_poll():
@@ -435,3 +442,48 @@ def test_every_cancellation_request_is_bounded():
     # Both post-cancel resyncs forward the deadline signal, so a resync that outlives its
     # deadline cannot publish a stale model list over a later load.
     assert cancel.count("resyncInferenceStatusAfterServerModelChange(signal)") == 2
+
+
+def test_staged_metadata_and_validate_carry_the_cancellation_signal():
+    """Stop during a preparatory request must abort it, not wait it out.
+
+    The composer's cancellation gates sit after these awaits, so without the signal a
+    request that never answers holds `comparing` and the model-lifecycle lease open
+    however many times the user presses Stop.
+    """
+    api = _read("api", "chat-api.ts")
+    staged = api.split("export async function fetchGgufStagedMetadata(", 1)[1]
+    staged = staged.split("export async function unloadModel(", 1)[0]
+    assert "options?: { signal?: AbortSignal }," in staged
+    assert "signal: options?.signal," in staged
+
+    validate = api.split("export async function validateModel(", 1)[1]
+    validate = validate.split("/** Read a GGUF's header dims", 1)[0]
+    assert "options?: { signal?: AbortSignal }," in validate
+    assert "signal: options?.signal," in validate
+
+    composer = _read("shared-composer.tsx")
+    helper = composer.split("async function ensureModelLoaded(", 1)[1]
+    helper = helper.split("const handle1 = handlesRef.current", 1)[0]
+    # Both preparatory requests in that helper are issued under the submitting signal.
+    assert "{ signal: stoppedSignal }," in helper
+    assert "}, { signal: stoppedSignal });" in helper
+
+
+def test_compare_pane_classifies_adapters_by_normalized_identity():
+    """A Hub ID differing only by case must still load as the LoRA it is.
+
+    The checkpoint and its inventory row can be the same model in two spellings; an exact
+    comparison then marks the pane a base model, and the sequential reload sends
+    `is_lora: false` against the adapter.
+    """
+    page = _read("chat-page.tsx")
+    pane = page.split(
+        "const GeneralCompareContent = memo(function GeneralCompareContent({", 1
+    )[1]
+    pane = pane.split("return (\n    <CompareShell", 1)[0]
+    assert "modelIdsMatch" in pane
+    assert "lora.id === globalCheckpoint" not in pane
+    assert "lora.id === current.id" not in pane
+    # Both the initial state and the deferred-inventory repair use the normalized match.
+    assert pane.count("modelIdsMatch(lora.id,") == 2

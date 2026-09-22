@@ -1084,7 +1084,8 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
     // The pane's own LoRA identity, from the loaded checkpoint's adapter row. Hardcoding
     // false made a reselected adapter load as a base model.
     isLora: loraModels.some(
-      (lora) => lora.id === globalCheckpoint && lora.exportType === "lora",
+      (lora) =>
+        modelIdsMatch(lora.id, globalCheckpoint) && lora.exportType === "lora",
     ),
     ggufVariant: globalGgufVariant ?? undefined,
     isDiffusion: globalIsDiffusion,
@@ -1102,7 +1103,8 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
       if (
         current.isLora ||
         !loraModels.some(
-          (lora) => lora.id === current.id && lora.exportType === "lora",
+          (lora) =>
+            modelIdsMatch(lora.id, current.id) && lora.exportType === "lora",
         )
       ) {
         return current;
