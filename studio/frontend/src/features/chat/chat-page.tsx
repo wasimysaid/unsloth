@@ -1071,6 +1071,10 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
   const listedPairRef = useRef<string | null>(null);
   // Bumped by every compare submission so a lookup that started before it cannot apply.
   const compareSubmittingRef = useRef(0);
+  // Bumped only for a submission that actually starts a compare run -- the composer
+  // claims the panes once the run is accepted -- so a send it rejects before that
+  // cannot invalidate a pending lookup. A real run still flips `anyRunning`, whose
+  // settle edge re-lists and hands the panes the threads that run created.
   const [model1, setModel1] = useState<CompareModelSelection>({
     id: globalCheckpoint || "",
     // The pane's own LoRA identity, from the loaded checkpoint's adapter row. Hardcoding
@@ -1124,13 +1128,18 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
     if (anyRunning && listedPairRef.current === pairId) return;
     listedPairRef.current = pairId;
     let isActive = true;
+    // Invalidated only by a submission that actually claimed the panes. A send the
+    // composer rejects never gets here, so it cannot strand the panes on an undefined
+    // thread while the stored history is still available; a run that does start
+    // re-lists on the `anyRunning` settle edge below.
     const submittedAt = compareSubmittingRef.current;
     setThreadsSettled(false);
     listStoredChatThreads({ pairId })
       .then((threads) => {
         if (!isActive) return;
         // A compare submission that started after this lookup would otherwise be
-        // repointed at whichever threads this stale read happens to name.
+        // repointed at whichever threads this stale read happens to name. The
+        // settle edge re-lists, so its own threads still become the targets.
         if (compareSubmittingRef.current !== submittedAt) return;
         const pair = resolveComparePaneThreadIds(threads);
         setModel1ThreadId(pair.first);

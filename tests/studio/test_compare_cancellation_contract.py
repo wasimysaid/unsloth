@@ -35,17 +35,51 @@ def test_composer_aborts_the_load_and_reconciles_the_backend():
     assert "cancelCompareBackendLoad" in composer
     # The unload is the backend's cancellation path; without it the aborted fetch
     # leaves the server-side load running.
-    assert "await unloadModel({ model_path: modelId });" in composer
+    assert "await unloadModel({" in composer
     assert "getInferenceStatus()" in composer
     assert "COMPARE_CANCEL_SETTLED_OBSERVATIONS" in composer
     assert "status.loading" in composer
 
     stop = composer.split("function stop() {", 1)[1].split("\n  }", 1)[0]
     assert "compareRunsRef.current.cancelCurrent()" in stop
-    assert "cancelCompareBackendLoad(loadingModel.id)" in stop
-    # The run's own signal must abort the browser request.
-    assert "signal: compareSignal" in composer
+    assert "cancelCompareBackendLoad(" in stop
+    # The unload names the attempt, not just the model.
+    assert "run.loadingRequestId" in stop
+    # The submitting run's own signal must abort the browser request.
+    assert "signal: stoppedSignal" in composer
     assert "compareRunsRef.current.begin()" in composer
+
+
+def test_cancellation_is_scoped_to_the_originating_load_attempt():
+    """A Stop must cancel the load this run started, not whoever holds the slot."""
+    composer = _read("shared-composer.tsx")
+    ownership = _read("compare-run-ownership.ts")
+
+    # A fresh request id per compare load, carried on both requests.
+    assert "function newCompareLoadRequestId()" in composer
+    assert "load_request_id: loadRequestId," in composer
+    assert "cancel_load_request_id: loadRequestId" in composer
+    assert "const loadRequestId = newCompareLoadRequestId();" in composer
+    # Claimed at the request boundary alongside the model, never before it.
+    boundary = composer.split("onRequestStart: () => {", 1)[1].split("},", 1)[0]
+    assert "setLoadingModel(run, sel)" in boundary
+    assert "setLoadingRequestId(run, loadRequestId)" in boundary
+    # The id lives on the run, and is dropped once the load lands.
+    assert "loadingRequestId: string | null;" in ownership
+    assert "setLoadingRequestId(" in ownership
+    assert "requestId: string | null," in ownership
+    assert "run.loadingRequestId = null;" in ownership
+
+
+def test_cancellation_poll_matches_the_reported_public_id():
+    """The poll must not read a path-shaped id as a settled load."""
+    composer = _read("shared-composer.tsx")
+    assert "function compareLoadingStatusIds(modelId: string): string[]" in composer
+    assert "publicModelId(modelId)" in composer
+    assert "const statusIds = compareLoadingStatusIds(modelId);" in composer
+    assert "statusIds.includes(loadingId.trim().toLowerCase())" in composer
+    # The raw-id comparison is the defect: it never matches the reported public id.
+    assert "loadingId.toLowerCase() === modelId.toLowerCase()" not in composer
 
 
 def test_unload_target_is_named_only_at_the_request_boundary():
@@ -61,6 +95,39 @@ def test_unload_target_is_named_only_at_the_request_boundary():
     assert "const run = compareRunsRef.current.current();" in preamble
     boundary = load.split("onRequestStart: () => {", 1)[1].split("},", 1)[0]
     assert "setLoadingModel(run, sel)" in boundary
+
+
+def test_cancellation_is_honored_across_preparation_and_generation():
+    """Stop during preparation or after a generation must still stop the compare."""
+    composer = _read("shared-composer.tsx")
+    # The submitting signal is threaded into the helper instead of only being read
+    # after its final await.
+    assert "stoppedSignal: AbortSignal," in composer
+    assert "const status1 = await ensureModelLoaded(model1, compareSignal);" in composer
+    assert "const status2 = await ensureModelLoaded(model2, compareSignal);" in composer
+
+    helper = composer.split("async function ensureModelLoaded(", 1)[1]
+    helper = helper.split("const handle1 = handlesRef.current", 1)[0]
+    # Entry plus every preparatory boundary: staged metadata, extra args, the GPU
+    # cache, validation, and the confirmation dialogs.
+    assert helper.count("throwIfCompareCancelled(stoppedSignal);") >= 6
+
+    # Both generations are re-checked after their run ends, so a Stop during model
+    # 2's generation cannot be reported as "Compare complete".
+    generation = composer.split("const handle2 = handlesRef.current", 1)[1]
+    generation = generation.split("if (compareRunsRef.current.owns(run)) {", 1)[0]
+    assert generation.count("throwIfCompareCancelled(compareSignal);") >= 3
+
+
+def test_successful_cancellation_reconciles_the_store_checkpoint():
+    """A cancelled load that evicted the old runtime must not leave it selected."""
+    composer = _read("shared-composer.tsx")
+    cancel = composer.split("async function cancelCompareBackendLoad(", 1)[1]
+    cancel = cancel.split("function newCompareLoadRequestId", 1)[0]
+    # The successful unload path re-derives residency from the backend, so the
+    # checkpoint cannot keep naming a model this cancellation removed.
+    success = cancel.split("} catch (unloadError) {", 1)[0]
+    assert "resyncInferenceStatusAfterServerModelChange()" in success
 
 
 def test_composer_releases_ownership_only_after_reconciliation():
@@ -83,3 +150,27 @@ def test_compare_layout_keeps_the_pane_identity():
     assert "onComparingChange={handleComparingChange}" in general
     assert "compareSubmittingRef.current += 1;" in general
     assert "if (compareSubmittingRef.current !== submittedAt) return;" in general
+
+
+def test_pending_compare_history_survives_a_rejected_send():
+    """History invalidation must follow an accepted run, not every send attempt."""
+    composer = _read("shared-composer.tsx")
+    # The panes are claimed only after the early returns, i.e. once the run starts.
+    acceptance = composer.split(
+        "const run = compareRunsRef.current.begin();", 1
+    )[1].split("try {", 1)[0]
+    assert "onComparingChange?.(true);" in acceptance
+    # The claim is released with the run's ownership, and not around the whole send.
+    release = composer.split("if (compareRunsRef.current.release(run)) {", 1)[1]
+    release = release.split("\n      }", 1)[0]
+    assert "onComparingChange?.(false);" in release
+    send = composer.split("async function send() {", 1)[1].split("async function sendImpl", 1)[0]
+    assert "onComparingChange?.(true);" not in send
+    assert "onComparingChange?.(false);" not in send
+
+    # The lookup's own invalidation counter is the only one bumped, and it is bumped
+    # by the composer's accept-time claim, never by a send attempt.
+    page = _read("chat-page.tsx")
+    assert "const compareSubmittingRef = useRef(0);" in page
+    assert "if (compareSubmittingRef.current !== submittedAt) return;" in page
+    assert "}, [pairId, anyRunning]);" in page

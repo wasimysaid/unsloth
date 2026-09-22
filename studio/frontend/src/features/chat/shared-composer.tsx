@@ -65,7 +65,10 @@ import { classifiedAttachmentFiles, isVideoFile } from "@/lib/video-utils";
 import { isDownloadCancelled } from "@/lib/native-files";
 import { isMultimodalResponse } from "./types/api";
 import { getImageInputUnavailableReason } from "./utils/image-input-support";
-import { modelIdsMatch } from "@/features/hub/lib/model-identity";
+import {
+  modelIdsMatch,
+  publicModelId,
+} from "@/features/hub/lib/model-identity";
 import { CONVERSATION_MARKDOWN_LABEL } from "./utils/conversation-markdown";
 import { pasteClipboardFiles } from "./utils/clipboard-files";
 import { confirmStopRunningChatsIfNeeded } from "./utils/confirm-stop-running-chats";
@@ -122,6 +125,7 @@ import { KnowledgeBaseComposerButton } from "@/features/rag/components/knowledge
 import { NewProjectDialog } from "./components/new-project-dialog";
 import { ChatSkillsDialog } from "./components/chat-skills-dialog";
 import { useChatProjects } from "./hooks/use-chat-projects";
+import { resyncInferenceStatusAfterServerModelChange } from "./hooks/use-chat-model-runtime";
 import { confirmRemoteCodeIfNeeded } from "@/features/security";
 import {
   DEFAULT_MAX_SEQ_LENGTH,
@@ -253,24 +257,67 @@ const COMPARE_CANCEL_STATUS_POLL_MS = 750;
 /** Consecutive status reads without the cancelled model in `loading` before it counts as settled. */
 const COMPARE_CANCEL_SETTLED_OBSERVATIONS = 3;
 
+/** Every id `/api/inference/status` may publish for a load of `modelId`, lowercased.
+ *
+ * A pane sends whatever the picker gave it -- an absolute path for an on-device GGUF --
+ * while the same load reports itself mid-flight through the backend's public-id
+ * conversion, commonly a bare filename stem or repo id. Comparing the raw id alone
+ * records false "settled" observations and releases the run while its load still runs. */
+function compareLoadingStatusIds(modelId: string): string[] {
+  const ids = new Set<string>();
+  for (const candidate of [modelId, publicModelId(modelId)]) {
+    const normalized = candidate.trim().toLowerCase();
+    if (normalized) {
+      ids.add(normalized);
+    }
+  }
+  return [...ids];
+}
+
+/** A fresh id scoping one compare `/load` to the `/unload` that cancels it.
+ *
+ * ``crypto.randomUUID`` is undefined in non-secure contexts (HTTP over a LAN IP), so
+ * this mirrors the fallback the compare-start path already uses. */
+function newCompareLoadRequestId(): string {
+  return typeof globalThis.crypto?.randomUUID === "function"
+    ? globalThis.crypto.randomUUID()
+    : `compare-load-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 /** Reconcile an aborted compare `/load` with the backend.
  *
  * Aborting the browser request releases the socket, not the server-side job, so Stop on a
  * generalized compare issues `/unload` for the model the cancelled run was loading. When that
  * unload is rejected, the status poll keeps the run unsettled until the backend stops reporting
- * the load, so an orphaned load cannot replace the model behind a later prompt. */
-async function cancelCompareBackendLoad(modelId: string): Promise<void> {
+ * the load, so an orphaned load cannot replace the model behind a later prompt. The
+ * unload is scoped to the cancelled attempt's own request id, so a Stop racing a newer
+ * same-model load cancels that attempt and never the newer runtime. */
+async function cancelCompareBackendLoad(
+  modelId: string,
+  loadRequestId: string | null,
+): Promise<void> {
   try {
-    await unloadModel({ model_path: modelId });
+    await unloadModel({
+      model_path: modelId,
+      // Scoped to this exact attempt: an unscoped unload falls through to the manual
+      // path and can cancel a newer same-model load, or one this client never started.
+      ...(loadRequestId ? { cancel_load_request_id: loadRequestId } : {}),
+    });
+    // The replacing /load can already have evicted the previously active model before
+    // Stop landed, leaving the client checkpoint naming a runtime the backend no longer
+    // has -- a later compare would then take the isAlreadyActive fast path against
+    // nothing. Re-derive residency from the server, as the interactive cancel path does.
+    await resyncInferenceStatusAfterServerModelChange().catch(() => undefined);
     return;
   } catch (unloadError) {
     useChatRuntimeStore.getState().clearCheckpoint();
+    const statusIds = compareLoadingStatusIds(modelId);
     let settledObservations = 0;
     while (settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS) {
       try {
         const status = await getInferenceStatus();
-        const stillLoading = (status.loading ?? []).some(
-          (loadingId) => loadingId.toLowerCase() === modelId.toLowerCase(),
+        const stillLoading = (status.loading ?? []).some((loadingId) =>
+          statusIds.includes(loadingId.trim().toLowerCase()),
         );
         settledObservations = stillLoading ? 0 : settledObservations + 1;
       } catch {
@@ -1152,11 +1199,9 @@ export function SharedComposer({
     // otherwise both pass the idle render and later supersede an in-flight load.
     if (sendInProgressRef.current) return;
     sendInProgressRef.current = true;
-    onComparingChange?.(true);
     try {
       await sendImpl();
     } finally {
-      onComparingChange?.(false);
       sendInProgressRef.current = false;
     }
   }
@@ -1375,7 +1420,12 @@ export function SharedComposer({
       };
       async function ensureModelLoaded(
         sel: CompareModelSelection,
+        stoppedSignal: AbortSignal,
       ): Promise<string> {
+        // Stop can land while any preparatory await below is still running -- token
+        // validation, staged metadata, confirmation dialogs -- so the submitting run's
+        // signal is honored at each boundary, not only at the final request.
+        throwIfCompareCancelled(stoppedSignal);
         const currentStore = useChatRuntimeStore.getState();
         const config = sel.config ?? null;
         // This pane's effective config: an explicit selection config, else the remembered store config
@@ -1416,6 +1466,7 @@ export function SharedComposer({
           resolvedIsDiffusion = staged.isDiffusion;
           diffusionUnknown = staged.diffusionUnknown;
         }
+        throwIfCompareCancelled(stoppedSignal);
         // Pass-through arguments can live only in the server's override map while this config comes from
         // local storage, and /load's omission path inherits them from a RESIDENT instance, which a cold
         // compare pane does not have, so the experiment would run a different command.
@@ -1464,6 +1515,7 @@ export function SharedComposer({
             // The load still works; a real overrides outage surfaces there.
           }
         }
+        throwIfCompareCancelled(stoppedSignal);
         // Mirror single-view resolveLoadMaxSeqLength: a pane with no explicit context hands sizing to
         // whichever local backend serves it, not the session maxSeqLength, which would silently shrink
         // the shown context. With no local backend it falls back to the app default rather than the
@@ -1502,6 +1554,7 @@ export function SharedComposer({
         if (ownConfig.selectedGpuIds != null) {
           await ensureGpuDeviceCache();
         }
+        throwIfCompareCancelled(stoppedSignal);
         // A pane's OWN saved split is sent instead of being forced to Auto (#7574); the shared Send-time
         // snapshot is not, since its layer count is bounded by another GGUF. Knobs the runner has no
         // equivalent for (MoE offload, tensor parallel) stay hard-forced, as does an UNCLASSIFIED GGUF.
@@ -1596,6 +1649,7 @@ export function SharedComposer({
               }
             : {}),
         });
+        throwIfCompareCancelled(stoppedSignal);
         // Upgrade dialog first (mirrors the primary load path).
         if (validation.requires_transformers_upgrade) {
           const upgraded = await confirmTransformersUpgradeIfNeeded({
@@ -1622,6 +1676,7 @@ export function SharedComposer({
             );
           }
         }
+        throwIfCompareCancelled(stoppedSignal);
         if (
           validation.requires_trust_remote_code ||
           validation.requires_security_review
@@ -1648,9 +1703,13 @@ export function SharedComposer({
         const run = compareRunsRef.current.current();
         const compareSignal = run?.controller.signal;
         if (compareSignal) throwIfCompareCancelled(compareSignal);
+        const loadRequestId = newCompareLoadRequestId();
         const resp = await loadModel(
           {
             model_path: sel.id,
+            // Ties this attempt to Stop-time cancellation, so a late Stop cancels exactly
+            // this load instead of whoever holds the slot when it lands.
+            load_request_id: loadRequestId,
             hf_token: useChatRuntimeStore.getState().hfToken || null,
             max_seq_length: compareMaxSeqLength,
             load_in_4bit: true,
@@ -1701,12 +1760,14 @@ export function SharedComposer({
 
           },
           {
-            signal: compareSignal,
+            signal: stoppedSignal,
             // Token validation and its dialog happen inside loadModel. Expose the
             // cancellation target only at the actual request boundary, so Stop cannot
             // evict a resident same-ID model before the load is really in flight.
             onRequestStart: () => {
               if (run) compareRunsRef.current.setLoadingModel(run, sel);
+              if (run)
+                compareRunsRef.current.setLoadingRequestId(run, loadRequestId);
             },
           },
         );
@@ -1910,6 +1971,9 @@ export function SharedComposer({
       setComparing(true);
       const run = compareRunsRef.current.begin();
       const compareSignal = run.controller.signal;
+      // The panes are claimed only now, past every early return: a send that never
+      // starts a run must not invalidate a pending compare-history lookup.
+      onComparingChange?.(true);
       try {
         throwIfCompareCancelled(compareSignal);
         if (handle1 && model1?.id) {
@@ -1918,7 +1982,7 @@ export function SharedComposer({
             description: name1,
             duration: Infinity,
           });
-          const status1 = await ensureModelLoaded(model1);
+          const status1 = await ensureModelLoaded(model1, compareSignal);
           throwIfCompareCancelled(compareSignal);
           if (run) compareRunsRef.current.setLoadingModel(run, null);
           releaseCompareModelLifecycle();
@@ -1931,6 +1995,7 @@ export function SharedComposer({
           const done = handle1.waitForRunEnd();
           handle1.startRun();
           await done;
+          throwIfCompareCancelled(compareSignal);
         }
 
         if (handle2 && model2?.id) {
@@ -1945,6 +2010,7 @@ export function SharedComposer({
             if (!currentStopDecision.proceed) {
               throw new Error("Second comparison model load cancelled.");
             }
+            throwIfCompareCancelled(compareSignal);
             compareStopDecision = currentStopDecision;
             toast("Loading Model 2…", {
               id: toastId,
@@ -1952,7 +2018,7 @@ export function SharedComposer({
               duration: Infinity,
             });
           }
-          const status2 = await ensureModelLoaded(model2);
+          const status2 = await ensureModelLoaded(model2, compareSignal);
           throwIfCompareCancelled(compareSignal);
           if (run) compareRunsRef.current.setLoadingModel(run, null);
           releaseCompareModelLifecycle();
@@ -1965,6 +2031,7 @@ export function SharedComposer({
           const done = handle2.waitForRunEnd();
           handle2.startRun();
           await done;
+          throwIfCompareCancelled(compareSignal);
         }
 
         if (compareRunsRef.current.owns(run)) {
@@ -2016,6 +2083,7 @@ export function SharedComposer({
         if (compareRunsRef.current.release(run)) {
           releaseCompareModelLifecycle();
           setComparing(false);
+          onComparingChange?.(false);
         }
       }
     } else {
@@ -2073,7 +2141,10 @@ export function SharedComposer({
         // The fetch abort only releases the browser. /unload is the backend
         // cancellation path for an in-flight load, so it runs on its own
         // signal rather than the aborted compare one.
-        const cleanup = cancelCompareBackendLoad(loadingModel.id);
+        const cleanup = cancelCompareBackendLoad(
+          loadingModel.id,
+          run.loadingRequestId,
+        );
         compareRunsRef.current.setCleanup(run, cleanup);
       }
     }

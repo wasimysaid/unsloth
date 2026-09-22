@@ -4,7 +4,12 @@
 export type CompareRun<Model> = {
   readonly id: number;
   readonly controller: AbortController;
+  /** The model this run's in-flight /load named as its cancellation target, plus the
+   *  request id that scopes a Stop to exactly that attempt. Both are set at the request
+   *  boundary and cleared once the load lands, so Stop can never evict a runtime this
+   *  run did not start. */
   loadingModel: Model | null;
+  loadingRequestId: string | null;
   cleanup: Promise<void> | null;
 };
 
@@ -25,6 +30,7 @@ export class CompareRunOwnership<Model> {
       id: this.nextId,
       controller: new AbortController(),
       loadingModel: null,
+      loadingRequestId: null,
       cleanup: null,
     };
     this.nextId += 1;
@@ -45,6 +51,21 @@ export class CompareRunOwnership<Model> {
       return false;
     }
     run.loadingModel = model;
+    if (model === null) {
+      // The load landed: this run has no cancellable attempt left to name.
+      run.loadingRequestId = null;
+    }
+    return true;
+  }
+
+  setLoadingRequestId(
+    run: CompareRun<Model>,
+    requestId: string | null,
+  ): boolean {
+    if (!this.owns(run)) {
+      return false;
+    }
+    run.loadingRequestId = requestId;
     return true;
   }
 
