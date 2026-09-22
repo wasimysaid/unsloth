@@ -1,0 +1,86 @@
+{
+  "commit": "897839187220ed52cb5471d92df41f6dc155478b",
+  "date": "2026-09-22",
+  "realStudio": true,
+  "model": "Qwen3.8-27B-UD-Q4_K_XL",
+  "effort": "xhigh",
+  "contextLength": 262144,
+  "hardware": "NVIDIA B200, GPU 5",
+  "method": "Local headless Chromium through SSH to EC2 Studio. Browser rAF intervals, not GPU frame timing. Pre-recording and capture-inclusive phases are labeled separately.",
+  "reasoningCharacters": 93005,
+  "readingDriftPx": null,
+  "readingAnchorMeasured": false,
+  "reopenDriftPx": 0,
+  "intervals": [
+    {
+      "name": "Thinking · Extra High / streaming-follow",
+      "samples": 4378,
+      "seconds": 72.9638,
+      "fps": 60.00235733336257,
+      "p95": 16.70000000001164,
+      "p99": 16.800000000017462,
+      "worst": 16.800000000017462,
+      "framesOver50ms": 0,
+      "longTasks": 0,
+      "longestTask": 0,
+      "maxMounted": 16115,
+      "maxFragments": 12,
+      "maxDomNodes": 909
+    },
+    {
+      "name": "Recorded live reasoning (capture overhead included)",
+      "samples": 12708,
+      "seconds": 211.80829999999997,
+      "fps": 59.99764881735041,
+      "p95": 16.70000000001164,
+      "p99": 16.800000000017462,
+      "worst": 33.40000000002328,
+      "framesOver50ms": 0,
+      "longTasks": 1,
+      "longestTask": 56,
+      "maxMounted": 4713,
+      "maxFragments": 15,
+      "maxDomNodes": 1927
+    },
+    {
+      "name": "Thinking · Extra High / answer streaming",
+      "samples": 0,
+      "seconds": 0,
+      "fps": 0,
+      "p95": 0,
+      "p99": 0,
+      "worst": 0,
+      "framesOver50ms": 0,
+      "longTasks": 0,
+      "longestTask": 0,
+      "maxMounted": 0,
+      "maxFragments": 0,
+      "maxDomNodes": 0
+    }
+  ],
+  "codeActions": {
+    "copiedCharacters": 1001,
+    "downloadMatches": true,
+    "durationMs": 4569
+  },
+  "edit": {
+    "rawDuration": 212.4,
+    "acceleratedSeconds": 204.4,
+    "playbackSpeed": 25.55,
+    "finalDuration": 20,
+    "streamSecondsInFinal": 8,
+    "liveActionsSeconds": 8,
+    "codeActionsSeconds": 4
+  },
+  "playback": {
+    "gifFps": 6,
+    "mp4Fps": 30
+  },
+  "stoppedStudioAndReleasedModel": true,
+  "limitations": [
+    "A new generation stopped after the recorded live interactions, not a completed Tesla simulation benchmark.",
+    "Existing isolated chat-history __LOCALID_404s were observed; full reasoning was exported before reload.",
+    "Three latest Codex follow-up findings remain pending; this video does not claim blanket review approval.",
+    "Capture frame rate is not measured app FPS."
+  ]
+}
