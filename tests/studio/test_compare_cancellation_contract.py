@@ -213,6 +213,15 @@ def test_cancellation_phase_starts_before_the_preparatory_awaits():
     assert "throwIfCompareCancelled(" not in before_try
     protected = entry.split("try {", 1)[1]
     assert "throwIfCompareCancelled(compareSignal);" in protected
+    # The draft clear and both prompt appends must also sit past that gate: a Stop
+    # taken during those awaits otherwise erases the draft and persists a comparison
+    # in both pane histories even though neither side generates.
+    assert "clearSubmittedDraft();" not in before_try
+    assert "appendMessage(content);" not in before_try
+    gated = protected.split("throwIfCompareCancelled(compareSignal);", 1)[1]
+    gated = gated.split("const status1 = await ensureModelLoaded", 1)[0]
+    assert "clearSubmittedDraft();" in gated
+    assert gated.count("appendMessage(content);") == 2
     # Every early return inside that window abandons the claimed run: the confirmation
     # throwing, it declining, and the GPU device-cache failing each release directly,
     # while both draft-changed exits go through the shared helper.
@@ -393,9 +402,16 @@ def test_the_whole_cancellation_poll_has_one_elapsed_deadline():
     # The loop stops once the budget is spent, not only when the round count runs out.
     assert "const remainingMs = pollDeadline - Date.now();" in loop
     assert "if (remainingMs <= 0) break;" in loop
-    # Both waits inside a round are capped by what is left of it.
+    # The retry is capped by what is left of the round's budget...
     assert "Math.min(COMPARE_CANCEL_REQUEST_TIMEOUT_MS, remainingMs)" in loop
-    assert "Math.min(COMPARE_CANCEL_STATUS_TIMEOUT_MS, remainingMs)" in loop
+    # ...and the status read re-reads it: a retry that consumed the whole allowance
+    # must not hand the read that same stale budget, nor may the trailing pause run
+    # past the deadline.
+    assert "const statusRemainingMs = pollDeadline - Date.now();" in loop
+    assert "if (statusRemainingMs <= 0) break;" in loop
+    assert "Math.min(COMPARE_CANCEL_STATUS_TIMEOUT_MS, statusRemainingMs)" in loop
+    assert "pollDeadline - Date.now()," in loop
+    assert "if (delayMs > 0) {" in loop
 
 
 def test_every_cancellation_request_is_bounded():

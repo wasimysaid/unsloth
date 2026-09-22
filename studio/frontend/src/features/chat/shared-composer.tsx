@@ -428,10 +428,14 @@ async function cancelCompareBackendLoad(
           // Not cancellable yet; retried on the next round while the budget lasts.
         }
       }
+      // Re-read the budget: the retry above can have spent all of it, so this read must
+      // not be handed an allowance the round no longer has.
+      const statusRemainingMs = pollDeadline - Date.now();
+      if (statusRemainingMs <= 0) break;
       // Null on a status outage or a read that never answered: neither is proof the
       // aborted load is gone, so neither settles a round.
       const status = await readInferenceStatusWithinPollBudget(
-        Math.min(COMPARE_CANCEL_STATUS_TIMEOUT_MS, remainingMs),
+        Math.min(COMPARE_CANCEL_STATUS_TIMEOUT_MS, statusRemainingMs),
       );
       const reported = status
         ? (status.loading ?? []).map((id) => id.trim().toLowerCase())
@@ -452,9 +456,17 @@ async function cancelCompareBackendLoad(
             : settledObservations + 1;
       }
       if (settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS) {
-        await new Promise<void>((resolve) => {
-          window.setTimeout(resolve, COMPARE_CANCEL_STATUS_POLL_MS);
-        });
+        // Capped by what is left of the budget, so the pause cannot carry the poll past
+        // its deadline; skipped once that is spent, since the next round breaks anyway.
+        const delayMs = Math.min(
+          COMPARE_CANCEL_STATUS_POLL_MS,
+          pollDeadline - Date.now(),
+        );
+        if (delayMs > 0) {
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, delayMs);
+          });
+        }
       }
     }
     if (retriedCancellation) {
@@ -1573,7 +1585,6 @@ export function SharedComposer({
         keepChangedDraft();
         return;
       }
-      clearSubmittedDraft();
       // Set when an accepted transformers install unloaded the active model server-side; a later
       // failure must then clear the stale checkpoint.
       let upgradeUnloadedActive = false;
@@ -2135,9 +2146,6 @@ export function SharedComposer({
       const handle1 = handlesRef.current["model1"];
       const handle2 = handlesRef.current["model2"];
 
-      if (handle1) handle1.appendMessage(content);
-      if (handle2) handle2.appendMessage(content);
-
       const name1 = model1?.id ? compareModelDisplayName(model1.id) : "";
       const name2 = model2?.id ? compareModelDisplayName(model2.id) : "";
       const toastId = toast("Comparing models…", { duration: Infinity });
@@ -2149,6 +2157,12 @@ export function SharedComposer({
         // unwind through the catch/finally below, which releases the run, the model
         // lifecycle lease and the busy state. Throwing before the try stranded all three.
         throwIfCompareCancelled(compareSignal);
+        // Cleared and appended only past that gate: a Stop taken during the awaits above
+        // must neither erase the draft nor persist a prompt in both panes for a run that
+        // never generated.
+        clearSubmittedDraft();
+        if (handle1) handle1.appendMessage(content);
+        if (handle2) handle2.appendMessage(content);
         if (handle1 && model1?.id) {
           toast("Loading Model 1…", {
             id: toastId,
