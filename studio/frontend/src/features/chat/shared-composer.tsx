@@ -1562,15 +1562,22 @@ export function SharedComposer({
       let loadedFromConfig = false;
 
       // Warm the device cache before the snapshot below reconciles the GPU pick: on a cold cache the
-      // reconcile passes a stale pick through.
+      // reconcile passes a stale pick through. Raced against this run's own signal, because /api/system
+      // is one shared in-flight request: a Stop landing on it must unwind this attempt instead of
+      // holding `comparing` and the model-lifecycle lease until a probe nobody waits for answers.
       try {
         if (store.selectedGpuIds != null) {
-          await ensureGpuDeviceCache();
+          await withAbort(ensureGpuDeviceCache(), compareSignal);
         }
       } catch (error) {
-        abandonCompareRun();
         releaseCompareModelLifecycle();
+        abandonCompareRun();
         resetPromptQueue();
+        // A Stop during the warmup IS that cancellation, not a compare failure: the run and its
+        // lease were released above and no progress toast is on screen to retire yet.
+        if (isCompareCancellation(error, compareSignal)) {
+          return;
+        }
         toast.error("Compare failed", {
           description: error instanceof Error ? error.message : "Unknown error",
         });
@@ -1753,7 +1760,10 @@ export function SharedComposer({
             ? ownConfig.disableVision
             : DEFAULT_PER_MODEL_CONFIG.disableVision;
         if (ownConfig.selectedGpuIds != null) {
-          await ensureGpuDeviceCache();
+          // Same race as the Send-time warmup: a pane carrying persisted GPU IDs awaits the shared
+          // /api/system request, so without the signal a probe that never answers outlives the Stop
+          // that was meant to end this load attempt.
+          await withAbort(ensureGpuDeviceCache(), stoppedSignal);
         }
         throwIfCompareCancelled(stoppedSignal);
         // A pane's OWN saved split is sent instead of being forced to Auto (#7574); the shared Send-time
@@ -1897,6 +1907,11 @@ export function SharedComposer({
             );
           }
         }
+        // The approval dialog can outlive the Stop pressed while it was open. Approving it after
+        // that must not reach the destructive stop decision below: that cancels this comparison's
+        // captured pre-stream reservations and local prompt queues for a run that will now throw
+        // here and never issue its model load, so the queued chats would stop for nothing.
+        throwIfCompareCancelled(stoppedSignal);
         applyCompareStopDecision();
         // Resolve the run that owns this load, but do not name its cancellation
         // target yet: token validation and the approval dialogs run first, and a

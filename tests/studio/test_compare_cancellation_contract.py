@@ -205,7 +205,7 @@ def test_cancellation_phase_starts_before_the_preparatory_awaits():
     composer = _read("shared-composer.tsx")
     prep = composer.split("async function sendImpl(", 1)[1]
     confirmation = prep.index("await confirmStopRunningChatsIfNeeded(")
-    gpu_cache = prep.index("await ensureGpuDeviceCache();")
+    gpu_cache = prep.index("ensureGpuDeviceCache()")
     claimed = prep.index("ownedCompareRun = compareRunsRef.current.begin();")
     assert claimed < confirmation and claimed < gpu_cache
     # The pre-generation entry must not begin a second run, and must not throw past the
@@ -549,3 +549,76 @@ def test_compare_pane_classifies_adapters_by_normalized_identity():
     assert "lora.id === current.id" not in pane
     # Both the initial state and the deferred-inventory repair use the normalized match.
     assert pane.count("modelIdsMatch(lora.id,") == 2
+
+
+def test_gpu_discovery_is_raced_against_the_compare_signal():
+    """A pending `/api/system` probe must not outlive the Stop that ends the compare.
+
+    `ensureGpuDeviceCache()` awaits the SHARED in-flight system request, and Stop only
+    aborts the run's own signal. A bare await therefore strands `comparing`, the
+    model-lifecycle lease and `sendInProgressRef` until a probe the user stopped
+    waiting for answers. Both warmups -- the Send-time one and the per-pane one --
+    have to race that signal.
+    """
+    composer = _read("shared-composer.tsx")
+    assert composer.count("withAbort(ensureGpuDeviceCache(),") == 2
+    assert "await withAbort(ensureGpuDeviceCache(), compareSignal);" in composer
+    assert "await withAbort(ensureGpuDeviceCache(), stoppedSignal);" in composer
+    # The unwrapped awaits are the defect: neither can observe a Stop on its own.
+    assert "await ensureGpuDeviceCache();" not in composer
+    # A Stop during the Send-time warmup is that cancellation, not a compare failure,
+    # and the run plus its lease are released on the way out.
+    warmup = composer.split("      try {\n        if (store.selectedGpuIds != null) {", 1)[1]
+    warmup = warmup.split("      const compareLoadKnobs = {", 1)[0]
+    assert "releaseCompareModelLifecycle();" in warmup
+    assert "abandonCompareRun();" in warmup
+    assert "isCompareCancellation(error, compareSignal)" in warmup
+
+
+def test_history_reads_are_monotonic_across_the_settle_edge():
+    """Two concurrent compare history reads must not let the older one win.
+
+    A compare that generated ends with the `anyRunning` settle edge and
+    `onComparingChange(false)` both re-listing, and both capture the same submit
+    counter, so that guard alone admits both. An earlier snapshot resolving last
+    would overwrite the newer pane thread IDs with stale or undefined ones.
+    """
+    page = _read("chat-page.tsx")
+    assert "const compareHistoryReadRef = useRef(0);" in page
+    # Claimed by both readers, checked by both handlers. One claim per read: the
+    # callback's and the lookup effect's, so exactly two increments.
+    assert page.count("const readGeneration = ++compareHistoryReadRef.current;") == 2
+    assert page.count("if (readGeneration !== compareHistoryReadRef.current) return;") == 2
+    handler = page.split("const handleComparingChange = useCallback(", 1)[1]
+    handler = handler.split("const handleModelsChange = useCallback(", 1)[0]
+    assert "const readGeneration = ++compareHistoryReadRef.current;" in handler
+    assert "if (readGeneration !== compareHistoryReadRef.current) return;" in handler
+    # The submit counter stays: a read that predates a claimed run still cannot apply.
+    assert "if (compareSubmittingRef.current !== submittedAt) return;" in handler
+    # Both panes are re-derived only on the winning read.
+    assert "const pair = resolveComparePaneThreadIds(threads);" in handler
+
+
+def test_the_stop_decision_is_gated_on_cancellation_past_approval():
+    """Approving a dialog after Stop must not cancel the queued chats.
+
+    `applyCompareStopDecision()` cancels captured pre-stream reservations and local
+    prompt queues. The remote-code dialog can outlive the Stop pressed while it was
+    open, and a run that then throws before its `/load` never issues that load, so
+    reaching the stop decision would stop queued chats for a comparison that never
+    starts.
+    """
+    composer = _read("shared-composer.tsx")
+    helper = composer.split("async function ensureModelLoaded(", 1)[1]
+    helper = helper.split("        if (handle1 && model1?.id) {", 1)[0]
+    approval = helper.split("const approved = await confirmRemoteCodeIfNeeded(", 1)[1]
+    # The gate sits between the approval await's block and the destructive call.
+    gate = approval.index("throwIfCompareCancelled(stoppedSignal);")
+    stop_decision = approval.index("applyCompareStopDecision();")
+    assert gate < stop_decision
+    # Nothing between the approval await and the gate issues the destructive call,
+    # and the decline branch still throws before the gate is reached.
+    assert "if (!approved) {" in approval[:gate]
+    assert "loadModel(" not in approval[:gate]
+    # Both the fast path and the post-validation path keep their stop decision.
+    assert helper.count("applyCompareStopDecision();") == 2
