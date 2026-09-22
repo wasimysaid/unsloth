@@ -126,6 +126,7 @@ import { NewProjectDialog } from "./components/new-project-dialog";
 import { ChatSkillsDialog } from "./components/chat-skills-dialog";
 import { useChatProjects } from "./hooks/use-chat-projects";
 import { resyncInferenceStatusAfterServerModelChange } from "./hooks/use-chat-model-runtime";
+import { isExternalModelId } from "./external-providers";
 import { confirmRemoteCodeIfNeeded } from "@/features/security";
 import {
   DEFAULT_MAX_SEQ_LENGTH,
@@ -314,7 +315,13 @@ async function cancelCompareBackendLoad(
     await resyncInferenceStatusAfterServerModelChange().catch(() => undefined);
     return;
   } catch (unloadError) {
-    useChatRuntimeStore.getState().clearCheckpoint();
+    // The fallback drops the selection this cancellation may have invalidated, but only
+    // a LOCAL one: an external-provider checkpoint has no llama.cpp mirror, so cancelling
+    // a local backend load cannot invalidate it. The successful path preserves it through
+    // the same guard inside resyncInferenceStatusAfterServerModelChange.
+    if (!isExternalModelId(useChatRuntimeStore.getState().params.checkpoint)) {
+      useChatRuntimeStore.getState().clearCheckpoint();
+    }
     const statusIds = compareLoadingStatusIds(modelId);
     let settledObservations = 0;
     let pollRounds = 0;
@@ -335,7 +342,12 @@ async function cancelCompareBackendLoad(
         // soon as this attempt becomes the visible one.
         const targetStillLoading = reported.some((id) => statusIds.includes(id));
         const anotherLoadVisible = reported.length > 0 && !targetStillLoading;
-        if (reported.length > 0 && loadRequestId) {
+        if (loadRequestId) {
+          // Retried on EVERY round, including an empty report: the first /unload can fail
+          // before the load reaches its attempt registration, and `onRequestStart` fires
+          // before the request is sent, so a delayed request could register after three
+          // empty reads and load without a cancellation tombstone. The retry is scoped and
+          // idempotent, so it is safe on a load this client has not seen yet.
           try {
             await unloadModel({
               model_path: modelId,
@@ -344,7 +356,7 @@ async function cancelCompareBackendLoad(
             retriedCancellation = true;
             break;
           } catch {
-            // Still reported; retried on the next round while the attempt stays visible.
+            // Not cancellable yet; retried on the next round while the budget lasts.
           }
         }
         // Both visibility cases stay unsettled: neither proves this attempt is gone.

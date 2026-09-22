@@ -74,12 +74,14 @@ def test_cancellation_is_scoped_to_the_originating_load_attempt():
 def test_visible_target_retries_cancellation_instead_of_waiting_out():
     """A target that surfaces after the unload failure must still be cancelled.
 
-    The first scoped `/unload` can fail before the load registers. Once the
-    backend reports the target itself, nothing else would retry: the poll would
-    merely wait for the load to finish and then release the run.
+    The first scoped `/unload` can fail before the load registers -- and the empty
+    report that produces is not proof of absence either, since `onRequestStart` fires
+    before the request is sent. The retry therefore runs every round, scoped to the
+    attempt's own request id, so a request that registers late is still cancelled.
     """
     composer = _read("shared-composer.tsx")
-    assert "if (reported.length > 0 && loadRequestId) {" in composer
+    assert "if (loadRequestId) {" in composer
+    assert "if (reported.length > 0 && loadRequestId) {" not in composer
 
 
 def test_cancellation_poll_matches_the_reported_public_id():
@@ -155,10 +157,12 @@ def test_unload_failure_never_settles_against_a_hidden_queued_attempt():
     assert "const targetStillLoading = reported.some((id) => statusIds.includes(id));" in composer
     assert "const anotherLoadVisible = reported.length > 0 && !targetStillLoading;" in composer
     assert "targetStillLoading || anotherLoadVisible" in composer
-    # The retry re-cancels by request id whenever any load is reported, so a target
-    # that becomes visible is cancelled rather than merely waited out.
-    assert "if (reported.length > 0 && loadRequestId) {" in composer
-    retry = composer.split("if (reported.length > 0 && loadRequestId) {", 1)[1]
+    # The retry re-cancels by request id on every round, including one whose report is
+    # empty: a delayed request can register after three empty reads, so gating the retry
+    # on visibility would let it load without a cancellation tombstone.
+    assert "if (loadRequestId) {" in composer
+    assert "if (reported.length > 0 && loadRequestId) {" not in composer
+    retry = composer.split("if (loadRequestId) {", 1)[1]
     retry = retry.split("retriedCancellation = true;", 1)[0]
     assert "cancel_load_request_id: loadRequestId," in retry
     assert "unloadModel({" in retry
@@ -283,7 +287,7 @@ def test_cancellation_retry_that_lands_reports_success():
     fallback = cancel.split("} catch (unloadError) {", 1)[1]
 
     assert "let retriedCancellation = false;" in fallback
-    retry = fallback.split("if (reported.length > 0 && loadRequestId) {", 1)[1]
+    retry = fallback.split("if (loadRequestId) {", 1)[1]
     retry = retry.split("retriedCancellation = true;", 1)[0]
     assert "cancel_load_request_id: loadRequestId," in retry
     # A landed retry ends the poll instead of waiting out an unrelated load.
@@ -301,3 +305,21 @@ def test_cancellation_retry_that_lands_reports_success():
     assert "return;" in settled
     # The original error survives only for the no-retry case, after that early return.
     assert "Could not cancel the backend model load: ${detail}" in fallback[timeout_at:]
+
+
+def test_fallback_preserves_an_unrelated_external_selection():
+    """Cancelling a local load must not erase a valid external checkpoint."""
+    composer = _read("shared-composer.tsx")
+    assert 'import { isExternalModelId } from "./external-providers";' in composer
+    cancel = composer.split("async function cancelCompareBackendLoad(", 1)[1]
+    cancel = cancel.split("function newCompareLoadRequestId", 1)[0]
+    fallback = cancel.split("} catch (unloadError) {", 1)[1]
+    # Guarded, exactly like the successful path's resync helper.
+    assert (
+        "if (!isExternalModelId(useChatRuntimeStore.getState().params.checkpoint)) {"
+        in fallback
+    )
+    guarded = fallback.split(
+        "if (!isExternalModelId(useChatRuntimeStore.getState().params.checkpoint)) {", 1
+    )[1]
+    assert "clearCheckpoint();" in guarded.split("}", 1)[0]
