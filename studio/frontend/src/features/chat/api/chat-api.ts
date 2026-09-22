@@ -273,7 +273,9 @@ export async function loadModel(
     runtime?: ModelRuntime;
   },
 ): Promise<LoadModelResponse> {
-  const preparedToken = await prepareHfTokenForUse(payload.hf_token);
+  const preparedToken = await prepareHfTokenForUse(payload.hf_token, {
+    signal: options?.signal,
+  });
   // Tagged so auto-load can tell a user cancellation from a backend rejection.
   if (!preparedToken.proceed)
     throw Object.assign(new Error("Model load cancelled."), {
@@ -357,7 +359,9 @@ export async function validateModel(
   payload: LoadModelRequest,
   options?: { signal?: AbortSignal },
 ): Promise<ValidateModelResponse> {
-  const preparedToken = await prepareHfTokenForUse(payload.hf_token);
+  const preparedToken = await prepareHfTokenForUse(payload.hf_token, {
+    signal: options?.signal,
+  });
   if (!preparedToken.proceed)
     throw Object.assign(new Error("Model load cancelled."), {
       unslothUserCancelled: true,

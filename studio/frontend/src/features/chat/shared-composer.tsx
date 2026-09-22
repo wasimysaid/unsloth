@@ -65,6 +65,7 @@ import { classifiedAttachmentFiles, isVideoFile } from "@/lib/video-utils";
 import { isDownloadCancelled } from "@/lib/native-files";
 import { isMultimodalResponse, type InferenceStatusResponse } from "./types/api";
 import { getImageInputUnavailableReason } from "./utils/image-input-support";
+import { withAbort } from "@/features/hub/lib/abort-signals";
 import {
   modelIdsMatch,
   publicModelId,
@@ -1674,7 +1675,10 @@ export function SharedComposer({
             // EXPLICIT /load argument, validated strictly rather than going through the carry-over paths
             // that drop a newly denied flag quietly, so a pane on an install upgraded across a denylist
             // change would otherwise answer 400 on a comparison that ran the day before.
-            const managed = await loadManagedLlamaFlags();
+            const managed = await withAbort(
+              loadManagedLlamaFlags(),
+              stoppedSignal,
+            );
             const clean = (tokens: readonly string[]) =>
               sanitizeStoredExtraArgs(
                 tokens,
@@ -1686,10 +1690,13 @@ export function SharedComposer({
               );
             const local = ownConfig.llamaExtraArgs;
             if (local === undefined) {
-              const resolvedArgs = await fetchLoadExtraArgs(
-                sel.id,
-                sel.id,
-                sel.ggufVariant ?? null,
+              const resolvedArgs = await withAbort(
+                fetchLoadExtraArgs(
+                  sel.id,
+                  sel.id,
+                  sel.ggufVariant ?? null,
+                ),
+                stoppedSignal,
               );
               const cleaned = clean(resolvedArgs.tokens);
               if (cleaned.length > 0) {

@@ -500,6 +500,38 @@ def test_hf_token_preparation_is_cancellable():
     assert "{ signal: stoppedSignal }," in helper
 
 
+def test_load_preflights_race_the_cancellation_signal():
+    """Stop must reach every awaited preflight, not only the ones already gated.
+
+    The GGUF flag catalogue and the stored-extra-args lookup are `authFetch` calls with
+    no deadline, and the cancellation gate sits after them; an endpoint that never
+    answers would hold `comparing` and the lifecycle lease open however often Stop is
+    pressed. Token preparation runs before `onRequestStart`, so it needs the signal too.
+    """
+    api = _read("api", "chat-api.ts")
+    for name, tail in (
+        ("export async function loadModel(", "export async function countChatInputTokens("),
+        ("export async function validateModel(", "/** Read a GGUF's header dims"),
+    ):
+        body = api.split(name, 1)[1].split(tail, 1)[0]
+        prepare = body.split("const preparedToken = await prepareHfTokenForUse(", 1)[1]
+        prepare = prepare.split(");", 1)[0]
+        assert "signal: options?.signal," in prepare
+
+    composer = _read("shared-composer.tsx")
+    assert (
+        'import { withAbort } from "@/features/hub/lib/abort-signals";' in composer
+    )
+    managed = composer.split("const managed = await withAbort(", 1)[1]
+    managed = managed.split(");", 1)[0]
+    assert "loadManagedLlamaFlags()," in managed
+    assert "stoppedSignal," in managed
+    extra = composer.split("const resolvedArgs = await withAbort(", 1)[1]
+    extra = extra.split(");", 1)[0]
+    assert "fetchLoadExtraArgs(" in extra
+    assert "stoppedSignal," in extra
+
+
 def test_compare_pane_classifies_adapters_by_normalized_identity():
     """A Hub ID differing only by case must still load as the LoRA it is.
 
