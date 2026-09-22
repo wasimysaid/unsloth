@@ -671,13 +671,17 @@ async function refreshAndWaitForServerModel(options?: {
  * unloaded model: an external-provider selection has no llama.cpp mirror and still works, so
  * clearing it would drop a valid, unrelated model.
  */
-export async function resyncInferenceStatusAfterServerModelChange(): Promise<void> {
+export async function resyncInferenceStatusAfterServerModelChange(
+  /** Aborting drops the resync: its model list was read from an older server state, so
+   *  publishing it after a fresh load would overwrite that load's row and capabilities. */
+  signal?: AbortSignal,
+): Promise<void> {
   // Both llama.cpp update paths land here, and an update replaces the binary whose --help the flag catalogue describes.
   invalidateLlamaFlagCatalog();
   if (!isExternalModelId(useChatRuntimeStore.getState().params.checkpoint)) {
     useChatRuntimeStore.getState().clearCheckpoint();
   }
-  await syncInferenceStatusToStore();
+  await syncInferenceStatusToStore({ signal });
 }
 
 function pickOf(info: {

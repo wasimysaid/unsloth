@@ -263,12 +263,16 @@ const COMPARE_CANCEL_STATUS_TIMEOUT_MS = COMPARE_CANCEL_STATUS_POLL_MS * 4;
  *  The compare's cleanup lease awaits this reconciliation, so a request that stays pending
  *  must not hold `modelLoading`/`comparing` open. A timed-out `/unload` is re-issued by the
  *  next poll round, so aborting a slow one only costs a round. */
-const COMPARE_CANCEL_REQUEST_TIMEOUT_MS = COMPARE_CANCEL_STATUS_POLL_MS * 20;
+const COMPARE_CANCEL_REQUEST_TIMEOUT_MS = COMPARE_CANCEL_STATUS_POLL_MS * 4;
 /** Consecutive status reads without the cancelled model in `loading` before it counts as settled. */
 const COMPARE_CANCEL_SETTLED_OBSERVATIONS = 3;
 /** Upper bound on the status poll. A load hidden behind another one is never settled, so
  *  an unrelated long-running load must end the attempt with a failure, not a hang. */
 const COMPARE_CANCEL_MAX_STATUS_POLLS = 40;
+/** Elapsed cap for the whole poll. The per-round bounds alone compose to many minutes when
+ *  every request stalls, so the loop also stops once this much wall clock has passed. */
+const COMPARE_CANCEL_TOTAL_DEADLINE_MS =
+  COMPARE_CANCEL_STATUS_POLL_MS * COMPARE_CANCEL_MAX_STATUS_POLLS;
 
 /** Every id `/api/inference/status` may publish for a load of `modelId`, lowercased.
  *
@@ -303,7 +307,9 @@ function newCompareLoadRequestId(): string {
  * end so the next one -- and its scoped retry -- can run, and the bounded poll has to reach
  * its failure instead of waiting forever. A rejection and a timeout are the same outcome:
  * neither settles a round, and neither is rethrown. */
-async function readInferenceStatusWithinPollBudget(): Promise<InferenceStatusResponse | null> {
+async function readInferenceStatusWithinPollBudget(
+  timeoutMs: number = COMPARE_CANCEL_STATUS_TIMEOUT_MS,
+): Promise<InferenceStatusResponse | null> {
   const controller = new AbortController();
   let timer: number | undefined;
   const expiry = new Promise<null>((resolve) => {
@@ -311,7 +317,7 @@ async function readInferenceStatusWithinPollBudget(): Promise<InferenceStatusRes
       // Also release the unanswered read; the next round starts its own.
       controller.abort();
       resolve(null);
-    }, COMPARE_CANCEL_STATUS_TIMEOUT_MS);
+    }, timeoutMs);
   });
   try {
     return await Promise.race([getInferenceStatus(controller.signal), expiry]);
@@ -328,6 +334,7 @@ async function readInferenceStatusWithinPollBudget(): Promise<InferenceStatusRes
  *  compare's cleanup lease unreachable. */
 async function withCompareCancelDeadline<T>(
   run: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number = COMPARE_CANCEL_REQUEST_TIMEOUT_MS,
 ): Promise<T> {
   const controller = new AbortController();
   let timer: number | undefined;
@@ -335,7 +342,7 @@ async function withCompareCancelDeadline<T>(
     timer = window.setTimeout(() => {
       controller.abort();
       reject(new Error("The cancellation request did not answer in time."));
-    }, COMPARE_CANCEL_REQUEST_TIMEOUT_MS);
+    }, timeoutMs);
   });
   try {
     return await Promise.race([run(controller.signal), expiry]);
@@ -373,8 +380,8 @@ async function cancelCompareBackendLoad(
     // Stop landed, leaving the client checkpoint naming a runtime the backend no longer
     // has -- a later compare would then take the isAlreadyActive fast path against
     // nothing. Re-derive residency from the server, as the interactive cancel path does.
-    await withCompareCancelDeadline(() =>
-      resyncInferenceStatusAfterServerModelChange(),
+    await withCompareCancelDeadline((signal) =>
+      resyncInferenceStatusAfterServerModelChange(signal),
     ).catch(() => undefined);
     return;
   } catch (unloadError) {
@@ -388,10 +395,15 @@ async function cancelCompareBackendLoad(
     let settledObservations = 0;
     let pollRounds = 0;
     let retriedCancellation = false;
+    const pollDeadline = Date.now() + COMPARE_CANCEL_TOTAL_DEADLINE_MS;
     while (
       settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS &&
       pollRounds < COMPARE_CANCEL_MAX_STATUS_POLLS
     ) {
+      // One elapsed cap for the attempt: per-round bounds alone add up to minutes when
+      // every request stalls, and the run's busy lease is held for all of it.
+      const remainingMs = pollDeadline - Date.now();
+      if (remainingMs <= 0) break;
       pollRounds += 1;
       if (loadRequestId) {
         // Every round, whatever the status read returns: the first /unload can fail before
@@ -399,14 +411,16 @@ async function cancelCompareBackendLoad(
         // delayed load could otherwise settle unseen. Scoped, so it is safe to re-issue.
         // Sequenced before the status await so a status read that hangs cannot postpone it.
         try {
-          await withCompareCancelDeadline((signal) =>
-            unloadModel(
-              {
-                model_path: modelId,
-                cancel_load_request_id: loadRequestId,
-              },
-              { signal },
-            ),
+          await withCompareCancelDeadline(
+            (signal) =>
+              unloadModel(
+                {
+                  model_path: modelId,
+                  cancel_load_request_id: loadRequestId,
+                },
+                { signal },
+              ),
+            Math.min(COMPARE_CANCEL_REQUEST_TIMEOUT_MS, remainingMs),
           );
           retriedCancellation = true;
           break;
@@ -416,7 +430,9 @@ async function cancelCompareBackendLoad(
       }
       // Null on a status outage or a read that never answered: neither is proof the
       // aborted load is gone, so neither settles a round.
-      const status = await readInferenceStatusWithinPollBudget();
+      const status = await readInferenceStatusWithinPollBudget(
+        Math.min(COMPARE_CANCEL_STATUS_TIMEOUT_MS, remainingMs),
+      );
       const reported = status
         ? (status.loading ?? []).map((id) => id.trim().toLowerCase())
         : null;
@@ -445,8 +461,8 @@ async function cancelCompareBackendLoad(
       // The retry landed: finish like the successful path instead of reporting a failure
       // for a cancellation that took effect. Checked before the timeout throw, which would
       // otherwise fire while an unrelated load keeps the poll unsettled.
-      await withCompareCancelDeadline(() =>
-        resyncInferenceStatusAfterServerModelChange(),
+      await withCompareCancelDeadline((signal) =>
+        resyncInferenceStatusAfterServerModelChange(signal),
       ).catch(() => undefined);
       return;
     }

@@ -38,7 +38,7 @@ def test_composer_aborts_the_load_and_reconciles_the_backend():
     # request cannot hold the compare's cleanup lease open.
     assert "await withCompareCancelDeadline((signal) =>" in composer
     assert "unloadModel(" in composer
-    assert "readInferenceStatusWithinPollBudget()" in composer
+    assert "readInferenceStatusWithinPollBudget(" in composer
     assert "COMPARE_CANCEL_SETTLED_OBSERVATIONS" in composer
     assert "status.loading" in composer
 
@@ -143,7 +143,7 @@ def test_successful_cancellation_reconciles_the_store_checkpoint():
     # The successful unload path re-derives residency from the backend, so the
     # checkpoint cannot keep naming a model this cancellation removed.
     success = cancel.split("} catch (unloadError) {", 1)[0]
-    assert "resyncInferenceStatusAfterServerModelChange()" in success
+    assert "resyncInferenceStatusAfterServerModelChange(signal)" in success
 
 
 def test_unload_failure_never_settles_against_a_hidden_queued_attempt():
@@ -168,7 +168,8 @@ def test_unload_failure_never_settles_against_a_hidden_queued_attempt():
     retry = retry.split("retriedCancellation = true;", 1)[0]
     assert "cancel_load_request_id: loadRequestId," in retry
     assert "unloadModel(" in retry
-    assert "withCompareCancelDeadline((signal) =>" in retry
+    assert "withCompareCancelDeadline(" in retry
+    assert "(signal) =>" in retry
     # The poll is bounded, so an unrelated load cannot hang the run forever.
     assert "pollRounds < COMPARE_CANCEL_MAX_STATUS_POLLS" in composer
 
@@ -305,7 +306,7 @@ def test_cancellation_retry_that_lands_reports_success():
     timeout_at = fallback.index("is still queued behind another load.")
     assert success_at < timeout_at
     settled = fallback[success_at:timeout_at]
-    assert "resyncInferenceStatusAfterServerModelChange()" in settled
+    assert "resyncInferenceStatusAfterServerModelChange(signal)" in settled
     assert "return;" in settled
     # The original error survives only for the no-retry case, after that early return.
     assert "Could not cancel the backend model load: ${detail}" in fallback[timeout_at:]
@@ -344,7 +345,7 @@ def test_cancellation_retry_survives_a_status_outage():
     # status outage -- or a read that never answers -- cannot skip it.
     assert "let reported: string[] | null = null;" not in loop
     retry_at = loop.index("if (loadRequestId) {")
-    status_at = loop.index("await readInferenceStatusWithinPollBudget();")
+    status_at = loop.index("await readInferenceStatusWithinPollBudget(")
     assert retry_at < status_at
     retry_block = loop[retry_at:status_at]
     assert "unloadModel(" in retry_block
@@ -371,10 +372,30 @@ def test_a_status_read_that_never_answers_cannot_stall_the_poll():
     assert "COMPARE_CANCEL_STATUS_TIMEOUT_MS" in composer
     # The loop awaits the bounded helper, not the raw request.
     assert "await getInferenceStatus()" not in loop
-    assert "await readInferenceStatusWithinPollBudget();" in loop
+    assert "await readInferenceStatusWithinPollBudget(" in loop
     # A bounded read that answered nothing settles nothing this round.
     assert "const reported = status" in loop
     assert ": null;" in loop
+
+
+def test_the_whole_cancellation_poll_has_one_elapsed_deadline():
+    """Per-round bounds alone compose to many minutes when every request stalls.
+
+    Each round could otherwise spend its full retry and status budgets, so the nominally
+    bounded poll held the compare's busy lease for far longer than its constants imply.
+    """
+    composer = _read("shared-composer.tsx")
+    cancel = composer.split("async function cancelCompareBackendLoad(", 1)[1]
+    cancel = cancel.split("function newCompareLoadRequestId", 1)[0]
+    loop = cancel.split("while (", 1)[1].split("if (retriedCancellation) {", 1)[0]
+    assert "COMPARE_CANCEL_TOTAL_DEADLINE_MS" in composer
+    assert "const pollDeadline = Date.now() + COMPARE_CANCEL_TOTAL_DEADLINE_MS;" in cancel
+    # The loop stops once the budget is spent, not only when the round count runs out.
+    assert "const remainingMs = pollDeadline - Date.now();" in loop
+    assert "if (remainingMs <= 0) break;" in loop
+    # Both waits inside a round are capped by what is left of it.
+    assert "Math.min(COMPARE_CANCEL_REQUEST_TIMEOUT_MS, remainingMs)" in loop
+    assert "Math.min(COMPARE_CANCEL_STATUS_TIMEOUT_MS, remainingMs)" in loop
 
 
 def test_every_cancellation_request_is_bounded():
@@ -394,7 +415,7 @@ def test_every_cancellation_request_is_bounded():
     assert "COMPARE_CANCEL_REQUEST_TIMEOUT_MS" in composer
     # Every cancellation request in the function goes through it, and none is awaited raw.
     assert "await unloadModel(" not in cancel
-    assert cancel.count("withCompareCancelDeadline((signal) =>") == 2
-    assert cancel.count("withCompareCancelDeadline(() =>") == 2
-    # The resync after a landed cancellation is bounded on both success paths.
-    assert cancel.count("resyncInferenceStatusAfterServerModelChange()") == 2
+    assert cancel.count("withCompareCancelDeadline(") == 4
+    # Both post-cancel resyncs forward the deadline signal, so a resync that outlives its
+    # deadline cannot publish a stale model list over a later load.
+    assert cancel.count("resyncInferenceStatusAfterServerModelChange(signal)") == 2
