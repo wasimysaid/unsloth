@@ -1,0 +1,81 @@
+{
+  "commit": "897839187220ed52cb5471d92df41f6dc155478b",
+  "kind": "Synthetic production Chromium; not another GPU generation",
+  "result": {
+    "passed": true,
+    "streaming": {
+      "done": true,
+      "duration": 6585.099999997765,
+      "p95": 16.799999999999955,
+      "worst": 116.70000000000002,
+      "mounted": 4932,
+      "fragments": 9,
+      "transfers": {
+        "initialSourceCharacters": [
+          16787
+        ],
+        "deltaRequests": 645,
+        "largestDeltaCharacters": 512,
+        "totalDeltaCharacters": 233093
+      }
+    },
+    "longLineSelectionLength": 16384,
+    "tallParagraphDrift": 0
+  },
+  "additionalChecks": [
+    "sanitized bounded SVG preview loads",
+    "code clipboard equals complete offscreen source",
+    "code download equals complete offscreen source"
+  ],
+  "existingSuite": {
+    "passed": true,
+    "checks": [
+      "bounded saved trace",
+      "no pagination chrome",
+      "canonical copy",
+      "collapse/reopen",
+      "live collapse/reopen",
+      "threshold anchor",
+      "streaming anchor",
+      "resize anchor",
+      "long prompt reflow",
+      "selection",
+      "resume following",
+      "narrow code",
+      "light/dark",
+      "document reference links",
+      "list continuation markers"
+    ]
+  },
+  "frontendTests": {
+    "passed": 8356,
+    "failed": 0
+  },
+  "prefixScanMicrobenchmark": {
+    "node": "v24.18.0",
+    "samples": [
+      {
+        "appends": 10000,
+        "chunk": 10,
+        "totalMs": 815.974686,
+        "p95Ms": 0.237203,
+        "worstMs": 3.357211
+      },
+      {
+        "appends": 500,
+        "chunk": 512,
+        "totalMs": 36.883862,
+        "p95Ms": 0.167413,
+        "worstMs": 0.905662
+      },
+      {
+        "appends": 25000,
+        "chunk": 10,
+        "totalMs": 7045.646593,
+        "p95Ms": 0.617123,
+        "worstMs": 4.378639
+      }
+    ],
+    "note": "Measures startsWith on successively appended matching strings, not browser FPS. Full-prefix validation remains linear per append; no O(1) claim."
+  }
+}
