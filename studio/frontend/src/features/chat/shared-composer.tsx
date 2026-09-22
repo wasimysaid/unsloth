@@ -256,6 +256,9 @@ const IME_STUCK_TIMEOUT_MS = 2500;
 const COMPARE_CANCEL_STATUS_POLL_MS = 750;
 /** Consecutive status reads without the cancelled model in `loading` before it counts as settled. */
 const COMPARE_CANCEL_SETTLED_OBSERVATIONS = 3;
+/** Upper bound on the status poll. A load hidden behind another one is never settled, so
+ *  an unrelated long-running load must end the attempt with a failure, not a hang. */
+const COMPARE_CANCEL_MAX_STATUS_POLLS = 40;
 
 /** Every id `/api/inference/status` may publish for a load of `modelId`, lowercased.
  *
@@ -313,13 +316,34 @@ async function cancelCompareBackendLoad(
     useChatRuntimeStore.getState().clearCheckpoint();
     const statusIds = compareLoadingStatusIds(modelId);
     let settledObservations = 0;
-    while (settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS) {
+    let pollRounds = 0;
+    while (
+      settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS &&
+      pollRounds < COMPARE_CANCEL_MAX_STATUS_POLLS
+    ) {
+      pollRounds += 1;
       try {
         const status = await getInferenceStatus();
-        const stillLoading = (status.loading ?? []).some((loadingId) =>
-          statusIds.includes(loadingId.trim().toLowerCase()),
-        );
-        settledObservations = stillLoading ? 0 : settledObservations + 1;
+        const reported = (status.loading ?? []).map((id) => id.trim().toLowerCase());
+        // The backend publishes at most ONE attempt: the running one, else a single
+        // queued one. So this list names the target both when the retried cancellation
+        // has not taken effect yet and when ANOTHER load is hiding the queued target,
+        // and its absence proves nothing in either case. Only an empty list settles the
+        // run; a nonempty one retries the scoped cancellation, which takes effect as
+        // soon as this attempt becomes the visible one.
+        const targetStillLoading = reported.some((id) => statusIds.includes(id));
+        const anotherLoadVisible = reported.length > 0 && !targetStillLoading;
+        if (reported.length > 0 && loadRequestId) {
+          await unloadModel({
+            model_path: modelId,
+            cancel_load_request_id: loadRequestId,
+          }).catch(() => undefined);
+        }
+        // Both visibility cases stay unsettled: neither proves this attempt is gone.
+        settledObservations =
+          targetStillLoading || anotherLoadVisible
+            ? 0
+            : settledObservations + 1;
       } catch {
         settledObservations = 0;
       }
@@ -328,6 +352,13 @@ async function cancelCompareBackendLoad(
           window.setTimeout(resolve, COMPARE_CANCEL_STATUS_POLL_MS);
         });
       }
+    }
+    // Bounded: a backend that keeps reporting an unrelated load is reported as an
+    // unsettled cancellation rather than as a settled one this run never proved.
+    if (settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS) {
+      throw new Error(
+        `Could not cancel the backend model load: ${modelId} is still queued behind another load.`,
+      );
     }
     const detail =
       unloadError instanceof Error

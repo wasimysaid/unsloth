@@ -71,13 +71,25 @@ def test_cancellation_is_scoped_to_the_originating_load_attempt():
     assert "run.loadingRequestId = null;" in ownership
 
 
+def test_visible_target_retries_cancellation_instead_of_waiting_out():
+    """A target that surfaces after the unload failure must still be cancelled.
+
+    The first scoped `/unload` can fail before the load registers. Once the
+    backend reports the target itself, nothing else would retry: the poll would
+    merely wait for the load to finish and then release the run.
+    """
+    composer = _read("shared-composer.tsx")
+    assert "if (reported.length > 0 && loadRequestId) {" in composer
+
+
 def test_cancellation_poll_matches_the_reported_public_id():
     """The poll must not read a path-shaped id as a settled load."""
     composer = _read("shared-composer.tsx")
     assert "function compareLoadingStatusIds(modelId: string): string[]" in composer
     assert "publicModelId(modelId)" in composer
     assert "const statusIds = compareLoadingStatusIds(modelId);" in composer
-    assert "statusIds.includes(loadingId.trim().toLowerCase())" in composer
+    assert "reported.some((id) => statusIds.includes(id))" in composer
+    assert "(status.loading ?? []).map((id) => id.trim().toLowerCase())" in composer
     # The raw-id comparison is the defect: it never matches the reported public id.
     assert "loadingId.toLowerCase() === modelId.toLowerCase()" not in composer
 
@@ -128,6 +140,43 @@ def test_successful_cancellation_reconciles_the_store_checkpoint():
     # checkpoint cannot keep naming a model this cancellation removed.
     success = cancel.split("} catch (unloadError) {", 1)[0]
     assert "resyncInferenceStatusAfterServerModelChange()" in success
+
+
+def test_unload_failure_never_settles_against_a_hidden_queued_attempt():
+    """Absence from status.loading proves nothing while another load can hide it.
+
+    The backend publishes at most one attempt -- the running one, else a single queued
+    one -- so a cancelled attempt waiting behind another load is invisible there.
+    """
+    composer = _read("shared-composer.tsx")
+    assert "COMPARE_CANCEL_MAX_STATUS_POLLS" in composer
+    # Both visibility cases are named, and both stay unsettled: the target visible
+    # because the retry has not landed yet, or another load hiding the queued target.
+    assert "const targetStillLoading = reported.some((id) => statusIds.includes(id));" in composer
+    assert "const anotherLoadVisible = reported.length > 0 && !targetStillLoading;" in composer
+    assert "targetStillLoading || anotherLoadVisible" in composer
+    # The retry re-cancels by request id whenever any load is reported, so a target
+    # that becomes visible is cancelled rather than merely waited out.
+    assert "if (reported.length > 0 && loadRequestId) {" in composer
+    retry = composer.split("if (reported.length > 0 && loadRequestId) {", 1)[1]
+    retry = retry.split("}).catch(() => undefined);", 1)[0]
+    assert "cancel_load_request_id: loadRequestId," in retry
+    assert "unloadModel({" in retry
+    # The poll is bounded, so an unrelated load cannot hang the run forever.
+    assert "pollRounds < COMPARE_CANCEL_MAX_STATUS_POLLS" in composer
+
+
+def test_compare_end_re_lists_history_without_a_run_transition():
+    """An accepted compare that ends pre-generation must still re-list its history."""
+    page = _read("chat-page.tsx")
+    handler = page.split("const handleComparingChange = useCallback(", 1)[1]
+    handler = handler.split("const handleModelsChange = useCallback(", 1)[0]
+    assert "void listStoredChatThreads({ pairId })" in handler
+    assert "resolveComparePaneThreadIds(threads)" in handler
+    assert "if (compareSubmittingRef.current !== submittedAt) return;" in handler
+    # The lookup effect's own settle edge is untouched, so the existing
+    # `anyRunning`-driven re-list still runs for a compare that did generate.
+    assert page.count("}, [pairId, anyRunning]);") == 2
 
 
 def test_composer_releases_ownership_only_after_reconciliation():

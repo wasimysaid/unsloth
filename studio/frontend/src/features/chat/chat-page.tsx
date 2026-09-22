@@ -1107,9 +1107,33 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
     });
   }, [loraModels]);
 
-  const handleComparingChange = useCallback((submitting: boolean) => {
-    if (submitting) compareSubmittingRef.current += 1;
-  }, []);
+  const handleComparingChange = useCallback(
+    (submitting: boolean) => {
+      if (submitting) {
+        compareSubmittingRef.current += 1;
+        return;
+      }
+      // An accepted compare that ends before any generation -- stopped or failed
+      // during model preparation -- leaves the lookup above invalidated while
+      // `anyRunning` never flips, so its settle edge never re-lists and the panes
+      // would stay on fresh/undefined threads. Re-list here instead; a compare that
+      // did generate re-lists the same way, so this is idempotent for it.
+      const submittedAt = compareSubmittingRef.current;
+      void listStoredChatThreads({ pairId })
+        .then((threads) => {
+          if (compareSubmittingRef.current !== submittedAt) return;
+          const pair = resolveComparePaneThreadIds(threads);
+          setModel1ThreadId(pair.first);
+          setModel2ThreadId(pair.second);
+        })
+        .catch((error) => {
+          if (!isExpectedBackgroundChatStorageError(error)) {
+            throw error;
+          }
+        });
+    },
+    [pairId],
+  );
 
   const handleModelsChange = useCallback(
     (deletedModel?: DeletedModelRef) => {
