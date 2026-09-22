@@ -462,10 +462,14 @@ export async function fetchGgufStagedMetadata(payload: {
   };
 }
 
-export async function unloadModel(payload: UnloadModelRequest): Promise<void> {
+export async function unloadModel(
+  payload: UnloadModelRequest,
+  options?: { signal?: AbortSignal },
+): Promise<void> {
   const response = await authFetch("/api/inference/unload", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: options?.signal,
     body: JSON.stringify(payload),
   });
   await parseJsonOrThrow<unknown>(response, "Model unload");

@@ -143,9 +143,16 @@ import {
 import { prepareHfTokenForUse } from "@/features/hf-auth";
 import {
   fetchGgufStagedMetadata,
+  getInferenceStatus,
   loadModel,
+  unloadModel,
   validateModel,
 } from "./api/chat-api";
+import {
+  CompareRunOwnership,
+  isCompareCancellation,
+  throwIfCompareCancelled,
+} from "./compare-run-ownership";
 import {
   loadedContextForParams,
   resolveExplicitCtxPin,
@@ -241,6 +248,47 @@ function isNativeComposing(event: Event) {
 // Mirrors the threshold in thread.tsx. Chrome on Windows-over-WSL (#5546) never fires
 // `compositionend` after IME commit, so the compose flag would otherwise stay true forever.
 const IME_STUCK_TIMEOUT_MS = 2500;
+/** Poll cadence while waiting for an aborted compare load to leave the backend. */
+const COMPARE_CANCEL_STATUS_POLL_MS = 750;
+/** Consecutive status reads without the cancelled model in `loading` before it counts as settled. */
+const COMPARE_CANCEL_SETTLED_OBSERVATIONS = 3;
+
+/** Reconcile an aborted compare `/load` with the backend.
+ *
+ * Aborting the browser request releases the socket, not the server-side job, so Stop on a
+ * generalized compare issues `/unload` for the model the cancelled run was loading. When that
+ * unload is rejected, the status poll keeps the run unsettled until the backend stops reporting
+ * the load, so an orphaned load cannot replace the model behind a later prompt. */
+async function cancelCompareBackendLoad(modelId: string): Promise<void> {
+  try {
+    await unloadModel({ model_path: modelId });
+    return;
+  } catch (unloadError) {
+    useChatRuntimeStore.getState().clearCheckpoint();
+    let settledObservations = 0;
+    while (settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS) {
+      try {
+        const status = await getInferenceStatus();
+        const stillLoading = (status.loading ?? []).some(
+          (loadingId) => loadingId.toLowerCase() === modelId.toLowerCase(),
+        );
+        settledObservations = stillLoading ? 0 : settledObservations + 1;
+      } catch {
+        settledObservations = 0;
+      }
+      if (settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS) {
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, COMPARE_CANCEL_STATUS_POLL_MS);
+        });
+      }
+    }
+    const detail =
+      unloadError instanceof Error
+        ? unloadError.message
+        : "The backend rejected the cancellation request.";
+    throw new Error(`Could not cancel the backend model load: ${detail}`);
+  }
+}
 
 function fileToBase64DataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -555,6 +603,7 @@ export function SharedComposer({
   model1,
   model2,
   onExitCompare,
+  onComparingChange,
   model1ThreadId,
   model2ThreadId,
   sendUnavailableReason,
@@ -564,6 +613,8 @@ export function SharedComposer({
   model1?: CompareModelSelection;
   model2?: CompareModelSelection;
   onExitCompare?: () => void;
+  /** Fired while a generalized compare submission owns the panes. */
+  onComparingChange?: (comparing: boolean) => void;
   model1ThreadId?: string;
   model2ThreadId?: string;
   sendUnavailableReason?: string;
@@ -624,6 +675,10 @@ export function SharedComposer({
   const prevRunningRef = useRef(false);
   const prevComparingRef = useRef(false);
   const compareStepSucceededRef = useRef(false);
+  const sendInProgressRef = useRef(false);
+  const compareRunsRef = useRef(
+    new CompareRunOwnership<CompareModelSelection>(),
+  );
   const sendRef = useRef<(() => void) | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
@@ -1093,6 +1148,20 @@ export function SharedComposer({
   useEffect(() => () => clearStuckImeTimer(), []);
 
   async function send() {
+    // Claim the submission window before any await: two attachment sends could
+    // otherwise both pass the idle render and later supersede an in-flight load.
+    if (sendInProgressRef.current) return;
+    sendInProgressRef.current = true;
+    onComparingChange?.(true);
+    try {
+      await sendImpl();
+    } finally {
+      onComparingChange?.(false);
+      sendInProgressRef.current = false;
+    }
+  }
+
+  async function sendImpl() {
     if (composingRef.current) {
       resetPromptQueue();
       return;
@@ -1573,56 +1642,75 @@ export function SharedComposer({
           }
         }
         applyCompareStopDecision();
-        const resp = await loadModel({
-          model_path: sel.id,
-          hf_token: useChatRuntimeStore.getState().hfToken || null,
-          max_seq_length: compareMaxSeqLength,
-          load_in_4bit: true,
-          is_lora: sel.isLora,
-          gguf_variant: sel.ggufVariant ?? null,
-          trust_remote_code: loadTrustRemoteCode,
-          approved_remote_code_fingerprint: approvedRemoteCodeFingerprint,
-          chat_template_override: effectiveChatTemplateOverride,
-          cache_type_kv: ownConfig.kvCacheDtype ?? null,
-          mlx_kv_bits: ownConfig.mlxKvBits ?? null,
-          speculative_type: effectiveSpeculativeType,
-          spec_draft_n_max: effectiveSpecDraftNMax,
-          reasoning_budget:
-            targetIsGguf && !resolvedIsDiffusion
-              ? ownConfig.reasoningBudget
-              : -1,
-          reasoning_budget_message:
-            targetIsGguf && !resolvedIsDiffusion
-              ? ownConfig.reasoningBudgetMessage
-              : "",
-          tensor_parallel: effectiveTensorParallel,
-          disable_vision: effectiveDisableVision,
-          force_cancel_active:
-            compareStopDecision?.forceCancelActive ?? false,
-          ...(targetIsGguf
-            ? {
-                gpu_memory_mode: effectiveGpuMemoryMode,
-                gpu_layers: effectiveGpuLayers,
-                n_cpu_moe: effectiveNCpuMoe,
-                tensor_split: compareLoadKnobs.splitRatio ?? undefined,
-                gpu_ids: effectiveSelectedGpuIds ?? undefined,
-                n_parallel: ownConfig.nParallel ?? null,
-                // Only when this panel has read the stored value: omitted, the load inherits it, which keeps
-                // CLI-set flags working.
-                ...(ownConfig.llamaExtraArgs !== undefined
-                  ? // biome-ignore lint/style/useNamingConvention: API schema
-                    { llama_extra_args: ownConfig.llamaExtraArgs ?? [] }
-                  : {}),
-                ...(ownConfig.nBatch != null
-                  ? { n_batch: ownConfig.nBatch }
-                  : {}),
-                ...(ownConfig.nUbatch != null
-                  ? { n_ubatch: ownConfig.nUbatch }
-                  : {}),
-                ...serverTuningLoadPayload(ownConfig),
-              }
-            : {}),
-        });
+        // Claim this run's identity before the request starts, so a Stop landing
+        // mid-load owns exactly this request's reconciliation.
+        const run = compareRunsRef.current.current();
+        if (run) compareRunsRef.current.setLoadingModel(run, sel);
+        const compareSignal = run?.controller.signal;
+        if (compareSignal) throwIfCompareCancelled(compareSignal);
+        const resp = await loadModel(
+          {
+            model_path: sel.id,
+            hf_token: useChatRuntimeStore.getState().hfToken || null,
+            max_seq_length: compareMaxSeqLength,
+            load_in_4bit: true,
+            is_lora: sel.isLora,
+            gguf_variant: sel.ggufVariant ?? null,
+            trust_remote_code: loadTrustRemoteCode,
+            approved_remote_code_fingerprint: approvedRemoteCodeFingerprint,
+            chat_template_override: effectiveChatTemplateOverride,
+            cache_type_kv: ownConfig.kvCacheDtype ?? null,
+            mlx_kv_bits: ownConfig.mlxKvBits ?? null,
+            speculative_type: effectiveSpeculativeType,
+            spec_draft_n_max: effectiveSpecDraftNMax,
+            reasoning_budget:
+              targetIsGguf && !resolvedIsDiffusion
+                ? ownConfig.reasoningBudget
+                : -1,
+            reasoning_budget_message:
+              targetIsGguf && !resolvedIsDiffusion
+                ? ownConfig.reasoningBudgetMessage
+                : "",
+            tensor_parallel: effectiveTensorParallel,
+            disable_vision: effectiveDisableVision,
+            force_cancel_active:
+              compareStopDecision?.forceCancelActive ?? false,
+            ...(targetIsGguf
+              ? {
+                  gpu_memory_mode: effectiveGpuMemoryMode,
+                  gpu_layers: effectiveGpuLayers,
+                  n_cpu_moe: effectiveNCpuMoe,
+                  tensor_split: compareLoadKnobs.splitRatio ?? undefined,
+                  gpu_ids: effectiveSelectedGpuIds ?? undefined,
+                  n_parallel: ownConfig.nParallel ?? null,
+                  // Only when this panel has read the stored value: omitted, the load inherits it, which keeps
+                  // CLI-set flags working.
+                  ...(ownConfig.llamaExtraArgs !== undefined
+                    ? // biome-ignore lint/style/useNamingConvention: API schema
+                      { llama_extra_args: ownConfig.llamaExtraArgs ?? [] }
+                    : {}),
+                  ...(ownConfig.nBatch != null
+                    ? { n_batch: ownConfig.nBatch }
+                    : {}),
+                  ...(ownConfig.nUbatch != null
+                    ? { n_ubatch: ownConfig.nUbatch }
+                    : {}),
+                  ...serverTuningLoadPayload(ownConfig),
+                }
+              : {}),
+
+          },
+          {
+            signal: compareSignal,
+            // Token validation and its dialog happen inside loadModel. Expose the
+            // cancellation target only at the actual request boundary, so Stop cannot
+            // evict a resident same-ID model before the load is really in flight.
+            onRequestStart: () => {
+              if (run) compareRunsRef.current.setLoadingModel(run, sel);
+            },
+          },
+        );
+        if (compareSignal) throwIfCompareCancelled(compareSignal);
         // Keep a compare pane's per-model speculative choice load-local: persist the global preference
         // only when it came from global settings.
         if (ownConfig.speculativeType == null) {
@@ -1632,6 +1720,8 @@ export function SharedComposer({
         // choice survives a restart.
         persistGpuMemoryModeOnLoad(resp, effectiveGpuMemoryMode);
         upgradeUnloadedActive = false;
+        // The load is no longer cancellable: Stop must not unload a model that is now resident.
+        if (run) compareRunsRef.current.setLoadingModel(run, null);
         const store = useChatRuntimeStore.getState();
         store.setCheckpoint(
           resp.model,
@@ -1817,9 +1907,11 @@ export function SharedComposer({
       const name1 = model1?.id ? compareModelDisplayName(model1.id) : "";
       const name2 = model2?.id ? compareModelDisplayName(model2.id) : "";
       const toastId = toast("Comparing models…", { duration: Infinity });
-
       setComparing(true);
+      const run = compareRunsRef.current.begin();
+      const compareSignal = run.controller.signal;
       try {
+        throwIfCompareCancelled(compareSignal);
         if (handle1 && model1?.id) {
           toast("Loading Model 1…", {
             id: toastId,
@@ -1827,12 +1919,15 @@ export function SharedComposer({
             duration: Infinity,
           });
           const status1 = await ensureModelLoaded(model1);
+          throwIfCompareCancelled(compareSignal);
+          if (run) compareRunsRef.current.setLoadingModel(run, null);
           releaseCompareModelLifecycle();
           toast("Generating with Model 1…", {
             id: toastId,
             description: `${name1} (${status1})`,
             duration: Infinity,
           });
+          throwIfCompareCancelled(compareSignal);
           const done = handle1.waitForRunEnd();
           handle1.startRun();
           await done;
@@ -1858,35 +1953,70 @@ export function SharedComposer({
             });
           }
           const status2 = await ensureModelLoaded(model2);
+          throwIfCompareCancelled(compareSignal);
+          if (run) compareRunsRef.current.setLoadingModel(run, null);
           releaseCompareModelLifecycle();
           toast("Generating with Model 2…", {
             id: toastId,
             description: `${name2} (${status2})`,
             duration: Infinity,
           });
+          throwIfCompareCancelled(compareSignal);
           const done = handle2.waitForRunEnd();
           handle2.startRun();
           await done;
         }
 
-        compareStepSucceededRef.current = true;
-        toast.success("Compare complete", { id: toastId, duration: 2000 });
-      } catch (err) {
-        compareStepSucceededRef.current = false;
-        resetPromptQueue();
-        // The install already unloaded the previously active model; drop the checkpoint so the UI does
-        // not keep pointing at it.
-        if (upgradeUnloadedActive) {
-          useChatRuntimeStore.getState().clearCheckpoint();
+        if (compareRunsRef.current.owns(run)) {
+          compareStepSucceededRef.current = true;
+          toast.success("Compare complete", { id: toastId, duration: 2000 });
         }
-        toast.error("Compare failed", {
-          id: toastId,
-          description: err instanceof Error ? err.message : "Unknown error",
-          duration: 4000,
-        });
+      } catch (err) {
+        let cleanupError: unknown = null;
+        if (run.cleanup) {
+          try {
+            await run.cleanup;
+          } catch (error) {
+            cleanupError = error;
+          }
+        }
+        if (compareRunsRef.current.owns(run)) {
+          compareStepSucceededRef.current = false;
+          resetPromptQueue();
+          // The install already unloaded the previously active model; drop the checkpoint so the UI does
+          // not keep pointing at it.
+          if (upgradeUnloadedActive) {
+            useChatRuntimeStore.getState().clearCheckpoint();
+          }
+          if (isCompareCancellation(err, compareSignal)) {
+            if (cleanupError) {
+              toast.error("Compare stopped after cancellation failed", {
+                id: toastId,
+                description:
+                  cleanupError instanceof Error
+                    ? cleanupError.message
+                    : "The model load ended, but the backend cancellation failed.",
+                duration: 5000,
+              });
+            } else {
+              toast.info("Compare stopped", { id: toastId, duration: 2000 });
+            }
+          } else {
+            toast.error("Compare failed", {
+              id: toastId,
+              description: err instanceof Error ? err.message : "Unknown error",
+              duration: 4000,
+            });
+          }
+        }
       } finally {
-        releaseCompareModelLifecycle();
-        setComparing(false);
+        // Ownership is not released until the backend reconciliation settles: a
+        // stopped run must not clear shared loading state while its /load is live.
+        if (run.cleanup) await run.cleanup.catch(() => undefined);
+        if (compareRunsRef.current.release(run)) {
+          releaseCompareModelLifecycle();
+          setComparing(false);
+        }
       }
     } else {
       const liveRuntime = useChatRuntimeStore.getState();
@@ -1935,6 +2065,18 @@ export function SharedComposer({
 
   function stop() {
     if (isDictating) stopDictation();
+    const run = compareRunsRef.current.cancelCurrent();
+    if (run) {
+      compareStepSucceededRef.current = false;
+      const loadingModel = run.loadingModel;
+      if (loadingModel && !run.cleanup) {
+        // The fetch abort only releases the browser. /unload is the backend
+        // cancellation path for an in-flight load, so it runs on its own
+        // signal rather than the aborted compare one.
+        const cleanup = cancelCompareBackendLoad(loadingModel.id);
+        compareRunsRef.current.setCleanup(run, cleanup);
+      }
+    }
     for (const handle of Object.values(handlesRef.current)) {
       handle.cancel();
     }

@@ -1069,9 +1069,15 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
     (s) => Object.keys(s.runningByThreadId).length > 0,
   );
   const listedPairRef = useRef<string | null>(null);
+  // Bumped by every compare submission so a lookup that started before it cannot apply.
+  const compareSubmittingRef = useRef(0);
   const [model1, setModel1] = useState<CompareModelSelection>({
     id: globalCheckpoint || "",
-    isLora: false,
+    // The pane's own LoRA identity, from the loaded checkpoint's adapter row. Hardcoding
+    // false made a reselected adapter load as a base model.
+    isLora: loraModels.some(
+      (lora) => lora.id === globalCheckpoint && lora.exportType === "lora",
+    ),
     ggufVariant: globalGgufVariant ?? undefined,
     isDiffusion: globalIsDiffusion,
   });
@@ -1079,6 +1085,27 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
     id: "",
     isLora: false,
   });
+
+  useEffect(() => {
+    // A deferred inventory can settle after this path mounted from a cached catalog.
+    // Retain (or later learn) adapter identity so sequential reloads keep the LoRA
+    // load semantics without remounting the conversation panes.
+    setModel1((current) => {
+      if (
+        current.isLora ||
+        !loraModels.some(
+          (lora) => lora.id === current.id && lora.exportType === "lora",
+        )
+      ) {
+        return current;
+      }
+      return { ...current, isLora: true };
+    });
+  }, [loraModels]);
+
+  const handleComparingChange = useCallback((submitting: boolean) => {
+    if (submitting) compareSubmittingRef.current += 1;
+  }, []);
 
   const handleModelsChange = useCallback(
     (deletedModel?: DeletedModelRef) => {
@@ -1097,10 +1124,14 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
     if (anyRunning && listedPairRef.current === pairId) return;
     listedPairRef.current = pairId;
     let isActive = true;
+    const submittedAt = compareSubmittingRef.current;
     setThreadsSettled(false);
     listStoredChatThreads({ pairId })
       .then((threads) => {
         if (!isActive) return;
+        // A compare submission that started after this lookup would otherwise be
+        // repointed at whichever threads this stale read happens to name.
+        if (compareSubmittingRef.current !== submittedAt) return;
         const pair = resolveComparePaneThreadIds(threads);
         setModel1ThreadId(pair.first);
         setModel2ThreadId(pair.second);
@@ -1139,6 +1170,7 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
             model1={model1}
             model2={model2}
             onExitCompare={onExitCompare}
+            onComparingChange={handleComparingChange}
             model1ThreadId={model1ThreadId}
             model2ThreadId={model2ThreadId}
           />
