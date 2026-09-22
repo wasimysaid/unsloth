@@ -1135,6 +1135,7 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
           if (compareSubmittingRef.current !== submittedAt) return;
           if (readGeneration !== compareHistoryReadRef.current) return;
           const pair = resolveComparePaneThreadIds(threads);
+          setModel1ThreadId(pair.first);
           setModel2ThreadId(pair.second);
         })
         .catch((error) => {
@@ -1187,6 +1188,7 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
         if (compareSubmittingRef.current !== submittedAt) return;
         if (readGeneration !== compareHistoryReadRef.current) return;
         const pair = resolveComparePaneThreadIds(threads);
+        setModel1ThreadId(pair.first);
         setModel2ThreadId(pair.second);
       })
       .catch((error) => {

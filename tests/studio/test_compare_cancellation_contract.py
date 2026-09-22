@@ -597,6 +597,14 @@ def test_history_reads_are_monotonic_across_the_settle_edge():
     assert "if (compareSubmittingRef.current !== submittedAt) return;" in handler
     # Both panes are re-derived only on the winning read.
     assert "const pair = resolveComparePaneThreadIds(threads);" in handler
+    # ...and the winning read is the only thing that may rebind either pane. A
+    # reader that resolved `pair` but set only `pair.second` leaves the left pane
+    # undefined, so it opens a fresh thread and hides the saved comparison. Count
+    # the setters too, not just the resolve: one winning read per claim, both panes.
+    assert page.count("setModel1ThreadId(pair.first);") == 2
+    assert page.count("setModel2ThreadId(pair.second);") == 2
+    assert "setModel1ThreadId(pair.first);" in handler
+    assert "setModel2ThreadId(pair.second);" in handler
 
 
 def test_the_stop_decision_is_gated_on_cancellation_past_approval():
