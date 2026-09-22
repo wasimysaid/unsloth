@@ -259,6 +259,11 @@ const COMPARE_CANCEL_STATUS_POLL_MS = 750;
 /** A status read that never answers must not hold a round forever: a hung backend would
  *  otherwise stop the per-round retry below from ever running again. */
 const COMPARE_CANCEL_STATUS_TIMEOUT_MS = COMPARE_CANCEL_STATUS_POLL_MS * 4;
+/** Deadline for one cancellation request: the `/unload` itself and the post-cancel resync.
+ *  The compare's cleanup lease awaits this reconciliation, so a request that stays pending
+ *  must not hold `modelLoading`/`comparing` open. A timed-out `/unload` is re-issued by the
+ *  next poll round, so aborting a slow one only costs a round. */
+const COMPARE_CANCEL_REQUEST_TIMEOUT_MS = COMPARE_CANCEL_STATUS_POLL_MS * 20;
 /** Consecutive status reads without the cancelled model in `loading` before it counts as settled. */
 const COMPARE_CANCEL_SETTLED_OBSERVATIONS = 3;
 /** Upper bound on the status poll. A load hidden behind another one is never settled, so
@@ -317,6 +322,28 @@ async function readInferenceStatusWithinPollBudget(): Promise<InferenceStatusRes
   }
 }
 
+/** Run one cancellation request under a deadline: a request that never answers aborts and
+ *  fails the wait, which the caller treats like any other failure. Without it a pending
+ *  `/unload` -- or the resync behind it -- would leave the status poll, its retries, and the
+ *  compare's cleanup lease unreachable. */
+async function withCompareCancelDeadline<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  let timer: number | undefined;
+  const expiry = new Promise<never>((_resolve, reject) => {
+    timer = window.setTimeout(() => {
+      controller.abort();
+      reject(new Error("The cancellation request did not answer in time."));
+    }, COMPARE_CANCEL_REQUEST_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([run(controller.signal), expiry]);
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 /** Reconcile an aborted compare `/load` with the backend.
  *
  * Aborting the browser request releases the socket, not the server-side job, so Stop on a
@@ -330,17 +357,25 @@ async function cancelCompareBackendLoad(
   loadRequestId: string | null,
 ): Promise<void> {
   try {
-    await unloadModel({
-      model_path: modelId,
-      // Scoped to this exact attempt: an unscoped unload falls through to the manual
-      // path and can cancel a newer same-model load, or one this client never started.
-      ...(loadRequestId ? { cancel_load_request_id: loadRequestId } : {}),
-    });
+    // Bounded like the poll below, so a request that never answers still reaches it.
+    await withCompareCancelDeadline((signal) =>
+      unloadModel(
+        {
+          model_path: modelId,
+          // Scoped to this exact attempt: an unscoped unload falls through to the manual
+          // path and can cancel a newer same-model load, or one this client never started.
+          ...(loadRequestId ? { cancel_load_request_id: loadRequestId } : {}),
+        },
+        { signal },
+      ),
+    );
     // The replacing /load can already have evicted the previously active model before
     // Stop landed, leaving the client checkpoint naming a runtime the backend no longer
     // has -- a later compare would then take the isAlreadyActive fast path against
     // nothing. Re-derive residency from the server, as the interactive cancel path does.
-    await resyncInferenceStatusAfterServerModelChange().catch(() => undefined);
+    await withCompareCancelDeadline(() =>
+      resyncInferenceStatusAfterServerModelChange(),
+    ).catch(() => undefined);
     return;
   } catch (unloadError) {
     // Only a local selection can be invalidated by cancelling a local load; an external
@@ -364,10 +399,15 @@ async function cancelCompareBackendLoad(
         // delayed load could otherwise settle unseen. Scoped, so it is safe to re-issue.
         // Sequenced before the status await so a status read that hangs cannot postpone it.
         try {
-          await unloadModel({
-            model_path: modelId,
-            cancel_load_request_id: loadRequestId,
-          });
+          await withCompareCancelDeadline((signal) =>
+            unloadModel(
+              {
+                model_path: modelId,
+                cancel_load_request_id: loadRequestId,
+              },
+              { signal },
+            ),
+          );
           retriedCancellation = true;
           break;
         } catch {
@@ -405,7 +445,9 @@ async function cancelCompareBackendLoad(
       // The retry landed: finish like the successful path instead of reporting a failure
       // for a cancellation that took effect. Checked before the timeout throw, which would
       // otherwise fire while an unrelated load keeps the poll unsettled.
-      await resyncInferenceStatusAfterServerModelChange().catch(() => undefined);
+      await withCompareCancelDeadline(() =>
+        resyncInferenceStatusAfterServerModelChange(),
+      ).catch(() => undefined);
       return;
     }
     // Bounded: a backend that keeps reporting an unrelated load is reported as an

@@ -34,8 +34,10 @@ def test_composer_aborts_the_load_and_reconciles_the_backend():
     composer = _read("shared-composer.tsx")
     assert "cancelCompareBackendLoad" in composer
     # The unload is the backend's cancellation path; without it the aborted fetch
-    # leaves the server-side load running.
-    assert "await unloadModel({" in composer
+    # leaves the server-side load running. It runs under a deadline so a pending
+    # request cannot hold the compare's cleanup lease open.
+    assert "await withCompareCancelDeadline((signal) =>" in composer
+    assert "unloadModel(" in composer
     assert "readInferenceStatusWithinPollBudget()" in composer
     assert "COMPARE_CANCEL_SETTLED_OBSERVATIONS" in composer
     assert "status.loading" in composer
@@ -165,7 +167,8 @@ def test_unload_failure_never_settles_against_a_hidden_queued_attempt():
     retry = composer.split("if (loadRequestId) {", 1)[1]
     retry = retry.split("retriedCancellation = true;", 1)[0]
     assert "cancel_load_request_id: loadRequestId," in retry
-    assert "unloadModel({" in retry
+    assert "unloadModel(" in retry
+    assert "withCompareCancelDeadline((signal) =>" in retry
     # The poll is bounded, so an unrelated load cannot hang the run forever.
     assert "pollRounds < COMPARE_CANCEL_MAX_STATUS_POLLS" in composer
 
@@ -372,3 +375,26 @@ def test_a_status_read_that_never_answers_cannot_stall_the_poll():
     # A bounded read that answered nothing settles nothing this round.
     assert "const reported = status" in loop
     assert ": null;" in loop
+
+
+def test_every_cancellation_request_is_bounded():
+    """The unload and its resync must expire, not just the status read.
+
+    The compare's cleanup lease awaits this reconciliation, so a cancellation request that
+    stays pending (rather than rejecting) keeps `modelLoading`/`comparing` open and hides the
+    fallback. Both the initial `/unload`, the per-round retry, and the post-cancel resync
+    therefore run under a deadline that aborts the request.
+    """
+    composer = _read("shared-composer.tsx")
+    cancel = composer.split("async function cancelCompareBackendLoad(", 1)[1]
+    cancel = cancel.split("function newCompareLoadRequestId", 1)[0]
+    # A deadline helper that aborts the request and fails the wait.
+    assert "async function withCompareCancelDeadline<T>(" in composer
+    assert "controller.abort();" in composer.split("async function withCompareCancelDeadline", 1)[1].split("async function cancelCompareBackendLoad", 1)[0]
+    assert "COMPARE_CANCEL_REQUEST_TIMEOUT_MS" in composer
+    # Every cancellation request in the function goes through it, and none is awaited raw.
+    assert "await unloadModel(" not in cancel
+    assert cancel.count("withCompareCancelDeadline((signal) =>") == 2
+    assert cancel.count("withCompareCancelDeadline(() =>") == 2
+    # The resync after a landed cancellation is bounded on both success paths.
+    assert cancel.count("resyncInferenceStatusAfterServerModelChange()") == 2
