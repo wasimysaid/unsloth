@@ -1071,12 +1071,18 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
   const listedPairRef = useRef<string | null>(null);
   // Bumped by every compare submission so a lookup that started before it cannot apply.
   const compareSubmittingRef = useRef(0);
-  // Monotonic generation for the compare path's history reads. Two of them can be in flight at
+  // Monotonic ordering for the compare path's history reads. Two of them can be in flight at
   // once -- the `anyRunning` settle edge and `onComparingChange(false)` both re-list after a
   // compare that generated -- and the submit counter alone admits both, since neither bump
-  // follows the other. The later-started read therefore owns the panes, so an earlier snapshot
-  // that resolves last cannot overwrite it with stale or undefined thread IDs.
+  // follows the other. Each read claims a number when it starts, so a later read outranks an
+  // earlier one and a snapshot that resolves last cannot overwrite it with stale or undefined
+  // thread IDs.
   const compareHistoryReadRef = useRef(0);
+  // The newest claim that actually bound the panes, kept separate from the claim counter so a
+  // newer read that fails its way into the swallowed background-storage catch cannot strand an
+  // older, successful snapshot behind the ordering guard. A request that never rebinds the panes
+  // has nothing to order, so only an applied read moves this marker.
+  const compareHistoryAppliedRef = useRef(0);
   // The settle-edge re-list is owned by its effect; this one is a bare callback, so
   // it needs its own window guard. The parent remounts this path per pair, so this
   // covers an unmount mid-request rather than a pair swap.
@@ -1126,14 +1132,16 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
         return;
       }
       // This lookup is invalidated by a submit that claimed the panes (its own counter) and by
-      // any newer history read, so a snapshot that predates one of those cannot apply.
+      // any read that already applied after it started; a read whose own request failed does
+      // not invalidate it.
       const submittedAt = compareSubmittingRef.current;
       const readGeneration = ++compareHistoryReadRef.current;
       void listStoredChatThreads({ pairId })
         .then((threads) => {
           if (!compareMountedRef.current) return;
           if (compareSubmittingRef.current !== submittedAt) return;
-          if (readGeneration !== compareHistoryReadRef.current) return;
+          if (readGeneration < compareHistoryAppliedRef.current) return;
+          compareHistoryAppliedRef.current = readGeneration;
           const pair = resolveComparePaneThreadIds(threads);
           setModel1ThreadId(pair.first);
           setModel2ThreadId(pair.second);
@@ -1186,7 +1194,8 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
         // repointed at whichever threads this stale read happens to name. The
         // settle edge re-lists, so its own threads still become the targets.
         if (compareSubmittingRef.current !== submittedAt) return;
-        if (readGeneration !== compareHistoryReadRef.current) return;
+        if (readGeneration < compareHistoryAppliedRef.current) return;
+        compareHistoryAppliedRef.current = readGeneration;
         const pair = resolveComparePaneThreadIds(threads);
         setModel1ThreadId(pair.first);
         setModel2ThreadId(pair.second);

@@ -582,17 +582,30 @@ def test_history_reads_are_monotonic_across_the_settle_edge():
     `onComparingChange(false)` both re-listing, and both capture the same submit
     counter, so that guard alone admits both. An earlier snapshot resolving last
     would overwrite the newer pane thread IDs with stale or undefined ones.
+
+    Ordering must be by what actually applied, not by what was requested: a newer
+    read whose request fails into the swallowed background-storage catch never
+    rebinds the panes, and if it had claimed the marker up front the older,
+    successful snapshot would be discarded behind the guard with no later
+    transition left to re-list.
     """
     page = _read("chat-page.tsx")
     assert "const compareHistoryReadRef = useRef(0);" in page
+    assert "const compareHistoryAppliedRef = useRef(0);" in page
     # Claimed by both readers, checked by both handlers. One claim per read: the
     # callback's and the lookup effect's, so exactly two increments.
     assert page.count("const readGeneration = ++compareHistoryReadRef.current;") == 2
-    assert page.count("if (readGeneration !== compareHistoryReadRef.current) return;") == 2
+    # Both readers order by the applied marker and move it only when they apply --
+    # never on the way in, where a failed request would strand the older snapshot.
+    assert page.count(
+        "if (readGeneration < compareHistoryAppliedRef.current) return;"
+    ) == 2
+    assert page.count("compareHistoryAppliedRef.current = readGeneration;") == 2
     handler = page.split("const handleComparingChange = useCallback(", 1)[1]
     handler = handler.split("const handleModelsChange = useCallback(", 1)[0]
     assert "const readGeneration = ++compareHistoryReadRef.current;" in handler
-    assert "if (readGeneration !== compareHistoryReadRef.current) return;" in handler
+    assert "if (readGeneration < compareHistoryAppliedRef.current) return;" in handler
+    assert "compareHistoryAppliedRef.current = readGeneration;" in handler
     # The submit counter stays: a read that predates a claimed run still cannot apply.
     assert "if (compareSubmittingRef.current !== submittedAt) return;" in handler
     # Both panes are re-derived only on the winning read.
