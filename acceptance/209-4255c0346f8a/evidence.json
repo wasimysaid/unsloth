@@ -1,0 +1,81 @@
+{
+  "check": "live-classify",
+  "kind": "live_browser",
+  "proof": "real_runtime",
+  "pin": {
+    "base_sha": "ae3077a09f2dcc7970721f7d06c6022de49ced1f",
+    "head_sha": "4255c0346f8a2db449dfa59a4a6e7586fd33660d",
+    "revision_generation": 3,
+    "comparison": "new_change"
+  },
+  "run_id": "uilive",
+  "drive_attempt": "a2",
+  "scene_sha256": "26df3044c37be4d303292b6db1152cd2d806d7121464683cca471fb6d03ea44b",
+  "scene_path": "/mnt/disks/unslothai/mugi/workbench-v2/t_abfdbc7c409f4fa3374d8ed7ed065daf/ui-scenes/hub_mixed_format_support.py",
+  "plan_path": "/mnt/disks/unslothai/mugi/workbench-v2/t_abfdbc7c409f4fa3374d8ed7ed065daf/validation/classify-ui/plan-live.json",
+  "manifest_path": "/mnt/disks/unslothai/mugi/workbench-v2/t_abfdbc7c409f4fa3374d8ed7ed065daf/validation/classify-ui/runs/uilive/manifest.json",
+  "endpoints": {
+    "before": "http://127.0.0.1:9016 (build ae3077a09f2dcc7970721f7d06c6022de49ced1f)",
+    "after": "http://127.0.0.1:9026 (build 4255c0346f8a2db449dfa59a4a6e7586fd33660d)"
+  },
+  "input_provenance": [
+    {
+      "identity": "Live Hugging Face Hub API tag payloads fetched over the real network during the run for openai-community/gpt2, sentence-transformers/all-MiniLM-L6-v2, Xenova/all-MiniLM-L6-v2, Qdrant/all-MiniLM-L6-v2-onnx",
+      "proof": "real_runtime",
+      "synthetic": false
+    },
+    {
+      "identity": "Real Studio server + Chromium browser driving the rendered Hub inspector for each pinned build (before/after), authenticated per home",
+      "proof": "real_runtime",
+      "synthetic": false
+    }
+  ],
+  "observed": {
+    "openai-community/gpt2": {
+      "kind": "mixed",
+      "hub_tags": ["transformers", "pytorch", "tf", "jax", "tflite", "rust", "onnx", "safetensors"],
+      "unsupported_chip_count": {"before": 1, "after": 0}
+    },
+    "sentence-transformers/all-MiniLM-L6-v2": {
+      "kind": "mixed",
+      "hub_tags": ["sentence-transformers", "pytorch", "tf", "rust", "onnx", "safetensors", "openvino"],
+      "unsupported_chip_count": {"before": 1, "after": 0}
+    },
+    "Xenova/all-MiniLM-L6-v2": {
+      "kind": "onnx_only",
+      "hub_tags": ["transformers.js", "onnx", "bert"],
+      "unsupported_chip_count": {"before": 1, "after": 1}
+    },
+    "Qdrant/all-MiniLM-L6-v2-onnx": {
+      "kind": "onnx_only",
+      "hub_tags": ["transformers", "onnx", "bert"],
+      "unsupported_chip_count": {"before": 1, "after": 1}
+    }
+  },
+  "comparison": {
+    "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_abfdbc7c409f4fa3374d8ed7ed065daf/validation/classify-ui/runs/uilive/comparison-before-after-a2-a2/result.json",
+    "pairs_sha256": [
+      "5fcfd04a18859c9b74fcd3a5ef3198ec6076cf8c6f756b371798fa9732faae09",
+      "1b4fa3785ee0b0f781acfb65634354bf04d88dbe6b376a56317df36b434dabd8",
+      "842538f27b0dee7555d04b47d3722a7c5288ab3ebf6ac3f802d345c2c89bd63d",
+      "55cf784881191d476fc8c450bad34a73b9e201004f6d202b1b825672cf060c77"
+    ],
+    "identical_pairs": [3],
+    "identical_pair_meaning": "pair index 3 is the export-only Qdrant ONNX repository, which stays flagged on both sides -- the negative control that the fix does not over-permit"
+  },
+  "artifacts": [
+    {"path": "validation/classify-ui/runs/uilive/comparison-before-after-a2-a2/pair-00.png", "sha256": "5fcfd04a18859c9b74fcd3a5ef3198ec6076cf8c6f756b371798fa9732faae09", "content_type": "image/png"},
+    {"path": "validation/classify-ui/runs/uilive/comparison-before-after-a2-a2/pair-01.png", "sha256": "1b4fa3785ee0b0f781acfb65634354bf04d88dbe6b376a56317df36b434dabd8", "content_type": "image/png"},
+    {"path": "validation/classify-ui/runs/uilive/comparison-before-after-a2-a2/pair-02.png", "sha256": "842538f27b0dee7555d04b47d3722a7c5288ab3ebf6ac3f802d345c2c89bd63d", "content_type": "image/png"},
+    {"path": "validation/classify-ui/runs/uilive/comparison-before-after-a2-a2/pair-03.png", "sha256": "55cf784881191d476fc8c450bad34a73b9e201004f6d202b1b825672cf060c77", "content_type": "image/png"},
+    {"path": "validation/classify-ui/runs/uilive/variants/before/attempts/a2/captures/current-main_openai-community__gpt2.png", "sha256": "db7920e01b61fa4f767372616b91693788ec4dae444b89ea4210aeacf7305f63", "content_type": "image/png"},
+    {"path": "validation/classify-ui/runs/uilive/variants/after/attempts/a2/captures/replacement_openai-community__gpt2.png", "sha256": "06f10a0a098b2ad59137c0b69cfec15e34a302614039c7b08fa22be0ee5a0b87", "content_type": "image/png"},
+    {"path": "validation/classify-ui/runs/uilive/variants/before/attempts/a2/captures/current-main_sentence-transformers__all-MiniLM-L6-v2.png", "sha256": "bd171e54903e816af4fe66d1b1444aad521e08977fc2072a156ae4d77032ffcd", "content_type": "image/png"},
+    {"path": "validation/classify-ui/runs/uilive/variants/after/attempts/a2/captures/replacement_sentence-transformers__all-MiniLM-L6-v2.png", "sha256": "8a2c367267b7127074167141bd2d256d3f461474c957045eba5042303ab194bb", "content_type": "image/png"},
+    {"path": "validation/classify-ui/runs/uilive/variants/before/attempts/a2/captures/current-main_Xenova__all-MiniLM-L6-v2.png", "sha256": "8f7b8bc79aebc85ee4fe888c638aca6b819e7257f0da08a002997f4b91cdf387", "content_type": "image/png"},
+    {"path": "validation/classify-ui/runs/uilive/variants/after/attempts/a2/captures/replacement_Xenova__all-MiniLM-L6-v2.png", "sha256": "13ffb0b67a8fa5d2adecc2bc069f9b1de192b16f4031d0507d203966d0cb430e", "content_type": "image/png"},
+    {"path": "validation/classify-ui/runs/uilive/variants/before/attempts/a2/captures/current-main_Qdrant__all-MiniLM-L6-v2-onnx.png", "sha256": "1a0bf311f7121050c4c3a084dc6c847f9fa48934215744da7ef5430215bb937d", "content_type": "image/png"},
+    {"path": "validation/classify-ui/runs/uilive/variants/after/attempts/a2/captures/replacement_Qdrant__all-MiniLM-L6-v2-onnx.png", "sha256": "1a0bf311f7121050c4c3a084dc6c847f9fa48934215744da7ef5430215bb937d", "content_type": "image/png"}
+  ],
+  "cleanup": {"browsers": "closed", "servers": "stopped and ports 9016/9026 free", "leases": "none"}
+}
