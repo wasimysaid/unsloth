@@ -1,0 +1,83 @@
+{
+  "task": "vision-ui-main-vs-head",
+  "base_sha": "ae3077a09f2dcc7970721f7d06c6022de49ced1f",
+  "head_sha": "509e1f2cb5a249358e30eeab983f9182ac475323",
+  "compared_against_main": "f5109b58434da3f5cda352f3477eefa3f2670483",
+  "warning_text": "Selected model may not handle earlier images",
+  "vision_repo": {
+    "id": "ggml-org/SmolVLM-256M-Instruct-GGUF",
+    "has_vision": true,
+    "mmproj_on_disk": true
+  },
+  "text_repo": {
+    "id": "unsloth/gemma-3-270m-it-GGUF",
+    "has_vision": false,
+    "mmproj_on_disk": false
+  },
+  "picker": {
+    "head_textonly_badge": false,
+    "head_vision_badge": true,
+    "main_textonly_badge": false,
+    "main_vision_badge": true
+  },
+  "W_vision_to_textonly": {
+    "head_warned": true,
+    "main_warned": false,
+    "head_toast": [
+      "Selected model may not handle earlier images This chat already includes images. Text-only models can ignore them or fail on follow-up replies."
+    ],
+    "main_toast": [],
+    "head_images": 2,
+    "main_images": 2
+  },
+  "V_textonly_to_vision": {
+    "head_warned": false,
+    "main_warned": false
+  },
+  "console_errors": {
+    "head": [],
+    "main": [
+      "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "Failed to load resource: the server responded with a status of 404 (Not Found)"
+    ]
+  },
+  "pairs": [
+    {
+      "scenario": "P",
+      "path": "recon/formal/pairs/P-head-left-main-right.png",
+      "sha256": "b24dc721136cbef3ecbf65e7164ad01549a6b74b95f09bd3faa507438cb9beb6",
+      "head_screenshot": "HEAD-P-picker.png",
+      "head_sha256": "f102c2a054916059af77c29d5d40100c70f895e5849e68e25add0ec9f0f72b20",
+      "main_screenshot": "MAIN-P-picker.png",
+      "main_sha256": "04f2c903c3ab08298fe7c19bfc10a2fb69a0ed8c96eff52cf1a19b390ea0dbb9",
+      "identical": false
+    },
+    {
+      "scenario": "W",
+      "path": "recon/formal/pairs/W-head-left-main-right.png",
+      "sha256": "f7bd70e227630434c5907f84ae01c5f88ec7352c36df25d6996ec5c424a6101b",
+      "head_screenshot": "HEAD-W-textonly-selected.png",
+      "head_sha256": "70f97fe1ba05ba8842c18ea4e61d23a216468a7daa9252248242962d115eda6a",
+      "main_screenshot": "MAIN-W-textonly-selected.png",
+      "main_sha256": "a0622290abe248732882256d3dc7f8dca1de7ed99846dcffa84e1cb61592baac",
+      "identical": false
+    },
+    {
+      "scenario": "V",
+      "path": "recon/formal/pairs/V-head-left-main-right.png",
+      "sha256": "f8e768328b61f8fbdbdb64b3342368fa4ffdfd30e9fff77205c296084cbcf68d",
+      "head_screenshot": "HEAD-V-vision-selected.png",
+      "head_sha256": "1875f3b110ed21f56aaf62805e67f774517fc3197193af3e7f385abd5503a8fe",
+      "main_screenshot": "MAIN-V-vision-selected.png",
+      "main_sha256": "98e49a7c812c4ea1423d887886c58050043e4f63bc055314bc4a106a9d8a0500",
+      "identical": false
+    }
+  ],
+  "conclusion": "head warns for a genuinely text-only GGUF switch and stays silent for the vision repo; main warns in neither direction (missed warning). Matches the PR change in isKnownTextOnlySelection + sole-quant row isVision forwarding.",
+  "not_run": [
+    "live model inference in browser (existing vision-runtime-r2 GGUF/mmproj inference evidence covers runtime)",
+    "narrow 800px viewport for this formal pass"
+  ]
+}
