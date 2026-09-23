@@ -1,0 +1,20 @@
+# SHA-256 manifest for acceptance/205-509e1f2cb5a2 (fork PR #205, head 509e1f2cb5a249358e30eeab983f9182ac475323)
+# sha256<2 spaces>bytes<2 spaces>name
+f102c2a054916059af77c29d5d40100c70f895e5849e68e25add0ec9f0f72b20  83647  HEAD-P-picker.png
+1875f3b110ed21f56aaf62805e67f774517fc3197193af3e7f385abd5503a8fe  60667  HEAD-V-vision-selected.png
+70f97fe1ba05ba8842c18ea4e61d23a216468a7daa9252248242962d115eda6a  70464  HEAD-W-textonly-selected.png
+7b769892bed6ca7fae17fb1e2d6e807f36c7e0c954f3227f8d5117eba38c96bb  2682  HEAD-facts.json
+04f2c903c3ab08298fe7c19bfc10a2fb69a0ed8c96eff52cf1a19b390ea0dbb9  87074  MAIN-P-picker.png
+98e49a7c812c4ea1423d887886c58050043e4f63bc055314bc4a106a9d8a0500  65740  MAIN-V-vision-selected.png
+a0622290abe248732882256d3dc7f8dca1de7ed99846dcffa84e1cb61592baac  64420  MAIN-W-textonly-selected.png
+38329ffe43dc172908b9d51d5bcb5d4d2c6ba806b7af37d8d8be4938d2808e98  2874  MAIN-facts.json
+b24dc721136cbef3ecbf65e7164ad01549a6b74b95f09bd3faa507438cb9beb6  118819  P-head-left-main-right.png
+f8e768328b61f8fbdbdb64b3342368fa4ffdfd30e9fff77205c296084cbcf68d  92016  V-head-left-main-right.png
+f7bd70e227630434c5907f84ae01c5f88ec7352c36df25d6996ec5c424a6101b  105889  W-head-left-main-right.png
+ec9bb7d943615dac364258c26ebc7e35fca5b6c500b02882c960ecb6d7607201  271  new-main-focused-pytest.log
+cc1b9d72c12828335de45c0c999945330e0c2fa88315bf825a17369377656cef  552  new-main-node-contract.log
+fed29f94b12c6eae92d62e9d7a919fec9018871a4e69e3ecce5d19fa5dc73a5a  2176  new-main-relevance.log
+e836cd15a0b57a59e6cf2b89983f02701e8f3a821dcaaf8ad90b9f3f8478473e  21610  runtime-result.json
+83c3a900da0452b6f4d8f05c46b5c077dc6ae2a4b24e36ebcdd7e532884fd2b3  3424  verdict.json
+# notes: all nine PNGs are Chromium captures with IHDR/IDAT/IEND chunks only (no tEXt/iTXt/eXIf metadata) and contain no host or user identity strings.
+# runtime-result.json is the task manifest with host paths substituted (<task-root>, <host-data>, <home>, <user>); its JSON structure and every non-path field are unchanged.

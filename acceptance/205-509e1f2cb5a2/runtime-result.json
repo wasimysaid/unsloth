@@ -15,10 +15,10 @@
     "text-only-negative"
   ],
   "run_id": "v_0b3a6674a5a256bc1ded9641b09d83bc",
-  "plan_file": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/plan.json",
+  "plan_file": "<task-root>/validation/vision-runtime-r2/plan.json",
   "plan_sha256": "4036f7c658444e1a010ff7ab3a744a971cba64b75f9585aef7bb0e33e7e2886b",
   "source": {
-    "worktree": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/worktree",
+    "worktree": "<task-root>/worktree",
     "expected_head_sha": "509e1f2cb5a249358e30eeab983f9182ac475323",
     "actual_head_sha": "509e1f2cb5a249358e30eeab983f9182ac475323",
     "head_sha_matches_plan": true,
@@ -96,7 +96,7 @@
         }
       ],
       "vision": true,
-      "source": "/mnt/disks/unslothai/mugi/models/Qwen3.8-27B-GGUF",
+      "source": "<host-data>/models/Qwen3.8-27B-GGUF",
       "role": "second real vision GGUF; capability probed, no inference (17.5 GB, no GPU free)"
     },
     {
@@ -110,7 +110,7 @@
         }
       ],
       "vision": false,
-      "source": "/mnt/disks/unslothai/mugi/temp/reb-10438-live/weights/",
+      "source": "<host-data>/temp/reb-10438-live/weights/",
       "role": "real text-only negative control"
     }
   ],
@@ -139,7 +139,7 @@
   "stage_results": [
     {
       "stage_id": "runtime",
-      "result_manifest": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/stage.json",
+      "result_manifest": "<task-root>/validation/vision-runtime-r2/stage.json",
       "result_manifest_sha256": "2f83ec0a41272664821bd628754ee6d5d62a18e27d57152aa3e8645406df9793",
       "outcome": "passed"
     }
@@ -263,138 +263,138 @@
   ],
   "artifacts": [
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/artifacts/backend-capability.json",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/artifacts/backend-capability.json",
       "sha256": "a80ef4c768ce7970f45c78ce878ea413026a44698d4f14e8d58007e2cefbfbec",
       "size_bytes": 2865,
       "note": "Real backend output for the staged GGUFs: hub listing + the exact response object of hub.services.models.gguf_variants.get_gguf_variants_answer (the coroutine behind GET /api/models/gguf-variants)."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/artifacts/capability-facts.json",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/artifacts/capability-facts.json",
       "sha256": "5e266dba186e35583bcffdd873ac838a24cb71ead009c81e01e61dccbd7714c2",
       "size_bytes": 2323,
       "note": "Measured capability facts per real weight: listing has_vision, /api/models/list catalog is_vision_model, mmproj_accepts_image for each projector found."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/logs/gate-matrix.log",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/logs/gate-matrix.log",
       "sha256": "83589f429d5866ad10b963e39740c05be166eac5f8650f1253fc2e3098a0d953",
       "size_bytes": 5344,
       "note": "Base/head chat gate comparison over the real facts: pinned base gate expression vs the head's real model-vision-capability.ts. MATRIX_OK measured=6 base_wrong_measured=2 head_wrong=0."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/logs/capability-normalize.log",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/logs/capability-normalize.log",
       "sha256": "d470ca7bb92535784189c781afdf67517f2e00a272ba4f7cd14be496aa25e08f",
       "size_bytes": 783,
       "note": "Real backend payload -> head module: NORMALIZE_OK repos=2. Vision repo does not warn; text-only repo warns."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/logs/live-vision-smolvlm-green.log",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/logs/live-vision-smolvlm-green.log",
       "sha256": "8781ff07b24d10ef28bc936de802d6331ad9d78fc136f65e0aff2bbad119f339",
       "size_bytes": 847,
       "note": "REAL image inference (CPU, build 11125): SmolVLM-256M Q8_0 + mmproj-SmolVLM-256M Q8_0 with green-circle.png -> 'Green'."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/logs/live-vision-smolvlm-red.log",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/logs/live-vision-smolvlm-red.log",
       "sha256": "4bad3f011cbc87b04e05cd1d7db400a1f3314f48a4d7a1f3d5cddbb331a8eeba",
       "size_bytes": 845,
       "note": "REAL image inference (CPU): same vision pair with red-square.png -> 'Red'."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/logs/textonly-control-mtmd-nommproj.log",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/logs/textonly-control-mtmd-nommproj.log",
       "sha256": "351b27f95eea6e6f8316c5d6d5fb114827fe481de96e5e3ffaf293d65724d290",
       "size_bytes": 568,
       "note": "Negative control: the multimodal runner refuses the text-only gemma-3-270m quant with an image and no projector ('Missing --mmproj argument')."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/logs/textonly-control-mtmd-mismatch.log",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/logs/textonly-control-mtmd-mismatch.log",
       "sha256": "c15e3ca67f62f961b43251399ab212b42c89a7a288e4c4b4f8404faa40f47cce",
       "size_bytes": 532,
       "note": "Negative control: text-only gemma-3-270m weight paired with the SmolVLM projector fails with 'mismatch between text model (n_embd = 640) and mmproj (n_embd = 576)'; the capability is a real property of the weight/projector pair, not a filename guess."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/logs/textonly-control-text-prompt.log",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/logs/textonly-control-text-prompt.log",
       "sha256": "4d9bbf1026224f4e1e3d6709d37b63b8aa150b31ad2ed4fae70bbcc12165b29a",
       "size_bytes": 2710,
       "note": "Negative control: the same text-only quant does answer a text-only prompt, so the refusal above is about image input, not a broken model."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/logs/textonly-control-image-prompt.log",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/logs/textonly-control-image-prompt.log",
       "sha256": "8bcc7838efab3fd30c369e73caae49282660fc0ad64f764347a3f5dcc01ea8c7",
       "size_bytes": 33,
       "note": "Negative control: text-only runner rejects --image outright ('invalid argument: --image')."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/artifacts/source/base-chat-page.tsx",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/artifacts/source/base-chat-page.tsx",
       "sha256": "a9232ff9277419f759d29da69a50c7f6cd89cfc853d5f59d0af879e0ff74f968",
       "size_bytes": 166720,
       "note": "`git show ae3077a09:studio/frontend/src/features/chat/chat-page.tsx` \u2013 the pinned base gate source the matrix extracts and executes."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/artifacts/source/base-pickers.tsx",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/artifacts/source/base-pickers.tsx",
       "sha256": "d6c9741ce3de4a6a7feae6d71dd593f624f17eb6753a68993a6992932da0f860",
       "size_bytes": 309383,
       "note": "`git show ae3077a09:studio/frontend/src/features/model-picker/components/model-selector/pickers.tsx` \u2013 pinned base picker; contains zero isVision forwards."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/artifacts/images/green-circle.png",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/artifacts/images/green-circle.png",
       "sha256": "7ed314df63b64af1583d3cb169461d126104c2cfdcb22c664a61baba6c06e135",
       "size_bytes": 3056,
       "note": "Deterministic probe image A (solid green disc)."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/artifacts/images/red-square.png",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/artifacts/images/red-square.png",
       "sha256": "f21120d0d4b6662b7db76bffcaa36b1d7813f7a02f79bcd397c6185bd6ffbcd5",
       "size_bytes": 1445,
       "note": "Deterministic probe image B (solid red square)."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/scripts/backend_capability_check.py",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/scripts/backend_capability_check.py",
       "sha256": "791da2c98f525bec65f7b4d915a362d4b9fbf0a1707afd4194670beebf853983",
       "size_bytes": 3683,
       "note": "Runner for the real backend check."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/scripts/collect_capability_facts.py",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/scripts/collect_capability_facts.py",
       "sha256": "0b8666f9a2219a07c2686882ce4727960dfb7172bd16b167cc56c6bbb332e9e1",
       "size_bytes": 3351,
       "note": "Runner for the measured capability facts."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/scripts/gate_matrix.mjs",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/scripts/gate_matrix.mjs",
       "sha256": "b98fc73f92a7d42fd7bf4a121d5a1dba0167f8188153de6008066354b2720e22",
       "size_bytes": 8644,
       "note": "Base/head gate matrix over real facts."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/scripts/capability_normalize.mjs",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/scripts/capability_normalize.mjs",
       "sha256": "363fad364f2d5a5bfc11dc3b44b4828130ef8b57b89e0b980e2aa4ca90a8a6a7",
       "size_bytes": 2735,
       "note": "Real payload -> head module check."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/scripts/make_images.py",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/scripts/make_images.py",
       "sha256": "584b08e46f34705cbad572b313d128b9f0ef84b1e0ff895eee1336313baf0d10",
       "size_bytes": 1050,
       "note": "Probe image generator."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/models/smolvlm-vision-repo/SmolVLM-256M-Instruct-Q8_0.gguf",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/models/smolvlm-vision-repo/SmolVLM-256M-Instruct-Q8_0.gguf",
       "sha256": "2a31195d3769c0b0fd0a4906201666108834848db768af11de1d2cef7cd35e65",
       "size_bytes": 175054528,
       "note": "Real vision weights (ggml-org/SmolVLM-256M-Instruct-GGUF @ b9e4379657e1450d04d02eec8e345667265b0a00)."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/models/smolvlm-vision-repo/mmproj-SmolVLM-256M-Instruct-Q8_0.gguf",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/models/smolvlm-vision-repo/mmproj-SmolVLM-256M-Instruct-Q8_0.gguf",
       "sha256": "7e943f7c53f0382a6fc41b6ee0c2def63ba4fded9ab8ed039cc9e2ab905e0edd",
       "size_bytes": 103769856,
       "note": "Real projector for the vision weights, same repo revision."
     },
     {
-      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/models/textonly-gemma-repo/gemma-3-270m-it-Q8_0.gguf",
+      "path": "<task-root>/validation/vision-runtime-r2/runtime-work/models/textonly-gemma-repo/gemma-3-270m-it-Q8_0.gguf",
       "sha256": "d156a5159f2f79c1b1d53c7c1cc20f1ff28ab8d00f17a292620aad13399b9698",
       "size_bytes": 291546144,
       "note": "Real text-only quant used as the negative control."
     }
   ],
-  "artifact_manifest": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/artifacts/artifact-sha256.txt",
+  "artifact_manifest": "<task-root>/validation/vision-runtime-r2/runtime-work/artifacts/artifact-sha256.txt",
   "artifact_manifest_sha256": "9097bab9282935e79e8207a0c4dba5057236d894ff6ac7c0f09be8f0669e3ec1"
 }

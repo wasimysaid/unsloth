@@ -1,0 +1,14 @@
+✔ undefined catalog target is not treated as text-only (0.592456ms)
+✔ known vision GGUF suppresses the historical-image warning (0.117331ms)
+✔ known text-only GGUF emits the historical-image warning (0.081962ms)
+✔ unknown GGUF capability does not trust a stale catalog false (0.083301ms)
+✔ missing and malformed GGUF vision metadata remain unknown (0.121553ms)
+✔ known text-only non-GGUF still emits the warning (0.075937ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 115.489576

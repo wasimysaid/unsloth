@@ -1,0 +1,36 @@
+# new-main relevance check: does the #205 patch still apply and pass on upstream main 3ef36472dfe1c367cf448f5b4e7ffe444c2cce37 ?
+# scratch worktree: /mnt/disks/unslothai/mugi/temp/reb205-newmain (detached at 3ef36472d), implementation branch untouched
+$ git apply --3way --check <patch from ae3077a09..509e1f2cb5>
+Applied patch to 'studio/frontend/src/features/chat/chat-page.tsx' cleanly.
+Applied patch to 'studio/frontend/src/features/chat/hooks/use-chat-model-runtime.ts' cleanly.
+Performing three-way merge...
+Applied patch to 'studio/frontend/src/features/chat/utils/model-vision-capability.ts' cleanly.
+Applied patch to 'studio/frontend/src/features/model-picker/components/model-selector/pickers.tsx' cleanly.
+Applied patch to 'studio/frontend/src/features/model-picker/components/model-selector/types.ts' cleanly.
+Performing three-way merge...
+Applied patch to 'tests/studio/model_vision_capability.test.mjs' cleanly.
+Applied patch to 'tests/studio/test_model_picker_contracts.py' cleanly.
+Performing three-way merge...
+Applied patch to 'tests/studio/test_model_vision_capability.py' cleanly.
+EXIT=0 (applies cleanly)
+
+$ grep -n 'hasImage && targetModel?.isVision === false' studio/frontend/src/features/chat/chat-page.tsx
+(absent: new main still has the pre-fix gate, feature not superseded)
+
+$ grep -n 'isKnownTextOnlySelection(' studio/frontend/src/features/chat/chat-page.tsx
+3346:                isKnownTextOnlySelection(
+
+$ grep -n 'pinnedFamilies|pinToTop' (new-main-only changes preserved after apply)
+3587:      pinnedFamilies: catalog
+2
+
+$ git diff --stat HEAD
+ studio/frontend/src/features/chat/chat-page.tsx    |  8 ++-
+ .../features/chat/hooks/use-chat-model-runtime.ts  |  2 +
+ .../features/chat/utils/model-vision-capability.ts | 36 ++++++++++++
+ .../components/model-selector/pickers.tsx          | 57 ++++++++++++++----
+ .../components/model-selector/types.ts             |  2 +
+ tests/studio/model_vision_capability.test.mjs      | 68 ++++++++++++++++++++++
+ tests/studio/test_model_picker_contracts.py        | 27 +++++++++
+ tests/studio/test_model_vision_capability.py       | 43 ++++++++++++++
+ 8 files changed, 231 insertions(+), 12 deletions(-)
