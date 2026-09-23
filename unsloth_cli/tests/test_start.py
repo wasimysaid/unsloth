@@ -7763,6 +7763,74 @@ def test_hub_gguf_files_ignores_prefixed_drafters(monkeypatch):
     ]
 
 
+def test_hub_gguf_files_ignores_imatrices(monkeypatch):
+    # Mirrors hub.utils.gguf.is_imatrix_filename, which the backend drops the same listing with:
+    # unsloth/Qwen3.8-27B-GGUF publishes imatrix_unsloth.gguf beside its weights, and a valid GGUF
+    # container holding calibration statistics reached the variant menu, download and loader as
+    # though it were a model. Anchored at an end of the stem, never a substring, for the same
+    # reason is_mtp_drafter_path documents: Qwen3-Imatrix-Tuned-Q4_K_M.gguf IS the model.
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising = False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising = False)
+    payload = {
+        "siblings": [
+            {"rfilename": "imatrix_unsloth.gguf"},
+            {"rfilename": "imatrix.gguf"},
+            {"rfilename": "quants/imatrix_unsloth.gguf"},
+            {"rfilename": "Qwen3.8-27B-Q4_K_M-imatrix.gguf"},
+            {"rfilename": "Qwen3.8-27B.IMATRIX.GGUF"},
+            # The word inside a longer name is a real model, not a companion.
+            {"rfilename": "Qwen3-Imatrix-Tuned-Q4_K_M.gguf"},
+            {"rfilename": "Qwen3.8-27B-Q4_K_M.gguf"},
+            {"rfilename": "README.md"},
+        ]
+    }
+    monkeypatch.setattr(
+        start.urllib.request,
+        "urlopen",
+        lambda request, timeout: io.BytesIO(json.dumps(payload).encode()),
+    )
+    assert start._hub_gguf_files("unsloth/Qwen3.8-27B-GGUF") == [
+        "Qwen3-Imatrix-Tuned-Q4_K_M.gguf",
+        "Qwen3.8-27B-Q4_K_M.gguf",
+    ]
+
+
+def test_hub_gguf_files_reports_imatrix_only_repo_as_no_weights(monkeypatch):
+    # A repo whose only .gguf is a calibration imatrix has no model to offer, so the caller must
+    # see the same empty list it sees for an mmproj-only repo rather than one "loadable" file.
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising = False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising = False)
+    payload = {"siblings": [{"rfilename": "imatrix_unsloth.gguf"}, {"rfilename": "README.md"}]}
+    monkeypatch.setattr(
+        start.urllib.request,
+        "urlopen",
+        lambda request, timeout: io.BytesIO(json.dumps(payload).encode()),
+    )
+    assert start._hub_gguf_files("unsloth/Qwen3.8-27B-GGUF") == []
+
+
+def test_direct_gguf_is_companion_refuses_imatrices():
+    # Mirrors gguf_variants._direct_gguf_loads, which refuses an imatrix as a clause of its own
+    # return: a path this predicate clears is handed to the agent, and the backend then declines
+    # to load it -- the eviction/transformers-fallback failure the check exists to prevent.
+    for path in (
+        "imatrix_unsloth.gguf",
+        r"C:\models\unsloth\imatrix_unsloth.gguf",
+        "quants/imatrix_unsloth.gguf",
+        "Qwen3.8-27B-Q4_K_M-imatrix.gguf",
+        "Qwen3.8-27B.IMATRIX.GGUF",
+    ):
+        assert start._direct_gguf_is_companion(path) is True
+    for path in (
+        "Qwen3-Imatrix-Tuned-Q4_K_M.gguf",
+        "Qwen3.8-27B-Q4_K_M.gguf",
+        "MTP/gemma-Q8_0-MTP.gguf",
+        "README.md",
+    ):
+        assert start._direct_gguf_is_companion(path) is False
+
+
+
 def test_hub_gguf_files_filters_root_big_endian_only(monkeypatch):
     monkeypatch.delenv("HF_HUB_OFFLINE", raising = False)
     monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising = False)

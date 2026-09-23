@@ -2120,14 +2120,29 @@ _DRAFTER_KINDS = ("mtp", "dspark", "dflash", "eagle3")
 _DRAFTER_DIR_KINDS = ("mtp", "dspark")
 
 
+# Mirrors hub.utils.gguf._IMATRIX_TOKEN_RE; change in lockstep. Anchored at an END of the stem, never a substring, so Qwen3-Imatrix-Tuned-Q4_K_M.gguf stays a model while every published imatrix leads or closes with the word.
+_IMATRIX_TOKEN_RE = re.compile(r"^imatrix(?:[._\-]|$)|[._\-]imatrix$", re.IGNORECASE)
+
+
+def _is_imatrix_name(basename: str) -> bool:
+    """Mirrors hub.utils.gguf.is_imatrix_filename for an already-split name. An imatrix holds activation statistics for llama-quantize, not weights, and llama-server never opens one, so it is not a variant to offer or a file to load directly. The trailing ``.imatrix`` form is unreachable from the callers below, which have already required a ``.gguf`` suffix, and is kept so this stays a drop-in mirror of the canonical rule."""
+    name = basename.lower()
+    stem = name.rsplit(".", 1)[0] if "." in name else name
+    return bool(_IMATRIX_TOKEN_RE.search(stem)) or name.endswith(".imatrix")
+
+
 def _is_auxiliary_gguf(filename: str) -> bool:
-    # Mirrors detect_gguf_model_remote (hub.utils.gguf.is_mtp_drafter_path): projectors, separate-file drafters and big-endian builds are not loadable weights. Drafters match by basename prefix or exact parent dir, never substring, since the kind names double as family names and Qwen3.6-...-DFlash-Q4_K_M.gguf IS the model. Only the root-level trailing -be form is filtered; the fuller quant-aware check would over-reject here.
+    # Mirrors detect_gguf_model_remote (hub.utils.gguf.is_mtp_drafter_path, is_imatrix_filename): projectors, calibration imatrixes, separate-file drafters and big-endian builds are not loadable weights. Drafters match by basename prefix or exact parent dir, never substring, since the kind names double as family names and Qwen3.6-...-DFlash-Q4_K_M.gguf IS the model. Only the root-level trailing -be form is filtered; the fuller quant-aware check would over-reject here.
     p = filename.lower().replace("\\", "/")
     parts = [segment for segment in p.split("/") if segment]
     if not parts:
         return False
     name, parents = parts[-1], parts[:-1]
     if "mmproj" in p:
+        return True
+    if _is_imatrix_name(name):
+        # unsloth/Qwen3.8-27B-GGUF publishes imatrix_unsloth.gguf beside its weights, and the
+        # backend drops it from the same listing (hub/utils/gguf.py, gguf_variants.py:1174).
         return True
     if any(name.startswith(f"{kind}-") for kind in _DRAFTER_KINDS):
         return True
@@ -2138,7 +2153,7 @@ def _is_auxiliary_gguf(filename: str) -> bool:
 
 
 def _direct_gguf_is_companion(path: str) -> bool:
-    """Whether the server refuses this .gguf path as a model in its own right. A strict subset of detect_gguf_model / gguf_variants._direct_gguf_loads: projector and drafter prefixes read off the basename, companion-only folders off the immediate parent, the same context the server reads, so nothing loadable is refused here. Big-endian is left out on purpose: that check needs quant context the CLI cannot mirror."""
+    """Whether the server refuses this .gguf path as a model in its own right. A strict subset of detect_gguf_model / gguf_variants._direct_gguf_loads: projector, imatrix and drafter prefixes read off the basename, companion-only folders off the immediate parent, the same context the server reads, so nothing loadable is refused here. Big-endian is left out on purpose: that check needs quant context the CLI cannot mirror."""
     parts = [segment for segment in path.replace("\\", "/").split("/") if segment]
     if not parts:
         return False
@@ -2147,6 +2162,10 @@ def _direct_gguf_is_companion(path: str) -> bool:
         return False
     # Root-independent refusals only: name prefixes read the basename alone, so they mean the same under any model root. A drafter FOLDER does not.
     if "mmproj" in name:
+        return True
+    if _is_imatrix_name(name):
+        # _direct_gguf_loads refuses an imatrix as a clause of its own return, so leaving it
+        # out here hands the agent a path the backend refuses at load.
         return True
     return any(name.startswith(f"{kind}-") for kind in _DRAFTER_KINDS)
 
