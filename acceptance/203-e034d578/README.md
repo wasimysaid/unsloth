@@ -53,8 +53,11 @@ Both PNGs are 3024x1056 side-by-sides: **left = before (main)**, **right = after
 | --- | --- |
 | `mid-load-swap-refused-vs-accepted.png` | `3e80ccc57c028ea0602cf63269b1aa6d5687808bd2b33a8252709b1cd60ee234` |
 | `final-resident-model-a-vs-model-b.png` | `53b82a93a73094918598421f9f8a8f4403e428b934be82e154eac0ebaa6c42bc` |
-| before facts (`f5109b58`) | `ce3b33a4cf822874399430c5cea46f5d5cc271c18d3b4c139492e619e6cc86b8` |
-| after facts (`e034d578`) | `ffc8ce4af0cb31e55cf521958dbe7b648add79a8b6d5157cdeedf4cbf0b135da` |
+| committed `before-facts.json` (subset of the main-side run) | `43129db44a211af9a0ce5a3e76db2a76a83f34bc18caa09ad6ac5c0778e4f211` |
+| committed `after-facts.json` (subset of the head-side run) | `9c811f8c65b1e93157b3e3743ed389d6fb452cd6160800d86fd3b0de21cc79c8` |
+| committed `comparison-result.json` | `1b35d402dbcb2089c472bc8ab0e403ccf583d6ed8b6e15540e0d079971881494` |
+| full unpublished main-side `result.json` | `ce3b33a4cf822874399430c5cea46f5d5cc271c18d3b4c139492e619e6cc86b8` |
+| full unpublished head-side `result.json` | `ffc8ce4af0cb31e55cf521958dbe7b648add79a8b6d5157cdeedf4cbf0b135da` |
 | scene `swap-scene.py` | `1432ae8c431064e6ea93c30a882fe0f97d4aa4d89576f47d6ae02983cb807c6b` |
 
 `comparison-result.json` records `identical_pairs: []` (no capture pair is byte-identical)
