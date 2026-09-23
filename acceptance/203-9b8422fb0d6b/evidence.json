@@ -1,0 +1,178 @@
+{
+  "schema_version": 1,
+  "task_id": "t_c04a8d3ff1124b84fcacc354cdc2d53d",
+  "assignment_id": "assignment-2026-09-23T13-00-22-644Z_92e2b314-1141-4743-ad5e-527068f81eda",
+  "check_ids": ["live-swap"],
+  "coverage_ids": ["live-swap"],
+  "result": "observed",
+  "pin": {
+    "base_sha": "f5109b58434da3f5cda352f3477eefa3f2670483",
+    "head_sha": "9b8422fb0d6ba65d7d6b983815ecbe5cab15b57c",
+    "comparison": "new_change",
+    "revision_generation": 17,
+    "base_label": "current upstream main tip (origin/main, fetched during this validation)",
+    "head_label": "fork #203 fix-chat-model-load-switching-7405 final head",
+    "head_verified_against_fork_ref": "git ls-remote fork refs/heads/fix-chat-model-load-switching-7405 -> 9b8422fb0d6ba65d7d6b983815ecbe5cab15b57c",
+    "head_verified_against_gh": "gh pr view 203 --repo wasimysaid/unsloth -> headRefOid 9b8422fb0d6ba65d7d6b983815ecbe5cab15b57c, state OPEN, updatedAt 2026-09-23T12:28:37Z",
+    "head_branch_merge_base_with_base": "6eb1b2eec68086d5aea249609ea2cad96e92fe91"
+  },
+  "verdict": {
+    "claim": "On the replacement head, picking model B while model A is still loading replaces the in-flight load so B becomes resident; on upstream main the same pick is refused with 'Another model is already loading' and A stays resident.",
+    "supported": true,
+    "scope": "Live Studio UI, CPU-only, real GGUFs, matched same-scene same-kwargs pair."
+  },
+  "primary_run": {
+    "run_id": "ui-04",
+    "root": "/mnt/disks/unslothai/mugi/workbench-v2/t_c04a8d3ff1124b84fcacc354cdc2d53d/validation/swap-ui/runs/ui-04",
+    "manifest": "manifest.json",
+    "plan": "validation/swap-ui/ui-plan5.json",
+    "scene": "validation/swap-ui/swap-scene.py",
+    "scene_sha256": "1432ae8c431064e6ea93c30a882fe0f97d4aa4d89576f47d6ae02983cb807c6b",
+    "driver": "pr_ui_diff.py drive (attempt a1 on both sides)",
+    "endpoints": {
+      "before": "http://127.0.0.1:9121",
+      "after": "http://127.0.0.1:9122"
+    },
+    "cpu_only_proof": {
+      "overlay": {"CUDA_VISIBLE_DEVICES": "", "UNSLOTH_ALLOW_CPU": "1"},
+      "installer_line": "gpu none (CPU-only) ; installing PyTorch (https://download.pytorch.org/whl/cpu)",
+      "venv_torch": "2.11.0+cpu, torch.cuda.is_available() == False, for both variants",
+      "scene_reported_backend": {"device_backend": "cpu", "python_version": "3.13.12"}
+    },
+    "build_identity": {
+      "before": {
+        "source_sha": "f5109b58434da3f5cda352f3477eefa3f2670483",
+        "worktree_head": "f5109b58434da3f5cda352f3477eefa3f2670483",
+        "frontend_index_html_md5_16": "a422f9838c9c36a4",
+        "build_stamp": {"sha": "f5109b58434da3f5cda352f3477eefa3f2670483", "configuration": "bb0d4f601c1c92fe04a82a0d9bd8be9dfa42d33aa6a8c2c36e63ad2c094eb5cf"}
+      },
+      "after": {
+        "source_sha": "9b8422fb0d6ba65d7d6b983815ecbe5cab15b57c",
+        "worktree_head": "9b8422fb0d6ba65d7d6b983815ecbe5cab15b57c",
+        "frontend_index_html_md5_16": "21a00b435e772c47",
+        "build_stamp": {"sha": "9b8422fb0d6ba65d7d6b983815ecbe5cab15b57c", "configuration": "dbdc61ee7d166c0318ef0e3a011b7fb507c066c9399fce6ec46b0b787f4eda53"}
+      }
+    },
+    "models": {
+      "a": {"path": "/mnt/disks/unslothai/mugi/workbench-v2/t_c04a8d3ff1124b84fcacc354cdc2d53d/models/model-a/gemma-3-270m-it-Q6_K.gguf", "sha256": "9826846190dea7bdd334fb834d5a1d3b8bf95b14a9833fe792e0abbc49b4927f", "bytes": 282975264, "picker_row": "model-a -> Q6_K"},
+      "b": {"path": "/mnt/disks/unslothai/mugi/workbench-v2/t_c04a8d3ff1124b84fcacc354cdc2d53d/models/model-b/gemma-3-270m-it-Q8_0.gguf", "sha256": "d156a5159f2f79c1b1d53c7c1cc20f1ff28ab8d00f17a292620aad13399b9698", "bytes": 291546144, "picker_row": "model-b -> Q8_0"},
+      "discovery": "/api/hub/local returned both rows with source=models_dir; scene asserted both rows present in the picker before any click"
+    },
+    "observations": {
+      "before_main_f5109b58": {
+        "row_a_present": true,
+        "row_b_present": true,
+        "load_in_progress_observed": true,
+        "in_flight_evidence": {"loading": ["model-a"], "loaded": [], "fraction": 0.0},
+        "picked_b_while_a_loading": true,
+        "swap_click_accepted": false,
+        "swap_refusal_matched": true,
+        "refusal_lines": ["Another model is already loading", "Wait for it to finish or cancel it first."],
+        "loading_after_b_click": ["model-a"],
+        "final_resident_model": "/mnt/disks/unslothai/mugi/workbench-v2/t_c04a8d3ff1124b84fcacc354cdc2d53d/models/model-a",
+        "final_loaded": ["model-a"],
+        "final_matches_b": false,
+        "final_matches_a": true,
+        "trigger_text_after_swap": "model-a GGUF \u00b7 Q6_K",
+        "settle_reason": "refusal text seen; 20.0s confirmation window expired without B becoming resident"
+      },
+      "after_replacement_9b8422fb": {
+        "row_a_present": true,
+        "row_b_present": true,
+        "load_in_progress_observed": true,
+        "in_flight_evidence": {"loading": ["model-a"], "loaded": [], "fraction": 0.0},
+        "picked_b_while_a_loading": true,
+        "swap_click_accepted": true,
+        "swap_refusal_matched": false,
+        "refusal_lines": [],
+        "loading_after_b_click": ["model-b"],
+        "final_resident_model": "/mnt/disks/unslothai/mugi/workbench-v2/t_c04a8d3ff1124b84fcacc354cdc2d53d/models/model-b",
+        "final_loaded": ["model-b"],
+        "final_matches_b": true,
+        "final_matches_a": false,
+        "trigger_text_after_swap": "Select model",
+        "ui_transient_text": ["Starting model\u2026 | 0.2 of 0.3 GB in memory | 70% | Cancel", "Stopping model load"],
+        "settle_reason": "model B reported resident"
+      }
+    },
+    "facts_diff_decisive": {
+      "swap_click_accepted": [false, true],
+      "swap_refusal_matched": [true, false],
+      "final_resident_model": [".../models/model-a", ".../models/model-b"],
+      "loading_after_b_click_ms": [["model-a"], ["model-b"]]
+    },
+    "artifacts": {
+      "labelled_pairs": [
+        {"path": "comparison-before-after-a1-a1/pair-00.png", "sha256": "0f952868db37446d7a2b4f0aab17ad9395659334f2901e8f86967a86319e7b8b", "frame": "chat ready + both build UIs"},
+        {"path": "comparison-before-after-a1-a1/pair-01.png", "sha256": "0857f9ce7e53397573012253388ec4cbf3a01a8d5752ce873e71fb7dfd45a9dc", "frame": "picker open, both seeded rows"},
+        {"path": "comparison-before-after-a1-a1/pair-02.png", "sha256": "1aaacba119e3356b9aaaaa9187e09025ad7ec22fde04939c0a1cef38091319b9", "frame": "DECISIVE: after the mid-load B pick, before shows 'Another model is already loading' + model-a GGUF Q6_K; after shows 'Starting model\u2026' progress + 'Stopping model load'"},
+        {"path": "comparison-before-after-a1-a1/pair-03.png", "sha256": "38ca508889aa8575fa21525ada17e18bd291406b749e615d75e2bded35576159", "frame": "settled: before picker row model-a marked Loaded; after row model-b marked Loaded"}
+      ],
+      "before_attempt_a1_result": {"path": "variants/before/attempts/a1/result.json", "sha256": "cf6ddf49ea7fc1b73a10b4f42cc023a5e5a0683d69fe341cbb949286b8e878b9"},
+      "after_attempt_a1_result": {"path": "variants/after/attempts/a1/result.json", "sha256": "c7bcc013b0f22e772ff808826938e9b9c734d5826250c81e80d0241a3b74c955"},
+      "before_facts": {"path": "variants/before/attempts/a1/captures/main_f5109b58_facts.json", "sha256": "528c03c731382ceac5c650c1fa0a44c8cfe67812fb45f53cce99d6dcee8aa07e"},
+      "after_facts": {"path": "variants/after/attempts/a1/captures/replacement_9b8422fb_facts.json", "sha256": "eb6926281747f4d0550b06a1f2521209562cd2b98e6f3dc2e6b6aaa44ca69a01"},
+      "comparison_result": {"path": "comparison-before-after-a1-a1/result.json"},
+      "compare_conclusion": "requires_assertion_review (driver does not adjudicate; identical_pairs = [] so no frame was byte-identical)"
+    }
+  },
+  "supplementary_run": {
+    "probe": "cancel-in-flight-load (validation/swap-ui/cancel-probe.py)",
+    "purpose": "Attempt the failed/cancelled rollback half of the assignment on the same live pinned builds.",
+    "runs": {
+      "before_main_f5109b58": {
+        "facts": "probe/before/main_f5109b58_facts.json",
+        "facts_sha256": "e9220c356447fd13410b1958828b37b9f3152ca6884679a98be663b624043c49",
+        "resident_before": ".../models/model-a",
+        "load_target": "model-b",
+        "load_in_progress_observed": true,
+        "cancel_control_found": true,
+        "cancel_control_matched_by": "Cancel",
+        "cancel_clicked": true,
+        "toast": "Stopped loading model",
+        "load_stopped": true,
+        "final_resident_model": null
+      },
+      "after_replacement_9b8422fb": {
+        "facts": "probe/after/replacement_9b8422fb_facts.json",
+        "facts_sha256": "0708275aa2794578a9825afe4018c49b9af72bb014ec6d4a3a690d18edaacd70",
+        "resident_before": ".../models/model-b",
+        "load_target": "model-a",
+        "load_in_progress_observed": true,
+        "cancel_control_found": true,
+        "cancel_control_matched_by": "Cancel",
+        "cancel_clicked": true,
+        "toast": "Stopping model load",
+        "load_stopped": true,
+        "final_resident_model": null
+      }
+    },
+    "finding": "Backend outcome identical (cancel stops the load; no model resident afterwards). Only the transient toast wording differs ('Stopped loading model' vs 'Stopping model load'). No rollback divergence was demonstrated by this probe.",
+    "coverage": "partial"
+  },
+  "backend_identity_note": {
+    "studio_backend_diff_base_to_head": "(empty) -- no studio/backend file differs between f5109b58 and 9b8422fb",
+    "use_chat_model_runtime_diff_6eb1b2e_to_f5109b58": "(empty)",
+    "implication": "The whole changed surface is studio/frontend chat code, so the historical HTTP-level runtime control (validation/swap-runtime-r2) is backend-identical by construction; the frontend behaviour measured here is the part that actually changed."
+  },
+  "historical_evidence_superseded": {
+    "validation/swap-ui/runs/ui-01": "pinned 541dd1a2 -> fca54f377 (revision_generation 3); its own before side IS the control (refusal reproduced) but the head is stale",
+    "validation/swap-ui/runs/ui": "pinned 6eb1b2e -> ebb0604; builds never completed (no build.json), no attempts",
+    "validation/swap-ui/runs/ui-02": "pinned 6eb1b2e -> 9b8422fb with no CPU overlay; install ran with CUDA torch, build.json absent, no drives",
+    "validation/swap-runtime-r2": "HTTP/ASGI-level live runtime for 6eb1b2e -> ebb0604; superseded for the frontend claim but still valid as the backend-unchanged control",
+    "validation/swap-ui/runs/ui-03": "f5109b58 -> 9b8422fb prepared WITHOUT the CPU overlay (CUDA torch installed); left in place for provenance, not used for evidence"
+  },
+  "limitations": [
+    "The head branch is based on 6eb1b2e, so the base variant carries 11 unrelated upstream-main commits between 6eb1b2e and f5109b58. Those touch studio/frontend styling/sidebar/settings files; studio/frontend/src/features/chat/hooks/use-chat-model-runtime.ts is byte-identical between the two, so the measured refusal path is unaffected, but the pair is not a pure one-commit comparison.",
+    "CPU-only by design: this proves the frontend state machine and the real llama.cpp load/replace flow, not GPU throughput or accelerator-specific behaviour.",
+    "Credential-required / Hub-auth-decline rollback was NOT exercised from the UI. The task's own earlier runtime stage already found the credential gate unreachable for a local GGUF with a placeholder token; this validation did not add a real Hub credential flow, so 'credential state if feasible' is answered as not feasible here.",
+    "The cancel probe measured the cancel path only as far as 'load stopped, nothing resident'; it did not drive the head's compensating reload back to the previously resident model, so the specific rollback-to-A assertion remains covered only by the head's own frontend test suite, not by this live pair.",
+    "The supplementary probe ran against the same two servers used by the primary pair, so both ran after the primary pair's own load activity; each probe re-derived its starting resident model explicitly and recorded it."
+  ],
+  "cleanup": {
+    "servers": "Both owner-supplied foreground serve sessions were terminated; ss shows 9121 and 9122 free; no ui-04 process remains; endpoint.json state 'cleaning' (owner terminated mid-cleanup, port released and process gone)",
+    "browsers": "Every drive reported browsers[].cleanup == 'closed'; the supplementary probe closed its own context; no orphaned chromium belongs to this run (the only remaining playwright chromium tree belongs to another task's port 9112)"
+  },
+  "head_change_required": false,
+  "recorded_at": "2026-09-23T13:30:00+0000"
+}
