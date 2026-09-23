@@ -22,7 +22,7 @@ dX backward kernel
 
 `permute_x` notes:
 - In the forward pass, if we permute X on load, we need to permute on store in the backward pass to restore to original token order
-- the output dX with have shape [NUM_TOKENS * TOPK, K] and we need to perform an additional reduction across topk to accumulate gradients
+- the output dX will have shape [NUM_TOKENS * TOPK, K] and we need to perform an additional reduction across topk to accumulate gradients
 - This is done as a post-processing step in autograd.Function.
 - If not `permute_x`, this postprocessing step should take place outside autograd.Function such that the gradient shape matches the input X shape.
 
