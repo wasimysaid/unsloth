@@ -1,0 +1,1074 @@
+{
+ "artifacts": [
+  {
+   "content_type": "image/png",
+   "path": "<task-root>/validation/swap-ui/runs/ui-06/comparison-before-after-a2-a2/pair-00.png",
+   "sha256": "f17c3f29a5d3477ac4ae3061f1c14643eba8756eee79460b54d10ac89f3ce9c2"
+  },
+  {
+   "content_type": "image/png",
+   "path": "<task-root>/validation/swap-ui/runs/ui-06/comparison-before-after-a2-a2/pair-01.png",
+   "sha256": "677295cc09004036719718bcceb15ab8ed0a857fb31b294dcfb6007b2c2152a4"
+  },
+  {
+   "content_type": "image/png",
+   "path": "<task-root>/validation/swap-ui/runs/ui-06/comparison-before-after-a2-a2/pair-02.png",
+   "sha256": "3e80ccc57c028ea0602cf63269b1aa6d5687808bd2b33a8252709b1cd60ee234"
+  },
+  {
+   "content_type": "image/png",
+   "path": "<task-root>/validation/swap-ui/runs/ui-06/comparison-before-after-a2-a2/pair-03.png",
+   "sha256": "53b82a93a73094918598421f9f8a8f4403e428b934be82e154eac0ebaa6c42bc"
+  }
+ ],
+ "conclusion": "requires_assertion_review",
+ "facts_diff": {
+  "a_in_progress_evidence": [
+   {
+    "active_model": null,
+    "fraction": 0.0,
+    "load_phase": null,
+    "loaded": [],
+    "loading": [
+     "model-a"
+    ],
+    "model_identifier": null,
+    "t_ms": 1790176069916,
+    "tag": "a_load"
+   },
+   {
+    "active_model": null,
+    "fraction": 0.0,
+    "load_phase": null,
+    "loaded": [],
+    "loading": [
+     "model-a"
+    ],
+    "model_identifier": null,
+    "t_ms": 1790174243628,
+    "tag": "a_load"
+   }
+  ],
+  "a_pick": [
+   {
+    "expander_child": "Q6_Kdownloaded | 283MB [a_pick]",
+    "parent_clicked_at_ms": 1790176067829,
+    "pick_done_at_ms": 1790176069880,
+    "picker_open_after_pick": false,
+    "row_label": "model-a",
+    "row_text": "model-a",
+    "t_ms": 1790176067780
+   },
+   {
+    "expander_child": "Q6_Kdownloaded | 283MB [a_pick]",
+    "parent_clicked_at_ms": 1790174241515,
+    "pick_done_at_ms": 1790174243579,
+    "picker_open_after_pick": false,
+    "row_label": "model-a",
+    "row_text": "model-a",
+    "t_ms": 1790174241479
+   }
+  ],
+  "b_pick": [
+   {
+    "expander_child": "Q8_0downloaded | 292MB [b_pick]",
+    "parent_clicked_at_ms": 1790176070140,
+    "pick_done_at_ms": 1790176072172,
+    "picker_open_after_pick": false,
+    "row_label": "model-b",
+    "row_text": "model-b",
+    "t_ms": 1790176070122
+   },
+   {
+    "expander_child": "Q8_0downloaded | 292MB [b_pick]",
+    "parent_clicked_at_ms": 1790174243940,
+    "pick_done_at_ms": 1790174245984,
+    "picker_open_after_pick": false,
+    "row_label": "model-b",
+    "row_text": "model-b",
+    "t_ms": 1790174243903
+   }
+  ],
+  "elapsed_a_selected_to_end_ms": [
+   26758,
+   14210
+  ],
+  "elapsed_in_progress_to_b_click_ms": [
+   2256,
+   2356
+  ],
+  "elapsed_total_ms": [
+   32185,
+   20609
+  ],
+  "error_texts": [
+   [
+    "Another model is already loading | Wait for it to finish or cancel it first.",
+    "model-a loaded",
+    "Drop to add model chip | Review it before loading."
+   ],
+   [
+    "Starting model\u2026 |  | Loading cached model into memory. |  | Cancel",
+    "Stopping model load",
+    "Drop to add model chip | Review it before loading."
+   ]
+  ],
+  "error_texts_after_swap": [
+   [
+    "Another model is already loading | Wait for it to finish or cancel it first.",
+    "model-a loaded",
+    "Drop to add model chip | Review it before loading."
+   ],
+   [
+    "Starting model\u2026 |  | Loading cached model into memory. |  | Cancel",
+    "Stopping model load",
+    "Drop to add model chip | Review it before loading."
+   ]
+  ],
+  "extra_screenshots": [
+   [
+    "<task-root>/validation/swap-ui/runs/ui-06/variants/before/attempts/a2/captures/main_f5109b58_01_both_rows.png"
+   ],
+   [
+    "<task-root>/validation/swap-ui/runs/ui-06/variants/after/attempts/a2/captures/replacement_e034d578_01_both_rows.png"
+   ]
+  ],
+  "facts_json": [
+   "<task-root>/validation/swap-ui/runs/ui-06/variants/before/attempts/a2/captures/main_f5109b58_facts.json",
+   "<task-root>/validation/swap-ui/runs/ui-06/variants/after/attempts/a2/captures/replacement_e034d578_facts.json"
+  ],
+  "final_loaded": [
+   [
+    "model-a"
+   ],
+   [
+    "model-b"
+   ]
+  ],
+  "final_matches_a": [
+   true,
+   false
+  ],
+  "final_matches_b": [
+   false,
+   true
+  ],
+  "final_resident_model": [
+   "<task-root>/models/model-a",
+   "<task-root>/models/model-b"
+  ],
+  "final_status": [
+   {
+    "active_model": "model-a",
+    "fraction": 1.0,
+    "load_phase": "ready",
+    "loaded": [
+     "model-a"
+    ],
+    "loading": [],
+    "model_identifier": "<task-root>/models/model-a",
+    "t_ms": 1790176095381
+   },
+   {
+    "active_model": "model-b",
+    "fraction": 1.0,
+    "load_phase": "ready",
+    "loaded": [
+     "model-b"
+    ],
+    "loading": [],
+    "model_identifier": "<task-root>/models/model-b",
+    "t_ms": 1790174256432
+   }
+  ],
+  "label": [
+   "MAIN-f5109b58",
+   "REPLACEMENT-e034d578"
+  ],
+  "refusal_lines_after_swap": [
+   [
+    "Another model is already loading",
+    "Wait for it to finish or cancel it first."
+   ],
+   []
+  ],
+  "row_a": [
+   {
+    "on_device_tab": true,
+    "row_count": 1,
+    "row_found": true,
+    "row_label": "model-a",
+    "row_selected": false,
+    "row_text": "model-a",
+    "t_ms": 1790176066450
+   },
+   {
+    "on_device_tab": true,
+    "row_count": 1,
+    "row_found": true,
+    "row_label": "model-a",
+    "row_selected": false,
+    "row_text": "model-a",
+    "t_ms": 1790174239979
+   }
+  ],
+  "row_b": [
+   {
+    "on_device_tab": true,
+    "row_count": 1,
+    "row_found": true,
+    "row_label": "model-b",
+    "row_selected": false,
+    "row_text": "model-b",
+    "t_ms": 1790176067197
+   },
+   {
+    "on_device_tab": true,
+    "row_count": 1,
+    "row_found": true,
+    "row_label": "model-b",
+    "row_selected": false,
+    "row_text": "model-b",
+    "t_ms": 1790174240853
+   }
+  ],
+  "screenshots": [
+   [
+    "<task-root>/validation/swap-ui/runs/ui-06/variants/before/attempts/a2/captures/main_f5109b58_00_chat_ready.png",
+    "<task-root>/validation/swap-ui/runs/ui-06/variants/before/attempts/a2/captures/main_f5109b58_02_a_loading.png",
+    "<task-root>/validation/swap-ui/runs/ui-06/variants/before/attempts/a2/captures/main_f5109b58_03_after_swap_click.png",
+    "<task-root>/validation/swap-ui/runs/ui-06/variants/before/attempts/a2/captures/main_f5109b58_04_final.png"
+   ],
+   [
+    "<task-root>/validation/swap-ui/runs/ui-06/variants/after/attempts/a2/captures/replacement_e034d578_00_chat_ready.png",
+    "<task-root>/validation/swap-ui/runs/ui-06/variants/after/attempts/a2/captures/replacement_e034d578_02_a_loading.png",
+    "<task-root>/validation/swap-ui/runs/ui-06/variants/after/attempts/a2/captures/replacement_e034d578_03_after_swap_click.png",
+    "<task-root>/validation/swap-ui/runs/ui-06/variants/after/attempts/a2/captures/replacement_e034d578_04_final.png"
+   ]
+  ],
+  "settle_poll_samples": [
+   39,
+   14
+  ],
+  "settle_reason": [
+   "refusal text seen; 20.0s confirmation window expired without B becoming resident",
+   "model B reported resident"
+  ],
+  "settle_timeline_tail": [
+   [
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176094291,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176094813,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176095333,
+     "tag": "settle"
+    }
+   ],
+   [
+    {
+     "active_model": null,
+     "fraction": 1.0,
+     "load_phase": "mmap",
+     "loaded": [],
+     "loading": [
+      "model-b"
+     ],
+     "model_identifier": null,
+     "t_ms": 1790174255263,
+     "tag": "settle"
+    },
+    {
+     "active_model": null,
+     "fraction": 1.0,
+     "load_phase": "mmap",
+     "loaded": [],
+     "loading": [
+      "model-b"
+     ],
+     "model_identifier": null,
+     "t_ms": 1790174255816,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-b",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-b"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-b",
+     "t_ms": 1790174256402,
+     "tag": "settle"
+    }
+   ]
+  ],
+  "status_before": [
+   {
+    "active_model": null,
+    "fraction": null,
+    "load_phase": null,
+    "loaded": [],
+    "loading": [],
+    "model_identifier": null,
+    "t_ms": 1790176064572
+   },
+   {
+    "active_model": null,
+    "fraction": null,
+    "load_phase": null,
+    "loaded": [],
+    "loading": [],
+    "model_identifier": null,
+    "t_ms": 1790174237369
+   }
+  ],
+  "swap_click_accepted": [
+   false,
+   true
+  ],
+  "swap_refusal_matched": [
+   true,
+   false
+  ],
+  "t_a_in_progress_ms": [
+   1790176069916,
+   1790174243628
+  ],
+  "t_a_selected_ms": [
+   1790176069880,
+   1790174243579
+  ],
+  "t_b_clicked_ms": [
+   1790176072172,
+   1790174245984
+  ],
+  "t_b_picker_open_ms": [
+   1790176070122,
+   1790174243903
+  ],
+  "t_b_resident_ms": [
+   null,
+   1790174256402
+  ],
+  "t_scene_end_ms": [
+   1790176096638,
+   1790174257789
+  ],
+  "t_scene_start_ms": [
+   1790176064453,
+   1790174237180
+  ],
+  "timeline": [
+   [
+    {
+     "active_model": null,
+     "fraction": 0.0,
+     "load_phase": null,
+     "loaded": [],
+     "loading": [
+      "model-a"
+     ],
+     "model_identifier": null,
+     "t_ms": 1790176069916,
+     "tag": "a_load"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176075423,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176076084,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176076600,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176077117,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176077634,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176078152,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176078668,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176079187,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176079703,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176080220,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176080736,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176081253,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176081770,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176082290,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176082810,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176083329,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176083846,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176084376,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176084896,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176085428,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176085954,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176086472,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176086997,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176087520,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176088043,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176088560,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176089078,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176089603,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176090120,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176090637,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176091161,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176091684,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176092204,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176092730,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176093251,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176093771,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176094291,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176094813,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-a",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-a"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-a",
+     "t_ms": 1790176095333,
+     "tag": "settle"
+    }
+   ],
+   [
+    {
+     "active_model": null,
+     "fraction": 0.0,
+     "load_phase": null,
+     "loaded": [],
+     "loading": [
+      "model-a"
+     ],
+     "model_identifier": null,
+     "t_ms": 1790174243628,
+     "tag": "a_load"
+    },
+    {
+     "active_model": null,
+     "fraction": 0.7082,
+     "load_phase": "mmap",
+     "loaded": [],
+     "loading": [
+      "model-b"
+     ],
+     "model_identifier": null,
+     "t_ms": 1790174249197,
+     "tag": "settle"
+    },
+    {
+     "active_model": null,
+     "fraction": 0.8152,
+     "load_phase": "mmap",
+     "loaded": [],
+     "loading": [
+      "model-b"
+     ],
+     "model_identifier": null,
+     "t_ms": 1790174249732,
+     "tag": "settle"
+    },
+    {
+     "active_model": null,
+     "fraction": 0.8432,
+     "load_phase": "mmap",
+     "loaded": [],
+     "loading": [
+      "model-b"
+     ],
+     "model_identifier": null,
+     "t_ms": 1790174250270,
+     "tag": "settle"
+    },
+    {
+     "active_model": null,
+     "fraction": 1.0,
+     "load_phase": "mmap",
+     "loaded": [],
+     "loading": [
+      "model-b"
+     ],
+     "model_identifier": null,
+     "t_ms": 1790174250816,
+     "tag": "settle"
+    },
+    {
+     "active_model": null,
+     "fraction": 1.0,
+     "load_phase": "mmap",
+     "loaded": [],
+     "loading": [
+      "model-b"
+     ],
+     "model_identifier": null,
+     "t_ms": 1790174251388,
+     "tag": "settle"
+    },
+    {
+     "active_model": null,
+     "fraction": 1.0,
+     "load_phase": "mmap",
+     "loaded": [],
+     "loading": [
+      "model-b"
+     ],
+     "model_identifier": null,
+     "t_ms": 1790174251941,
+     "tag": "settle"
+    },
+    {
+     "active_model": null,
+     "fraction": 1.0,
+     "load_phase": "mmap",
+     "loaded": [],
+     "loading": [
+      "model-b"
+     ],
+     "model_identifier": null,
+     "t_ms": 1790174252501,
+     "tag": "settle"
+    },
+    {
+     "active_model": null,
+     "fraction": 1.0,
+     "load_phase": "mmap",
+     "loaded": [],
+     "loading": [
+      "model-b"
+     ],
+     "model_identifier": null,
+     "t_ms": 1790174253079,
+     "tag": "settle"
+    },
+    {
+     "active_model": null,
+     "fraction": 1.0,
+     "load_phase": "mmap",
+     "loaded": [],
+     "loading": [
+      "model-b"
+     ],
+     "model_identifier": null,
+     "t_ms": 1790174253626,
+     "tag": "settle"
+    },
+    {
+     "active_model": null,
+     "fraction": 1.0,
+     "load_phase": "mmap",
+     "loaded": [],
+     "loading": [
+      "model-b"
+     ],
+     "model_identifier": null,
+     "t_ms": 1790174254173,
+     "tag": "settle"
+    },
+    {
+     "active_model": null,
+     "fraction": 1.0,
+     "load_phase": "mmap",
+     "loaded": [],
+     "loading": [
+      "model-b"
+     ],
+     "model_identifier": null,
+     "t_ms": 1790174254719,
+     "tag": "settle"
+    },
+    {
+     "active_model": null,
+     "fraction": 1.0,
+     "load_phase": "mmap",
+     "loaded": [],
+     "loading": [
+      "model-b"
+     ],
+     "model_identifier": null,
+     "t_ms": 1790174255263,
+     "tag": "settle"
+    },
+    {
+     "active_model": null,
+     "fraction": 1.0,
+     "load_phase": "mmap",
+     "loaded": [],
+     "loading": [
+      "model-b"
+     ],
+     "model_identifier": null,
+     "t_ms": 1790174255816,
+     "tag": "settle"
+    },
+    {
+     "active_model": "model-b",
+     "fraction": 1.0,
+     "load_phase": "ready",
+     "loaded": [
+      "model-b"
+     ],
+     "loading": [],
+     "model_identifier": "<task-root>/models/model-b",
+     "t_ms": 1790174256402,
+     "tag": "settle"
+    }
+   ]
+  ],
+  "timeline_samples": [
+   40,
+   15
+  ],
+  "trigger_text_after_swap": [
+   "model-a GGUF \u00b7 Q6_K",
+   "Select model"
+  ]
+ },
+ "identical_pairs": [],
+ "left": "before",
+ "left_attempt": "a2",
+ "right": "after",
+ "right_attempt": "a2",
+ "run_id": "ui-06",
+ "scene_sha256": "1432ae8c431064e6ea93c30a882fe0f97d4aa4d89576f47d6ae02983cb807c6b",
+ "schema_version": 1
+}

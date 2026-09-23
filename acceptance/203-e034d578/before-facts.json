@@ -1,0 +1,87 @@
+{
+ "facts": {
+  "a_pick": {
+   "expander_child": "Q6_Kdownloaded | 283MB [a_pick]",
+   "parent_clicked_at_ms": 1790176067829,
+   "pick_done_at_ms": 1790176069880,
+   "picker_open_after_pick": false,
+   "row_label": "model-a",
+   "row_text": "model-a",
+   "t_ms": 1790176067780
+  },
+  "a_poll_samples": 1,
+  "b_pick": {
+   "expander_child": "Q8_0downloaded | 292MB [b_pick]",
+   "parent_clicked_at_ms": 1790176070140,
+   "pick_done_at_ms": 1790176072172,
+   "picker_open_after_pick": false,
+   "row_label": "model-b",
+   "row_text": "model-b",
+   "t_ms": 1790176070122
+  },
+  "build": {
+   "device_backend": "cpu",
+   "platform": "Linux-6.17.0-1007-aws-x86_64-with-glibc2.39",
+   "python_version": "3.13.12"
+  },
+  "elapsed_in_progress_to_b_click_ms": 2256,
+  "elapsed_total_ms": 32185,
+  "error_texts_after_swap": [
+   "Another model is already loading | Wait for it to finish or cancel it first.",
+   "model-a loaded",
+   "Drop to add model chip | Review it before loading."
+  ],
+  "final_loaded": [
+   "model-a"
+  ],
+  "final_loading": [],
+  "final_matches_a": true,
+  "final_matches_b": false,
+  "final_status": {
+   "active_model": "model-a",
+   "fraction": 1.0,
+   "load_phase": "ready",
+   "loaded": [
+    "model-a"
+   ],
+   "loading": [],
+   "model_identifier": "<task-root>/models/model-a",
+   "t_ms": 1790176095381
+  },
+  "load_in_progress_observed": true,
+  "loading_at_swap_ms": [
+   "model-a"
+  ],
+  "local_models_dir": [
+   {
+    "display_name": "model-b",
+    "id": "<task-root>/models/model-b",
+    "model_format": "gguf",
+    "model_id": null,
+    "size_bytes": 291546144,
+    "source": "models_dir"
+   },
+   {
+    "display_name": "model-a",
+    "id": "<task-root>/models/model-a",
+    "model_format": "gguf",
+    "model_id": null,
+    "size_bytes": 282975264,
+    "source": "models_dir"
+   }
+  ],
+  "refusal_lines_after_swap": [
+   "Another model is already loading",
+   "Wait for it to finish or cancel it first."
+  ],
+  "settle_reason": "refusal text seen; 20.0s confirmation window expired without B becoming resident",
+  "swap_click_accepted": false,
+  "swap_refusal_matched": true,
+  "timeline_samples": 40,
+  "trigger_text_after_swap": "model-a GGUF \u00b7 Q6_K"
+ },
+ "label": "MAIN-f5109b58",
+ "outcome": "observed",
+ "scene_sha256": "1432ae8c431064e6ea93c30a882fe0f97d4aa4d89576f47d6ae02983cb807c6b",
+ "source_sha": "f5109b58434da3f5cda352f3477eefa3f2670483"
+}

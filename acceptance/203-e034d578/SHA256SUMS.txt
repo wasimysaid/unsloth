@@ -1,0 +1,20 @@
+# SHA-256 manifest for the #203 evidence package
+# head e034d5789dad63746b21d98c5d7f80c7e7b27447   base (before control) f5109b58434da3f5cda352f3477eefa3f2670483
+# sha256<2 spaces>bytes<2 spaces>name  -- hashes below are of the files as committed here
+3e80ccc57c028ea0602cf63269b1aa6d5687808bd2b33a8252709b1cd60ee234   88951  mid-load-swap-refused-vs-accepted.png
+53b82a93a73094918598421f9f8a8f4403e428b934be82e154eac0ebaa6c42bc   85053  final-resident-model-a-vs-model-b.png
+1b35d402dbcb2089c472bc8ab0e403ccf583d6ed8b6e15540e0d079971881494   23655  comparison-result.json
+43129db44a211af9a0ce5a3e76db2a76a83f34bc18caa09ad6ac5c0778e4f211    2385  before-facts.json
+9c811f8c65b1e93157b3e3743ed389d6fb452cd6160800d86fd3b0de21cc79c8    2236  after-facts.json
+
+# Provenance of the two fact subsets (hashes of the FULL unpublished result.json each was
+# taken from, so the subset can be traced back to its source):
+#   before (main f5109b58)  full result.json sha256 ce3b33a4cf822874399430c5cea46f5d5cc271c18d3b4c139492e619e6cc86b8
+#   after  (head e034d578)  full result.json sha256 ffc8ce4af0cb31e55cf521958dbe7b648add79a8b6d5157cdeedf4cbf0b135da
+#   scene  swap-scene.py    sha256 1432ae8c431064e6ea93c30a882fe0f97d4aa4d89576f47d6ae02983cb807c6b (identical both sides)
+#
+# notes: both PNGs are Chromium captures with IHDR/IDAT/IEND chunks only (no tEXt/iTXt/eXIf
+#        metadata) and contain no host or user identity strings.
+#        before-facts.json / after-facts.json / comparison-result.json are sanitized copies:
+#        absolute host paths are replaced with <task-root> and <home>. No other field was
+#        altered and no fact value was edited.
