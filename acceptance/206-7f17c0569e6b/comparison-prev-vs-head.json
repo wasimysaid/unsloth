@@ -1,0 +1,2187 @@
+{
+  "artifacts": [
+    {
+      "content_type": "image/png",
+      "file": "pair-00.png",
+      "sha256": "59c1c578fcb009c289fb27cc98b21bbfdb0dcb67c31f82480b7357b82c18b1d5"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-01.png",
+      "sha256": "c02c06294c0babc389c0299bb214e70acc88d098378ecbe02174d680bdc34751"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-02.png",
+      "sha256": "72cc4d652fa11470169fb29c1200b226d146a0044ff5147a47b40ee88b224280"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-03.png",
+      "sha256": "67629621dbc591ddc75a057f96330ae050a12259dc99f19f320f1e9e97d8f945"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-04.png",
+      "sha256": "df07b2fea8418e1aa99938f0f4182213d89a6d80ce18f3e04d788869a7a3b730"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-05.png",
+      "sha256": "da7d925f7668bf86b0e4ffd6acb7d88018da4e64a370198c1bf482bba0790b15"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-06.png",
+      "sha256": "da7d925f7668bf86b0e4ffd6acb7d88018da4e64a370198c1bf482bba0790b15"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-07.png",
+      "sha256": "89759b04c35bfcc876d1518dff6e6526c2bd1e3e8ad0b3e4b26b379bb404e6b9"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-08.png",
+      "sha256": "1949c6f749fea34a3ff2ff0781e40cb17da0a20986c9cab0b3a8d30e0eda4481"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-09.png",
+      "sha256": "f4fb2e8380ebf68a6fde260cab0586ea6e48517df510014d5f2cd3db81bdc146"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-10.png",
+      "sha256": "e18cb52e40979676c66f42272779d9a7d0f9ec0c25326484339c2978621706c3"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-11.png",
+      "sha256": "4460e1d8165f1f69059c36aa3ed4438cada3842226ba2058f3c6a6795e6ab6a5"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-12.png",
+      "sha256": "8fbb40abdc484739211f4c8bc38c8f47f01e83004f6afa710ce160767f4feda3"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-13.png",
+      "sha256": "d78ef5a0674c87fe32f0ff3cdcd265e77f9ec4e8c91eea775b9193c9f674d12f"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-14.png",
+      "sha256": "d78ef5a0674c87fe32f0ff3cdcd265e77f9ec4e8c91eea775b9193c9f674d12f"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-15.png",
+      "sha256": "6ec618f829c899666eb88fc2f0b0a3bbd02d1f8240d57e906b4bb30e1069b0ab"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-16.png",
+      "sha256": "9a858545c9ad8e6b490fba5668fc0d55dc1cad8eaf63590cd1fc2af9619656d1"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-17.png",
+      "sha256": "95b1771cef7f5429777d29ad1f7655a6bf8d26dc8d154e164b44def4405bc4f2"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-18.png",
+      "sha256": "c6e4f660a69db847baea2ff9a23adc807bc23f6809fdb9b2ece81dfccdfb189f"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-19.png",
+      "sha256": "b3ac4ac56715b890d6255e339da1ef2e4e3e500533b9b128c25cd3b4b9ca0fdf"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-20.png",
+      "sha256": "b3ac4ac56715b890d6255e339da1ef2e4e3e500533b9b128c25cd3b4b9ca0fdf"
+    },
+    {
+      "content_type": "image/png",
+      "file": "pair-21.png",
+      "sha256": "679606406d701efc5ee9077eb4d2f1c563432cd3f577b19938c78e9963c95de5"
+    }
+  ],
+  "conclusion": "requires_assertion_review",
+  "facts_diff": {
+    "drags": [
+      {
+        "font20-netzero": {
+          "away": [
+            873.6875,
+            588.828125
+          ],
+          "start": [
+            933.6875,
+            588.828125
+          ]
+        },
+        "netzero": {
+          "away": [
+            892.0,
+            641.0625
+          ],
+          "start": [
+            952.0,
+            641.0625
+          ]
+        },
+        "savedx-docked": {
+          "away": [
+            892.0,
+            641.0625
+          ],
+          "start": [
+            952.0,
+            641.0625
+          ]
+        },
+        "savedx-fullwidth": {
+          "away": [
+            832.0,
+            641.0625
+          ],
+          "start": [
+            952.0,
+            641.0625
+          ]
+        }
+      },
+      {
+        "font20-netzero": {
+          "away": [
+            873.6875,
+            664.09375
+          ],
+          "start": [
+            933.6875,
+            664.09375
+          ]
+        },
+        "netzero": {
+          "away": [
+            892.0,
+            641.0625
+          ],
+          "start": [
+            952.0,
+            641.0625
+          ]
+        },
+        "savedx-docked": {
+          "away": [
+            892.0,
+            641.0625
+          ],
+          "start": [
+            952.0,
+            641.0625
+          ]
+        },
+        "savedx-fullwidth": {
+          "away": [
+            1092.0,
+            641.0625
+          ],
+          "start": [
+            1212.0,
+            641.0625
+          ]
+        }
+      }
+    ],
+    "label": [
+      "SUPERSEDED-CANDIDATE-e55c9b58",
+      "FINAL-HEAD-7f17c056"
+    ],
+    "states": [
+      {
+        "font20-closed": {
+          "ariaHidden": null,
+          "containerRight": "21.3333px",
+          "containerStyle": "z-index: 9101; right: 21.3333px;",
+          "grip": {
+            "bottom": 598.15625,
+            "height": 18.65625,
+            "right": 1204.34375,
+            "width": 29.3125,
+            "x": 1175.03125,
+            "y": 579.5
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 778.671875,
+            "height": 222.84375,
+            "right": 1258.671875,
+            "width": 341.328125,
+            "x": 917.34375,
+            "y": 555.828125
+          },
+          "monitorOffsetInContainer": {
+            "left": 896.016,
+            "top": 534.5
+          },
+          "monitorStyle": "opacity: 1; left: 896.016px; top: 534.5px; min-width: 341.328px; min-height: 222.844px; max-width: 341.328px; max-height: 222.844px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 0,
+            "x": 1280,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": "20",
+          "uiFontScale": "1.25",
+          "uiSpaceScale": "calc(1.25 / .9375)"
+        },
+        "font20-netzero-away-held": {
+          "ariaHidden": null,
+          "containerRight": "277.333px",
+          "containerStyle": "z-index: 9101; right: 277.333px;",
+          "grip": {
+            "bottom": 598.15625,
+            "height": 18.65625,
+            "right": 888.34375,
+            "width": 29.3125,
+            "x": 859.03125,
+            "y": 579.5
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 778.671875,
+            "height": 222.84375,
+            "right": 942.671875,
+            "width": 341.328125,
+            "x": 601.34375,
+            "y": 555.828125
+          },
+          "monitorOffsetInContainer": {
+            "left": 580.016,
+            "top": 534.5
+          },
+          "monitorStyle": "opacity: 1; left: 640.016px; top: 534.5px; min-width: 341.328px; min-height: 222.844px; max-width: 341.328px; max-height: 222.844px; transform: translate3d(-60px, 0px, 0px);",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": "20",
+          "uiFontScale": "1.25",
+          "uiSpaceScale": "calc(1.25 / .9375)"
+        },
+        "font20-netzero-back-held": {
+          "ariaHidden": null,
+          "containerRight": "277.333px",
+          "containerStyle": "z-index: 9101; right: 277.333px;",
+          "grip": {
+            "bottom": 598.15625,
+            "height": 18.65625,
+            "right": 948.34375,
+            "width": 29.3125,
+            "x": 919.03125,
+            "y": 579.5
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 778.671875,
+            "height": 222.84375,
+            "right": 1002.671875,
+            "width": 341.328125,
+            "x": 661.34375,
+            "y": 555.828125
+          },
+          "monitorOffsetInContainer": {
+            "left": 640.016,
+            "top": 534.5
+          },
+          "monitorStyle": "opacity: 1; left: 640.016px; top: 534.5px; min-width: 341.328px; min-height: 222.844px; max-width: 341.328px; max-height: 222.844px; transform: translate3d(0px, 0px, 0px);",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": "20",
+          "uiFontScale": "1.25",
+          "uiSpaceScale": "calc(1.25 / .9375)"
+        },
+        "font20-netzero-released": {
+          "ariaHidden": null,
+          "containerRight": "277.333px",
+          "containerStyle": "z-index: 9101; right: 277.333px;",
+          "grip": {
+            "bottom": 598.15625,
+            "height": 18.65625,
+            "right": 948.34375,
+            "width": 29.3125,
+            "x": 919.03125,
+            "y": 579.5
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 778.671875,
+            "height": 222.84375,
+            "right": 1002.671875,
+            "width": 341.328125,
+            "x": 661.34375,
+            "y": 555.828125
+          },
+          "monitorOffsetInContainer": {
+            "left": 640.016,
+            "top": 534.5
+          },
+          "monitorStyle": "opacity: 1; left: 640.016px; top: 534.5px; min-width: 341.328px; min-height: 222.844px; max-width: 341.328px; max-height: 222.844px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": "20",
+          "uiFontScale": "1.25",
+          "uiSpaceScale": "calc(1.25 / .9375)"
+        },
+        "font20-open": {
+          "ariaHidden": null,
+          "containerRight": "277.333px",
+          "containerStyle": "z-index: 9101; right: 277.333px;",
+          "grip": {
+            "bottom": 598.15625,
+            "height": 18.65625,
+            "right": 948.34375,
+            "width": 29.3125,
+            "x": 919.03125,
+            "y": 579.5
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 778.671875,
+            "height": 222.84375,
+            "right": 1002.671875,
+            "width": 341.328125,
+            "x": 661.34375,
+            "y": 555.828125
+          },
+          "monitorOffsetInContainer": {
+            "left": 640.016,
+            "top": 534.5
+          },
+          "monitorStyle": "opacity: 1; left: 640.016px; top: 534.5px; min-width: 341.328px; min-height: 222.844px; max-width: 341.328px; max-height: 222.844px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": "20",
+          "uiFontScale": "1.25",
+          "uiSpaceScale": "calc(1.25 / .9375)"
+        },
+        "font20-undocked": {
+          "ariaHidden": null,
+          "containerRight": "21.3333px",
+          "containerStyle": "z-index: 9101; right: 21.3333px;",
+          "grip": {
+            "bottom": 598.15625,
+            "height": 18.65625,
+            "right": 948.34375,
+            "width": 29.3125,
+            "x": 919.03125,
+            "y": 579.5
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 778.671875,
+            "height": 222.84375,
+            "right": 1002.671875,
+            "width": 341.328125,
+            "x": 661.34375,
+            "y": 555.828125
+          },
+          "monitorOffsetInContainer": {
+            "left": 640.016,
+            "top": 534.5
+          },
+          "monitorStyle": "opacity: 1; left: 640.016px; top: 534.5px; min-width: 341.328px; min-height: 222.844px; max-width: 597.328px; max-height: 222.844px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 0,
+            "x": 1280,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": "20",
+          "uiFontScale": "1.25",
+          "uiSpaceScale": "calc(1.25 / .9375)"
+        },
+        "narrow-open": {
+          "ariaHidden": "true",
+          "containerRight": "16px",
+          "containerStyle": "z-index: 9101; right: 16px;",
+          "grip": {
+            "bottom": 704.53125,
+            "height": 14,
+            "right": 663,
+            "width": 22,
+            "x": 641,
+            "y": 690.53125
+          },
+          "gripVisible": false,
+          "innerHeight": 800,
+          "innerWidth": 720,
+          "monitor": {
+            "bottom": 784,
+            "height": 111.46875,
+            "right": 704,
+            "width": 256,
+            "x": 448,
+            "y": 672.53125
+          },
+          "monitorOffsetInContainer": {
+            "left": 432,
+            "top": 656.531
+          },
+          "monitorStyle": "opacity: 1; left: 432px; top: 656.531px; min-width: 256px; min-height: 111.469px; max-width: 256px; max-height: 111.469px;",
+          "monitorVisible": false,
+          "overlap": null,
+          "panel": null,
+          "panelStyle": null,
+          "panelVisible": false,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "netzero-away-held": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 903,
+            "width": 22,
+            "x": 881,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 944,
+            "width": 256,
+            "x": 688,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 672,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px; transform: translate3d(-60px, 0px, 0px);",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "netzero-back-held": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px; transform: translate3d(0px, 0px, 0px);",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "netzero-released": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "netzero-undocked": {
+          "ariaHidden": null,
+          "containerRight": "16px",
+          "containerStyle": "z-index: 9101; right: 16px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 516px; max-height: 167.938px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 0,
+            "x": 1280,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "savedx-docked": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "savedx-docked-away-held": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 903,
+            "width": 22,
+            "x": 881,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 944,
+            "width": 256,
+            "x": 688,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 672,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px; transform: translate3d(-60px, 0px, 0px);",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "savedx-docked-back-held": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px; transform: translate3d(0px, 0px, 0px);",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "savedx-docked-released": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "savedx-fullwidth-away-held": {
+          "ariaHidden": null,
+          "containerRight": "16px",
+          "containerStyle": "z-index: 9101; right: 16px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 843,
+            "width": 22,
+            "x": 821,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 884,
+            "width": 256,
+            "x": 628,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 612,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 516px; max-height: 167.938px; transform: translate3d(-120px, 0px, 0px);",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 0,
+            "x": 1280,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "savedx-fullwidth-back-held": {
+          "ariaHidden": null,
+          "containerRight": "16px",
+          "containerStyle": "z-index: 9101; right: 16px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 516px; max-height: 167.938px; transform: translate3d(0px, 0px, 0px);",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 0,
+            "x": 1280,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "savedx-fullwidth-released": {
+          "ariaHidden": null,
+          "containerRight": "16px",
+          "containerStyle": "z-index: 9101; right: 16px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 516px; max-height: 167.938px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 0,
+            "x": 1280,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "savedx-undocked": {
+          "ariaHidden": null,
+          "containerRight": "16px",
+          "containerStyle": "z-index: 9101; right: 16px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 516px; max-height: 167.938px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 0,
+            "x": 1280,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "wide-closed": {
+          "ariaHidden": null,
+          "containerRight": "16px",
+          "containerStyle": "z-index: 9101; right: 16px;",
+          "grip": {
+            "bottom": 704.53125,
+            "height": 14,
+            "right": 1223,
+            "width": 22,
+            "x": 1201,
+            "y": 690.53125
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 111.46875,
+            "right": 1264,
+            "width": 256,
+            "x": 1008,
+            "y": 672.53125
+          },
+          "monitorOffsetInContainer": {
+            "left": 992,
+            "top": 656.531
+          },
+          "monitorStyle": "opacity: 1; left: 992px; top: 656.531px; min-width: 256px; min-height: 111.469px; max-width: 256px; max-height: 111.469px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 0,
+            "x": 1280,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "wide-open": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 704.53125,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 690.53125
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 111.46875,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 672.53125
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 656.531
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 656.531px; min-width: 256px; min-height: 111.469px; max-width: 256px; max-height: 111.469px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "wide-restored": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        }
+      },
+      {
+        "font20-closed": {
+          "ariaHidden": null,
+          "containerRight": "21.3333px",
+          "containerStyle": "z-index: 9101; right: 21.3333px;",
+          "grip": {
+            "bottom": 673.421875,
+            "height": 18.65625,
+            "right": 1204.34375,
+            "width": 29.3125,
+            "x": 1175.03125,
+            "y": 654.765625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 778.671875,
+            "height": 147.578125,
+            "right": 1258.671875,
+            "width": 341.328125,
+            "x": 917.34375,
+            "y": 631.09375
+          },
+          "monitorOffsetInContainer": {
+            "left": 896.016,
+            "top": 609.766
+          },
+          "monitorStyle": "opacity: 1; left: 896.016px; top: 609.766px; min-width: 341.328px; min-height: 147.578px; max-width: 341.328px; max-height: 147.578px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 0,
+            "x": 1280,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": "20",
+          "uiFontScale": "1.25",
+          "uiSpaceScale": "calc(1.25 / .9375)"
+        },
+        "font20-netzero-away-held": {
+          "ariaHidden": null,
+          "containerRight": "277.333px",
+          "containerStyle": "z-index: 9101; right: 277.333px;",
+          "grip": {
+            "bottom": 673.421875,
+            "height": 18.65625,
+            "right": 888.34375,
+            "width": 29.3125,
+            "x": 859.03125,
+            "y": 654.765625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 778.671875,
+            "height": 147.578125,
+            "right": 942.671875,
+            "width": 341.328125,
+            "x": 601.34375,
+            "y": 631.09375
+          },
+          "monitorOffsetInContainer": {
+            "left": 580.016,
+            "top": 609.766
+          },
+          "monitorStyle": "opacity: 1; left: 640.016px; top: 609.766px; min-width: 341.328px; min-height: 147.578px; max-width: 341.328px; max-height: 147.578px; transform: translate3d(-60px, 0px, 0px);",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": "20",
+          "uiFontScale": "1.25",
+          "uiSpaceScale": "calc(1.25 / .9375)"
+        },
+        "font20-netzero-back-held": {
+          "ariaHidden": null,
+          "containerRight": "277.333px",
+          "containerStyle": "z-index: 9101; right: 277.333px;",
+          "grip": {
+            "bottom": 673.421875,
+            "height": 18.65625,
+            "right": 948.34375,
+            "width": 29.3125,
+            "x": 919.03125,
+            "y": 654.765625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 778.671875,
+            "height": 147.578125,
+            "right": 1002.671875,
+            "width": 341.328125,
+            "x": 661.34375,
+            "y": 631.09375
+          },
+          "monitorOffsetInContainer": {
+            "left": 640.016,
+            "top": 609.766
+          },
+          "monitorStyle": "opacity: 1; left: 640.016px; top: 609.766px; min-width: 341.328px; min-height: 147.578px; max-width: 341.328px; max-height: 147.578px; transform: translate3d(0px, 0px, 0px);",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": "20",
+          "uiFontScale": "1.25",
+          "uiSpaceScale": "calc(1.25 / .9375)"
+        },
+        "font20-netzero-released": {
+          "ariaHidden": null,
+          "containerRight": "277.333px",
+          "containerStyle": "z-index: 9101; right: 277.333px;",
+          "grip": {
+            "bottom": 673.421875,
+            "height": 18.65625,
+            "right": 948.34375,
+            "width": 29.3125,
+            "x": 919.03125,
+            "y": 654.765625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 778.671875,
+            "height": 147.578125,
+            "right": 1002.671875,
+            "width": 341.328125,
+            "x": 661.34375,
+            "y": 631.09375
+          },
+          "monitorOffsetInContainer": {
+            "left": 640.016,
+            "top": 609.766
+          },
+          "monitorStyle": "opacity: 1; left: 640.016px; top: 609.766px; min-width: 341.328px; min-height: 147.578px; max-width: 341.328px; max-height: 147.578px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": "20",
+          "uiFontScale": "1.25",
+          "uiSpaceScale": "calc(1.25 / .9375)"
+        },
+        "font20-open": {
+          "ariaHidden": null,
+          "containerRight": "277.333px",
+          "containerStyle": "z-index: 9101; right: 277.333px;",
+          "grip": {
+            "bottom": 673.421875,
+            "height": 18.65625,
+            "right": 948.34375,
+            "width": 29.3125,
+            "x": 919.03125,
+            "y": 654.765625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 778.671875,
+            "height": 147.578125,
+            "right": 1002.671875,
+            "width": 341.328125,
+            "x": 661.34375,
+            "y": 631.09375
+          },
+          "monitorOffsetInContainer": {
+            "left": 640.016,
+            "top": 609.766
+          },
+          "monitorStyle": "opacity: 1; left: 640.016px; top: 609.766px; min-width: 341.328px; min-height: 147.578px; max-width: 341.328px; max-height: 147.578px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": "20",
+          "uiFontScale": "1.25",
+          "uiSpaceScale": "calc(1.25 / .9375)"
+        },
+        "font20-undocked": {
+          "ariaHidden": null,
+          "containerRight": "21.3333px",
+          "containerStyle": "z-index: 9101; right: 21.3333px;",
+          "grip": {
+            "bottom": 673.421875,
+            "height": 18.65625,
+            "right": 1204.34375,
+            "width": 29.3125,
+            "x": 1175.03125,
+            "y": 654.765625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 778.671875,
+            "height": 147.578125,
+            "right": 1258.671875,
+            "width": 341.328125,
+            "x": 917.34375,
+            "y": 631.09375
+          },
+          "monitorOffsetInContainer": {
+            "left": 896.016,
+            "top": 609.766
+          },
+          "monitorStyle": "opacity: 1; left: 896.016px; top: 609.766px; min-width: 341.328px; min-height: 147.578px; max-width: 341.328px; max-height: 147.578px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 0,
+            "x": 1280,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": "20",
+          "uiFontScale": "1.25",
+          "uiSpaceScale": "calc(1.25 / .9375)"
+        },
+        "narrow-open": {
+          "ariaHidden": "true",
+          "containerRight": "16px",
+          "containerStyle": "z-index: 9101; right: 16px;",
+          "grip": {
+            "bottom": 704.53125,
+            "height": 14,
+            "right": 663,
+            "width": 22,
+            "x": 641,
+            "y": 690.53125
+          },
+          "gripVisible": false,
+          "innerHeight": 800,
+          "innerWidth": 720,
+          "monitor": {
+            "bottom": 784,
+            "height": 111.46875,
+            "right": 704,
+            "width": 256,
+            "x": 448,
+            "y": 672.53125
+          },
+          "monitorOffsetInContainer": {
+            "left": 432,
+            "top": 656.531
+          },
+          "monitorStyle": "opacity: 1; left: 432px; top: 656.531px; min-width: 256px; min-height: 111.469px; max-width: 256px; max-height: 111.469px;",
+          "monitorVisible": false,
+          "overlap": null,
+          "panel": null,
+          "panelStyle": null,
+          "panelVisible": false,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "netzero-away-held": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 903,
+            "width": 22,
+            "x": 881,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 944,
+            "width": 256,
+            "x": 688,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 672,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px; transform: translate3d(-60px, 0px, 0px);",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "netzero-back-held": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px; transform: translate3d(0px, 0px, 0px);",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "netzero-released": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "netzero-undocked": {
+          "ariaHidden": null,
+          "containerRight": "16px",
+          "containerStyle": "z-index: 9101; right: 16px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 1223,
+            "width": 22,
+            "x": 1201,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1264,
+            "width": 256,
+            "x": 1008,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 992,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 992px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 0,
+            "x": 1280,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "savedx-docked": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "savedx-docked-away-held": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 903,
+            "width": 22,
+            "x": 881,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 944,
+            "width": 256,
+            "x": 688,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 672,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px; transform: translate3d(-60px, 0px, 0px);",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "savedx-docked-back-held": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px; transform: translate3d(0px, 0px, 0px);",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "savedx-docked-released": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "savedx-fullwidth-away-held": {
+          "ariaHidden": null,
+          "containerRight": "16px",
+          "containerStyle": "z-index: 9101; right: 16px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 1103,
+            "width": 22,
+            "x": 1081,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1144,
+            "width": 256,
+            "x": 888,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 872,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 992px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px; transform: translate3d(-120px, 0px, 0px);",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 0,
+            "x": 1280,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "savedx-fullwidth-back-held": {
+          "ariaHidden": null,
+          "containerRight": "16px",
+          "containerStyle": "z-index: 9101; right: 16px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 1223,
+            "width": 22,
+            "x": 1201,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1264,
+            "width": 256,
+            "x": 1008,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 992,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 992px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px; transform: translate3d(0px, 0px, 0px);",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 0,
+            "x": 1280,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "savedx-fullwidth-released": {
+          "ariaHidden": null,
+          "containerRight": "16px",
+          "containerStyle": "z-index: 9101; right: 16px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 1223,
+            "width": 22,
+            "x": 1201,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1264,
+            "width": 256,
+            "x": 1008,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 992,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 992px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 0,
+            "x": 1280,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "savedx-undocked": {
+          "ariaHidden": null,
+          "containerRight": "16px",
+          "containerStyle": "z-index: 9101; right: 16px;",
+          "grip": {
+            "bottom": 648.0625,
+            "height": 14,
+            "right": 1223,
+            "width": 22,
+            "x": 1201,
+            "y": 634.0625
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 167.9375,
+            "right": 1264,
+            "width": 256,
+            "x": 1008,
+            "y": 616.0625
+          },
+          "monitorOffsetInContainer": {
+            "left": 992,
+            "top": 600.063
+          },
+          "monitorStyle": "opacity: 1; left: 992px; top: 600.062px; min-width: 256px; min-height: 167.938px; max-width: 256px; max-height: 167.938px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 0,
+            "x": 1280,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "wide-closed": {
+          "ariaHidden": null,
+          "containerRight": "16px",
+          "containerStyle": "z-index: 9101; right: 16px;",
+          "grip": {
+            "bottom": 704.53125,
+            "height": 14,
+            "right": 1223,
+            "width": 22,
+            "x": 1201,
+            "y": 690.53125
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 111.46875,
+            "right": 1264,
+            "width": 256,
+            "x": 1008,
+            "y": 672.53125
+          },
+          "monitorOffsetInContainer": {
+            "left": 992,
+            "top": 656.531
+          },
+          "monitorStyle": "opacity: 1; left: 992px; top: 656.531px; min-width: 256px; min-height: 111.469px; max-width: 256px; max-height: 111.469px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 0,
+            "x": 1280,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "wide-open": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 704.53125,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 690.53125
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 111.46875,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 672.53125
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 656.531
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 656.531px; min-width: 256px; min-height: 111.469px; max-width: 256px; max-height: 111.469px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        },
+        "wide-restored": {
+          "ariaHidden": null,
+          "containerRight": "276px",
+          "containerStyle": "z-index: 9101; right: 276px;",
+          "grip": {
+            "bottom": 704.53125,
+            "height": 14,
+            "right": 963,
+            "width": 22,
+            "x": 941,
+            "y": 690.53125
+          },
+          "gripVisible": true,
+          "innerHeight": 800,
+          "innerWidth": 1280,
+          "monitor": {
+            "bottom": 784,
+            "height": 111.46875,
+            "right": 1004,
+            "width": 256,
+            "x": 748,
+            "y": 672.53125
+          },
+          "monitorOffsetInContainer": {
+            "left": 732,
+            "top": 656.531
+          },
+          "monitorStyle": "opacity: 1; left: 732px; top: 656.531px; min-width: 256px; min-height: 111.469px; max-width: 256px; max-height: 111.469px;",
+          "monitorVisible": true,
+          "overlap": 0,
+          "panel": {
+            "bottom": 800,
+            "height": 800,
+            "right": 1280,
+            "width": 272,
+            "x": 1008,
+            "y": 0
+          },
+          "panelStyle": "--chat-settings-width: 272px; height: calc(100% - var(--studio-custom-titlebar-height, 0px)); margin-top: var(--studio-custom-titlebar-height, 0px);",
+          "panelVisible": true,
+          "resizeHandle": null,
+          "uiFontAttribute": null,
+          "uiFontScale": ".9375",
+          "uiSpaceScale": "calc(.9375 / .9375)"
+        }
+      }
+    ]
+  },
+  "identical_pairs": [],
+  "left": "prev",
+  "left_attempt": "r2",
+  "right": "after",
+  "right_attempt": "r2",
+  "run_id": "final-7f17",
+  "scene_sha256": "fd1fc6364d30411c54aba8cc79c9edd56cc1953861b5ad8ca289d4360bae64ee",
+  "schema_version": 1
+}

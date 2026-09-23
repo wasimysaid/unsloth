@@ -1,0 +1,139 @@
+{
+  "cleanup": {
+    "browsers": "closed (recorded per drive)",
+    "endpoints": "all three endpoint.json reached state=stopped",
+    "listeners": "no listener on 9161/9162/9163",
+    "pids": "no PID from the run remained in /proc",
+    "worktrees": "all three variant worktrees left with 0 dirty tracked files"
+  },
+  "coverage_ids": [
+    "dock-main-vs-head-r1",
+    "dock-font20-scaled-inset",
+    "dock-netzero-drag-release"
+  ],
+  "execution": {
+    "all_variants": {
+      "browser": "closed",
+      "outcome": "observed",
+      "scene_conclusion": "completed"
+    },
+    "attempt": "r2",
+    "captures_per_variant": 22,
+    "kind": "real authenticated Studio (3 source builds) + real Chromium via Playwright API, headless",
+    "model_load": "none required (system-info resource panel only)",
+    "ports": {
+      "after": 9163,
+      "before": 9161,
+      "prev": 9162
+    }
+  },
+  "findings": {
+    "font20_open": {
+      "head_container_right": "277.333px",
+      "head_monitor_right": 1002.67,
+      "head_monitor_x": 661.34,
+      "head_overlap_px": 0,
+      "main_overlap_px": 250.672,
+      "rest_inset_px": 21.3333,
+      "scale": "calc(1.25 / .9375) = 1.3333"
+    },
+    "narrow_720_open": {
+      "both_aria_hidden": "true",
+      "head_grip_visible": false,
+      "head_monitor_visible": false,
+      "main_grip_visible": true,
+      "main_monitor_visible": true
+    },
+    "netzero_dock_drag": {
+      "head": {
+        "font20": {
+          "released_x": 661.34,
+          "returned_to_right_anchor": true,
+          "undocked_right": 1258.67,
+          "undocked_x": 917.34
+        },
+        "released_x": 748,
+        "returned_to_right_anchor": true,
+        "undocked_right": 1264,
+        "undocked_x": 1008
+      },
+      "prev": {
+        "font20": {
+          "released_x": 661.34,
+          "returned_to_right_anchor": false,
+          "undocked_x": 661.34
+        },
+        "released_x": 748,
+        "returned_to_right_anchor": false,
+        "undocked_right": 1004,
+        "undocked_x": 748
+      }
+    },
+    "wide_1280_open": {
+      "head_container_right": "276px",
+      "head_monitor_x": 748,
+      "head_overlap_px": 0,
+      "main_container_right": "16px",
+      "main_monitor_x": 1008,
+      "main_overlap_px": 256,
+      "panel_width": 272,
+      "panel_x": 1008
+    },
+    "wide_closed_pair_0_identical": true
+  },
+  "images": [
+    {
+      "bytes": 93709,
+      "content_type": "image/png",
+      "file": "before-after-font20-open.png",
+      "sha256": "4d183c1ba509554bc26c6832e7834bcdf25864d348b77d054d4931aea6ebeb2e"
+    },
+    {
+      "bytes": 54966,
+      "content_type": "image/png",
+      "file": "before-after-narrow-720-sheet.png",
+      "sha256": "1db259039c3bf672a9d446157a57ac01ee84459cd136ee3c68c430e85e1bffff"
+    },
+    {
+      "bytes": 93339,
+      "content_type": "image/png",
+      "file": "before-after-run-settings-open.png",
+      "sha256": "2095dce93c12982a7c69e1dd2426433a62e6918940641b50fc5f5d496372086d"
+    },
+    {
+      "bytes": 70107,
+      "content_type": "image/png",
+      "file": "prev-after-netzero-undocked.png",
+      "sha256": "1949c6f749fea34a3ff2ff0781e40cb17da0a20986c9cab0b3a8d30e0eda4481"
+    }
+  ],
+  "limitations": [
+    "The saved-full-width-X-survives-a-later-docked-net-zero-drag sub-step degenerated to a second at-anchor drag (no non-anchor X committed yet); supporting only. The decisive first-ever case is covered.",
+    "Monitor height varies between runs (system-info rows arrive at different times: 111.47 -> 167.94 -> 222.84px); horizontal geometry and the bottom-anchored inset are stable.",
+    "The Run settings <aside> stays mounted at zero width when closed, so close_panel waits on measured width, not detachment. Evidence is from corrective attempt r2.",
+    "The comparison tool conclusion field reports requires_assertion_review; findings were read from recorded geometry and the images.",
+    "System-info RAM/VRAM values are live host readings and differ between variants; they are not a controlled input."
+  ],
+  "pins": {
+    "before_control_main": "f5109b58434da3f5cda352f3477eefa3f2670483",
+    "branch": "mimir/rebuild-6993-monitor-dock",
+    "fork_pr": "wasimysaid/unsloth#206",
+    "head": "7f17c0569e6b446ca9dbf68d02e931cc6149eb88",
+    "head_is_ancestor_of_upstream_main": false,
+    "pr_merge_base": "316e1912db4e82dda4aa44b3eadec5b12d52fb4c",
+    "superseded_candidate": "e55c9b58018032330fb678fe55c1676d6761bbe6",
+    "upstream_main_at_collection": "3ef36472dfe1c367cf448f5b4e7ffe444c2cce37",
+    "verification": "git ls-remote fork refs/heads/mimir/rebuild-6993-monitor-dock and gh pr view 206 --json headRefOid both returned 7f17c0569e6b446ca9dbf68d02e931cc6149eb88; each variant worktree HEAD re-read as the build SHA"
+  },
+  "scene": {
+    "file": "scene-7f17.py",
+    "sha256": "fd1fc6364d30411c54aba8cc79c9edd56cc1953861b5ad8ca289d4360bae64ee",
+    "shared_by_variants": [
+      "before",
+      "prev",
+      "after"
+    ]
+  },
+  "schema_version": 1,
+  "supersedes": "acceptance/206-44029cd63c5d/ (earlier intermediate head 44029cd63)"
+}
