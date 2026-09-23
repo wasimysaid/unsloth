@@ -1,0 +1,70 @@
+{
+  "variant": "HEAD",
+  "base_url": "http://127.0.0.1:9112",
+  "vision_repo": "ggml-org/SmolVLM-256M-Instruct-GGUF",
+  "text_repo": "unsloth/gemma-3-270m-it-GGUF",
+  "warning_text": "may not handle earlier images",
+  "build_sha": "509e1f2cb5a249358e30eeab983f9182ac475323",
+  "api_cached_gguf_repos": [
+    "ggml-org/SmolVLM-256M-Instruct-GGUF",
+    "unsloth/gemma-3-270m-it-GGUF"
+  ],
+  "api_has_vision": {
+    "ggml-org/SmolVLM-256M-Instruct-GGUF": true,
+    "unsloth/gemma-3-270m-it-GGUF": false
+  },
+  "picker": {
+    "thread_id": "formal-HEAD-inv-1790173720282",
+    "rows": [
+      {
+        "i": 0,
+        "text": "gemma-3-270m-it-GGUF Q8_0 292MB",
+        "visionBadge": false
+      },
+      {
+        "i": 1,
+        "text": "ggml-org / SmolVLM-256M-Instruct-GGUF",
+        "visionBadge": true
+      }
+    ],
+    "textonly_row_has_vision_badge": false,
+    "vision_row_has_vision_badge": true,
+    "screenshot": "HEAD-P-picker.png",
+    "screenshot_sha256": "f102c2a054916059af77c29d5d40100c70f895e5849e68e25add0ec9f0f72b20"
+  },
+  "W_vision_to_textonly": {
+    "thread_id": "formal-HEAD-W-1790173747978",
+    "seeded_model_id": "ggml-org/SmolVLM-256M-Instruct-GGUF",
+    "server_thread_model_id": "ggml-org/SmolVLM-256M-Instruct-GGUF",
+    "target_row": "gemma-3-270m-it-GGUF",
+    "loaded_trigger": "gemma-3-270m-it-GGUF\nGGUF \u00b7 Q8_0",
+    "repo_row_click": "gemma-3-270m-it-GGUF Q8_0 292MB",
+    "images_in_thread": 2,
+    "final_trigger": "gemma-3-270m-it-GGUF\nGGUF \u00b7 Q8_0",
+    "warning_text_seen_in_dom": [],
+    "warning_toast": [
+      "Selected model may not handle earlier images This chat already includes images. Text-only models can ignore them or fail on follow-up replies."
+    ],
+    "body_has_warning": true,
+    "warning_observed": true,
+    "screenshot": "HEAD-W-textonly-selected.png",
+    "screenshot_sha256": "70f97fe1ba05ba8842c18ea4e61d23a216468a7daa9252248242962d115eda6a"
+  },
+  "V_textonly_to_vision": {
+    "thread_id": "formal-HEAD-V-1790173781597",
+    "seeded_model_id": "unsloth/gemma-3-270m-it-GGUF",
+    "server_thread_model_id": "unsloth/gemma-3-270m-it-GGUF",
+    "target_row": "SmolVLM-256M-Instruct-GGUF",
+    "loaded_trigger": "gemma-3-270m-it-GGUF\nGGUF \u00b7 Q8_0",
+    "repo_row_click": "ggml-org / SmolVLM-256M-Instruct-GGUF",
+    "images_in_thread": 2,
+    "final_trigger": "SmolVLM-256M-Instruct-GGUF\nGGUF \u00b7 Q8_0",
+    "warning_text_seen_in_dom": [],
+    "warning_toast": [],
+    "body_has_warning": false,
+    "warning_observed": false,
+    "screenshot": "HEAD-V-vision-selected.png",
+    "screenshot_sha256": "1875f3b110ed21f56aaf62805e67f774517fc3197193af3e7f385abd5503a8fe"
+  },
+  "console_errors": []
+}
