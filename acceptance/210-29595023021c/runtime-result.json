@@ -1,0 +1,752 @@
+{
+ "schema_note": "Stage and result manifests follow the loader-stage plan's own schema: pin, check_ids, coverage ids and per-coverage verdicts with evidence, per-arm variants for base and head, inputs split into real_runtime and synthetic, artifact SHA-256 hashes, and explicit limitations. The loader stage is the only declared stage and is also the final stage, so result.json carries the same observations and does not erase the earlier plan-only state of validation/live-loader/.",
+ "schema_version": 1,
+ "pin": {
+  "base_sha": "ae3077a09f2dcc7970721f7d06c6022de49ced1f",
+  "head_sha": "29595023021c1f1d6bc6b1e75307301a34bd0cd6",
+  "comparison": "new_change",
+  "revision_generation": 17
+ },
+ "requirements_version": 2,
+ "check_ids": [
+  "live-env"
+ ],
+ "coverage_ids": [
+  "live-loader-cuda13-soname",
+  "live-loader-system-precedence",
+  "live-loader-ldconfig-unavailable"
+ ],
+ "final_stage": "loader",
+ "outcome": "reproduced",
+ "status": "passed",
+ "observation": "Ten real dynamic-loader arms were executed twice, once against the pinned head 29595023021c1f1d6bc6b1e75307301a34bd0cd6 and once against the pinned base ae3077a09f2dcc7970721f7d06c6022de49ced1f, for both launchers (llama-server and whisper-server). In every arm the product's own child-env builder produced the environment, a real process was spawned with it and its environment was read back from that child's /proc/<pid>/environ, and CUDA resolution was performed by the real glibc loader /lib64/ld-linux-x86-64.so.2 running a compiled ELF whose NEEDED entries are the exact SONAMEs libcudart.so.13 and libcublas.so.13. The vendored cudart/cublas files are byte-identical copies of the host toolkit's CUDA 13 payloads (sha256 matched), and each arm's resolved object path was read back from the loader child's own /proc/<pid>/maps.\n\nHEAD: on the unpatched host (ldconfig readable, its cache naming a system CUDA 13) both launchers withheld the vendored dir and the child mapped the system /usr/local/cuda-13.1 payloads. With the cache unreadable (real RLIMIT_NPROC=0 blocked exec) both launchers appended the vendored dir last and the child mapped both CUDA objects from the vendored dir (rc 0); the same binary with the appended dir removed failed rc 127. The exact-SONAME vendored shape loads when forced (rc 0), and the payload-only shape (fully-versioned filenames, no SONAME entry) fails rc 127 while the helper refuses that dir. In the synthetic arch-dir sub-arms, an unreadable cache with the arch dir populated yielded 'already provides' and a withhold, while the same dir emptied yielded 'not provided', an append, and a vendored resolution.\n\nBASE: it never appends any vendored dir in any arm, so every unreadable-cache arm fails rc 127 for both launchers, while its host-default and system-precedence arms do resolve the system objects. The base/head difference is therefore exactly the append the change introduces, with the withhold behaviour preserved.",
+ "stages": [
+  {
+   "id": "loader",
+   "manifest": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/stage.json",
+   "status": "passed",
+   "outcome": "reproduced",
+   "coverage": {
+    "live-loader-cuda13-soname": {
+     "verdict": "passed",
+     "claim": "A real process reading a NEEDED-name-only ELF resolves libcudart.so.13 / libcublas.so.13 from the vendored dir when, and only when, the product appended it, and the vendored shape's exact-SONAME entries are genuinely usable bytes.",
+     "evidence": {
+      "head_llama_ldconfig_unavailable": "product appended the dir last; the loader mapped both objects from it (rc 0)",
+      "head_whisper_ldconfig_unavailable": "same, through the whisper launcher",
+      "head_vendored_dir_forced_llama_and_whisper": "loading the arm-workspace vendored dir by hand succeeds (rc 0)",
+      "head_binary_dir_only_llama_and_whisper": "without the appended dir the same binary fails (rc 127), so the resolution is attributable",
+      "payload_only_llama_and_whisper": "the payload-filename-only shape fails (rc 127) and the helper refuses it",
+      "base_ldconfig_unavailable_llama_and_whisper": "base never appends, so the same binary fails (rc 127): the negative control"
+     }
+    },
+    "live-loader-system-precedence": {
+     "verdict": "passed",
+     "claim": "A loader-resolved system runtime is never displaced: the vendored dir is withheld whenever the loader can already answer, including when only the architecture-specific default dir holds the pair and no ldconfig can be read.",
+     "evidence": {
+      "head_host_default_llama_and_whisper": "real host cache names CUDA 13; product withheld; child mapped the system /usr/local/cuda-13.1 objects",
+      "head_system_precedence_host": "same withhold, child mapped the system objects",
+      "head_synthetic_multiarch_populated": "no readable cache and the arch dir holds the pair: helper answered 'already provides' and the product withheld",
+      "head_synthetic_multiarch_emptied": "same shape with the dir emptied: helper answered 'not provided', product appended, and the loader used the vendored dir",
+      "base_host_default_llama_and_whisper": "base also resolves the system objects, so the guard's premise is real"
+     }
+    },
+    "live-loader-ldconfig-unavailable": {
+     "verdict": "passed",
+     "claim": "When ldconfig genuinely cannot be executed, the product still decides correctly and does not fall back to a patched or assumed answer.",
+     "evidence": {
+      "enforcement": "RLIMIT_NPROC = 0 made every exec() fail with BlockingIOError [Errno 11] /sbin/ldconfig during env construction",
+      "head_diagnostics": "cache_readable=False, loader_resolves_sonames=False, loader_already_provides_13=False under the enforced limit, and the product then appended the vendored dir",
+      "resolved_live": "the loader (cache inhibited to match an unavailable ldconfig) mapped both objects from the vendored dir",
+      "binary_only_negative": "the same binary with no appended dir fails (rc 127)"
+     }
+    }
+   },
+   "limitations": [
+    "No real /usr/local/lib/ollama tree exists on this host (and a root-owned system dir cannot be populated here), so the vendored tree was synthesized inside the arm workspace and reached through the module's documented roots override. The bytes placed in it are the host's real CUDA 13 payloads (sha256-identical to /usr/local/cuda/targets/x86_64-linux/lib), not stubs.",
+    "The arch-specific default dir used by the two synthetic precedence sub-arms is a workspace directory assigned to the loader default-dir list; the real /lib/x86_64-linux-gnu and /usr/lib/x86_64-linux-gnu dirs were only detected and reported, not modified. The sub-arm result is a synthetic-shape limitation of this host, and the real-host cache arm is reported separately and unpatched.",
+    "The ldconfig-unavailable arms enforce RLIMIT_NPROC=0 to make exec genuinely fail; that is a real kernel-enforced failure, but it is not a disk-image with ldconfig removed. To keep the loader run consistent with that state, those arms pass ld.so's own documented --inhibit-cache.",
+    "The restricted loader arms deliberately search only the binary dir plus whatever the product appended, modelling a host with no system CUDA toolkit; the unrestricted host arms use the child's real LD_LIBRARY_PATH unchanged. Neither arm ran a GPU kernel: no CUDA workload, no device initialization and no inference was executed, so nothing here attests to GPU runtime behaviour.",
+    "A 'pass' here means the change does what it claims for the loader search path and the child environment; it is not a substitute for the GPU/model-run validation a real Ollama CUDA 13 host could provide.",
+    "The prior stage directory validation/live-loader/ contains only plan.json (no stage or result manifest was produced by that attempt), so there are no earlier stage observations to merge; nothing was erased.",
+    "The per-arm working trees under scratch/<revision>/ (the synthesized install and vendored trees and the CUDA payload copies) were removed after their evidence JSON was copied into artifacts/. The recorded library paths therefore name directories that no longer exist; the arm JSON under artifacts/ holds the full observations, and the harness plus the consumer source are preserved so the run can be reproduced."
+   ]
+  }
+ ],
+ "checks": {
+  "live-env": {
+   "status": "passed",
+   "outcome": "reproduced",
+   "coverage": {
+    "live-loader-cuda13-soname": {
+     "verdict": "passed"
+    },
+    "live-loader-system-precedence": {
+     "verdict": "passed"
+    },
+    "live-loader-ldconfig-unavailable": {
+     "verdict": "passed"
+    }
+   },
+   "variants": {
+    "head": {
+     "head_sha": "29595023021c1f1d6bc6b1e75307301a34bd0cd6",
+     "arms": [
+      {
+       "arm": "llama-server-host-default",
+       "launcher": "llama-server",
+       "child_env_read_from": "/proc/2551656/environ",
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/head/install/llama.cpp/build/bin",
+        "/usr/local/cuda/lib64",
+        "/usr/local/cuda/targets/x86_64-linux/lib",
+        "/usr/local/cuda-12.8/lib64",
+        "/usr/local/cuda-12.8/targets/x86_64-linux/lib"
+       ],
+       "loader_rc": 0,
+       "loader_maps_read_from": "live /proc/2551824/maps",
+       "loaded_cuda_objects": [
+        "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcublas.so.13.2.1.1",
+        "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcudart.so.13.1.80"
+       ],
+       "resolved_from": "system-toolkit"
+      },
+      {
+       "arm": "llama-server-ldconfig-unavailable",
+       "launcher": "llama-server",
+       "child_env_read_from": "/proc/2551846/environ",
+       "child_ld_library_path_vendored_present": true,
+       "product_vendored_present": true,
+       "product_vendored_is_last": true,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/head/install/llama.cpp/build/bin",
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/head/ollama/cuda_v13"
+       ],
+       "loader_rc": 0,
+       "loader_maps_read_from": "live /proc/2552064/maps",
+       "loaded_cuda_objects": [
+        "<work>/ollama/cuda_v13/libcublas.so.13",
+        "<work>/ollama/cuda_v13/libcudart.so.13"
+       ],
+       "resolved_from": "arm-workspace-vendored",
+       "binary_only_rc": 127,
+       "product_diagnostics_under_blocked_exec": {
+        "cache_readable_under_blocked_exec": false,
+        "loader_resolves_sonames_under_blocked_exec": false,
+        "loader_already_provides_13_under_blocked_exec": false,
+        "ldconfig_exec_evidence": "BlockingIOError: [Errno 11] Resource temporarily unavailable: '/sbin/ldconfig'"
+       }
+      },
+      {
+       "arm": "llama-server-vendored-soname",
+       "launcher": "llama-server",
+       "child_env_read_from": null,
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/head/install/llama.cpp/build/bin"
+       ],
+       "loader_rc": 127,
+       "loader_maps_read_from": "live /proc/2552148/maps",
+       "loaded_cuda_objects": [],
+       "resolved_from": "none",
+       "vendored_dir_forced_rc": 0,
+       "binary_only_rc": 127
+      },
+      {
+       "arm": "llama-server-payload-only",
+       "launcher": "llama-server",
+       "child_env_read_from": null,
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/head/install/llama.cpp/build/bin",
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/head/ollama_payload/cuda_v13"
+       ],
+       "loader_rc": 127,
+       "loader_maps_read_from": "live /proc/2552251/maps",
+       "loaded_cuda_objects": [],
+       "resolved_from": "none",
+       "product_refused_payload_only_shape": true
+      },
+      {
+       "arm": "llama-server-system-precedence",
+       "launcher": "llama-server",
+       "child_env_read_from": null,
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/head/install/llama.cpp/build/bin",
+        "/usr/local/cuda/lib64",
+        "/usr/local/cuda/targets/x86_64-linux/lib",
+        "/usr/local/cuda-12.8/lib64",
+        "/usr/local/cuda-12.8/targets/x86_64-linux/lib"
+       ],
+       "loader_rc": 0,
+       "loader_maps_read_from": "live /proc/2552333/maps",
+       "loaded_cuda_objects": [
+        "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcublas.so.13.2.1.1",
+        "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcudart.so.13.1.80"
+       ],
+       "resolved_from": "system-toolkit",
+       "synthetic_multiarch_supported": true,
+       "synthetic_multiarch_populated": {
+        "diagnostics": {
+         "cache_readable": false,
+         "loader_resolves_sonames": false,
+         "loader_already_provides_13": true
+        },
+        "product_vendored_present": false,
+        "loader_rc": 0,
+        "loaded_cuda_objects": [
+         "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcublas.so.13.2.1.1",
+         "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcudart.so.13.1.80"
+        ]
+       },
+       "synthetic_multiarch_emptied": {
+        "diagnostics": {
+         "cache_readable": false,
+         "loader_resolves_sonames": false,
+         "loader_already_provides_13": false
+        },
+        "product_vendored_present": true,
+        "loader_rc": 0,
+        "loaded_cuda_objects": [
+         "<work>/ollama/cuda_v13/libcublas.so.13",
+         "<work>/ollama/cuda_v13/libcudart.so.13"
+        ]
+       }
+      },
+      {
+       "arm": "whisper-server-host-default",
+       "launcher": "whisper-server",
+       "child_env_read_from": "/proc/2552480/environ",
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/head/install/llama.cpp/build/bin"
+       ],
+       "loader_rc": 0,
+       "loader_maps_read_from": "live /proc/2552840/maps",
+       "loaded_cuda_objects": [
+        "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcublas.so.13.2.1.1",
+        "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcudart.so.13.1.80"
+       ],
+       "resolved_from": "system-toolkit"
+      },
+      {
+       "arm": "whisper-server-ldconfig-unavailable",
+       "launcher": "whisper-server",
+       "child_env_read_from": "/proc/2552935/environ",
+       "child_ld_library_path_vendored_present": true,
+       "product_vendored_present": true,
+       "product_vendored_is_last": true,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/head/install/llama.cpp/build/bin",
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/head/ollama/cuda_v13"
+       ],
+       "loader_rc": 0,
+       "loader_maps_read_from": "live /proc/2553182/maps",
+       "loaded_cuda_objects": [
+        "<work>/ollama/cuda_v13/libcublas.so.13",
+        "<work>/ollama/cuda_v13/libcudart.so.13"
+       ],
+       "resolved_from": "arm-workspace-vendored",
+       "binary_only_rc": 127,
+       "product_diagnostics_under_blocked_exec": {
+        "cache_readable_under_blocked_exec": false,
+        "loader_resolves_sonames_under_blocked_exec": false,
+        "loader_already_provides_13_under_blocked_exec": false,
+        "ldconfig_exec_evidence": "BlockingIOError: [Errno 11] Resource temporarily unavailable: '/sbin/ldconfig'"
+       }
+      },
+      {
+       "arm": "whisper-server-vendored-soname",
+       "launcher": "whisper-server",
+       "child_env_read_from": null,
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/head/install/llama.cpp/build/bin"
+       ],
+       "loader_rc": 127,
+       "loader_maps_read_from": "live /proc/2553281/maps",
+       "loaded_cuda_objects": [],
+       "resolved_from": "none",
+       "vendored_dir_forced_rc": 0,
+       "binary_only_rc": 127
+      },
+      {
+       "arm": "whisper-server-payload-only",
+       "launcher": "whisper-server",
+       "child_env_read_from": null,
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/head/install/llama.cpp/build/bin",
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/head/ollama_payload/cuda_v13"
+       ],
+       "loader_rc": 127,
+       "loader_maps_read_from": "live /proc/2553545/maps",
+       "loaded_cuda_objects": [],
+       "resolved_from": "none",
+       "product_refused_payload_only_shape": true
+      },
+      {
+       "arm": "whisper-server-system-precedence",
+       "launcher": "whisper-server",
+       "child_env_read_from": null,
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/head/install/llama.cpp/build/bin"
+       ],
+       "loader_rc": 0,
+       "loader_maps_read_from": "live /proc/2553611/maps",
+       "loaded_cuda_objects": [
+        "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcublas.so.13.2.1.1",
+        "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcudart.so.13.1.80"
+       ],
+       "resolved_from": "system-toolkit",
+       "synthetic_multiarch_supported": true,
+       "synthetic_multiarch_populated": {
+        "diagnostics": {
+         "cache_readable": false,
+         "loader_resolves_sonames": false,
+         "loader_already_provides_13": true
+        },
+        "product_vendored_present": false,
+        "loader_rc": 0,
+        "loaded_cuda_objects": [
+         "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcublas.so.13.2.1.1",
+         "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcudart.so.13.1.80"
+        ]
+       },
+       "synthetic_multiarch_emptied": {
+        "diagnostics": {
+         "cache_readable": false,
+         "loader_resolves_sonames": false,
+         "loader_already_provides_13": false
+        },
+        "product_vendored_present": true,
+        "loader_rc": 0,
+        "loaded_cuda_objects": [
+         "<work>/ollama/cuda_v13/libcublas.so.13",
+         "<work>/ollama/cuda_v13/libcudart.so.13"
+        ]
+       }
+      }
+     ]
+    },
+    "base": {
+     "base_sha": "ae3077a09f2dcc7970721f7d06c6022de49ced1f",
+     "arms": [
+      {
+       "arm": "llama-server-host-default",
+       "launcher": "llama-server",
+       "child_env_read_from": "/proc/2555735/environ",
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/base/install/llama.cpp/build/bin",
+        "/usr/local/cuda/lib64",
+        "/usr/local/cuda/targets/x86_64-linux/lib",
+        "/usr/local/cuda-12.8/lib64",
+        "/usr/local/cuda-12.8/targets/x86_64-linux/lib"
+       ],
+       "loader_rc": 0,
+       "loader_maps_read_from": "live /proc/2556548/maps",
+       "loaded_cuda_objects": [
+        "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcublas.so.13.2.1.1",
+        "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcudart.so.13.1.80"
+       ],
+       "resolved_from": "system-toolkit"
+      },
+      {
+       "arm": "llama-server-ldconfig-unavailable",
+       "launcher": "llama-server",
+       "child_env_read_from": "/proc/2557015/environ",
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/base/install/llama.cpp/build/bin"
+       ],
+       "loader_rc": 127,
+       "loader_maps_read_from": "live /proc/2557504/maps",
+       "loaded_cuda_objects": [],
+       "resolved_from": "none",
+       "binary_only_rc": 127,
+       "product_diagnostics_under_blocked_exec": {
+        "cache_readable_under_blocked_exec": "unsupported: this revision has no loader-cache probe",
+        "loader_resolves_sonames_under_blocked_exec": "unsupported",
+        "loader_already_provides_13_under_blocked_exec": "unsupported: this revision has no vendored-runtime helper",
+        "ldconfig_exec_evidence": "BlockingIOError: [Errno 11] Resource temporarily unavailable: '/sbin/ldconfig'"
+       }
+      },
+      {
+       "arm": "llama-server-vendored-soname",
+       "launcher": "llama-server",
+       "child_env_read_from": null,
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/base/install/llama.cpp/build/bin"
+       ],
+       "loader_rc": 127,
+       "loader_maps_read_from": "live /proc/2557698/maps",
+       "loaded_cuda_objects": [],
+       "resolved_from": "none",
+       "vendored_dir_forced_rc": 0,
+       "binary_only_rc": 127
+      },
+      {
+       "arm": "llama-server-payload-only",
+       "launcher": "llama-server",
+       "child_env_read_from": null,
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/base/install/llama.cpp/build/bin",
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/base/ollama_payload/cuda_v13"
+       ],
+       "loader_rc": 127,
+       "loader_maps_read_from": "live /proc/2557720/maps",
+       "loaded_cuda_objects": [],
+       "resolved_from": "none"
+      },
+      {
+       "arm": "llama-server-system-precedence",
+       "launcher": "llama-server",
+       "child_env_read_from": null,
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/base/install/llama.cpp/build/bin",
+        "/usr/local/cuda/lib64",
+        "/usr/local/cuda/targets/x86_64-linux/lib",
+        "/usr/local/cuda-12.8/lib64",
+        "/usr/local/cuda-12.8/targets/x86_64-linux/lib"
+       ],
+       "loader_rc": 0,
+       "loader_maps_read_from": "live /proc/2557722/maps",
+       "loaded_cuda_objects": [
+        "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcublas.so.13.2.1.1",
+        "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcudart.so.13.1.80"
+       ],
+       "resolved_from": "system-toolkit",
+       "synthetic_multiarch_supported": false
+      },
+      {
+       "arm": "whisper-server-host-default",
+       "launcher": "whisper-server",
+       "child_env_read_from": "/proc/2557883/environ",
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/base/install/llama.cpp/build/bin"
+       ],
+       "loader_rc": 0,
+       "loader_maps_read_from": "live /proc/2558162/maps",
+       "loaded_cuda_objects": [
+        "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcublas.so.13.2.1.1",
+        "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcudart.so.13.1.80"
+       ],
+       "resolved_from": "system-toolkit"
+      },
+      {
+       "arm": "whisper-server-ldconfig-unavailable",
+       "launcher": "whisper-server",
+       "child_env_read_from": "/proc/2558163/environ",
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/base/install/llama.cpp/build/bin"
+       ],
+       "loader_rc": 127,
+       "loader_maps_read_from": "live /proc/2558464/maps",
+       "loaded_cuda_objects": [],
+       "resolved_from": "none",
+       "binary_only_rc": 127,
+       "product_diagnostics_under_blocked_exec": {
+        "cache_readable_under_blocked_exec": "unsupported: this revision has no loader-cache probe",
+        "loader_resolves_sonames_under_blocked_exec": "unsupported",
+        "loader_already_provides_13_under_blocked_exec": "unsupported: this revision has no vendored-runtime helper",
+        "ldconfig_exec_evidence": "BlockingIOError: [Errno 11] Resource temporarily unavailable: '/sbin/ldconfig'"
+       }
+      },
+      {
+       "arm": "whisper-server-vendored-soname",
+       "launcher": "whisper-server",
+       "child_env_read_from": null,
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/base/install/llama.cpp/build/bin"
+       ],
+       "loader_rc": 127,
+       "loader_maps_read_from": "live /proc/2558500/maps",
+       "loaded_cuda_objects": [],
+       "resolved_from": "none",
+       "vendored_dir_forced_rc": 0,
+       "binary_only_rc": 127
+      },
+      {
+       "arm": "whisper-server-payload-only",
+       "launcher": "whisper-server",
+       "child_env_read_from": null,
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/base/install/llama.cpp/build/bin",
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/base/ollama_payload/cuda_v13"
+       ],
+       "loader_rc": 127,
+       "loader_maps_read_from": "live /proc/2558568/maps",
+       "loaded_cuda_objects": [],
+       "resolved_from": "none"
+      },
+      {
+       "arm": "whisper-server-system-precedence",
+       "launcher": "whisper-server",
+       "child_env_read_from": null,
+       "child_ld_library_path_vendored_present": false,
+       "product_vendored_present": false,
+       "product_vendored_is_last": false,
+       "loader_library_path": [
+        "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/scratch/base/install/llama.cpp/build/bin"
+       ],
+       "loader_rc": 0,
+       "loader_maps_read_from": "live /proc/2558569/maps",
+       "loaded_cuda_objects": [
+        "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcublas.so.13.2.1.1",
+        "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcudart.so.13.1.80"
+       ],
+       "resolved_from": "system-toolkit",
+       "synthetic_multiarch_supported": false
+      }
+     ]
+    }
+   }
+  }
+ },
+ "inputs": [
+  {
+   "identity": "exact pinned head 29595023021c1f1d6bc6b1e75307301a34bd0cd6 backend (worktree head) built every head child environment",
+   "proof": "real_runtime",
+   "synthetic": false
+  },
+  {
+   "identity": "exact pinned base ae3077a09f2dcc7970721f7d06c6022de49ced1f backend (git archive of studio/backend) built every base child environment",
+   "proof": "real_runtime",
+   "synthetic": false
+  },
+  {
+   "identity": "real glibc loader /lib64/ld-linux-x86-64.so.2 over a compiled ELF consumer with NEEDED libcudart.so.13 and libcublas.so.13; real children and their /proc/<pid>/environ and /proc/<pid>/maps",
+   "proof": "real_runtime",
+   "synthetic": false
+  },
+  {
+   "identity": "real host CUDA 13 payload bytes copied into the arm workspace's vendored tree (sha256 identical to the toolkit objects), because no /usr/local/lib/ollama tree exists on this host",
+   "proof": "synthetic",
+   "synthetic": true
+  },
+  {
+   "identity": "synthetic arch-specific default dir assigned to the loader default dir list for the two precedence sub-arms",
+   "proof": "synthetic",
+   "synthetic": true
+  }
+ ],
+ "artifacts": [
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/harness.py",
+   "sha256": "9b54ebc04f4710aaceac5f5cf8f782b90c1ea418e089015e8f709939f1fdd806",
+   "mime": "text/x-python",
+   "purpose": "Loader arm harness (product env construction, real child spawn and readback, real loader runs, blocked-exec arms)"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/consumer.c.txt",
+   "sha256": "f9baaa6827e56eeaf59ae639c6da3acc12e3d9ea742a7356728d0500ac533f60",
+   "mime": "text/x-c",
+   "purpose": "Compiled loader consumer source: NEEDED libcudart.so.13 / libcublas.so.13"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/head-run.log",
+   "sha256": "4a53403e844c881c831eff2048b8422c628b937835b56acd590b05fab03977e2",
+   "mime": "text/plain",
+   "purpose": "Head run stdout, all ten arms"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/base-run.log",
+   "sha256": "0b5e1553c33f68e173a942688d514e651d11045cb26147905c0298e2270a7ee8",
+   "mime": "text/plain",
+   "purpose": "Base run stdout, all ten arms"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/head-evidence/host-probe-head.json",
+   "sha256": "0bd25ca42fd34d5826c811c1b713db66cb73a1fba70635071484cc2ecc128992",
+   "mime": "application/json",
+   "purpose": "Head host probe: ldconfig paths, cache state, detected default/multiarch dirs"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/base-evidence/host-probe-base.json",
+   "sha256": "7f67cea464d701989e73660a8c47f266df2acf6f8f0d912aeb9804f488dfced1",
+   "mime": "application/json",
+   "purpose": "Base host probe (no loader-cache probe in this revision, as expected)"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/head-evidence/arms/llama-server-ldconfig-unavailable-head.json",
+   "sha256": "7a83eda84c31a5164ac7d0f2d130289557508e003e57e07105c3c01f7a51fd50",
+   "mime": "application/json",
+   "purpose": "Head llama arm: blocked exec, append, /proc readback, loader maps, LD_DEBUG"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/head-evidence/arms/whisper-server-ldconfig-unavailable-head.json",
+   "sha256": "d9b67c674b7f49acfb0ba5919cca7060f0d268ce8f9e2dd0249958f5294e4658",
+   "mime": "application/json",
+   "purpose": "Head whisper arm: same, through the whisper launcher"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/head-evidence/arms/llama-server-vendored-soname-head.json",
+   "sha256": "c8dd57f7880eba1c78f61b48633dabde0694df73a6eff38b491967353c773fa4",
+   "mime": "application/json",
+   "purpose": "Head llama arm: usable-SONAME shape, forced and binary-only runs"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/head-evidence/arms/llama-server-payload-only-head.json",
+   "sha256": "89434540a7799053820268eff0bf68a3efd5aa7f53bd7d8f9db08cbffbbb21fa",
+   "mime": "application/json",
+   "purpose": "Head llama arm: payload-only negative"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/head-evidence/arms/llama-server-system-precedence-head.json",
+   "sha256": "8a67a681cde6df25e518aa74ea23e8a71906b1c1a89ae5e44093e2f098759bf9",
+   "mime": "application/json",
+   "purpose": "Head llama arm: host system runtime plus populated/emptied arch-dir sub-arms"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/head-evidence/arms/llama-server-host-default-head.json",
+   "sha256": "19952e2de3d5976e46b07f76d2b6c818509b154a5de9228c3164f3d64778b0c2",
+   "mime": "application/json",
+   "purpose": "Head llama arm: unpatched host default"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/head-evidence/arms/whisper-server-vendored-soname-head.json",
+   "sha256": "f4e2175b00ce4f79a8cc8c8b88eb545e0448495f0365f48915b3770458957036",
+   "mime": "application/json",
+   "purpose": "Head whisper arm: usable-SONAME shape"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/head-evidence/arms/whisper-server-payload-only-head.json",
+   "sha256": "011bba52d9023a3dfa4d31d6471bee32d47eaf1f79219b8626a9d887a230df55",
+   "mime": "application/json",
+   "purpose": "Head whisper arm: payload-only negative"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/head-evidence/arms/whisper-server-system-precedence-head.json",
+   "sha256": "ce70199a7fa6c8f721d41ac0dbae72855d336846e4b29f82a28b0d584a4f352d",
+   "mime": "application/json",
+   "purpose": "Head whisper arm: precedence sub-arms"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/head-evidence/arms/whisper-server-host-default-head.json",
+   "sha256": "c1feee6b16486a2855a0311aa3aa75d924941ee9e52942d05948a291e9ee4b6a",
+   "mime": "application/json",
+   "purpose": "Head whisper arm: unpatched host default"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/base-evidence/arms/llama-server-ldconfig-unavailable-base.json",
+   "sha256": "71958851324bec4908d8a80ca295e3cdb0fe51f70354e24a0b4ebd02d270a446",
+   "mime": "application/json",
+   "purpose": "Base llama negative control: no append, loader fails rc 127"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/base-evidence/arms/whisper-server-ldconfig-unavailable-base.json",
+   "sha256": "17ed26964a748315eec7a6e8cbd9fb75a1127d04c74d2bb87f7685f08d29d89a",
+   "mime": "application/json",
+   "purpose": "Base whisper negative control"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/base-evidence/arms/llama-server-system-precedence-base.json",
+   "sha256": "553daf0f33210742a8471691c075b0a1d81b56ed517ed3cbbdf2acf5b9171550",
+   "mime": "application/json",
+   "purpose": "Base llama: system runtime resolved"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/base-evidence/arms/llama-server-vendored-soname-base.json",
+   "sha256": "44cc4e204f690b56956667daf39b5cdb939d77dd432ed8864483ca142c508f09",
+   "mime": "application/json",
+   "purpose": "Base llama: vendored shape forced still loads, confirming the fixture"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/base-evidence/arms/llama-server-payload-only-base.json",
+   "sha256": "9dfb21b5476a708ed11112725088d2585aba57ff3dfd8f6c2e4aea2f581465ef",
+   "mime": "application/json",
+   "purpose": "Base llama: payload-only negative"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/base-evidence/arms/llama-server-host-default-base.json",
+   "sha256": "2f8904dfcdd3865aef31295c2d401db55ae9a699ef12fb32eb99cf8e2b4678a4",
+   "mime": "application/json",
+   "purpose": "Base llama: unpatched host default"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/base-evidence/arms/whisper-server-system-precedence-base.json",
+   "sha256": "a7d67192ec5c82cb2f08632ed3e65489e1d92a711e0fe36c135f34b489da992a",
+   "mime": "application/json",
+   "purpose": "Base whisper: system runtime resolved"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/base-evidence/arms/whisper-server-vendored-soname-base.json",
+   "sha256": "33278d65baad35ae05be2fcede726598b70b2abc57f64b0a4e24f07904dd81c2",
+   "mime": "application/json",
+   "purpose": "Base whisper: vendored shape forced"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/base-evidence/arms/whisper-server-payload-only-base.json",
+   "sha256": "0c1da2bf6e5da54a1db7e20f885974bc738737e530c711cc2277588bfa082896",
+   "mime": "application/json",
+   "purpose": "Base whisper: payload-only negative"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/artifacts/base-evidence/arms/whisper-server-host-default-base.json",
+   "sha256": "3db2fb20761304fe133704e9eaa2416081c12336d5a2aa7dacb2eabcecd56b0c",
+   "mime": "application/json",
+   "purpose": "Base whisper: unpatched host default"
+  },
+  {
+   "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_aa41ebbf23ec78a54d7dd5eb9014fb29/validation/live-loader-r2/stage.json",
+   "sha256": "9ea1272ab2954195967ebff64ddfef356be064e5d24ecab0691144247fd51430",
+   "mime": "application/json",
+   "purpose": "Stage result for the loader stage"
+  }
+ ],
+ "limitations": [
+  "No real /usr/local/lib/ollama tree exists on this host (and a root-owned system dir cannot be populated here), so the vendored tree was synthesized inside the arm workspace and reached through the module's documented roots override. The bytes placed in it are the host's real CUDA 13 payloads (sha256-identical to /usr/local/cuda/targets/x86_64-linux/lib), not stubs.",
+  "The arch-specific default dir used by the two synthetic precedence sub-arms is a workspace directory assigned to the loader default-dir list; the real /lib/x86_64-linux-gnu and /usr/lib/x86_64-linux-gnu dirs were only detected and reported, not modified. The sub-arm result is a synthetic-shape limitation of this host, and the real-host cache arm is reported separately and unpatched.",
+  "The ldconfig-unavailable arms enforce RLIMIT_NPROC=0 to make exec genuinely fail; that is a real kernel-enforced failure, but it is not a disk-image with ldconfig removed. To keep the loader run consistent with that state, those arms pass ld.so's own documented --inhibit-cache.",
+  "The restricted loader arms deliberately search only the binary dir plus whatever the product appended, modelling a host with no system CUDA toolkit; the unrestricted host arms use the child's real LD_LIBRARY_PATH unchanged. Neither arm ran a GPU kernel: no CUDA workload, no device initialization and no inference was executed, so nothing here attests to GPU runtime behaviour.",
+  "A 'pass' here means the change does what it claims for the loader search path and the child environment; it is not a substitute for the GPU/model-run validation a real Ollama CUDA 13 host could provide.",
+  "The prior stage directory validation/live-loader/ contains only plan.json (no stage or result manifest was produced by that attempt), so there are no earlier stage observations to merge; nothing was erased.",
+  "The per-arm working trees under scratch/<revision>/ (the synthesized install and vendored trees and the CUDA payload copies) were removed after their evidence JSON was copied into artifacts/. The recorded library paths therefore name directories that no longer exist; the arm JSON under artifacts/ holds the full observations, and the harness plus the consumer source are preserved so the run can be reproduced."
+ ],
+ "assertion_reached": true,
+ "observed_at": 1790165100
+}

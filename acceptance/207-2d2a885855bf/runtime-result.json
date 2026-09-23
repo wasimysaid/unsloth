@@ -1,0 +1,1197 @@
+{
+  "artifact_manifest": {
+    "artifacts": {
+      "approval_http_harness.py": {
+        "bytes": 15274,
+        "sha256": "2e1dd930ee70a49680b2d1bc1e6438d3ace19feb79962d444c79f4dff7b4508b"
+      },
+      "artifacts/approval-http-base.json": {
+        "bytes": 4635,
+        "sha256": "2e8245123636354c9f3424e194ec7ed5ada24870e067de31b3f446a31a4aa26a"
+      },
+      "artifacts/approval-http-head.json": {
+        "bytes": 4585,
+        "sha256": "4dc328df92ac8e1f240d0909faf2639a47cebbcddb9b20761bb66f04624f6ba1"
+      },
+      "artifacts/probe-base.json": {
+        "bytes": 10380,
+        "sha256": "c8a4c45601a62db42fc48f867c1167ea40a1ee95a4857ef42dad631e8c4034e5"
+      },
+      "artifacts/probe-head.json": {
+        "bytes": 10331,
+        "sha256": "6d2e0c3bfad233e2e085b45dc11b62266b5c178d241c104bd55e1da520dd39d3"
+      },
+      "artifacts/route-probe-base.json": {
+        "bytes": 1832,
+        "sha256": "42734e74fd66d357cc8b0ef05767c8d3f869392daca77654064ca6f131096e04"
+      },
+      "artifacts/route-probe-head.json": {
+        "bytes": 1807,
+        "sha256": "c69400f8203e64aea53750449bc62b85193057ae51c47ad6802f9f3060ea8c30"
+      },
+      "build_manifests.py": {
+        "bytes": 17119,
+        "sha256": "06368e92211da8706fd57ecfda6e5f544455f820a3a7172473c6830eb0e5b7ec"
+      },
+      "logs/approval-http-base.log": {
+        "bytes": 4635,
+        "sha256": "2e8245123636354c9f3424e194ec7ed5ada24870e067de31b3f446a31a4aa26a"
+      },
+      "logs/approval-http-head.log": {
+        "bytes": 4585,
+        "sha256": "4dc328df92ac8e1f240d0909faf2639a47cebbcddb9b20761bb66f04624f6ba1"
+      },
+      "logs/pip-studio.log": {
+        "bytes": 2747,
+        "sha256": "3803ae852c17219959e2548ca465b9d5334f7bdc935cdb9bbfa439b8c1e99b1c"
+      },
+      "logs/probe-base.log": {
+        "bytes": 10471,
+        "sha256": "c65e2342e2c37d797e264d32cdf7c23856432dc47820efd1349077fb9c48bf6f"
+      },
+      "logs/probe-head.log": {
+        "bytes": 10422,
+        "sha256": "fbe179dea0361ccec3b5bb23aa9fbbaf647830b0df72abd663fceb0a4d747338"
+      },
+      "logs/pytest-approvals-base.log": {
+        "bytes": 2662,
+        "sha256": "11e4581f88b03d9a95e2bab80e63a4f061cfc8ae2352aa0d54991e17ea056f62"
+      },
+      "logs/pytest-approvals-head.log": {
+        "bytes": 2662,
+        "sha256": "a6ec37cc294db6252e3037f929d3246919d03465d8f493e660f7ea8602c445ce"
+      },
+      "logs/pytest-confirm-base.log": {
+        "bytes": 539,
+        "sha256": "af303d35a5e0e2b23df52a150cb5406cdc8c93529202a80517ab1dfb693d3a2a"
+      },
+      "logs/pytest-confirm-head.log": {
+        "bytes": 539,
+        "sha256": "37a9e650ebbec1be70bb8e86b4ccea8621374a42b01638ef0a1978762b129569"
+      },
+      "logs/pytest-fetch-base.log": {
+        "bytes": 4022,
+        "sha256": "b73511ee7327b6f0b93049f24d33469107b6f8f9375d2482f2c280ac75321495"
+      },
+      "logs/pytest-fetch-head.log": {
+        "bytes": 4022,
+        "sha256": "212e250badc2bbf2bd48a9332b94349dcd08bd79d027fb3c4f03a53a7c45a819"
+      },
+      "logs/route-probe-base.log": {
+        "bytes": 3886,
+        "sha256": "948e133ba52d3d9d833b3be2d572fe56bc1f98662c0a0825eac19a8b8ce9b98d"
+      },
+      "logs/route-probe-head.log": {
+        "bytes": 4249,
+        "sha256": "65e31ced2a2ebb9202f39796d515bce71e15c4a045260a6716ed5292e97441eb"
+      },
+      "probe_fetch_runtime.py": {
+        "bytes": 18849,
+        "sha256": "ade088b72df5dae537746c921d3e94946d56b2e50b86f97d748bc6a7117cb8ac"
+      },
+      "studio_route_probe.py": {
+        "bytes": 8049,
+        "sha256": "45f4dfcc3bd984760f865833a8c2e0ca38a005d38521a92247705259fc54adf9"
+      }
+    }
+  },
+  "assignment_id": "fetch-runtime-r2",
+  "check_ids": [
+    "live-parked"
+  ],
+  "coverage_ids": [
+    "parked-tool-result",
+    "cancel-negative"
+  ],
+  "final_stage": true,
+  "generated_at": "2026-09-23T11:54:41Z",
+  "kind": "validation_result",
+  "merged_stage_failures": [],
+  "observations": {
+    "artifacts": {
+      "approval_http_harness.py": {
+        "bytes": 15274,
+        "sha256": "2e1dd930ee70a49680b2d1bc1e6438d3ace19feb79962d444c79f4dff7b4508b"
+      },
+      "artifacts/approval-http-base.json": {
+        "bytes": 4635,
+        "sha256": "2e8245123636354c9f3424e194ec7ed5ada24870e067de31b3f446a31a4aa26a"
+      },
+      "artifacts/approval-http-head.json": {
+        "bytes": 4585,
+        "sha256": "4dc328df92ac8e1f240d0909faf2639a47cebbcddb9b20761bb66f04624f6ba1"
+      },
+      "artifacts/probe-base.json": {
+        "bytes": 10380,
+        "sha256": "c8a4c45601a62db42fc48f867c1167ea40a1ee95a4857ef42dad631e8c4034e5"
+      },
+      "artifacts/probe-head.json": {
+        "bytes": 10331,
+        "sha256": "6d2e0c3bfad233e2e085b45dc11b62266b5c178d241c104bd55e1da520dd39d3"
+      },
+      "artifacts/route-probe-base.json": {
+        "bytes": 1832,
+        "sha256": "42734e74fd66d357cc8b0ef05767c8d3f869392daca77654064ca6f131096e04"
+      },
+      "artifacts/route-probe-head.json": {
+        "bytes": 1807,
+        "sha256": "c69400f8203e64aea53750449bc62b85193057ae51c47ad6802f9f3060ea8c30"
+      },
+      "build_manifests.py": {
+        "bytes": 17119,
+        "sha256": "06368e92211da8706fd57ecfda6e5f544455f820a3a7172473c6830eb0e5b7ec"
+      },
+      "logs/approval-http-base.log": {
+        "bytes": 4635,
+        "sha256": "2e8245123636354c9f3424e194ec7ed5ada24870e067de31b3f446a31a4aa26a"
+      },
+      "logs/approval-http-head.log": {
+        "bytes": 4585,
+        "sha256": "4dc328df92ac8e1f240d0909faf2639a47cebbcddb9b20761bb66f04624f6ba1"
+      },
+      "logs/pip-studio.log": {
+        "bytes": 2747,
+        "sha256": "3803ae852c17219959e2548ca465b9d5334f7bdc935cdb9bbfa439b8c1e99b1c"
+      },
+      "logs/probe-base.log": {
+        "bytes": 10471,
+        "sha256": "c65e2342e2c37d797e264d32cdf7c23856432dc47820efd1349077fb9c48bf6f"
+      },
+      "logs/probe-head.log": {
+        "bytes": 10422,
+        "sha256": "fbe179dea0361ccec3b5bb23aa9fbbaf647830b0df72abd663fceb0a4d747338"
+      },
+      "logs/pytest-approvals-base.log": {
+        "bytes": 2662,
+        "sha256": "11e4581f88b03d9a95e2bab80e63a4f061cfc8ae2352aa0d54991e17ea056f62"
+      },
+      "logs/pytest-approvals-head.log": {
+        "bytes": 2662,
+        "sha256": "a6ec37cc294db6252e3037f929d3246919d03465d8f493e660f7ea8602c445ce"
+      },
+      "logs/pytest-confirm-base.log": {
+        "bytes": 539,
+        "sha256": "af303d35a5e0e2b23df52a150cb5406cdc8c93529202a80517ab1dfb693d3a2a"
+      },
+      "logs/pytest-confirm-head.log": {
+        "bytes": 539,
+        "sha256": "37a9e650ebbec1be70bb8e86b4ccea8621374a42b01638ef0a1978762b129569"
+      },
+      "logs/pytest-fetch-base.log": {
+        "bytes": 4022,
+        "sha256": "b73511ee7327b6f0b93049f24d33469107b6f8f9375d2482f2c280ac75321495"
+      },
+      "logs/pytest-fetch-head.log": {
+        "bytes": 4022,
+        "sha256": "212e250badc2bbf2bd48a9332b94349dcd08bd79d027fb3c4f03a53a7c45a819"
+      },
+      "logs/route-probe-base.log": {
+        "bytes": 3886,
+        "sha256": "948e133ba52d3d9d833b3be2d572fe56bc1f98662c0a0825eac19a8b8ce9b98d"
+      },
+      "logs/route-probe-head.log": {
+        "bytes": 4249,
+        "sha256": "65e31ced2a2ebb9202f39796d515bce71e15c4a045260a6716ed5292e97441eb"
+      },
+      "probe_fetch_runtime.py": {
+        "bytes": 18849,
+        "sha256": "ade088b72df5dae537746c921d3e94946d56b2e50b86f97d748bc6a7117cb8ac"
+      },
+      "studio_route_probe.py": {
+        "bytes": 8049,
+        "sha256": "45f4dfcc3bd984760f865833a8c2e0ca38a005d38521a92247705259fc54adf9"
+      }
+    },
+    "assignment_id": "fetch-runtime-r2",
+    "check_id": "live-parked",
+    "comparison": {
+      "discriminating_proof_location": "the visible parked-URL rendering delta belongs to the fetch-ui assignment (base 8190a1a77 vs head 2d2a88585); this runtime stage cannot and does not claim a base/head rendering difference",
+      "expected": "identical at base and head for the web-fetch runtime, because the whole base..head delta is studio/frontend only (4 files) and the studio/backend tree hash is byte-identical at both pins",
+      "observed": "identical: the same 9/9 rejections, the same fetch text hash, the same approval-gate verdicts and the same test-suite counts at both pins"
+    },
+    "coverage_ids": [
+      "parked-tool-result",
+      "cancel-negative"
+    ],
+    "environment": {
+      "gpu_used": false,
+      "installed_from": "studio/backend/requirements/studio.txt (uv pip install)",
+      "python": "3.13.12 (main, Feb  4 2026, 09:25:39) [GCC 13.3.0]",
+      "server": "loopback uvicorn started inside this assignment; no external endpoint supplied",
+      "studio_home": "/mnt/disks/unslothai/mugi/workbench-v2/t_3bcc4f29192a354e52e65bdd71bec45d/validation/fetch-runtime-r2/studio-home",
+      "venv": "/mnt/disks/unslothai/mugi/workbench-v2/t_3bcc4f29192a354e52e65bdd71bec45d/validation/fetch-runtime-r2/venv"
+    },
+    "executed_checks": {
+      "P1_public_https_fetch": {
+        "base": {
+          "dns": {
+            "addresses": [
+              {
+                "ip": "172.66.147.243",
+                "is_global": true
+              },
+              {
+                "ip": "104.20.23.154",
+                "is_global": true
+              },
+              {
+                "ip": "2606:4700:10::ac42:93f3",
+                "is_global": true
+              },
+              {
+                "ip": "2606:4700:10::6814:179a",
+                "is_global": true
+              }
+            ],
+            "host": "example.com"
+          },
+          "elapsed_s": 1.728,
+          "output_chars": 167,
+          "output_sha256": "5945db6fd8137aa377638814ca9bb1ac0a663fd90a97f11f86c3f5c09cfb40e3",
+          "url": "https://example.com/",
+          "verdict": "fetch-succeeded"
+        },
+        "head": {
+          "dns": {
+            "addresses": [
+              {
+                "ip": "172.66.147.243",
+                "is_global": true
+              },
+              {
+                "ip": "104.20.23.154",
+                "is_global": true
+              },
+              {
+                "ip": "2606:4700:10::ac42:93f3",
+                "is_global": true
+              },
+              {
+                "ip": "2606:4700:10::6814:179a",
+                "is_global": true
+              }
+            ],
+            "host": "example.com"
+          },
+          "elapsed_s": 1.643,
+          "output_chars": 167,
+          "output_sha256": "5945db6fd8137aa377638814ca9bb1ac0a663fd90a97f11f86c3f5c09cfb40e3",
+          "url": "https://example.com/",
+          "verdict": "fetch-succeeded"
+        }
+      },
+      "P2_execute_tool_web_search_url": {
+        "base": {
+          "output_chars": 167,
+          "output_sha256": "5945db6fd8137aa377638814ca9bb1ac0a663fd90a97f11f86c3f5c09cfb40e3",
+          "verdict": "dispatched-fetch-succeeded"
+        },
+        "head": {
+          "output_chars": 167,
+          "output_sha256": "5945db6fd8137aa377638814ca9bb1ac0a663fd90a97f11f86c3f5c09cfb40e3",
+          "verdict": "dispatched-fetch-succeeded"
+        }
+      },
+      "P3_private_address_rejection": {
+        "base": {
+          "all_rejected": true,
+          "cases": [
+            {
+              "error": "Blocked: refusing to fetch non-public address 127.0.0.1.",
+              "name": "loopback-ipv4",
+              "url": "http://127.0.0.1:9/",
+              "verdict": "rejected"
+            },
+            {
+              "error": "Blocked: refusing to fetch non-public address ::1.",
+              "name": "loopback-ipv6",
+              "url": "http://[::1]:9/",
+              "verdict": "rejected"
+            },
+            {
+              "error": "Blocked: refusing to fetch non-public address 127.0.0.1.",
+              "name": "loopback-name",
+              "url": "http://localhost:9/",
+              "verdict": "rejected"
+            },
+            {
+              "error": "Blocked: refusing to fetch non-public address 10.0.0.1.",
+              "name": "rfc1918-10",
+              "url": "http://10.0.0.1/",
+              "verdict": "rejected"
+            },
+            {
+              "error": "Blocked: refusing to fetch non-public address 192.168.1.1.",
+              "name": "rfc1918-192",
+              "url": "http://192.168.1.1/",
+              "verdict": "rejected"
+            },
+            {
+              "error": "Blocked: refusing to fetch non-public address 169.254.169.254.",
+              "name": "link-local-imds",
+              "url": "http://169.254.169.254/latest/meta-data/",
+              "verdict": "rejected"
+            },
+            {
+              "error": "Blocked: URL has an invalid hostname or port.",
+              "name": "ipv4-mapped-decimal",
+              "url": "http://2130706433:9/",
+              "verdict": "rejected"
+            },
+            {
+              "error": "Blocked: only http/https URLs are allowed.",
+              "name": "non-http-scheme",
+              "url": "file:///etc/passwd",
+              "verdict": "rejected"
+            },
+            {
+              "error": "Blocked: URL credentials or encoded hostnames are not allowed.",
+              "name": "credentialed-url",
+              "url": "https://user:secret@example.com/",
+              "verdict": "rejected"
+            }
+          ]
+        },
+        "head": {
+          "all_rejected": true,
+          "cases": [
+            {
+              "error": "Blocked: refusing to fetch non-public address 127.0.0.1.",
+              "name": "loopback-ipv4",
+              "url": "http://127.0.0.1:9/",
+              "verdict": "rejected"
+            },
+            {
+              "error": "Blocked: refusing to fetch non-public address ::1.",
+              "name": "loopback-ipv6",
+              "url": "http://[::1]:9/",
+              "verdict": "rejected"
+            },
+            {
+              "error": "Blocked: refusing to fetch non-public address 127.0.0.1.",
+              "name": "loopback-name",
+              "url": "http://localhost:9/",
+              "verdict": "rejected"
+            },
+            {
+              "error": "Blocked: refusing to fetch non-public address 10.0.0.1.",
+              "name": "rfc1918-10",
+              "url": "http://10.0.0.1/",
+              "verdict": "rejected"
+            },
+            {
+              "error": "Blocked: refusing to fetch non-public address 192.168.1.1.",
+              "name": "rfc1918-192",
+              "url": "http://192.168.1.1/",
+              "verdict": "rejected"
+            },
+            {
+              "error": "Blocked: refusing to fetch non-public address 169.254.169.254.",
+              "name": "link-local-imds",
+              "url": "http://169.254.169.254/latest/meta-data/",
+              "verdict": "rejected"
+            },
+            {
+              "error": "Blocked: URL has an invalid hostname or port.",
+              "name": "ipv4-mapped-decimal",
+              "url": "http://2130706433:9/",
+              "verdict": "rejected"
+            },
+            {
+              "error": "Blocked: only http/https URLs are allowed.",
+              "name": "non-http-scheme",
+              "url": "file:///etc/passwd",
+              "verdict": "rejected"
+            },
+            {
+              "error": "Blocked: URL credentials or encoded hostnames are not allowed.",
+              "name": "credentialed-url",
+              "url": "https://user:secret@example.com/",
+              "verdict": "rejected"
+            }
+          ]
+        }
+      },
+      "P4_approval_gate_decisions": {
+        "base": {
+          "all_match": true,
+          "cases": [
+            {
+              "arguments": {
+                "url": "https://example.com/"
+              },
+              "expected_asks": true,
+              "high_risk_asks": true,
+              "name": "url-fetch-asks",
+              "potentially_unsafe_asks": true,
+              "tool": "web_search",
+              "verdict": "match"
+            },
+            {
+              "arguments": {
+                "query": "unsloth"
+              },
+              "expected_asks": false,
+              "high_risk_asks": false,
+              "name": "query-only-search-does-not-ask",
+              "potentially_unsafe_asks": false,
+              "tool": "web_search",
+              "verdict": "match"
+            },
+            {
+              "arguments": {
+                "url": "  "
+              },
+              "expected_asks": false,
+              "high_risk_asks": false,
+              "name": "blank-url-does-not-ask",
+              "potentially_unsafe_asks": false,
+              "tool": "web_search",
+              "verdict": "match"
+            }
+          ]
+        },
+        "head": {
+          "all_match": true,
+          "cases": [
+            {
+              "arguments": {
+                "url": "https://example.com/"
+              },
+              "expected_asks": true,
+              "high_risk_asks": true,
+              "name": "url-fetch-asks",
+              "potentially_unsafe_asks": true,
+              "tool": "web_search",
+              "verdict": "match"
+            },
+            {
+              "arguments": {
+                "query": "unsloth"
+              },
+              "expected_asks": false,
+              "high_risk_asks": false,
+              "name": "query-only-search-does-not-ask",
+              "potentially_unsafe_asks": false,
+              "tool": "web_search",
+              "verdict": "match"
+            },
+            {
+              "arguments": {
+                "url": "  "
+              },
+              "expected_asks": false,
+              "high_risk_asks": false,
+              "name": "blank-url-does-not-ask",
+              "potentially_unsafe_asks": false,
+              "tool": "web_search",
+              "verdict": "match"
+            }
+          ]
+        }
+      },
+      "P5_fetch_cancellation": {
+        "base": {
+          "cancel_before_public": {
+            "body_chars": 0,
+            "error": "Failed to fetch URL: cancelled.",
+            "verdict": "cancelled-before-dispatch"
+          },
+          "kind": "fetch_cancellation",
+          "midflight_cancel": {
+            "body_chars": 0,
+            "cancelled_before_completion": true,
+            "elapsed_s": 10.481,
+            "error": "Failed to fetch URL: cancelled.",
+            "url": "https://httpbin.org/delay/10",
+            "verdict": "cancelled-mid-flight"
+          },
+          "preset_cancel": {
+            "body_chars": 0,
+            "error": "Failed to fetch URL: cancelled.",
+            "verdict": "Failed to fetch URL: cancelled."
+          }
+        },
+        "head": {
+          "cancel_before_public": {
+            "body_chars": 0,
+            "error": "Failed to fetch URL: cancelled.",
+            "verdict": "cancelled-before-dispatch"
+          },
+          "kind": "fetch_cancellation",
+          "midflight_cancel": {
+            "body_chars": 0,
+            "cancelled_before_completion": true,
+            "elapsed_s": 10.048,
+            "error": "Failed to fetch URL: cancelled.",
+            "url": "https://httpbin.org/delay/10",
+            "verdict": "cancelled-mid-flight"
+          },
+          "preset_cancel": {
+            "body_chars": 0,
+            "error": "Failed to fetch URL: cancelled.",
+            "verdict": "Failed to fetch URL: cancelled."
+          }
+        }
+      },
+      "P6_pending_ownership_in_process": {
+        "base": {
+          "all_match": true,
+          "cases": [
+            {
+              "name": "allow-same-session",
+              "reason": "answered",
+              "verdict": "allow-delivered"
+            },
+            {
+              "name": "wrong-session-denied",
+              "reason": null,
+              "verdict": "cross-session-rejected"
+            },
+            {
+              "name": "stale-id-rejected",
+              "reason": null,
+              "verdict": "stale-rejected"
+            },
+            {
+              "name": "duplicate-first-wins",
+              "reason": null,
+              "verdict": "first-decision-wins"
+            },
+            {
+              "name": "cancel-denies",
+              "reason": "cancelled",
+              "verdict": "cancel-denies-promptly"
+            },
+            {
+              "name": "abort-removes-slot",
+              "reason": null,
+              "verdict": "slot-removed"
+            }
+          ],
+          "residual_pending_slots": 0
+        },
+        "head": {
+          "all_match": true,
+          "cases": [
+            {
+              "name": "allow-same-session",
+              "reason": "answered",
+              "verdict": "allow-delivered"
+            },
+            {
+              "name": "wrong-session-denied",
+              "reason": null,
+              "verdict": "cross-session-rejected"
+            },
+            {
+              "name": "stale-id-rejected",
+              "reason": null,
+              "verdict": "stale-rejected"
+            },
+            {
+              "name": "duplicate-first-wins",
+              "reason": null,
+              "verdict": "first-decision-wins"
+            },
+            {
+              "name": "cancel-denies",
+              "reason": "cancelled",
+              "verdict": "cancel-denies-promptly"
+            },
+            {
+              "name": "abort-removes-slot",
+              "reason": null,
+              "verdict": "slot-removed"
+            }
+          ],
+          "residual_pending_slots": 0
+        }
+      },
+      "P7_pending_ownership_over_real_http": {
+        "base": {
+          "label": "base-8190a1a77",
+          "parked_url": "https://example.com/private?q=1",
+          "scenarios": [
+            {
+              "cancel_response": null,
+              "cancel_status": null,
+              "confirm_request": {
+                "approval_id": "WffdAnUK_m7IKDipJfW1Ug",
+                "decision": "allow",
+                "session_id": "sess-A"
+              },
+              "confirm_response": {
+                "resolved": true
+              },
+              "confirm_status": 200,
+              "cross_session_request": null,
+              "cross_session_status": null,
+              "elapsed_s": null,
+              "exception": null,
+              "name": "owner-session-allow",
+              "own_session_status": null,
+              "owner_id_body": null,
+              "owner_id_status": null,
+              "pending_after_disconnect": null,
+              "pending_while_parked": true,
+              "residual_pending_slots": 0,
+              "slot_released_after": null,
+              "stale_id_status": null,
+              "still_pending_after_cross": null,
+              "terminal_frame": {
+                "result": "tool executed: fetched the parked url",
+                "tool_name": "web_search",
+                "type": "tool_end"
+              },
+              "tool_start_frame": {
+                "approval_id": "WffdAnUK_m7IKDipJfW1Ug",
+                "arguments": {
+                  "url": "https://example.com/private?q=1"
+                },
+                "awaiting_confirmation": true,
+                "tool_name": "web_search",
+                "type": "tool_start"
+              },
+              "unknown_id_status": null,
+              "verdict": "allow-resolved-owned-call",
+              "wrong_session_status": null
+            },
+            {
+              "cancel_response": null,
+              "cancel_status": null,
+              "confirm_request": null,
+              "confirm_response": null,
+              "confirm_status": null,
+              "cross_session_request": {
+                "approval_id": "NfF-lwal9yVWbnj7i64Tvw",
+                "decision": "allow",
+                "session_id": "sess-B"
+              },
+              "cross_session_status": 404,
+              "elapsed_s": null,
+              "exception": null,
+              "name": "cross-session-and-stale-confirm-rejected",
+              "own_session_status": 200,
+              "owner_id_body": null,
+              "owner_id_status": null,
+              "pending_after_disconnect": null,
+              "pending_while_parked": null,
+              "residual_pending_slots": 0,
+              "slot_released_after": null,
+              "stale_id_status": 404,
+              "still_pending_after_cross": true,
+              "terminal_frame": {
+                "result": "tool executed: fetched the parked url",
+                "tool_name": "web_search",
+                "type": "tool_end"
+              },
+              "tool_start_frame": {
+                "approval_id": "NfF-lwal9yVWbnj7i64Tvw",
+                "arguments": {
+                  "url": "https://example.com/private?q=1"
+                },
+                "awaiting_confirmation": true,
+                "tool_name": "web_search",
+                "type": "tool_start"
+              },
+              "unknown_id_status": null,
+              "verdict": "cross-session-and-stale-rejected",
+              "wrong_session_status": null
+            },
+            {
+              "cancel_response": {
+                "cancelled": true
+              },
+              "cancel_status": 200,
+              "confirm_request": null,
+              "confirm_response": null,
+              "confirm_status": null,
+              "cross_session_request": null,
+              "cross_session_status": null,
+              "elapsed_s": 0.501,
+              "exception": null,
+              "name": "cancel-while-parked",
+              "own_session_status": null,
+              "owner_id_body": null,
+              "owner_id_status": null,
+              "pending_after_disconnect": null,
+              "pending_while_parked": true,
+              "residual_pending_slots": 0,
+              "slot_released_after": true,
+              "stale_id_status": null,
+              "still_pending_after_cross": null,
+              "terminal_frame": {
+                "result": "The user declined to run this tool call.",
+                "tool_name": "web_search",
+                "type": "tool_end"
+              },
+              "tool_start_frame": {
+                "approval_id": "uq1YT9xNiDXcLpI9j9WuQw",
+                "arguments": {
+                  "url": "https://example.com/private?q=1"
+                },
+                "awaiting_confirmation": true,
+                "tool_name": "web_search",
+                "type": "tool_start"
+              },
+              "unknown_id_status": null,
+              "verdict": "cancel-denies-and-releases",
+              "wrong_session_status": null
+            },
+            {
+              "cancel_response": null,
+              "cancel_status": null,
+              "confirm_request": null,
+              "confirm_response": null,
+              "confirm_status": null,
+              "cross_session_request": null,
+              "cross_session_status": null,
+              "elapsed_s": null,
+              "exception": null,
+              "name": "disconnect-then-id-ownership",
+              "own_session_status": null,
+              "owner_id_body": {
+                "resolved": true
+              },
+              "owner_id_status": 200,
+              "pending_after_disconnect": true,
+              "pending_while_parked": null,
+              "residual_pending_slots": 0,
+              "slot_released_after": null,
+              "stale_id_status": null,
+              "still_pending_after_cross": null,
+              "terminal_frame": null,
+              "tool_start_frame": {
+                "approval_id": "vra35PZkVhTcT8ThoQ_Iqw",
+                "arguments": {
+                  "url": "https://example.com/private?q=1"
+                },
+                "awaiting_confirmation": true,
+                "tool_name": "web_search",
+                "type": "tool_start"
+              },
+              "unknown_id_status": 404,
+              "verdict": "only-owner-id-resolves",
+              "wrong_session_status": 404
+            }
+          ],
+          "tool_approvals_sha256": "395bd34f69401f88de334a7689d0a27640ad8dd5de22dd980d0e251629e728a8"
+        },
+        "head": {
+          "label": "head-2d2a88585",
+          "parked_url": "https://example.com/private?q=1",
+          "scenarios": [
+            {
+              "cancel_response": null,
+              "cancel_status": null,
+              "confirm_request": {
+                "approval_id": "FhM1BDnzAdjvZhoUyRncMw",
+                "decision": "allow",
+                "session_id": "sess-A"
+              },
+              "confirm_response": {
+                "resolved": true
+              },
+              "confirm_status": 200,
+              "cross_session_request": null,
+              "cross_session_status": null,
+              "elapsed_s": null,
+              "exception": null,
+              "name": "owner-session-allow",
+              "own_session_status": null,
+              "owner_id_body": null,
+              "owner_id_status": null,
+              "pending_after_disconnect": null,
+              "pending_while_parked": true,
+              "residual_pending_slots": 0,
+              "slot_released_after": null,
+              "stale_id_status": null,
+              "still_pending_after_cross": null,
+              "terminal_frame": {
+                "result": "tool executed: fetched the parked url",
+                "tool_name": "web_search",
+                "type": "tool_end"
+              },
+              "tool_start_frame": {
+                "approval_id": "FhM1BDnzAdjvZhoUyRncMw",
+                "arguments": {
+                  "url": "https://example.com/private?q=1"
+                },
+                "awaiting_confirmation": true,
+                "tool_name": "web_search",
+                "type": "tool_start"
+              },
+              "unknown_id_status": null,
+              "verdict": "allow-resolved-owned-call",
+              "wrong_session_status": null
+            },
+            {
+              "cancel_response": null,
+              "cancel_status": null,
+              "confirm_request": null,
+              "confirm_response": null,
+              "confirm_status": null,
+              "cross_session_request": {
+                "approval_id": "E_ZQMKzxd-gvWJ4s5wGiYA",
+                "decision": "allow",
+                "session_id": "sess-B"
+              },
+              "cross_session_status": 404,
+              "elapsed_s": null,
+              "exception": null,
+              "name": "cross-session-and-stale-confirm-rejected",
+              "own_session_status": 200,
+              "owner_id_body": null,
+              "owner_id_status": null,
+              "pending_after_disconnect": null,
+              "pending_while_parked": null,
+              "residual_pending_slots": 0,
+              "slot_released_after": null,
+              "stale_id_status": 404,
+              "still_pending_after_cross": true,
+              "terminal_frame": {
+                "result": "tool executed: fetched the parked url",
+                "tool_name": "web_search",
+                "type": "tool_end"
+              },
+              "tool_start_frame": {
+                "approval_id": "E_ZQMKzxd-gvWJ4s5wGiYA",
+                "arguments": {
+                  "url": "https://example.com/private?q=1"
+                },
+                "awaiting_confirmation": true,
+                "tool_name": "web_search",
+                "type": "tool_start"
+              },
+              "unknown_id_status": null,
+              "verdict": "cross-session-and-stale-rejected",
+              "wrong_session_status": null
+            },
+            {
+              "cancel_response": {
+                "cancelled": true
+              },
+              "cancel_status": 200,
+              "confirm_request": null,
+              "confirm_response": null,
+              "confirm_status": null,
+              "cross_session_request": null,
+              "cross_session_status": null,
+              "elapsed_s": 0.501,
+              "exception": null,
+              "name": "cancel-while-parked",
+              "own_session_status": null,
+              "owner_id_body": null,
+              "owner_id_status": null,
+              "pending_after_disconnect": null,
+              "pending_while_parked": true,
+              "residual_pending_slots": 0,
+              "slot_released_after": true,
+              "stale_id_status": null,
+              "still_pending_after_cross": null,
+              "terminal_frame": {
+                "result": "The user declined to run this tool call.",
+                "tool_name": "web_search",
+                "type": "tool_end"
+              },
+              "tool_start_frame": {
+                "approval_id": "mpfgQpODaXNU2oSOOldStA",
+                "arguments": {
+                  "url": "https://example.com/private?q=1"
+                },
+                "awaiting_confirmation": true,
+                "tool_name": "web_search",
+                "type": "tool_start"
+              },
+              "unknown_id_status": null,
+              "verdict": "cancel-denies-and-releases",
+              "wrong_session_status": null
+            },
+            {
+              "cancel_response": null,
+              "cancel_status": null,
+              "confirm_request": null,
+              "confirm_response": null,
+              "confirm_status": null,
+              "cross_session_request": null,
+              "cross_session_status": null,
+              "elapsed_s": null,
+              "exception": null,
+              "name": "disconnect-then-id-ownership",
+              "own_session_status": null,
+              "owner_id_body": {
+                "resolved": true
+              },
+              "owner_id_status": 200,
+              "pending_after_disconnect": true,
+              "pending_while_parked": null,
+              "residual_pending_slots": 0,
+              "slot_released_after": null,
+              "stale_id_status": null,
+              "still_pending_after_cross": null,
+              "terminal_frame": null,
+              "tool_start_frame": {
+                "approval_id": "4ZQknhOxoey2vBeIaLueZg",
+                "arguments": {
+                  "url": "https://example.com/private?q=1"
+                },
+                "awaiting_confirmation": true,
+                "tool_name": "web_search",
+                "type": "tool_start"
+              },
+              "unknown_id_status": 404,
+              "verdict": "only-owner-id-resolves",
+              "wrong_session_status": 404
+            }
+          ],
+          "tool_approvals_sha256": "395bd34f69401f88de334a7689d0a27640ad8dd5de22dd980d0e251629e728a8"
+        }
+      },
+      "P8_real_studio_route_http": {
+        "base": {
+          "app_import": "ok",
+          "http_verdict": "real-route-ownership-and-negative-control-pass",
+          "label": "base-8190a1a77",
+          "residual_pending_slots": 0,
+          "route_count": 53,
+          "source_sha256": {
+            "main.py": "faf722dc691c6794fecf27c289e91bf0baca2903ed445bdec636814d38400315",
+            "routes/inference.py": "144a776f453268875ac65826849a96652a5c2bffdfc6db71cba4ca54a3d110f0",
+            "state/tool_approvals.py": "395bd34f69401f88de334a7689d0a27640ad8dd5de22dd980d0e251629e728a8"
+          },
+          "steps": [
+            {
+              "body": {
+                "pending": true
+              },
+              "request": {
+                "approval_id": "BQTBmluJ...",
+                "session_id": "sess-A"
+              },
+              "status": 200,
+              "step": "status-while-parked"
+            },
+            {
+              "body": {
+                "detail": "No pending tool call confirmation"
+              },
+              "request": {
+                "approval_id": "BQTBmluJ...",
+                "session_id": "sess-B"
+              },
+              "status": 404,
+              "step": "wrong-session-confirm"
+            },
+            {
+              "body": {
+                "detail": "No pending tool call confirmation"
+              },
+              "request": {
+                "approval_id": "stale-id-not-pending"
+              },
+              "status": 404,
+              "step": "stale-id-confirm"
+            },
+            {
+              "body": {
+                "resolved": true
+              },
+              "request": {
+                "approval_id": "BQTBmluJ...",
+                "session_id": "sess-A"
+              },
+              "status": 200,
+              "step": "owner-session-allow"
+            },
+            {
+              "body": {
+                "pending": false
+              },
+              "status": 200,
+              "step": "status-after-decision"
+            }
+          ],
+          "still_pending_after_rejections": true,
+          "waiter_reason": "answered",
+          "waiter_verdict": "allow"
+        },
+        "head": {
+          "app_import": "ok",
+          "http_verdict": "real-route-ownership-and-negative-control-pass",
+          "label": "head-2d2a88585",
+          "residual_pending_slots": 0,
+          "route_count": 53,
+          "source_sha256": {
+            "main.py": "faf722dc691c6794fecf27c289e91bf0baca2903ed445bdec636814d38400315",
+            "routes/inference.py": "144a776f453268875ac65826849a96652a5c2bffdfc6db71cba4ca54a3d110f0",
+            "state/tool_approvals.py": "395bd34f69401f88de334a7689d0a27640ad8dd5de22dd980d0e251629e728a8"
+          },
+          "steps": [
+            {
+              "body": {
+                "pending": true
+              },
+              "request": {
+                "approval_id": "VcHXtyIt...",
+                "session_id": "sess-A"
+              },
+              "status": 200,
+              "step": "status-while-parked"
+            },
+            {
+              "body": {
+                "detail": "No pending tool call confirmation"
+              },
+              "request": {
+                "approval_id": "VcHXtyIt...",
+                "session_id": "sess-B"
+              },
+              "status": 404,
+              "step": "wrong-session-confirm"
+            },
+            {
+              "body": {
+                "detail": "No pending tool call confirmation"
+              },
+              "request": {
+                "approval_id": "stale-id-not-pending"
+              },
+              "status": 404,
+              "step": "stale-id-confirm"
+            },
+            {
+              "body": {
+                "resolved": true
+              },
+              "request": {
+                "approval_id": "VcHXtyIt...",
+                "session_id": "sess-A"
+              },
+              "status": 200,
+              "step": "owner-session-allow"
+            },
+            {
+              "body": {
+                "pending": false
+              },
+              "status": 200,
+              "step": "status-after-decision"
+            }
+          ],
+          "still_pending_after_rejections": true,
+          "waiter_reason": "answered",
+          "waiter_verdict": "allow"
+        }
+      },
+      "P9_backend_test_suites": {
+        "approval_permission_suite": {
+          "base": {
+            "failed": null,
+            "passed": 2371,
+            "tail": "2371 passed in 26.29s"
+          },
+          "head": {
+            "failed": null,
+            "passed": 2371,
+            "tail": "2371 passed in 26.17s"
+          }
+        },
+        "fetched_web_backend_suite": {
+          "base": {
+            "failed": null,
+            "passed": 3599,
+            "tail": "3599 passed in 43.73s"
+          },
+          "head": {
+            "failed": null,
+            "passed": 3599,
+            "tail": "3599 passed in 41.79s"
+          }
+        },
+        "tool_confirm_stream_handshake": {
+          "base": {
+            "failed": null,
+            "passed": 3,
+            "tail": "3 passed in 2.26s"
+          },
+          "head": {
+            "failed": null,
+            "passed": 3,
+            "tail": "3 passed in 2.58s"
+          }
+        }
+      }
+    },
+    "generated_at": "2026-09-23T11:54:41Z",
+    "limitations": [
+      "The base..head delta for this task is frontend-only, so the runtime stage's base/head comparison is an expected-identical control rather than a discriminating test. The requested public-HTTPS fetch and private-address rejection were executed for real at both pins and both pass; a difference here would have been a regression signal.",
+      "The full Studio UI (browser) parked card flow is covered by the separate fetch-ui assignment whose output root is validation/fetch-ui. This stage verifies the backend runtime the parked card depends on plus the real approval HTTP routes.",
+      "The fetch-runtime-r2 stage folder was created without a server/endpoint; no parent server endpoint was supplied in the assignment, so an in-assignment loopback uvicorn was used for the route-level checks. No external or shared service was contacted.",
+      "The Studio app was imported with the studio/backend requirements set only; torch/transformers were intentionally not installed, so the server logged 'Could not build detection sets from transformers' and ran on the CPU backend. That does not affect the web-fetch tool path or the approval routes under test.",
+      "The cancel-while-parked HTTP scenario cancels via a stop-style cancel_event on the same gateway shape the repository's own stream test uses; it does not reproduce a real browser Stop button click (that is the fetch-ui assignment's surface)."
+    ],
+    "outcome": {
+      "P1_public_https_fetch": "pass-base-and-head",
+      "P2_execute_tool_web_search_url": "pass-base-and-head",
+      "P3_private_address_rejection": "pass-base-and-head (9/9 rejected)",
+      "P4_approval_gate_decisions": "pass-base-and-head (3/3 match)",
+      "P5_fetch_cancellation": "pass-base-and-head",
+      "P6_pending_ownership_in_process": "pass-base-and-head (6/6, 0 residual slots)",
+      "P7_pending_ownership_over_real_http": "pass-base-and-head (4/4 scenarios)",
+      "P8_real_studio_route_http": "pass-base-and-head",
+      "P9_backend_test_suites": "pass-base-and-head (identical counts)"
+    },
+    "pin": {
+      "base_sha": "8190a1a77267cefe8ff4eb2ba2ff8e1e44a50263",
+      "comparison": "new_change",
+      "head_sha": "2d2a885855bfb2153e1dfeaf382330003f988af5",
+      "revision_generation": 5
+    },
+    "prior_stages": {
+      "validation/fetch-r2": "this stage",
+      "validation/fetch-runtime": "plan.json only; the earlier runtime assignment wrote no result manifest, so there are no earlier stage observations to merge or preserve"
+    },
+    "requirements_version": 1,
+    "run_id": "v_0b3a6674a5a256bc1ded9641b09d83bc",
+    "source": {
+      "backend_tree_identical_base_head": true,
+      "base_tree_extracted_to": "/mnt/disks/unslothai/mugi/workbench-v2/t_3bcc4f29192a354e52e65bdd71bec45d/validation/fetch-runtime-r2/trees/studio/backend",
+      "base_tree_studio_backend": "2b68cdd471079d97869ea7b14bf802d3a48a71da",
+      "branch": "workbench/t_3bcc4f29192a354e52e65bdd71bec45d",
+      "changed_paths_base_to_head": [
+        "studio/frontend/src/components/assistant-ui/tool-ui-web-search.tsx",
+        "studio/frontend/src/lib/escape-bidi-controls.ts",
+        "studio/frontend/tests/escape-bidi-controls.test.ts",
+        "studio/frontend/tests/web-fetch-parked-url.test.ts"
+      ],
+      "head_commits": [
+        "2d2a885855bfb2153e1dfeaf382330003f988af5 Cap the url scroller, not its padded wrapper",
+        "ef77ff587cd058a8647b970a2c5829fba8214324 Escape bidi controls and cap the parked url row",
+        "2faa8ed9375c53e20de62d02e7653d6e2de9b84f Studio: show the full url while a web fetch waits for approval"
+      ],
+      "head_rev": "2d2a885855bfb2153e1dfeaf382330003f988af5",
+      "head_tree_studio_backend": "2b68cdd471079d97869ea7b14bf802d3a48a71da",
+      "worktree": "/mnt/disks/unslothai/mugi/workbench-v2/t_3bcc4f29192a354e52e65bdd71bec45d/worktree"
+    },
+    "stage_id": "runtime"
+  },
+  "pin": {
+    "base_sha": "8190a1a77267cefe8ff4eb2ba2ff8e1e44a50263",
+    "comparison": "new_change",
+    "head_sha": "2d2a885855bfb2153e1dfeaf382330003f988af5",
+    "revision_generation": 5
+  },
+  "requirements_version": 1,
+  "run_id": "v_0b3a6674a5a256bc1ded9641b09d83bc",
+  "schema_version": 1,
+  "stages": [
+    {
+      "result_manifest": "/mnt/disks/unslothai/mugi/workbench-v2/t_3bcc4f29192a354e52e65bdd71bec45d/validation/fetch-runtime-r2/stage.json",
+      "stage_id": "runtime",
+      "status": "passed"
+    }
+  ],
+  "status": "passed",
+  "task_id": "t_3bcc4f29192a354e52e65bdd71bec45d"
+}

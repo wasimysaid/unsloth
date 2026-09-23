@@ -1,0 +1,400 @@
+{
+  "schema_version": 1,
+  "pin": {
+    "base_sha": "ae3077a09f2dcc7970721f7d06c6022de49ced1f",
+    "head_sha": "509e1f2cb5a249358e30eeab983f9182ac475323",
+    "comparison": "new_change",
+    "revision_generation": 4
+  },
+  "requirements_version": 1,
+  "check_ids": [
+    "live-vision"
+  ],
+  "coverage_ids": [
+    "vision-gating-live",
+    "text-only-negative"
+  ],
+  "run_id": "v_0b3a6674a5a256bc1ded9641b09d83bc",
+  "plan_file": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/plan.json",
+  "plan_sha256": "4036f7c658444e1a010ff7ab3a744a971cba64b75f9585aef7bb0e33e7e2886b",
+  "source": {
+    "worktree": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/worktree",
+    "expected_head_sha": "509e1f2cb5a249358e30eeab983f9182ac475323",
+    "actual_head_sha": "509e1f2cb5a249358e30eeab983f9182ac475323",
+    "head_sha_matches_plan": true,
+    "worktree_dirty": false,
+    "scope_files_changed_vs_base": [
+      "studio/frontend/src/features/chat/chat-page.tsx",
+      "studio/frontend/src/features/chat/hooks/use-chat-model-runtime.ts",
+      "studio/frontend/src/features/chat/utils/model-vision-capability.ts",
+      "studio/frontend/src/features/model-picker/components/model-selector/pickers.tsx",
+      "studio/frontend/src/features/model-picker/components/model-selector/types.ts",
+      "tests/studio/model_vision_capability.test.mjs",
+      "tests/studio/test_model_picker_contracts.py",
+      "tests/studio/test_model_vision_capability.py"
+    ]
+  },
+  "coverage": [
+    {
+      "coverage_id": "vision-gating-live",
+      "status": "covered",
+      "how": "Real vision GGUF+mmproj (SmolVLM-256M, HF revision pinned) accepted images and answered correctly, while the real backend listing/catalog and the head gate let it through (no warning). Base spuriously warns on the same real inputs.",
+      "evidence": [
+        "logs/live-vision-smolvlm-green.log",
+        "logs/live-vision-smolvlm-red.log",
+        "logs/gate-matrix.log",
+        "logs/capability-normalize.log",
+        "artifacts/backend-capability.json"
+      ]
+    },
+    {
+      "coverage_id": "text-only-negative",
+      "status": "covered",
+      "how": "Real text-only quant: listing has_vision=false, head warns on image attach, and the runtime refuses image input (no projector / projector mismatch / --image unsupported) while still answering text prompts.",
+      "evidence": [
+        "logs/textonly-control-mtmd-nommproj.log",
+        "logs/textonly-control-mtmd-mismatch.log",
+        "logs/textonly-control-text-prompt.log",
+        "logs/textonly-control-image-prompt.log",
+        "logs/capability-normalize.log"
+      ]
+    }
+  ],
+  "models": [
+    {
+      "identity": "ggml-org/SmolVLM-256M-Instruct-GGUF",
+      "revision": "b9e4379657e1450d04d02eec8e345667265b0a00",
+      "files": [
+        {
+          "name": "SmolVLM-256M-Instruct-Q8_0.gguf",
+          "bytes": 175054528,
+          "sha256": "2a31195d3769c0b0fd0a4906201666108834848db768af11de1d2cef7cd35e65"
+        },
+        {
+          "name": "mmproj-SmolVLM-256M-Instruct-Q8_0.gguf",
+          "bytes": 103769856,
+          "sha256": "7e943f7c53f0382a6fc41b6ee0c2def63ba4fded9ab8ed039cc9e2ab905e0edd"
+        }
+      ],
+      "vision": true,
+      "source": "https://huggingface.co/ggml-org/SmolVLM-256M-Instruct-GGUF",
+      "role": "vision-capable GGUF + mmproj pair; real image inference executed on CPU"
+    },
+    {
+      "identity": "local HF-cache snapshot of a real 27B vision GGUF repo (Qwen3.8-27B-GGUF)",
+      "revision": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
+      "files": [
+        {
+          "name": "Qwen3.8-27B-UD-Q4_K_XL.gguf",
+          "bytes": 17559178144,
+          "sha256": "via blobs/3f227079003add2511437e5b1e94812e363385225bf6a9b47b0054a72bc8b01e"
+        },
+        {
+          "name": "mmproj-F16.gguf",
+          "bytes": 927607488,
+          "sha256": "via blobs/cbb841a9ee0636b2ec172f5bb8df2ea8dfeb01e90fe7c6126581d662a0b4e43e"
+        }
+      ],
+      "vision": true,
+      "source": "/mnt/disks/unslothai/mugi/models/Qwen3.8-27B-GGUF",
+      "role": "second real vision GGUF; capability probed, no inference (17.5 GB, no GPU free)"
+    },
+    {
+      "identity": "gemma-3-270m-it-Q8_0.gguf (text-only quant)",
+      "revision": "local file, downloaded 2026-09-22",
+      "files": [
+        {
+          "name": "gemma-3-270m-it-Q8_0.gguf",
+          "bytes": 291546144,
+          "sha256": "d156a5159f2f79c1b1d53c7c1cc20f1ff28ab8d00f17a292620aad13399b9698"
+        }
+      ],
+      "vision": false,
+      "source": "/mnt/disks/unslothai/mugi/temp/reb-10438-live/weights/",
+      "role": "real text-only negative control"
+    }
+  ],
+  "observations": [
+    "REAL INFERENCE RAN. Upstream llama.cpp b11125 (CPU only, -ngl 0) loaded SmolVLM-256M-Instruct-Q8_0.gguf + mmproj-SmolVLM-256M-Instruct-Q8_0.gguf and answered the image question correctly twice: green-circle.png -> 'Green', red-square.png -> 'Red'. So the vision-capable GGUF+mmproj pair genuinely accepts images.",
+    "REAL BACKEND, NO MOCKS. hub.utils.gguf.list_local_gguf_variants returned has_vision=true for the vision repo and has_vision=false for the text-only repo; utils.models.gguf_metadata.mmproj_accepts_image returned true for both real projectors; and the real coroutine behind GET /api/models/gguf-variants (hub.services.models.gguf_variants.get_gguf_variants_answer) answered with the same verdicts and resolved_locally=true.",
+    "THE BUG SHAPE IS REAL ON DISK. For the real vision repo the variant listing reports has_vision=true while the /api/models/list catalog row for the same directory reports isVision=false (utils.models.model_config.is_vision_model -> False). That stale/mismatched pair is exactly what the head's isKnownTextOnlySelection is written to survive.",
+    "BASE vs HEAD (measured cases). Base spuriously warns on the real vision quant (vision-gguf-local-picked-quant and vision-gguf-no-hint-yet-stale-catalog); head warns on neither. Head is correct on all 7 cases (6 measured on real weights + 1 derived); base_wrong_measured=2, head_wrong=0.",
+    "TEXT-ONLY NEGATIVE CONTROL. The same 270m text-only quant answers a text-only prompt (llama-completion, exit 0) but is refused for image input: llama-mtmd-cli exits 1 with 'Missing --mmproj argument', pairing it with the SmolVLM projector fails with 'mismatch between text model (n_embd = 640) and mmproj (n_embd = 576)', and the text-only runner rejects --image as 'invalid argument'.",
+    "HEAD NORMALIZER ON REAL PAYLOADS. Feeding the actual route payloads through the head's real normalizeGgufVisionCapability: the vision repo's has_vision=true normalizes to undefined (not a text-only claim) and does not warn; the text-only repo's has_vision=false survives as false and does warn. NORMALIZE_OK repos=2.",
+    "HONEST NON-DISCRIMINATION. On the real text-only directory base and head agree (both warn), because that directory's own catalog row is authoritative. The only text-only case where base misses the warning uses a derived stale is_vision=true catalog row, which was NOT observed in the staged weights; it is labelled derived-not-observed in the matrix and was not counted as measured."
+  ],
+  "limitations": [
+    "NO STUDIO SERVER WAS LAUNCHED and no Studio HTTP endpoint or browser was used. The delegated constraint forbids launching independent servers, and the stage declares no environments, browsers or endpoints. The API-level check therefore ran the real route coroutine in-process rather than over a socket; the picker/composer UI path is the separate vision-ui stage.",
+    "NO GPU INFERENCE. nvidia-smi showed GPUs 0-6 at 78-99% utilisation with 136-169 GB already allocated by other workloads; GPU 7 was reportedly faulty. No reservation was held, so all inference was CPU-only with -ngl 0 and tiny 256M weights. Throughput numbers are not comparable to GPU runs and were not treated as performance evidence.",
+    "MODEL CHOICE. The 17.5 GB Qwen3.8-27B vision GGUF already on disk was probed for capability but not run; a separate 256M SmolVLM vision pair was downloaded specifically so real image inference would be affordable on CPU within the stage's 4096 MiB RAM and 3-thread envelope.",
+    "TOOLCHAIN IDENTITY. Inference used upstream llama.cpp b11125 (ubuntu-x64 CPU build, commit 94256114c) fetched into the task root, not the Studio-bundled build present on the host (version 0.4.1-dev build 11030). The bundled copy ships only llama-server, which the no-new-server constraint excluded.",
+    "The real Studio frontend bundle was not rebuilt or driven in this stage; base/head behaviour was compared between the pinned base gate source executed verbatim and the head's actual module, plus the real backend payloads they consume."
+  ],
+  "final_stage": true,
+  "stage_id": "runtime",
+  "outcome": "passed",
+  "check_status": {
+    "live-vision": "passed"
+  },
+  "stage_results": [
+    {
+      "stage_id": "runtime",
+      "result_manifest": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/stage.json",
+      "result_manifest_sha256": "2f83ec0a41272664821bd628754ee6d5d62a18e27d57152aa3e8645406df9793",
+      "outcome": "passed"
+    }
+  ],
+  "gate_matrix": [
+    {
+      "id": "vision-gguf-local-picked-quant",
+      "realWeight": "huggingface.co/ggml-org/SmolVLM-256M-Instruct-GGUF @ b9e4379657e1450d04d02eec8e345667265b0a00",
+      "evidenceClass": "measured-on-real-weights",
+      "note": "Real vision pair (SmolVLM-256M GGUF + mmproj) whose quant is picked; the /api/models/list row for this directory says is_vision=false although the mmproj is present and usable.",
+      "pending": {
+        "isGguf": true
+      },
+      "catalog": {
+        "isGguf": true,
+        "isVision": false
+      },
+      "expectedWarns": false,
+      "baseWarns": true,
+      "headWarns": false
+    },
+    {
+      "id": "vision-gguf-hf-cache-picked-quant",
+      "realWeight": "local HF cache download of a real gated-free vision GGUF repo (mmproj-F16 present)",
+      "evidenceClass": "measured-on-real-weights",
+      "note": "Real HF-cache vision GGUF (weights + mmproj-F16) where both the listing and the catalog row report vision; image must be allowed.",
+      "pending": {
+        "isGguf": true
+      },
+      "catalog": {
+        "isGguf": true,
+        "isVision": true
+      },
+      "expectedWarns": false,
+      "baseWarns": false,
+      "headWarns": false
+    },
+    {
+      "id": "vision-gguf-no-hint-yet-stale-catalog",
+      "realWeight": "huggingface.co/ggml-org/SmolVLM-256M-Instruct-GGUF @ b9e4379657e1450d04d02eec8e345667265b0a00",
+      "evidenceClass": "measured-on-real-weights",
+      "note": "Same real vision quant before any variant metadata is read (hint unknown) against a stale is_vision=false catalog row: GGUF capability is unknown, so claiming text-only is wrong.",
+      "pending": {
+        "isGguf": true
+      },
+      "catalog": {
+        "isGguf": true,
+        "isVision": false
+      },
+      "expectedWarns": false,
+      "baseWarns": true,
+      "headWarns": false
+    },
+    {
+      "id": "text-only-gguf-sole-quant-collapsed-row",
+      "realWeight": "gemma-3-270m-it-Q8_0.gguf (text-only quant, no projector anywhere)",
+      "evidenceClass": "measured-on-real-weights",
+      "note": "Real text-only quant with 'Show all quantizations' off: the collapsed row forwards the listing's authoritative has_vision=false. Measured outcome: base also warns here, because the staged directory's own catalog row is authoritative (is_vision=false). This case is recorded as a text-only negative control but does NOT discriminate base from head.",
+      "pending": {
+        "isGguf": true,
+        "isVision": false
+      },
+      "catalog": {
+        "isGguf": true,
+        "isVision": false
+      },
+      "expectedWarns": true,
+      "baseWarns": true,
+      "headWarns": true
+    },
+    {
+      "id": "text-only-gguf-expander-row",
+      "realWeight": "gemma-3-270m-it-Q8_0.gguf (text-only quant, no projector anywhere)",
+      "evidenceClass": "measured-on-real-weights",
+      "note": "Same real text-only quant picked from the expanded quant list (authoritative false hint). Base also warns: the catalog row happens to be correct for this repo.",
+      "pending": {
+        "isGguf": true,
+        "isVision": false
+      },
+      "catalog": {
+        "isGguf": true,
+        "isVision": false
+      },
+      "expectedWarns": true,
+      "baseWarns": true,
+      "headWarns": true
+    },
+    {
+      "id": "text-only-gguf-non-gguf-catalog",
+      "realWeight": "gemma-3-270m-it-Q8_0.gguf (text-only quant, no projector anywhere)",
+      "evidenceClass": "measured-on-real-weights",
+      "note": "Text-only negative control where the catalog row itself is authoritative (non-GGUF shape): the warning must appear on both variants.",
+      "pending": {
+        "isGguf": false
+      },
+      "catalog": {
+        "isGguf": false,
+        "isVision": false
+      },
+      "expectedWarns": true,
+      "baseWarns": true,
+      "headWarns": true
+    },
+    {
+      "id": "text-only-gguf-stale-catalog-sole-quant",
+      "realWeight": "gemma-3-270m-it-Q8_0.gguf (text-only quant, no projector anywhere)",
+      "evidenceClass": "derived-not-observed",
+      "note": "DERIVED input shape (stale is_vision=true catalog row) over the real text-only weight. On base the collapsed sole-quant row carries no isVision at all, so the warning is missed; the head forwards the listing's authoritative has_vision=false. This catalog shape was not observed in the staged weights, so it is labelled derived and is not counted as measured.",
+      "pending": {
+        "isGguf": true,
+        "isVision": false
+      },
+      "catalog": {
+        "isGguf": true,
+        "isVision": true
+      },
+      "expectedWarns": true,
+      "baseWarns": false,
+      "headWarns": true
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/artifacts/backend-capability.json",
+      "sha256": "a80ef4c768ce7970f45c78ce878ea413026a44698d4f14e8d58007e2cefbfbec",
+      "size_bytes": 2865,
+      "note": "Real backend output for the staged GGUFs: hub listing + the exact response object of hub.services.models.gguf_variants.get_gguf_variants_answer (the coroutine behind GET /api/models/gguf-variants)."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/artifacts/capability-facts.json",
+      "sha256": "5e266dba186e35583bcffdd873ac838a24cb71ead009c81e01e61dccbd7714c2",
+      "size_bytes": 2323,
+      "note": "Measured capability facts per real weight: listing has_vision, /api/models/list catalog is_vision_model, mmproj_accepts_image for each projector found."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/logs/gate-matrix.log",
+      "sha256": "83589f429d5866ad10b963e39740c05be166eac5f8650f1253fc2e3098a0d953",
+      "size_bytes": 5344,
+      "note": "Base/head chat gate comparison over the real facts: pinned base gate expression vs the head's real model-vision-capability.ts. MATRIX_OK measured=6 base_wrong_measured=2 head_wrong=0."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/logs/capability-normalize.log",
+      "sha256": "d470ca7bb92535784189c781afdf67517f2e00a272ba4f7cd14be496aa25e08f",
+      "size_bytes": 783,
+      "note": "Real backend payload -> head module: NORMALIZE_OK repos=2. Vision repo does not warn; text-only repo warns."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/logs/live-vision-smolvlm-green.log",
+      "sha256": "8781ff07b24d10ef28bc936de802d6331ad9d78fc136f65e0aff2bbad119f339",
+      "size_bytes": 847,
+      "note": "REAL image inference (CPU, build 11125): SmolVLM-256M Q8_0 + mmproj-SmolVLM-256M Q8_0 with green-circle.png -> 'Green'."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/logs/live-vision-smolvlm-red.log",
+      "sha256": "4bad3f011cbc87b04e05cd1d7db400a1f3314f48a4d7a1f3d5cddbb331a8eeba",
+      "size_bytes": 845,
+      "note": "REAL image inference (CPU): same vision pair with red-square.png -> 'Red'."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/logs/textonly-control-mtmd-nommproj.log",
+      "sha256": "351b27f95eea6e6f8316c5d6d5fb114827fe481de96e5e3ffaf293d65724d290",
+      "size_bytes": 568,
+      "note": "Negative control: the multimodal runner refuses the text-only gemma-3-270m quant with an image and no projector ('Missing --mmproj argument')."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/logs/textonly-control-mtmd-mismatch.log",
+      "sha256": "c15e3ca67f62f961b43251399ab212b42c89a7a288e4c4b4f8404faa40f47cce",
+      "size_bytes": 532,
+      "note": "Negative control: text-only gemma-3-270m weight paired with the SmolVLM projector fails with 'mismatch between text model (n_embd = 640) and mmproj (n_embd = 576)'; the capability is a real property of the weight/projector pair, not a filename guess."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/logs/textonly-control-text-prompt.log",
+      "sha256": "4d9bbf1026224f4e1e3d6709d37b63b8aa150b31ad2ed4fae70bbcc12165b29a",
+      "size_bytes": 2710,
+      "note": "Negative control: the same text-only quant does answer a text-only prompt, so the refusal above is about image input, not a broken model."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/logs/textonly-control-image-prompt.log",
+      "sha256": "8bcc7838efab3fd30c369e73caae49282660fc0ad64f764347a3f5dcc01ea8c7",
+      "size_bytes": 33,
+      "note": "Negative control: text-only runner rejects --image outright ('invalid argument: --image')."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/artifacts/source/base-chat-page.tsx",
+      "sha256": "a9232ff9277419f759d29da69a50c7f6cd89cfc853d5f59d0af879e0ff74f968",
+      "size_bytes": 166720,
+      "note": "`git show ae3077a09:studio/frontend/src/features/chat/chat-page.tsx` \u2013 the pinned base gate source the matrix extracts and executes."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/artifacts/source/base-pickers.tsx",
+      "sha256": "d6c9741ce3de4a6a7feae6d71dd593f624f17eb6753a68993a6992932da0f860",
+      "size_bytes": 309383,
+      "note": "`git show ae3077a09:studio/frontend/src/features/model-picker/components/model-selector/pickers.tsx` \u2013 pinned base picker; contains zero isVision forwards."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/artifacts/images/green-circle.png",
+      "sha256": "7ed314df63b64af1583d3cb169461d126104c2cfdcb22c664a61baba6c06e135",
+      "size_bytes": 3056,
+      "note": "Deterministic probe image A (solid green disc)."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/artifacts/images/red-square.png",
+      "sha256": "f21120d0d4b6662b7db76bffcaa36b1d7813f7a02f79bcd397c6185bd6ffbcd5",
+      "size_bytes": 1445,
+      "note": "Deterministic probe image B (solid red square)."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/scripts/backend_capability_check.py",
+      "sha256": "791da2c98f525bec65f7b4d915a362d4b9fbf0a1707afd4194670beebf853983",
+      "size_bytes": 3683,
+      "note": "Runner for the real backend check."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/scripts/collect_capability_facts.py",
+      "sha256": "0b8666f9a2219a07c2686882ce4727960dfb7172bd16b167cc56c6bbb332e9e1",
+      "size_bytes": 3351,
+      "note": "Runner for the measured capability facts."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/scripts/gate_matrix.mjs",
+      "sha256": "b98fc73f92a7d42fd7bf4a121d5a1dba0167f8188153de6008066354b2720e22",
+      "size_bytes": 8644,
+      "note": "Base/head gate matrix over real facts."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/scripts/capability_normalize.mjs",
+      "sha256": "363fad364f2d5a5bfc11dc3b44b4828130ef8b57b89e0b980e2aa4ca90a8a6a7",
+      "size_bytes": 2735,
+      "note": "Real payload -> head module check."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/scripts/make_images.py",
+      "sha256": "584b08e46f34705cbad572b313d128b9f0ef84b1e0ff895eee1336313baf0d10",
+      "size_bytes": 1050,
+      "note": "Probe image generator."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/models/smolvlm-vision-repo/SmolVLM-256M-Instruct-Q8_0.gguf",
+      "sha256": "2a31195d3769c0b0fd0a4906201666108834848db768af11de1d2cef7cd35e65",
+      "size_bytes": 175054528,
+      "note": "Real vision weights (ggml-org/SmolVLM-256M-Instruct-GGUF @ b9e4379657e1450d04d02eec8e345667265b0a00)."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/models/smolvlm-vision-repo/mmproj-SmolVLM-256M-Instruct-Q8_0.gguf",
+      "sha256": "7e943f7c53f0382a6fc41b6ee0c2def63ba4fded9ab8ed039cc9e2ab905e0edd",
+      "size_bytes": 103769856,
+      "note": "Real projector for the vision weights, same repo revision."
+    },
+    {
+      "path": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/models/textonly-gemma-repo/gemma-3-270m-it-Q8_0.gguf",
+      "sha256": "d156a5159f2f79c1b1d53c7c1cc20f1ff28ab8d00f17a292620aad13399b9698",
+      "size_bytes": 291546144,
+      "note": "Real text-only quant used as the negative control."
+    }
+  ],
+  "artifact_manifest": "/mnt/disks/unslothai/mugi/workbench-v2/t_e37ae76581bce3864cd6d70c16bdf3a9/validation/vision-runtime-r2/runtime-work/artifacts/artifact-sha256.txt",
+  "artifact_manifest_sha256": "9097bab9282935e79e8207a0c4dba5057236d894ff6ac7c0f09be8f0669e3ec1"
+}
