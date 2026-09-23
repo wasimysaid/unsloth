@@ -1069,9 +1069,36 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
     (s) => Object.keys(s.runningByThreadId).length > 0,
   );
   const listedPairRef = useRef<string | null>(null);
+  // Bumped by every compare submission so a lookup that started before it cannot apply.
+  const compareSubmittingRef = useRef(0);
+  // Monotonic ordering for the compare path's history reads. Two of them can be in flight at
+  // once -- the `anyRunning` settle edge and `onComparingChange(false)` both re-list after a
+  // compare that generated -- and the submit counter alone admits both, since neither bump
+  // follows the other. Each read claims a number when it starts, so a later read outranks an
+  // earlier one and a snapshot that resolves last cannot overwrite it with stale or undefined
+  // thread IDs.
+  const compareHistoryReadRef = useRef(0);
+  // The newest claim that actually bound the panes, kept separate from the claim counter so a
+  // newer read that fails its way into the swallowed background-storage catch cannot strand an
+  // older, successful snapshot behind the ordering guard. A request that never rebinds the panes
+  // has nothing to order, so only an applied read moves this marker.
+  const compareHistoryAppliedRef = useRef(0);
+  // The settle-edge re-list is owned by its effect; this one is a bare callback, so
+  // it needs its own window guard. The parent remounts this path per pair, so this
+  // covers an unmount mid-request rather than a pair swap.
+  const compareMountedRef = useRef(true);
+  // Bumped only for a submission that actually starts a compare run -- the composer
+  // claims the panes once the run is accepted -- so a send it rejects before that
+  // cannot invalidate a pending lookup. A real run still flips `anyRunning`, whose
+  // settle edge re-lists and hands the panes the threads that run created.
   const [model1, setModel1] = useState<CompareModelSelection>({
     id: globalCheckpoint || "",
-    isLora: false,
+    // The pane's own LoRA identity, from the loaded checkpoint's adapter row. Hardcoding
+    // false made a reselected adapter load as a base model.
+    isLora: loraModels.some(
+      (lora) =>
+        modelIdsMatch(lora.id, globalCheckpoint) && lora.exportType === "lora",
+    ),
     ggufVariant: globalGgufVariant ?? undefined,
     isDiffusion: globalIsDiffusion,
   });
@@ -1079,6 +1106,61 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
     id: "",
     isLora: false,
   });
+
+  useEffect(() => {
+    // A deferred inventory can settle after this path mounted from a cached catalog.
+    // Retain (or later learn) adapter identity so sequential reloads keep the LoRA
+    // load semantics without remounting the conversation panes.
+    setModel1((current) => {
+      if (
+        current.isLora ||
+        !loraModels.some(
+          (lora) =>
+            modelIdsMatch(lora.id, current.id) && lora.exportType === "lora",
+        )
+      ) {
+        return current;
+      }
+      return { ...current, isLora: true };
+    });
+  }, [loraModels]);
+
+  const handleComparingChange = useCallback(
+    (submitting: boolean) => {
+      if (submitting) {
+        compareSubmittingRef.current += 1;
+        return;
+      }
+      // This lookup is invalidated by a submit that claimed the panes (its own counter) and by
+      // any read that already applied after it started; a read whose own request failed does
+      // not invalidate it.
+      const submittedAt = compareSubmittingRef.current;
+      const readGeneration = ++compareHistoryReadRef.current;
+      void listStoredChatThreads({ pairId })
+        .then((threads) => {
+          if (!compareMountedRef.current) return;
+          if (compareSubmittingRef.current !== submittedAt) return;
+          if (readGeneration < compareHistoryAppliedRef.current) return;
+          compareHistoryAppliedRef.current = readGeneration;
+          const pair = resolveComparePaneThreadIds(threads);
+          setModel1ThreadId(pair.first);
+          setModel2ThreadId(pair.second);
+        })
+        .catch((error) => {
+          if (!isExpectedBackgroundChatStorageError(error)) {
+            throw error;
+          }
+        });
+    },
+    [pairId],
+  );
+
+  useEffect(() => {
+    compareMountedRef.current = true;
+    return () => {
+      compareMountedRef.current = false;
+    };
+  }, []);
 
   const handleModelsChange = useCallback(
     (deletedModel?: DeletedModelRef) => {
@@ -1097,10 +1179,23 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
     if (anyRunning && listedPairRef.current === pairId) return;
     listedPairRef.current = pairId;
     let isActive = true;
-    setThreadsSettled(false);
+    // Invalidated only by a submission that actually claimed the panes. A send the
+    // composer rejects never gets here, so it cannot strand the panes on an undefined
+    // thread while the stored history is still available; a run that does start
+    // re-lists on the `anyRunning` settle edge below.
+    // Same two guards as the callback above: a submit that claimed the panes invalidates this
+    // read, and so does a newer one. `isActive` still covers the unmount cleanup.
+    const submittedAt = compareSubmittingRef.current;
+    const readGeneration = ++compareHistoryReadRef.current;
     listStoredChatThreads({ pairId })
       .then((threads) => {
         if (!isActive) return;
+        // A compare submission that started after this lookup would otherwise be
+        // repointed at whichever threads this stale read happens to name. The
+        // settle edge re-lists, so its own threads still become the targets.
+        if (compareSubmittingRef.current !== submittedAt) return;
+        if (readGeneration < compareHistoryAppliedRef.current) return;
+        compareHistoryAppliedRef.current = readGeneration;
         const pair = resolveComparePaneThreadIds(threads);
         setModel1ThreadId(pair.first);
         setModel2ThreadId(pair.second);
@@ -1139,6 +1234,7 @@ const GeneralCompareContent = memo(function GeneralCompareContent({
             model1={model1}
             model2={model2}
             onExitCompare={onExitCompare}
+            onComparingChange={handleComparingChange}
             model1ThreadId={model1ThreadId}
             model2ThreadId={model2ThreadId}
           />

@@ -63,9 +63,13 @@ import {
 import { isTauri } from "@/lib/api-base";
 import { classifiedAttachmentFiles, isVideoFile } from "@/lib/video-utils";
 import { isDownloadCancelled } from "@/lib/native-files";
-import { isMultimodalResponse } from "./types/api";
+import { isMultimodalResponse, type InferenceStatusResponse } from "./types/api";
 import { getImageInputUnavailableReason } from "./utils/image-input-support";
-import { modelIdsMatch } from "@/features/hub/lib/model-identity";
+import { withAbort } from "@/features/hub/lib/abort-signals";
+import {
+  modelIdsMatch,
+  publicModelId,
+} from "@/features/hub/lib/model-identity";
 import { CONVERSATION_MARKDOWN_LABEL } from "./utils/conversation-markdown";
 import { pasteClipboardFiles } from "./utils/clipboard-files";
 import { confirmStopRunningChatsIfNeeded } from "./utils/confirm-stop-running-chats";
@@ -122,6 +126,8 @@ import { KnowledgeBaseComposerButton } from "@/features/rag/components/knowledge
 import { NewProjectDialog } from "./components/new-project-dialog";
 import { ChatSkillsDialog } from "./components/chat-skills-dialog";
 import { useChatProjects } from "./hooks/use-chat-projects";
+import { resyncInferenceStatusAfterServerModelChange } from "./hooks/use-chat-model-runtime";
+import { isExternalModelId } from "./external-providers";
 import { confirmRemoteCodeIfNeeded } from "@/features/security";
 import {
   DEFAULT_MAX_SEQ_LENGTH,
@@ -143,9 +149,17 @@ import {
 import { prepareHfTokenForUse } from "@/features/hf-auth";
 import {
   fetchGgufStagedMetadata,
+  getInferenceStatus,
   loadModel,
+  unloadModel,
   validateModel,
 } from "./api/chat-api";
+import {
+  CompareRunOwnership,
+  isCompareCancellation,
+  throwIfCompareCancelled,
+  type CompareRun,
+} from "./compare-run-ownership";
 import {
   loadedContextForParams,
   resolveExplicitCtxPin,
@@ -241,6 +255,250 @@ function isNativeComposing(event: Event) {
 // Mirrors the threshold in thread.tsx. Chrome on Windows-over-WSL (#5546) never fires
 // `compositionend` after IME commit, so the compose flag would otherwise stay true forever.
 const IME_STUCK_TIMEOUT_MS = 2500;
+/** Poll cadence while waiting for an aborted compare load to leave the backend. */
+const COMPARE_CANCEL_STATUS_POLL_MS = 750;
+/** A status read that never answers must not hold a round forever: a hung backend would
+ *  otherwise stop the per-round retry below from ever running again. */
+const COMPARE_CANCEL_STATUS_TIMEOUT_MS = COMPARE_CANCEL_STATUS_POLL_MS * 4;
+/** Deadline for one cancellation request: the `/unload` itself and the post-cancel resync.
+ *  The compare's cleanup lease awaits this reconciliation, so a request that stays pending
+ *  must not hold `modelLoading`/`comparing` open. A timed-out `/unload` is re-issued by the
+ *  next poll round, so aborting a slow one only costs a round. */
+const COMPARE_CANCEL_REQUEST_TIMEOUT_MS = COMPARE_CANCEL_STATUS_POLL_MS * 4;
+/** Consecutive status reads without the cancelled model in `loading` before it counts as settled. */
+const COMPARE_CANCEL_SETTLED_OBSERVATIONS = 3;
+/** Upper bound on the status poll. A load hidden behind another one is never settled, so
+ *  an unrelated long-running load must end the attempt with a failure, not a hang. */
+const COMPARE_CANCEL_MAX_STATUS_POLLS = 40;
+/** Elapsed cap for the whole poll. The per-round bounds alone compose to many minutes when
+ *  every request stalls, so the loop also stops once this much wall clock has passed. */
+const COMPARE_CANCEL_TOTAL_DEADLINE_MS =
+  COMPARE_CANCEL_STATUS_POLL_MS * COMPARE_CANCEL_MAX_STATUS_POLLS;
+
+/** Every id `/api/inference/status` may publish for a load of `modelId`, lowercased.
+ *
+ * A pane sends whatever the picker gave it -- an absolute path for an on-device GGUF --
+ * while the same load reports itself mid-flight through the backend's public-id
+ * conversion, commonly a bare filename stem or repo id. Comparing the raw id alone
+ * records false "settled" observations and releases the run while its load still runs. */
+function compareLoadingStatusIds(modelId: string): string[] {
+  const ids = new Set<string>();
+  for (const candidate of [modelId, publicModelId(modelId)]) {
+    const normalized = candidate.trim().toLowerCase();
+    if (normalized) {
+      ids.add(normalized);
+    }
+  }
+  return [...ids];
+}
+
+/** A fresh id scoping one compare `/load` to the `/unload` that cancels it.
+ *
+ * ``crypto.randomUUID`` is undefined in non-secure contexts (HTTP over a LAN IP), so
+ * this mirrors the fallback the compare-start path already uses. */
+function newCompareLoadRequestId(): string {
+  return typeof globalThis.crypto?.randomUUID === "function"
+    ? globalThis.crypto.randomUUID()
+    : `compare-load-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** Read the status, or report "no answer", so one pending read cannot stall the poll.
+ *
+ * A read that never answers is not proof the cancelled load is gone: the round still has to
+ * end so the next one -- and its scoped retry -- can run, and the bounded poll has to reach
+ * its failure instead of waiting forever. A rejection and a timeout are the same outcome:
+ * neither settles a round, and neither is rethrown. */
+async function readInferenceStatusWithinPollBudget(
+  timeoutMs: number = COMPARE_CANCEL_STATUS_TIMEOUT_MS,
+): Promise<InferenceStatusResponse | null> {
+  const controller = new AbortController();
+  let timer: number | undefined;
+  const expiry = new Promise<null>((resolve) => {
+    timer = window.setTimeout(() => {
+      // Also release the unanswered read; the next round starts its own.
+      controller.abort();
+      resolve(null);
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([getInferenceStatus(controller.signal), expiry]);
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+/** Run one cancellation request under a deadline: a request that never answers aborts and
+ *  fails the wait, which the caller treats like any other failure. Without it a pending
+ *  `/unload` -- or the resync behind it -- would leave the status poll, its retries, and the
+ *  compare's cleanup lease unreachable. */
+async function withCompareCancelDeadline<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number = COMPARE_CANCEL_REQUEST_TIMEOUT_MS,
+): Promise<T> {
+  const controller = new AbortController();
+  let timer: number | undefined;
+  const expiry = new Promise<never>((_resolve, reject) => {
+    timer = window.setTimeout(() => {
+      controller.abort();
+      reject(new Error("The cancellation request did not answer in time."));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([run(controller.signal), expiry]);
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+/** Reconcile an aborted compare `/load` with the backend.
+ *
+ * Aborting the browser request releases the socket, not the server-side job, so Stop on a
+ * generalized compare issues `/unload` for the model the cancelled run was loading. When that
+ * unload is rejected, the status poll keeps the run unsettled until the backend stops reporting
+ * the load, so an orphaned load cannot replace the model behind a later prompt. The
+ * unload is scoped to the cancelled attempt's own request id, so a Stop racing a newer
+ * same-model load cancels that attempt and never the newer runtime. */
+async function cancelCompareBackendLoad(
+  modelId: string,
+  loadRequestId: string | null,
+): Promise<void> {
+  try {
+    // Bounded like the poll below, so a request that never answers still reaches it.
+    await withCompareCancelDeadline((signal) =>
+      unloadModel(
+        {
+          model_path: modelId,
+          // Scoped to this exact attempt: an unscoped unload falls through to the manual
+          // path and can cancel a newer same-model load, or one this client never started.
+          ...(loadRequestId ? { cancel_load_request_id: loadRequestId } : {}),
+        },
+        { signal },
+      ),
+    );
+    // The replacing /load can already have evicted the previously active model before
+    // Stop landed, leaving the client checkpoint naming a runtime the backend no longer
+    // has -- a later compare would then take the isAlreadyActive fast path against
+    // nothing. Re-derive residency from the server, as the interactive cancel path does.
+    await withCompareCancelDeadline((signal) =>
+      resyncInferenceStatusAfterServerModelChange(signal),
+    ).catch(() => undefined);
+    return;
+  } catch (unloadError) {
+    // Only a local selection can be invalidated by cancelling a local load; an external
+    // provider has no llama.cpp mirror and stays valid, as the successful path already
+    // assumes.
+    if (!isExternalModelId(useChatRuntimeStore.getState().params.checkpoint)) {
+      useChatRuntimeStore.getState().clearCheckpoint();
+    }
+    const statusIds = compareLoadingStatusIds(modelId);
+    let settledObservations = 0;
+    let pollRounds = 0;
+    let retriedCancellation = false;
+    let observedRegistration = false;
+    const pollDeadline = Date.now() + COMPARE_CANCEL_TOTAL_DEADLINE_MS;
+    while (
+      settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS &&
+      pollRounds < COMPARE_CANCEL_MAX_STATUS_POLLS
+    ) {
+      // One elapsed cap for the attempt: per-round bounds alone add up to minutes when
+      // every request stalls, and the run's busy lease is held for all of it.
+      const remainingMs = pollDeadline - Date.now();
+      if (remainingMs <= 0) break;
+      pollRounds += 1;
+      if (loadRequestId) {
+        // Every round, whatever the status read returns: the first /unload can fail before
+        // the load registers, and onRequestStart fires before the request is sent, so a
+        // delayed load could otherwise settle unseen. Scoped, so it is safe to re-issue.
+        // Sequenced before the status await so a status read that hangs cannot postpone it.
+        try {
+          await withCompareCancelDeadline(
+            (signal) =>
+              unloadModel(
+                {
+                  model_path: modelId,
+                  cancel_load_request_id: loadRequestId,
+                },
+                { signal },
+              ),
+            Math.min(COMPARE_CANCEL_REQUEST_TIMEOUT_MS, remainingMs),
+          );
+          retriedCancellation = true;
+          break;
+        } catch {
+          // Not cancellable yet; retried on the next round while the budget lasts.
+        }
+      }
+      // Re-read the budget: the retry above can have spent all of it, so this read must
+      // not be handed an allowance the round no longer has.
+      const statusRemainingMs = pollDeadline - Date.now();
+      if (statusRemainingMs <= 0) break;
+      // Null on a status outage or a read that never answered: neither is proof the
+      // aborted load is gone, so neither settles a round.
+      const status = await readInferenceStatusWithinPollBudget(
+        Math.min(COMPARE_CANCEL_STATUS_TIMEOUT_MS, statusRemainingMs),
+      );
+      const reported = status
+        ? (status.loading ?? []).map((id) => id.trim().toLowerCase())
+        : null;
+      if (reported === null) {
+        settledObservations = 0;
+      } else {
+        // The backend publishes at most ONE attempt: the running one, else a single queued
+        // one. So this list names the target both when the retried cancellation has not
+        // taken effect yet and when ANOTHER load is hiding the queued target, and its
+        // absence proves nothing in either case. Only an empty list settles the run.
+        const targetStillLoading = reported.some((id) => statusIds.includes(id));
+        const anotherLoadVisible = reported.length > 0 && !targetStillLoading;
+        if (targetStillLoading) {
+          observedRegistration = true;
+        }
+        // Every failure here stays unsettled. An empty list proves nothing on its own:
+        // a load delayed before its attempt registers can still appear later, and only a
+        // registration that was watched appear and then retire is known to be gone.
+        settledObservations =
+          targetStillLoading || anotherLoadVisible || !observedRegistration
+            ? 0
+            : settledObservations + 1;
+      }
+      if (settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS) {
+        // Capped by what is left of the budget, so the pause cannot carry the poll past
+        // its deadline; skipped once that is spent, since the next round breaks anyway.
+        const delayMs = Math.min(
+          COMPARE_CANCEL_STATUS_POLL_MS,
+          pollDeadline - Date.now(),
+        );
+        if (delayMs > 0) {
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, delayMs);
+          });
+        }
+      }
+    }
+    if (retriedCancellation) {
+      // The retry landed: finish like the successful path instead of reporting a failure
+      // for a cancellation that took effect. Checked before the timeout throw, which would
+      // otherwise fire while an unrelated load keeps the poll unsettled.
+      await withCompareCancelDeadline((signal) =>
+        resyncInferenceStatusAfterServerModelChange(signal),
+      ).catch(() => undefined);
+      return;
+    }
+    // Bounded: a backend that keeps reporting an unrelated load is reported as an
+    // unsettled cancellation rather than as a settled one this run never proved.
+    if (settledObservations < COMPARE_CANCEL_SETTLED_OBSERVATIONS) {
+      throw new Error(
+        `Could not cancel the backend model load: ${modelId} was never confirmed cancelled.`,
+      );
+    }
+    const detail =
+      unloadError instanceof Error
+        ? unloadError.message
+        : "The backend rejected the cancellation request.";
+    throw new Error(`Could not cancel the backend model load: ${detail}`);
+  }
+}
 
 function fileToBase64DataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -555,6 +813,7 @@ export function SharedComposer({
   model1,
   model2,
   onExitCompare,
+  onComparingChange,
   model1ThreadId,
   model2ThreadId,
   sendUnavailableReason,
@@ -564,6 +823,8 @@ export function SharedComposer({
   model1?: CompareModelSelection;
   model2?: CompareModelSelection;
   onExitCompare?: () => void;
+  /** Fired while a generalized compare submission owns the panes. */
+  onComparingChange?: (comparing: boolean) => void;
   model1ThreadId?: string;
   model2ThreadId?: string;
   sendUnavailableReason?: string;
@@ -624,6 +885,10 @@ export function SharedComposer({
   const prevRunningRef = useRef(false);
   const prevComparingRef = useRef(false);
   const compareStepSucceededRef = useRef(false);
+  const sendInProgressRef = useRef(false);
+  const compareRunsRef = useRef(
+    new CompareRunOwnership<CompareModelSelection>(),
+  );
   const sendRef = useRef<(() => void) | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
@@ -1093,6 +1358,18 @@ export function SharedComposer({
   useEffect(() => () => clearStuckImeTimer(), []);
 
   async function send() {
+    // Claim the submission window before any await: two attachment sends could
+    // otherwise both pass the idle render and later supersede an in-flight load.
+    if (sendInProgressRef.current) return;
+    sendInProgressRef.current = true;
+    try {
+      await sendImpl();
+    } finally {
+      sendInProgressRef.current = false;
+    }
+  }
+
+  async function sendImpl() {
     if (composingRef.current) {
       resetPromptQueue();
       return;
@@ -1205,6 +1482,9 @@ export function SharedComposer({
       pendingImagesRef.current === submittedImages &&
       pendingAudioRef.current === submittedAudio;
     const keepChangedDraft = () => {
+      // Shared by both draft-changed exits in the preparatory window, so the compare
+      // run is abandoned here rather than being repeated (and forgotten) per call site.
+      abandonCompareRun();
       releaseCompareModelLifecycle();
       resetPromptQueue();
       toast.info("Message changed while preparing", {
@@ -1219,6 +1499,29 @@ export function SharedComposer({
       textareaRef.current?.focus();
     };
 
+    // The owned, cancellable phase starts here rather than at the first /load: these
+    // preparatory awaits can block (a confirmation dialog, a cold system-info request)
+    // while the model-lifecycle lease is already held and further sends are rejected.
+    // Without this, that whole window showed no Stop control at all.
+    let ownedCompareRun: CompareRun<CompareModelSelection> | null = null;
+    let compareSignal = new AbortController().signal;
+    if (isGeneralizedCompare) {
+      setComparing(true);
+      ownedCompareRun = compareRunsRef.current.begin();
+      compareSignal = ownedCompareRun.controller.signal;
+      onComparingChange?.(true);
+    }
+    const abandonCompareRun = () => {
+      if (ownedCompareRun === null) {
+        return;
+      }
+      if (compareRunsRef.current.release(ownedCompareRun)) {
+        setComparing(false);
+        onComparingChange?.(false);
+      }
+      ownedCompareRun = null;
+    };
+
     let compareStopDecision: Awaited<
       ReturnType<typeof confirmStopRunningChatsIfNeeded>
     > | null = null;
@@ -1229,6 +1532,7 @@ export function SharedComposer({
           "reload",
         );
       } catch (error) {
+        abandonCompareRun();
         releaseCompareModelLifecycle();
         resetPromptQueue();
         toast.error("Compare failed", {
@@ -1237,6 +1541,7 @@ export function SharedComposer({
         return;
       }
       if (!compareStopDecision.proceed) {
+        abandonCompareRun();
         releaseCompareModelLifecycle();
         resetPromptQueue();
         return;
@@ -1257,14 +1562,22 @@ export function SharedComposer({
       let loadedFromConfig = false;
 
       // Warm the device cache before the snapshot below reconciles the GPU pick: on a cold cache the
-      // reconcile passes a stale pick through.
+      // reconcile passes a stale pick through. Raced against this run's own signal, because /api/system
+      // is one shared in-flight request: a Stop landing on it must unwind this attempt instead of
+      // holding `comparing` and the model-lifecycle lease until a probe nobody waits for answers.
       try {
         if (store.selectedGpuIds != null) {
-          await ensureGpuDeviceCache();
+          await withAbort(ensureGpuDeviceCache(), compareSignal);
         }
       } catch (error) {
         releaseCompareModelLifecycle();
+        abandonCompareRun();
         resetPromptQueue();
+        // A Stop during the warmup IS that cancellation, not a compare failure: the run and its
+        // lease were released above and no progress toast is on screen to retire yet.
+        if (isCompareCancellation(error, compareSignal)) {
+          return;
+        }
         toast.error("Compare failed", {
           description: error instanceof Error ? error.message : "Unknown error",
         });
@@ -1286,7 +1599,6 @@ export function SharedComposer({
         keepChangedDraft();
         return;
       }
-      clearSubmittedDraft();
       // Set when an accepted transformers install unloaded the active model server-side; a later
       // failure must then clear the stale checkpoint.
       let upgradeUnloadedActive = false;
@@ -1306,7 +1618,12 @@ export function SharedComposer({
       };
       async function ensureModelLoaded(
         sel: CompareModelSelection,
+        stoppedSignal: AbortSignal,
       ): Promise<string> {
+        // Stop can land while any preparatory await below is still running -- token
+        // validation, staged metadata, confirmation dialogs -- so the submitting run's
+        // signal is honored at each boundary, not only at the final request.
+        throwIfCompareCancelled(stoppedSignal);
         const currentStore = useChatRuntimeStore.getState();
         const config = sel.config ?? null;
         // This pane's effective config: an explicit selection config, else the remembered store config
@@ -1335,18 +1652,23 @@ export function SharedComposer({
         if (targetIsGguf && resolvedIsDiffusion === undefined) {
           const preparedToken = await prepareHfTokenForUse(
             currentStore.hfToken,
+            { signal: stoppedSignal },
           );
           if (!preparedToken.proceed) {
             throw new Error("Model load cancelled.");
           }
-          const staged = await fetchGgufStagedMetadata({
-            model_path: sel.id,
-            gguf_variant: sel.ggufVariant ?? null,
-            hf_token: preparedToken.token,
-          });
+          const staged = await fetchGgufStagedMetadata(
+            {
+              model_path: sel.id,
+              gguf_variant: sel.ggufVariant ?? null,
+              hf_token: preparedToken.token,
+            },
+            { signal: stoppedSignal },
+          );
           resolvedIsDiffusion = staged.isDiffusion;
           diffusionUnknown = staged.diffusionUnknown;
         }
+        throwIfCompareCancelled(stoppedSignal);
         // Pass-through arguments can live only in the server's override map while this config comes from
         // local storage, and /load's omission path inherits them from a RESIDENT instance, which a cold
         // compare pane does not have, so the experiment would run a different command.
@@ -1360,7 +1682,10 @@ export function SharedComposer({
             // EXPLICIT /load argument, validated strictly rather than going through the carry-over paths
             // that drop a newly denied flag quietly, so a pane on an install upgraded across a denylist
             // change would otherwise answer 400 on a comparison that ran the day before.
-            const managed = await loadManagedLlamaFlags();
+            const managed = await withAbort(
+              loadManagedLlamaFlags(),
+              stoppedSignal,
+            );
             const clean = (tokens: readonly string[]) =>
               sanitizeStoredExtraArgs(
                 tokens,
@@ -1372,10 +1697,13 @@ export function SharedComposer({
               );
             const local = ownConfig.llamaExtraArgs;
             if (local === undefined) {
-              const resolvedArgs = await fetchLoadExtraArgs(
-                sel.id,
-                sel.id,
-                sel.ggufVariant ?? null,
+              const resolvedArgs = await withAbort(
+                fetchLoadExtraArgs(
+                  sel.id,
+                  sel.id,
+                  sel.ggufVariant ?? null,
+                ),
+                stoppedSignal,
               );
               const cleaned = clean(resolvedArgs.tokens);
               if (cleaned.length > 0) {
@@ -1395,6 +1723,7 @@ export function SharedComposer({
             // The load still works; a real overrides outage surfaces there.
           }
         }
+        throwIfCompareCancelled(stoppedSignal);
         // Mirror single-view resolveLoadMaxSeqLength: a pane with no explicit context hands sizing to
         // whichever local backend serves it, not the session maxSeqLength, which would silently shrink
         // the shown context. With no local backend it falls back to the app default rather than the
@@ -1431,8 +1760,12 @@ export function SharedComposer({
             ? ownConfig.disableVision
             : DEFAULT_PER_MODEL_CONFIG.disableVision;
         if (ownConfig.selectedGpuIds != null) {
-          await ensureGpuDeviceCache();
+          // Same race as the Send-time warmup: a pane carrying persisted GPU IDs awaits the shared
+          // /api/system request, so without the signal a probe that never answers outlives the Stop
+          // that was meant to end this load attempt.
+          await withAbort(ensureGpuDeviceCache(), stoppedSignal);
         }
+        throwIfCompareCancelled(stoppedSignal);
         // A pane's OWN saved split is sent instead of being forced to Auto (#7574); the shared Send-time
         // snapshot is not, since its layer count is bounded by another GGUF. Knobs the runner has no
         // equivalent for (MoE offload, tensor parallel) stay hard-forced, as does an UNCLASSIFIED GGUF.
@@ -1526,7 +1859,8 @@ export function SharedComposer({
                 ...serverTuningLoadPayload(ownConfig),
               }
             : {}),
-        });
+        }, { signal: stoppedSignal });
+        throwIfCompareCancelled(stoppedSignal);
         // Upgrade dialog first (mirrors the primary load path).
         if (validation.requires_transformers_upgrade) {
           const upgraded = await confirmTransformersUpgradeIfNeeded({
@@ -1553,6 +1887,7 @@ export function SharedComposer({
             );
           }
         }
+        throwIfCompareCancelled(stoppedSignal);
         if (
           validation.requires_trust_remote_code ||
           validation.requires_security_review
@@ -1572,57 +1907,87 @@ export function SharedComposer({
             );
           }
         }
+        // The approval dialog can outlive the Stop pressed while it was open. Approving it after
+        // that must not reach the destructive stop decision below: that cancels this comparison's
+        // captured pre-stream reservations and local prompt queues for a run that will now throw
+        // here and never issue its model load, so the queued chats would stop for nothing.
+        throwIfCompareCancelled(stoppedSignal);
         applyCompareStopDecision();
-        const resp = await loadModel({
-          model_path: sel.id,
-          hf_token: useChatRuntimeStore.getState().hfToken || null,
-          max_seq_length: compareMaxSeqLength,
-          load_in_4bit: true,
-          is_lora: sel.isLora,
-          gguf_variant: sel.ggufVariant ?? null,
-          trust_remote_code: loadTrustRemoteCode,
-          approved_remote_code_fingerprint: approvedRemoteCodeFingerprint,
-          chat_template_override: effectiveChatTemplateOverride,
-          cache_type_kv: ownConfig.kvCacheDtype ?? null,
-          mlx_kv_bits: ownConfig.mlxKvBits ?? null,
-          speculative_type: effectiveSpeculativeType,
-          spec_draft_n_max: effectiveSpecDraftNMax,
-          reasoning_budget:
-            targetIsGguf && !resolvedIsDiffusion
-              ? ownConfig.reasoningBudget
-              : -1,
-          reasoning_budget_message:
-            targetIsGguf && !resolvedIsDiffusion
-              ? ownConfig.reasoningBudgetMessage
-              : "",
-          tensor_parallel: effectiveTensorParallel,
-          disable_vision: effectiveDisableVision,
-          force_cancel_active:
-            compareStopDecision?.forceCancelActive ?? false,
-          ...(targetIsGguf
-            ? {
-                gpu_memory_mode: effectiveGpuMemoryMode,
-                gpu_layers: effectiveGpuLayers,
-                n_cpu_moe: effectiveNCpuMoe,
-                tensor_split: compareLoadKnobs.splitRatio ?? undefined,
-                gpu_ids: effectiveSelectedGpuIds ?? undefined,
-                n_parallel: ownConfig.nParallel ?? null,
-                // Only when this panel has read the stored value: omitted, the load inherits it, which keeps
-                // CLI-set flags working.
-                ...(ownConfig.llamaExtraArgs !== undefined
-                  ? // biome-ignore lint/style/useNamingConvention: API schema
-                    { llama_extra_args: ownConfig.llamaExtraArgs ?? [] }
-                  : {}),
-                ...(ownConfig.nBatch != null
-                  ? { n_batch: ownConfig.nBatch }
-                  : {}),
-                ...(ownConfig.nUbatch != null
-                  ? { n_ubatch: ownConfig.nUbatch }
-                  : {}),
-                ...serverTuningLoadPayload(ownConfig),
-              }
-            : {}),
-        });
+        // Resolve the run that owns this load, but do not name its cancellation
+        // target yet: token validation and the approval dialogs run first, and a
+        // Stop landing there must not unload a model no request has replaced.
+        const run = compareRunsRef.current.current();
+        const compareSignal = run?.controller.signal;
+        if (compareSignal) throwIfCompareCancelled(compareSignal);
+        const loadRequestId = newCompareLoadRequestId();
+        const resp = await loadModel(
+          {
+            model_path: sel.id,
+            // Ties this attempt to Stop-time cancellation, so a late Stop cancels exactly
+            // this load instead of whoever holds the slot when it lands.
+            load_request_id: loadRequestId,
+            hf_token: useChatRuntimeStore.getState().hfToken || null,
+            max_seq_length: compareMaxSeqLength,
+            load_in_4bit: true,
+            is_lora: sel.isLora,
+            gguf_variant: sel.ggufVariant ?? null,
+            trust_remote_code: loadTrustRemoteCode,
+            approved_remote_code_fingerprint: approvedRemoteCodeFingerprint,
+            chat_template_override: effectiveChatTemplateOverride,
+            cache_type_kv: ownConfig.kvCacheDtype ?? null,
+            mlx_kv_bits: ownConfig.mlxKvBits ?? null,
+            speculative_type: effectiveSpeculativeType,
+            spec_draft_n_max: effectiveSpecDraftNMax,
+            reasoning_budget:
+              targetIsGguf && !resolvedIsDiffusion
+                ? ownConfig.reasoningBudget
+                : -1,
+            reasoning_budget_message:
+              targetIsGguf && !resolvedIsDiffusion
+                ? ownConfig.reasoningBudgetMessage
+                : "",
+            tensor_parallel: effectiveTensorParallel,
+            disable_vision: effectiveDisableVision,
+            force_cancel_active:
+              compareStopDecision?.forceCancelActive ?? false,
+            ...(targetIsGguf
+              ? {
+                  gpu_memory_mode: effectiveGpuMemoryMode,
+                  gpu_layers: effectiveGpuLayers,
+                  n_cpu_moe: effectiveNCpuMoe,
+                  tensor_split: compareLoadKnobs.splitRatio ?? undefined,
+                  gpu_ids: effectiveSelectedGpuIds ?? undefined,
+                  n_parallel: ownConfig.nParallel ?? null,
+                  // Only when this panel has read the stored value: omitted, the load inherits it, which keeps
+                  // CLI-set flags working.
+                  ...(ownConfig.llamaExtraArgs !== undefined
+                    ? // biome-ignore lint/style/useNamingConvention: API schema
+                      { llama_extra_args: ownConfig.llamaExtraArgs ?? [] }
+                    : {}),
+                  ...(ownConfig.nBatch != null
+                    ? { n_batch: ownConfig.nBatch }
+                    : {}),
+                  ...(ownConfig.nUbatch != null
+                    ? { n_ubatch: ownConfig.nUbatch }
+                    : {}),
+                  ...serverTuningLoadPayload(ownConfig),
+                }
+              : {}),
+
+          },
+          {
+            signal: stoppedSignal,
+            // Token validation and its dialog happen inside loadModel. Expose the
+            // cancellation target only at the actual request boundary, so Stop cannot
+            // evict a resident same-ID model before the load is really in flight.
+            onRequestStart: () => {
+              if (run) compareRunsRef.current.setLoadingModel(run, sel);
+              if (run)
+                compareRunsRef.current.setLoadingRequestId(run, loadRequestId);
+            },
+          },
+        );
+        if (compareSignal) throwIfCompareCancelled(compareSignal);
         // Keep a compare pane's per-model speculative choice load-local: persist the global preference
         // only when it came from global settings.
         if (ownConfig.speculativeType == null) {
@@ -1632,6 +1997,8 @@ export function SharedComposer({
         // choice survives a restart.
         persistGpuMemoryModeOnLoad(resp, effectiveGpuMemoryMode);
         upgradeUnloadedActive = false;
+        // The load is no longer cancellable: Stop must not unload a model that is now resident.
+        if (run) compareRunsRef.current.setLoadingModel(run, null);
         const store = useChatRuntimeStore.getState();
         store.setCheckpoint(
           resp.model,
@@ -1811,31 +2178,43 @@ export function SharedComposer({
       const handle1 = handlesRef.current["model1"];
       const handle2 = handlesRef.current["model2"];
 
-      if (handle1) handle1.appendMessage(content);
-      if (handle2) handle2.appendMessage(content);
-
       const name1 = model1?.id ? compareModelDisplayName(model1.id) : "";
       const name2 = model2?.id ? compareModelDisplayName(model2.id) : "";
       const toastId = toast("Comparing models…", { duration: Infinity });
-
-      setComparing(true);
+      // Non-null here: this branch only runs for a generalized compare, which claimed
+      // the run above and abandons it on every early return before this point.
+      const run = ownedCompareRun as CompareRun<CompareModelSelection>;
       try {
+        // Inside the protected scope: a Stop during the preparatory awaits above must
+        // unwind through the catch/finally below, which releases the run, the model
+        // lifecycle lease and the busy state. Throwing before the try stranded all three.
+        throwIfCompareCancelled(compareSignal);
+        // Cleared and appended only past that gate: a Stop taken during the awaits above
+        // must neither erase the draft nor persist a prompt in both panes for a run that
+        // never generated.
+        clearSubmittedDraft();
+        if (handle1) handle1.appendMessage(content);
+        if (handle2) handle2.appendMessage(content);
         if (handle1 && model1?.id) {
           toast("Loading Model 1…", {
             id: toastId,
             description: name1,
             duration: Infinity,
           });
-          const status1 = await ensureModelLoaded(model1);
+          const status1 = await ensureModelLoaded(model1, compareSignal);
+          throwIfCompareCancelled(compareSignal);
+          if (run) compareRunsRef.current.setLoadingModel(run, null);
           releaseCompareModelLifecycle();
           toast("Generating with Model 1…", {
             id: toastId,
             description: `${name1} (${status1})`,
             duration: Infinity,
           });
+          throwIfCompareCancelled(compareSignal);
           const done = handle1.waitForRunEnd();
           handle1.startRun();
           await done;
+          throwIfCompareCancelled(compareSignal);
         }
 
         if (handle2 && model2?.id) {
@@ -1850,6 +2229,7 @@ export function SharedComposer({
             if (!currentStopDecision.proceed) {
               throw new Error("Second comparison model load cancelled.");
             }
+            throwIfCompareCancelled(compareSignal);
             compareStopDecision = currentStopDecision;
             toast("Loading Model 2…", {
               id: toastId,
@@ -1857,36 +2237,73 @@ export function SharedComposer({
               duration: Infinity,
             });
           }
-          const status2 = await ensureModelLoaded(model2);
+          const status2 = await ensureModelLoaded(model2, compareSignal);
+          throwIfCompareCancelled(compareSignal);
+          if (run) compareRunsRef.current.setLoadingModel(run, null);
           releaseCompareModelLifecycle();
           toast("Generating with Model 2…", {
             id: toastId,
             description: `${name2} (${status2})`,
             duration: Infinity,
           });
+          throwIfCompareCancelled(compareSignal);
           const done = handle2.waitForRunEnd();
           handle2.startRun();
           await done;
+          throwIfCompareCancelled(compareSignal);
         }
 
-        compareStepSucceededRef.current = true;
-        toast.success("Compare complete", { id: toastId, duration: 2000 });
-      } catch (err) {
-        compareStepSucceededRef.current = false;
-        resetPromptQueue();
-        // The install already unloaded the previously active model; drop the checkpoint so the UI does
-        // not keep pointing at it.
-        if (upgradeUnloadedActive) {
-          useChatRuntimeStore.getState().clearCheckpoint();
+        if (compareRunsRef.current.owns(run)) {
+          compareStepSucceededRef.current = true;
+          toast.success("Compare complete", { id: toastId, duration: 2000 });
         }
-        toast.error("Compare failed", {
-          id: toastId,
-          description: err instanceof Error ? err.message : "Unknown error",
-          duration: 4000,
-        });
+      } catch (err) {
+        let cleanupError: unknown = null;
+        if (run.cleanup) {
+          try {
+            await run.cleanup;
+          } catch (error) {
+            cleanupError = error;
+          }
+        }
+        if (compareRunsRef.current.owns(run)) {
+          compareStepSucceededRef.current = false;
+          resetPromptQueue();
+          // The install already unloaded the previously active model; drop the checkpoint so the UI does
+          // not keep pointing at it.
+          if (upgradeUnloadedActive) {
+            useChatRuntimeStore.getState().clearCheckpoint();
+          }
+          if (isCompareCancellation(err, compareSignal)) {
+            if (cleanupError) {
+              toast.error("Compare stopped after cancellation failed", {
+                id: toastId,
+                description:
+                  cleanupError instanceof Error
+                    ? cleanupError.message
+                    : "The model load ended, but the backend cancellation failed.",
+                duration: 5000,
+              });
+            } else {
+              toast.info("Compare stopped", { id: toastId, duration: 2000 });
+            }
+          } else {
+            toast.error("Compare failed", {
+              id: toastId,
+              description: err instanceof Error ? err.message : "Unknown error",
+              duration: 4000,
+            });
+          }
+        }
       } finally {
-        releaseCompareModelLifecycle();
-        setComparing(false);
+        // Ownership is not released until the backend reconciliation settles: a
+        // stopped run must not clear shared loading state while its /load is live.
+        if (run.cleanup) await run.cleanup.catch(() => undefined);
+        if (compareRunsRef.current.release(run)) {
+          releaseCompareModelLifecycle();
+          setComparing(false);
+          onComparingChange?.(false);
+        }
       }
     } else {
       const liveRuntime = useChatRuntimeStore.getState();
@@ -1935,6 +2352,21 @@ export function SharedComposer({
 
   function stop() {
     if (isDictating) stopDictation();
+    const run = compareRunsRef.current.cancelCurrent();
+    if (run) {
+      compareStepSucceededRef.current = false;
+      const loadingModel = run.loadingModel;
+      if (loadingModel && !run.cleanup) {
+        // The fetch abort only releases the browser. /unload is the backend
+        // cancellation path for an in-flight load, so it runs on its own
+        // signal rather than the aborted compare one.
+        const cleanup = cancelCompareBackendLoad(
+          loadingModel.id,
+          run.loadingRequestId,
+        );
+        compareRunsRef.current.setCleanup(run, cleanup);
+      }
+    }
     for (const handle of Object.values(handlesRef.current)) {
       handle.cancel();
     }

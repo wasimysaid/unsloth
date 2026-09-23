@@ -273,7 +273,9 @@ export async function loadModel(
     runtime?: ModelRuntime;
   },
 ): Promise<LoadModelResponse> {
-  const preparedToken = await prepareHfTokenForUse(payload.hf_token);
+  const preparedToken = await prepareHfTokenForUse(payload.hf_token, {
+    signal: options?.signal,
+  });
   // Tagged so auto-load can tell a user cancellation from a backend rejection.
   if (!preparedToken.proceed)
     throw Object.assign(new Error("Model load cancelled."), {
@@ -355,8 +357,11 @@ export async function countChatInputTokens(payload: {
 
 export async function validateModel(
   payload: LoadModelRequest,
+  options?: { signal?: AbortSignal },
 ): Promise<ValidateModelResponse> {
-  const preparedToken = await prepareHfTokenForUse(payload.hf_token);
+  const preparedToken = await prepareHfTokenForUse(payload.hf_token, {
+    signal: options?.signal,
+  });
   if (!preparedToken.proceed)
     throw Object.assign(new Error("Model load cancelled."), {
       unslothUserCancelled: true,
@@ -364,6 +369,7 @@ export async function validateModel(
   const response = await authFetch("/api/inference/validate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: options?.signal,
     body: JSON.stringify({
       model_path: payload.model_path,
       native_path_lease: payload.nativePathLease ?? null,
@@ -408,12 +414,15 @@ export async function validateModel(
 /** Read a GGUF's header dims (native context length, layer count, MoE expert-layer count) from its
  *  local file, with no GPU load or download. All null when the file is not downloaded, is not
  *  a GGUF, or is gated. For a native drag-drop file, pass `nativePathToken`. */
-export async function fetchGgufStagedMetadata(payload: {
-  model_path: string;
-  gguf_variant?: string | null;
-  hf_token?: string | null;
-  nativePathToken?: string | null;
-}): Promise<{
+export async function fetchGgufStagedMetadata(
+  payload: {
+    model_path: string;
+    gguf_variant?: string | null;
+    hf_token?: string | null;
+    nativePathToken?: string | null;
+  },
+  options?: { signal?: AbortSignal },
+): Promise<{
   contextLength: number | null;
   layerCount: number | null;
   moeLayerCount: number | null;
@@ -443,6 +452,7 @@ export async function fetchGgufStagedMetadata(payload: {
   const response = await authFetch("/api/inference/validate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: options?.signal,
     body: JSON.stringify({
       model_path: payload.model_path,
       gguf_variant: payload.gguf_variant ?? null,
@@ -462,10 +472,14 @@ export async function fetchGgufStagedMetadata(payload: {
   };
 }
 
-export async function unloadModel(payload: UnloadModelRequest): Promise<void> {
+export async function unloadModel(
+  payload: UnloadModelRequest,
+  options?: { signal?: AbortSignal },
+): Promise<void> {
   const response = await authFetch("/api/inference/unload", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: options?.signal,
     body: JSON.stringify(payload),
   });
   await parseJsonOrThrow<unknown>(response, "Model unload");

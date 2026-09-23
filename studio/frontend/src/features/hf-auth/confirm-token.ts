@@ -18,6 +18,9 @@ export interface PreparedHfToken {
 
 interface PrepareHfTokenOptions {
   allowAnonymous?: boolean;
+  /** A cancellable caller (an aborted compare) supplies this so Stop can end the
+   * await instead of waiting out a validation that never answers. */
+  signal?: AbortSignal;
 }
 
 // A caller can retain the pre-dialog payload while the shared store is cleared. Remember that
@@ -138,7 +141,11 @@ export async function prepareHfTokenForUse(
 
   let validation: HfTokenValidationResult;
   try {
-    validation = await validateOncePerBurst(normalized);
+    // A cancellable caller bypasses the burst cache: that entry is shared and cannot be
+    // aborted per caller, so one Stop would otherwise be stuck behind another's request.
+    validation = options.signal
+      ? await validateHfToken(normalized, { signal: options.signal })
+      : await validateOncePerBurst(normalized);
   } catch {
     // Validation is advisory. Let the real operation retain its own error.
     return { proceed: true, token: normalized };

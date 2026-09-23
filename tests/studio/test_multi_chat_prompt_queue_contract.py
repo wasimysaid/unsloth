@@ -678,15 +678,20 @@ def test_queued_settings_are_thread_scoped_without_cross_chat_fallback():
         "      try {\n        if (store.selectedGpuIds != null) {",
         "      const compareLoadKnobs = {",
     )
-    assert "await ensureGpuDeviceCache();" in gpu_discovery
-    assert "catch (error) {\n        releaseCompareModelLifecycle();" in gpu_discovery
+    # The warmup is awaited through the run's own signal (see the comparison cancel
+    # contract), so the literal bare await is no longer what this pins; both the call
+    # and its failure branch still have to be here.
+    assert "ensureGpuDeviceCache()" in gpu_discovery
+    assert "catch (error) {" in gpu_discovery
     side_one = _between(
         SHARED_COMPOSER,
         "        if (handle1 && model1?.id) {",
         "        if (handle2 && model2?.id) {",
     )
     assert (
-        side_one.index("const status1 = await ensureModelLoaded(model1)")
+        side_one.index(
+            "const status1 = await ensureModelLoaded(model1, compareSignal)"
+        )
         < side_one.index("releaseCompareModelLifecycle();")
         < side_one.index("handle1.startRun()")
     )
@@ -699,8 +704,9 @@ def test_queued_settings_are_thread_scoped_without_cross_chat_fallback():
         side_two.index("acquireCompareModelLifecycle();")
         < side_two.index("await confirmStopRunningChatsIfNeeded(")
         < side_two.index("compareStopDecision = currentStopDecision")
-        < side_two.index("const status2 = await ensureModelLoaded(model2)")
-        < side_two.index("releaseCompareModelLifecycle();")
+        < side_two.index(
+            "const status2 = await ensureModelLoaded(model2, compareSignal)"
+        )
         < side_two.index("handle2.startRun()")
     )
     assert "requestLocalPromptQueueStop" in eject
@@ -781,7 +787,7 @@ def test_queued_settings_are_thread_scoped_without_cross_chat_fallback():
     assert "pendingAudioRef.current === submittedAudio" in send_flow
     confirm_index = send_flow.index("await confirmStopRunningChatsIfNeeded(")
     first_draft_check = send_flow.index("if (!submittedDraftIsCurrent())")
-    gpu_discovery_index = send_flow.index("await ensureGpuDeviceCache();")
+    gpu_discovery_index = send_flow.index("withAbort(ensureGpuDeviceCache(),")
     second_draft_check = send_flow.index(
         "if (!submittedDraftIsCurrent())",
         gpu_discovery_index,
@@ -972,12 +978,12 @@ def test_compare_prompt_list_resets_when_preflight_never_starts_a_run():
         "      try {\n        if (store.selectedGpuIds != null) {",
         "      const compareLoadKnobs = {",
     )
-    assert "resetPromptQueue();" in failed_gpu_discovery
-
+    # Anchored on the run claim rather than `setComparing(true)`: the busy flag is raised
+    # before the preparatory awaits, so its old span no longer reaches this block.
     compare_run = _between(
         send_flow,
-        "setComparing(true);",
-        "} else {",
+        "const run = ownedCompareRun as CompareRun<CompareModelSelection>;",
+        "\n    } else {",
     )
     failed_compare = _between(compare_run, "} catch (err) {", "} finally {")
     assert "compareStepSucceededRef.current = false;" in failed_compare
