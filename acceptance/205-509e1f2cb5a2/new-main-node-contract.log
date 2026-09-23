@@ -1,9 +1,9 @@
-✔ undefined catalog target is not treated as text-only (0.592456ms)
-✔ known vision GGUF suppresses the historical-image warning (0.117331ms)
-✔ known text-only GGUF emits the historical-image warning (0.081962ms)
-✔ unknown GGUF capability does not trust a stale catalog false (0.083301ms)
-✔ missing and malformed GGUF vision metadata remain unknown (0.121553ms)
-✔ known text-only non-GGUF still emits the warning (0.075937ms)
+✔ undefined catalog target is not treated as text-only (0.6526ms)
+✔ known vision GGUF suppresses the historical-image warning (0.118395ms)
+✔ known text-only GGUF emits the historical-image warning (0.090165ms)
+✔ unknown GGUF capability does not trust a stale catalog false (0.080221ms)
+✔ missing and malformed GGUF vision metadata remain unknown (0.120271ms)
+✔ known text-only non-GGUF still emits the warning (0.078397ms)
 ℹ tests 6
 ℹ suites 0
 ℹ pass 6
@@ -11,4 +11,4 @@
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 115.489576
+ℹ duration_ms 95.154156

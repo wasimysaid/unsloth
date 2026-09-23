@@ -1,30 +1,44 @@
-# new-main relevance check: does the #205 patch still apply and pass on upstream main 3ef36472dfe1c367cf448f5b4e7ffe444c2cce37 ?
-# scratch worktree: <scratch> (detached at 3ef36472d), implementation branch untouched; fork implementation branch not touched
-$ git apply --3way --check <patch from ae3077a09..509e1f2cb5>
+# new-main relevance check for #205 head 509e1f2cb5 (patch = git diff ae3077a09..509e1f2cb5, 8 files)
+# scratch checkout: <scratch> (detached), fork implementation branch untouched
+# upstream main moved past the validation base f5109b584: -> 3ef36472df (touched pickers.tsx) -> ebf2f2a5d4 (tests/ only)
+
+## clean tree at ebf2f2a5d4c78407bce5a38988d38198c094ef2a (current main at check time)
+$ git status --porcelain   # expected empty
+$ git rev-parse HEAD
+ebf2f2a5d4c78407bce5a38988d38198c094ef2a
+
+$ git apply --3way --check /tmp/p205.patch
 Applied patch to 'studio/frontend/src/features/chat/chat-page.tsx' cleanly.
 Applied patch to 'studio/frontend/src/features/chat/hooks/use-chat-model-runtime.ts' cleanly.
-Performing three-way merge...
-Applied patch to 'studio/frontend/src/features/chat/utils/model-vision-capability.ts' cleanly.
+Falling back to direct application...
 Applied patch to 'studio/frontend/src/features/model-picker/components/model-selector/pickers.tsx' cleanly.
 Applied patch to 'studio/frontend/src/features/model-picker/components/model-selector/types.ts' cleanly.
-Performing three-way merge...
-Applied patch to 'tests/studio/model_vision_capability.test.mjs' cleanly.
+Falling back to direct application...
 Applied patch to 'tests/studio/test_model_picker_contracts.py' cleanly.
-Performing three-way merge...
-Applied patch to 'tests/studio/test_model_vision_capability.py' cleanly.
-EXIT=0 (applies cleanly)
+Falling back to direct application...
+check exit=0  (0 = applies cleanly, no conflict)
 
-$ grep -n 'hasImage && targetModel?.isVision === false' studio/frontend/src/features/chat/chat-page.tsx
-(absent: new main still has the pre-fix gate, feature not superseded)
+$ grep -c 'hasImage && targetModel?.isVision === false' studio/frontend/src/features/chat/chat-page.tsx
+1
+$ test -f studio/frontend/src/features/chat/utils/model-vision-capability.ts
+absent -> pre-fix gate is still current main; feature NOT superseded
+$ git diff --stat 3ef36472df..ebf2f2a5d4   # only tests/ changed between the two newer tips
+ tests/conftest.py                                  |  6 ++
+ tests/python/test_rocm_bf16_capability.py          | 76 ++++++++++++++++++++--
+ tests/python/test_windows_arm64_wheelhouse_tags.py | 38 +++++++----
+ .../studio/install/test_torch_probe_memoization.py | 61 +++++++++++++++--
+ .../test_desktop_reliability_frontend_contract.py  | 12 ++--
+ 5 files changed, 166 insertions(+), 27 deletions(-)
+Applied patch to 'studio/frontend/src/features/chat/chat-page.tsx' cleanly.
+Applied patch to 'studio/frontend/src/features/chat/hooks/use-chat-model-runtime.ts' cleanly.
+Falling back to direct application...
+Applied patch to 'studio/frontend/src/features/model-picker/components/model-selector/pickers.tsx' cleanly.
+Applied patch to 'studio/frontend/src/features/model-picker/components/model-selector/types.ts' cleanly.
+Falling back to direct application...
+Applied patch to 'tests/studio/test_model_picker_contracts.py' cleanly.
+Falling back to direct application...
 
-$ grep -n 'isKnownTextOnlySelection(' studio/frontend/src/features/chat/chat-page.tsx
-3346:                isKnownTextOnlySelection(
-
-$ grep -n 'pinnedFamilies|pinToTop' (new-main-only changes preserved after apply)
-3587:      pinnedFamilies: catalog
-2
-
-$ git diff --stat HEAD
+$ git apply --3way /tmp/p205.patch   # applied for the test run
  studio/frontend/src/features/chat/chat-page.tsx    |  8 ++-
  .../features/chat/hooks/use-chat-model-runtime.ts  |  2 +
  .../features/chat/utils/model-vision-capability.ts | 36 ++++++++++++
@@ -34,3 +48,11 @@ $ git diff --stat HEAD
  tests/studio/test_model_picker_contracts.py        | 27 +++++++++
  tests/studio/test_model_vision_capability.py       | 43 ++++++++++++++
  8 files changed, 231 insertions(+), 12 deletions(-)
+
+$ node --experimental-strip-types --test tests/studio/model_vision_capability.test.mjs   # exit=0
+ℹ tests 6
+ℹ pass 6
+ℹ fail 0
+$ uv run --no-project --with pytest python -m pytest tests/studio/test_model_vision_capability.py tests/studio/test_model_picker_contracts.py -q   # exit=0
+...................................................                      [100%]
+194 passed, 1 skipped in 1.11s

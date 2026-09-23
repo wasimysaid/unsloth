@@ -11,11 +11,11 @@ a0622290abe248732882256d3dc7f8dca1de7ed99846dcffa84e1cb61592baac  64420  MAIN-W-
 b24dc721136cbef3ecbf65e7164ad01549a6b74b95f09bd3faa507438cb9beb6  118819  P-head-left-main-right.png
 f8e768328b61f8fbdbdb64b3342368fa4ffdfd30e9fff77205c296084cbcf68d  92016  V-head-left-main-right.png
 f7bd70e227630434c5907f84ae01c5f88ec7352c36df25d6996ec5c424a6101b  105889  W-head-left-main-right.png
-ec9bb7d943615dac364258c26ebc7e35fca5b6c500b02882c960ecb6d7607201  271  new-main-focused-pytest.log
-cc1b9d72c12828335de45c0c999945330e0c2fa88315bf825a17369377656cef  552  new-main-node-contract.log
-2958067b00caf60b7f8986bf5780238e3ada30f0d2d71ca75931a1e1e141fb7a  2180  new-main-relevance.log
+966c14e40412710518c245066a59a28d92d91bec0541de3140afb0b564a65bec  351  new-main-focused-pytest.log
+a901fcb62d584b759226bf9ef215cccf245b4b4a44f01f7a87f8a7fb2aa28710  549  new-main-node-contract.log
+661ea7a20efabffe0c49f8ec34b985b8d8d08151b1b97a24a9dbd1946817ae66  3534  new-main-relevance.log
 e836cd15a0b57a59e6cf2b89983f02701e8f3a821dcaaf8ad90b9f3f8478473e  21610  runtime-result.json
 83c3a900da0452b6f4d8f05c46b5c077dc6ae2a4b24e36ebcdd7e532884fd2b3  3424  verdict.json
 # notes: all nine PNGs are Chromium captures with IHDR/IDAT/IEND chunks only (no tEXt/iTXt/eXIf metadata) and contain no host or user identity strings.
 # runtime-result.json is the task manifest with host paths substituted (<task-root>, <host-data>, <home>, <user>); its JSON structure and every non-path field are unchanged.
-# new-main-relevance.log uses a <scratch> placeholder instead of the scratch worktree path.
+# new-main-relevance.log covers upstream main ebf2f2a5d4 (current at check time) and uses a <scratch> placeholder instead of the scratch worktree path.
