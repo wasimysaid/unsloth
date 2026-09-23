@@ -7830,7 +7830,6 @@ def test_direct_gguf_is_companion_refuses_imatrices():
         assert start._direct_gguf_is_companion(path) is False
 
 
-
 def test_hub_gguf_files_filters_root_big_endian_only(monkeypatch):
     monkeypatch.delenv("HF_HUB_OFFLINE", raising = False)
     monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising = False)
