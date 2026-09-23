@@ -1,0 +1,73 @@
+{
+  "variant": "MAIN",
+  "base_url": "http://127.0.0.1:9111",
+  "vision_repo": "ggml-org/SmolVLM-256M-Instruct-GGUF",
+  "text_repo": "unsloth/gemma-3-270m-it-GGUF",
+  "warning_text": "may not handle earlier images",
+  "build_sha": "f5109b58434da3f5cda352f3477eefa3f2670483",
+  "api_cached_gguf_repos": [
+    "ggml-org/SmolVLM-256M-Instruct-GGUF",
+    "unsloth/gemma-3-270m-it-GGUF"
+  ],
+  "api_has_vision": {
+    "ggml-org/SmolVLM-256M-Instruct-GGUF": true,
+    "unsloth/gemma-3-270m-it-GGUF": false
+  },
+  "picker": {
+    "thread_id": "formal-MAIN-inv-1790173871321",
+    "rows": [
+      {
+        "i": 0,
+        "text": "gemma-3-270m-it-GGUF Q8_0 292MB",
+        "visionBadge": false
+      },
+      {
+        "i": 1,
+        "text": "ggml-org / SmolVLM-256M-Instruct-GGUF",
+        "visionBadge": true
+      }
+    ],
+    "textonly_row_has_vision_badge": false,
+    "vision_row_has_vision_badge": true,
+    "screenshot": "MAIN-P-picker.png",
+    "screenshot_sha256": "04f2c903c3ab08298fe7c19bfc10a2fb69a0ed8c96eff52cf1a19b390ea0dbb9"
+  },
+  "W_vision_to_textonly": {
+    "thread_id": "formal-MAIN-W-1790173899351",
+    "seeded_model_id": "ggml-org/SmolVLM-256M-Instruct-GGUF",
+    "server_thread_model_id": "ggml-org/SmolVLM-256M-Instruct-GGUF",
+    "target_row": "gemma-3-270m-it-GGUF",
+    "loaded_trigger": "gemma-3-270m-it-GGUF\nGGUF \u00b7 Q8_0",
+    "repo_row_click": "gemma-3-270m-it-GGUF Q8_0 292MB",
+    "images_in_thread": 2,
+    "final_trigger": "gemma-3-270m-it-GGUF\nGGUF \u00b7 Q8_0",
+    "warning_text_seen_in_dom": [],
+    "warning_toast": [],
+    "body_has_warning": false,
+    "warning_observed": false,
+    "screenshot": "MAIN-W-textonly-selected.png",
+    "screenshot_sha256": "a0622290abe248732882256d3dc7f8dca1de7ed99846dcffa84e1cb61592baac"
+  },
+  "V_textonly_to_vision": {
+    "thread_id": "formal-MAIN-V-1790173978710",
+    "seeded_model_id": "unsloth/gemma-3-270m-it-GGUF",
+    "server_thread_model_id": "unsloth/gemma-3-270m-it-GGUF",
+    "target_row": "SmolVLM-256M-Instruct-GGUF",
+    "loaded_trigger": "gemma-3-270m-it-GGUF\nGGUF \u00b7 Q8_0",
+    "repo_row_click": "ggml-org / SmolVLM-256M-Instruct-GGUF",
+    "images_in_thread": 2,
+    "final_trigger": "SmolVLM-256M-Instruct-GGUF\nGGUF \u00b7 Q8_0",
+    "warning_text_seen_in_dom": [],
+    "warning_toast": [],
+    "body_has_warning": false,
+    "warning_observed": false,
+    "screenshot": "MAIN-V-vision-selected.png",
+    "screenshot_sha256": "98e49a7c812c4ea1423d887886c58050043e4f63bc055314bc4a106a9d8a0500"
+  },
+  "console_errors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ]
+}
