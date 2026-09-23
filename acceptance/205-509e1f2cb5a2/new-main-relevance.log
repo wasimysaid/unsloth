@@ -1,5 +1,5 @@
 # new-main relevance check: does the #205 patch still apply and pass on upstream main 3ef36472dfe1c367cf448f5b4e7ffe444c2cce37 ?
-# scratch worktree: /mnt/disks/unslothai/mugi/temp/reb205-newmain (detached at 3ef36472d), implementation branch untouched
+# scratch worktree: <scratch> (detached at 3ef36472d), implementation branch untouched; fork implementation branch not touched
 $ git apply --3way --check <patch from ae3077a09..509e1f2cb5>
 Applied patch to 'studio/frontend/src/features/chat/chat-page.tsx' cleanly.
 Applied patch to 'studio/frontend/src/features/chat/hooks/use-chat-model-runtime.ts' cleanly.
