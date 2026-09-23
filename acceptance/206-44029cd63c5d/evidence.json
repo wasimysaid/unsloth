@@ -1,0 +1,52 @@
+{
+  "pins": {
+    "before": "f5109b58434da3f5cda352f3477eefa3f2670483",
+    "after": "44029cd63c5d80c38ab074d45bca1c64e10ccfcc"
+  },
+  "run_id": "pinned-final",
+  "attempt": "browser-v2",
+  "browser": "Chromium headless, real authenticated Studio frontends, no model load",
+  "scene_sha256": "732f5ff5558232997b52664c73c4fcd29d2129b76f3765885ded1feaa5e346b5",
+  "comparison": "runs/pinned-final/comparison-before-after-browser-v2-browser-v2/result.json",
+  "findings": {
+    "wide_main_overlap_px": 256,
+    "wide_head_overlap_px": 0,
+    "wide_head_settings_left": 1008,
+    "wide_head_monitor_right": 1004,
+    "vertical_drag_y_before": 672.53125,
+    "vertical_drag_y_after": 587.53125,
+    "head_narrow_suppressed": true,
+    "main_narrow_aria_hidden": "true",
+    "head_wide_reclosed_right": 1264
+  },
+  "cleanup": {
+    "browsers": "closed in both drive results",
+    "server_ports": "9141/9142 refused after verified process-group SIGTERM",
+    "endpoint_record_caveat": "endpoint.json retains ready state after shell-managed serve was terminated; socket/process verification is authoritative"
+  },
+  "limitations": [
+    "At 720px Run settings becomes a full-screen modal: main's aria-hidden monitor nevertheless paints over modal controls; head correctly suppresses it (verified in paired screenshots).", 
+    "No model loaded; observed resource numbers varied between isolated homes and are not inference evidence.",
+    "No font-size variation or horizontal drag in this scene."
+  ],
+  "sha256": {
+    "runs/pinned-final/variants/before/attempts/browser-v2/captures/wide-closed.png": "70b0d2c65eb74e6e1af4e57b7d62ce0b8c47c1129c72f5ba47e137688c82d270",
+    "runs/pinned-final/variants/before/attempts/browser-v2/captures/wide-open.png": "767fb4ff55d3fcf066325d2ff05ad4a2afd256a83f1df86121828e80836d92f1",
+    "runs/pinned-final/variants/before/attempts/browser-v2/captures/wide-vertical-drag.png": "627dd0f69716fe82cd8a246459ad323eda6f1d60afc53637415ce83afb2a26f7",
+    "runs/pinned-final/variants/before/attempts/browser-v2/captures/narrow-open.png": "f394e88cb934896409d7fa56d697b666e2a1265d9c692c3aabfe676fd3fa7be7",
+    "runs/pinned-final/variants/before/attempts/browser-v2/captures/wide-restored.png": "e6b3f7f933f7f3a94d294d6e899e89db99360e9e0e46cf1f5e413ee71d0b00d9",
+    "runs/pinned-final/variants/before/attempts/browser-v2/captures/wide-reclosed.png": "e8ef058ad74275a375b852af43fba84016992184f70cd552077394cd2f81a906",
+    "runs/pinned-final/variants/after/attempts/browser-v2/captures/wide-closed.png": "ae434430194413bda30073d5a45186bff2a2bcec37d00e4c853e2bab3bc000f2",
+    "runs/pinned-final/variants/after/attempts/browser-v2/captures/wide-open.png": "cfed2b61d04b21b23d50d6450d258ee05ac8d8818fddb69ee69c875ff3c8feba",
+    "runs/pinned-final/variants/after/attempts/browser-v2/captures/wide-vertical-drag.png": "30a92c4e238f8f2480a5e8afe2ec03673f4449ad77e277a0be5c6cc17fbfd3a3",
+    "runs/pinned-final/variants/after/attempts/browser-v2/captures/narrow-open.png": "260f1f6a67804a689f91a4c5f8cd798bf5191cb004bf956c3a1270a2d8f7a456",
+    "runs/pinned-final/variants/after/attempts/browser-v2/captures/wide-restored.png": "18ff59e8ba7c716cc3e18ba6b59880cd578dc5ca51e76233d0c62cf207eb77a1",
+    "runs/pinned-final/variants/after/attempts/browser-v2/captures/wide-reclosed.png": "4a17ca61d2da1612a761673bac52628ec41d3bb7751dae99fedf3e32731141d7",
+    "runs/pinned-final/comparison-before-after-browser-v2-browser-v2/pair-00.png": "9c7f88f38fce1989c1f320affb3d2260a3d0568c7ab57067aeecea6d72955f63",
+    "runs/pinned-final/comparison-before-after-browser-v2-browser-v2/pair-01.png": "81d6aeeaf101db86ec6f9ddb80c18223e1f6b012fce9a857e5e52e57dccafd0b",
+    "runs/pinned-final/comparison-before-after-browser-v2-browser-v2/pair-02.png": "cf7c4d926b0715e653df337f850b433dac1225c03a9f1876dbbeb26639de6afe",
+    "runs/pinned-final/comparison-before-after-browser-v2-browser-v2/pair-03.png": "7c6d238c4a4b7f645d70e3af54ba873490f7e38cd5b05d2fd0555e858f4d85d5",
+    "runs/pinned-final/comparison-before-after-browser-v2-browser-v2/pair-04.png": "c995cf5badef627143aea3cd2145443c23e4e0876fc0dc9bd5507b3fb9986d94",
+    "runs/pinned-final/comparison-before-after-browser-v2-browser-v2/pair-05.png": "bde4957d595c2579b8d3a5feb23c33e0f8a53dbef0faae241a101a64b3083dc7"
+  }
+}
