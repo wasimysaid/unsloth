@@ -2,8 +2,8 @@
 """Secret-free, bounded native-window probe for the disposable PR #11910 workflow.
 
 Runs the *subject* checkout's Tauri binary, not a browser rendering of its UI.
-A synthetic launcher is used only in the separately labelled saved-layout scenario;
-it does not prove a functioning installed backend or completion of onboarding.
+The installed scenario uses the subject's real --local --no-torch installer and
+seeds only the saved-window-state file. The onboarding flow is not mocked.
 """
 
 import ctypes
@@ -35,7 +35,8 @@ while Date().timeIntervalSince(started) < 9 {
             guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
                   (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
                   let bounds = window[kCGWindowBounds as String] as? [String: Any],
-                  let width = bounds["Width"] as? NSNumber, width.intValue > 0 else { continue }
+                  let width = bounds["Width"] as? NSNumber, width.intValue >= 320,
+                  let height = bounds["Height"] as? NSNumber, height.intValue >= 240 else { continue }
             let elapsed = Date().timeIntervalSince(started)
             let record: [String: Any] = ["elapsed_s": elapsed, "bounds": bounds,
                                          "title": window[kCGWindowName as String] ?? ""]
@@ -58,11 +59,11 @@ while Date().timeIntervalSince(started) < 9 {
 '''
 
 
-def run_command(argv, name, timeout=1800):
+def run_command(argv, name, timeout=1800, env=None):
     with (RESULTS / (name + ".log")).open("w", encoding="utf-8", errors="replace") as log:
         log.write("argv: " + json.dumps(argv) + "\n")
         log.flush()
-        result = subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT, timeout=timeout)
+        result = subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT, timeout=timeout, env=env)
     if result.returncode:
         raise RuntimeError(f"{name} exited {result.returncode}; see {name}.log")
 
@@ -85,6 +86,9 @@ def windows_visible(pid):
             return True
         title = ctypes.create_unicode_buffer(256)
         user32.GetWindowTextW(hwnd, title, len(title))
+        # Exclude Tauri's 16x16 single-instance helper before recording or capturing.
+        if title.value != "Unsloth" or rect.right - rect.left < 320 or rect.bottom - rect.top < 240:
+            return True
         found.append({"title": title.value, "x": rect.left, "y": rect.top,
                       "width": rect.right - rect.left, "height": rect.bottom - rect.top})
         return True
@@ -94,19 +98,23 @@ def windows_visible(pid):
     return found
 
 
-def windows_capture(path):
-    # The GitHub Windows service may have no interactive desktop; preserve the error.
+def windows_capture(path, bounds):
+    # Capture only the observed app window, never unrelated runner content.
     ps_path = str(path).replace("'", "''")
-    script = ("Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; "
-              "$r=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; "
-              "$b=New-Object System.Drawing.Bitmap($r.Width,$r.Height); "
+    x, y, w, h = (bounds[key] for key in ("x", "y", "width", "height"))
+    script = ("Add-Type -AssemblyName System.Drawing; "
+              f"$b=New-Object System.Drawing.Bitmap({w},{h}); "
               "$g=[System.Drawing.Graphics]::FromImage($b); "
-              "$g.CopyFromScreen($r.Location,[System.Drawing.Point]::Empty,$r.Size); "
+              f"$g.CopyFromScreen([System.Drawing.Point]::new({x},{y}),"
+              "[System.Drawing.Point]::Empty,$b.Size); "
               f"$b.Save('{ps_path}',[System.Drawing.Imaging.ImageFormat]::Png); "
               "$g.Dispose(); $b.Dispose()")
-    r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                       capture_output=True, text=True, timeout=15)
-    return {"exit_code": r.returncode, "error": r.stderr[-1500:]}
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                           capture_output=True, text=True, timeout=12)
+        return {"exit_code": r.returncode, "error": r.stderr[-1500:]}
+    except subprocess.TimeoutExpired:
+        return {"exit_code": None, "error": "screenshot command timed out after 12 s"}
 
 
 def launch(binary, scenario, root):
@@ -118,18 +126,27 @@ def launch(binary, scenario, root):
     env["APPDATA"] = str(home / "AppData" / "Roaming")
     env["LOCALAPPDATA"] = str(home / "AppData" / "Local")
     env["XDG_CONFIG_HOME"] = str(home / ".config")
-    if scenario == "seeded-saved-layout":
-        # Explicitly synthetic backend presence: no installer or actual CLI is implied.
+    env["UNSLOTH_SKIP_AUTOSTART"] = "1"
+    Path(env["APPDATA"]).mkdir(parents=True, exist_ok=True)
+    Path(env["LOCALAPPDATA"]).mkdir(parents=True, exist_ok=True)
+    summary = {"scenario": scenario, "backend": "absent" if scenario == "fresh-setup" else "real local --no-torch install",
+               "samples": [], "screenshots": [], "platform": platform.platform()}
+    if scenario == "installed-saved-layout":
+        try:
+            if IS_WINDOWS:
+                installer = [shutil.which("pwsh") or "pwsh", "-NoProfile", "-NonInteractive",
+                             "-ExecutionPolicy", "Bypass", "-File", "install.ps1", "--local", "--no-torch"]
+            else:
+                installer = ["bash", "install.sh", "--local", "--no-torch"]
+            run_command(installer, "local-install", 1500, env=env)
+            summary["installer"] = "passed; see local-install.log"
+        except Exception as exc:
+            summary["installer"] = "failed: " + repr(exc)
+            (RESULTS / (scenario + ".json")).write_text(json.dumps(summary, indent=2))
+            return summary
         if IS_WINDOWS:
-            scripts = home / ".unsloth" / "studio" / "unsloth_studio" / "Scripts"
-            scripts.mkdir(parents=True)
-            (scripts / "unsloth.exe").write_bytes(b"synthetic marker, not executable")
-            (scripts / "python.exe").write_bytes(b"synthetic marker, not executable")
             config = Path(env["APPDATA"]) / "ai.unsloth.studio"
         else:
-            scripts = home / ".unsloth" / "studio" / "unsloth_studio" / "bin"
-            scripts.mkdir(parents=True)
-            (scripts / "unsloth").write_text("synthetic marker, not executable\n")
             config = home / "Library" / "Application Support" / "ai.unsloth.studio"
         config.mkdir(parents=True, exist_ok=True)
         (config / ".window-state.json").write_text(json.dumps({"main": {
@@ -137,8 +154,7 @@ def launch(binary, scenario, root):
             "prev_y": 45, "maximized": False, "visible": True,
             "decorated": True, "fullscreen": False}}))
         (config / "app-layout-initialized-v1").write_text("initialized\n")
-    summary = {"scenario": scenario, "backend": "synthetic marker, not installed" if scenario != "fresh-setup" else "absent",
-               "samples": [], "screenshots": [], "platform": platform.platform()}
+        summary["seeded_state_path"] = str(config / ".window-state.json")
     started = time.monotonic()
     app_log = RESULTS / (scenario + "-app.log")
     with app_log.open("w", encoding="utf-8", errors="replace") as log:
@@ -149,9 +165,9 @@ def launch(binary, scenario, root):
                 for _ in range(225):
                     for win in windows_visible(proc.pid):
                         summary["samples"].append({"elapsed_s": round(time.monotonic() - started, 3), **win})
-                    if summary["samples"] and not summary["screenshots"]:
+                    if summary["samples"] and "capture" not in summary:
                         shot = RESULTS / (scenario + "-first-visible.png")
-                        summary["capture"] = windows_capture(shot)
+                        summary["capture"] = windows_capture(shot, win)
                         if shot.is_file() and shot.stat().st_size:
                             summary["screenshots"].append(shot.name)
                     if proc.poll() is not None:
@@ -209,10 +225,12 @@ def main():
                 swift = root / "observer.swift"
                 swift.write_text(MAC_OBSERVER)
                 run_command(["swiftc", str(swift), "-o", str(root / "mac-observer")], "mac-observer-compile", 120)
-            for scenario in ("fresh-setup", "seeded-saved-layout"):
+            for scenario in ("fresh-setup", "installed-saved-layout"):
                 summary["scenarios"].append(launch(binary, scenario, root))
         summary["gui_observed"] = any(s["samples"] for s in summary["scenarios"])
-        summary["limitations"] = ["Seeded layout uses a synthetic backend-presence marker, not an installed backend; normal application onboarding and a real full-app session are unverified."]
+        summary["limitations"] = ["Installed case seeds a saved layout after a real --local --no-torch backend install; no installer GUI or fully provisioned torch/model inference was exercised."]
+        if any(s.get("installer", "").startswith("failed:") for s in summary["scenarios"]):
+            summary["limitations"].append("Real backend installer failed; normal-window comparison is unavailable.")
         if not summary["gui_observed"]:
             summary["limitations"].append("No on-screen native window observed in the bounded runner session.")
     except Exception as exc:
@@ -220,7 +238,9 @@ def main():
     finally:
         (RESULTS / "desktop-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
         print(json.dumps(summary, indent=2), flush=True)
-    if "error" in summary or not summary.get("gui_observed"):
+    installed = next((s for s in summary["scenarios"] if s["scenario"] == "installed-saved-layout"), None)
+    if ("error" in summary or not summary.get("gui_observed") or not installed
+            or installed.get("installer", "").startswith("failed:") or not installed["samples"]):
         return 1
     return 0
 

@@ -60,7 +60,7 @@ jobs:
       - uses: astral-sh/setup-uv@eb1897b8dc4b5d5bfe39a428a8f2304605e0983c # v7.0.0
         with:
           python-version: '3.11'
-      - name: Build and measure real Tauri windows (setup and seeded saved layout)
+      - name: Build and measure real Tauri windows (clean setup and installed saved layout)
         shell: bash
         env:
           SUBJECT_SHA: ${{ inputs.subject_sha }}
