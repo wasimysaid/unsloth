@@ -29,7 +29,7 @@ let pid = Int32(CommandLine.arguments[1])!
 let dest = CommandLine.arguments[2]
 let started = Date()
 var first = false
-while Date().timeIntervalSince(started) < 9 {
+while Date().timeIntervalSince(started) < 30 {
     if let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] {
         for window in windows {
             guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
@@ -121,14 +121,20 @@ def launch(binary, scenario, root):
     env = os.environ.copy()
     home = root / scenario
     home.mkdir(parents=True)
-    env["HOME"] = str(home)
-    env["USERPROFILE"] = str(home)
-    env["APPDATA"] = str(home / "AppData" / "Roaming")
-    env["LOCALAPPDATA"] = str(home / "AppData" / "Local")
-    env["XDG_CONFIG_HOME"] = str(home / ".config")
+    if IS_WINDOWS:
+        # Windows Known Folder / home_dir APIs ignore a synthetic USERPROFILE.
+        # Hosted Actions provides a fresh disposable user account for each job;
+        # install there so Tauri and install.ps1 resolve the SAME real profile.
+        home = Path(env["USERPROFILE"])
+    else:
+        env["HOME"] = str(home)
+        env["USERPROFILE"] = str(home)
+        env["APPDATA"] = str(home / "AppData" / "Roaming")
+        env["LOCALAPPDATA"] = str(home / "AppData" / "Local")
+        env["XDG_CONFIG_HOME"] = str(home / ".config")
+        Path(env["APPDATA"]).mkdir(parents=True, exist_ok=True)
+        Path(env["LOCALAPPDATA"]).mkdir(parents=True, exist_ok=True)
     env["UNSLOTH_SKIP_AUTOSTART"] = "1"
-    Path(env["APPDATA"]).mkdir(parents=True, exist_ok=True)
-    Path(env["LOCALAPPDATA"]).mkdir(parents=True, exist_ok=True)
     summary = {"scenario": scenario, "backend": "absent" if scenario == "fresh-setup" else "real local --no-torch install",
                "samples": [], "screenshots": [], "platform": platform.platform()}
     if scenario == "installed-saved-layout":
@@ -162,7 +168,7 @@ def launch(binary, scenario, root):
                                 stderr=subprocess.STDOUT)
         try:
             if IS_WINDOWS:
-                for _ in range(225):
+                for _ in range(625):
                     for win in windows_visible(proc.pid):
                         summary["samples"].append({"elapsed_s": round(time.monotonic() - started, 3), **win})
                     if summary["samples"] and "capture" not in summary:
@@ -176,7 +182,7 @@ def launch(binary, scenario, root):
             else:
                 observer = subprocess.run([str(root / "mac-observer"), str(proc.pid),
                                            str(RESULTS / (scenario + "-first-visible.png"))],
-                                          capture_output=True, text=True, timeout=15)
+                                          capture_output=True, text=True, timeout=38)
                 summary["observer_exit"] = observer.returncode
                 summary["observer_stderr"] = observer.stderr[-1500:]
                 for line in observer.stdout.splitlines():
