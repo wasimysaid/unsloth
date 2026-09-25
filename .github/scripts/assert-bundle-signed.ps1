@@ -11,9 +11,7 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-# .ps1/.psm1 included: install.ps1 ships as a bundle resource and runs on first
-# launch. Authenticode covers scripts, and Smart App Control checks them.
-$exeExtensions = @('.exe', '.dll', '.sys', '.ocx', '.cpl', '.scr', '.ps1', '.psm1')
+$exeExtensions = @('.exe', '.dll', '.sys', '.ocx', '.cpl', '.scr')
 
 $unsigned = @()
 $checked = 0
