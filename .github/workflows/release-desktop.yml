@@ -38,7 +38,7 @@ on:
       zoo_sha:
         description: 'Full 40-character immutable unslothai/unsloth-zoo commit SHA for source_backend'
         type: string
-        default: 'eb5168814cc6b18d2f8b9e95efbf3e601b0b7f5a'
+        default: 'f980552ad9f9f1d5b82bc2b0303aa062acd840f5'
         required: false
 permissions:
   contents: read
