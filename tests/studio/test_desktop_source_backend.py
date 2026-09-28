@@ -251,7 +251,7 @@ class SourceBackendTests(unittest.TestCase):
             update.index("elif source_wheels is not None:"),
             update.index("elif NO_TORCH:", update.index("# 3. Core packages")),
         )
-        self.assertIn('"--reinstall-package", "unsloth-zoo",\n            *source_wheels', update)
+        self.assertIn("uv_required = True", update)
 
 
 if __name__ == "__main__":

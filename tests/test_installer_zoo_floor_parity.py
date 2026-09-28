@@ -42,7 +42,7 @@ INSTALL_PS1 = REPO / "install.ps1"
 EXPECTED_NO_DEPS_SITES = 4
 
 _ZOO_SPEC = re.compile(r"""unsloth[-_]zoo\s*(?:>=|==)\s*[0-9][^"'\s]*""")
-_ZOO_VARIABLE = {INSTALL_SH: '$_zoo_release_install_spec', INSTALL_PS1: '$_zooReleaseInstallSpec'}
+_ZOO_VARIABLE = {INSTALL_SH: "$_zoo_release_install_spec", INSTALL_PS1: "$_zooReleaseInstallSpec"}
 
 
 def _logical_lines(path: Path) -> list[tuple[int, str]]:
@@ -108,7 +108,9 @@ def _installer_sites() -> list[tuple[str, int, str, bool]]:
         # Source-backed mode substitutes a verified wheel. In ordinary mode the
         # variable still carries a literal floor, and every --no-deps site must
         # actually pass that variable to uv.
-        assignments = [line for _, line in lines if variable.lstrip('$') in line and _ZOO_SPEC.search(line)]
+        assignments = [
+            line for _, line in lines if variable.lstrip("$") in line and _ZOO_SPEC.search(line)
+        ]
         assert len(assignments) == 1, (path, assignments)
         default_spec = _ZOO_SPEC.search(assignments[0]).group()
         for number, text in lines:

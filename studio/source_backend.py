@@ -15,19 +15,22 @@ PACKAGES = ("unsloth", "unsloth-zoo")
 
 
 def wheel_paths(directory):
-    directory = pathlib.Path(directory).resolve(strict=True)
-    manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+    directory = pathlib.Path(directory).resolve(strict = True)
+    manifest = json.loads((directory / "manifest.json").read_text(encoding = "utf-8"))
     if manifest.get("schema") != 1 or set(manifest.get("packages", {})) != set(PACKAGES):
         raise ValueError("invalid desktop source backend manifest")
     result = []
     for name in PACKAGES:
         entry = manifest["packages"][name]
         filename = entry["wheel"]
-        if not (isinstance(filename, str) and filename == pathlib.Path(filename).name
-                and filename.startswith(name.replace("-", "_") + "-")
-                and filename.endswith("-none-any.whl")
-                and re.fullmatch(r"[0-9a-f]{40}", entry["source_sha"])
-                and re.fullmatch(r"[0-9a-f]{64}", entry["sha256"])):
+        if not (
+            isinstance(filename, str)
+            and filename == pathlib.Path(filename).name
+            and filename.startswith(name.replace("-", "_") + "-")
+            and filename.endswith("-none-any.whl")
+            and re.fullmatch(r"[0-9a-f]{40}", entry["source_sha"])
+            and re.fullmatch(r"[0-9a-f]{64}", entry["sha256"])
+        ):
             raise ValueError(f"invalid {name} source backend entry")
         wheel = directory / filename
         if hashlib.sha256(wheel.read_bytes()).hexdigest() != entry["sha256"]:

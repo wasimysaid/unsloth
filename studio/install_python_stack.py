@@ -9516,7 +9516,10 @@ def pip_install(
         _pip_install_once(label, *args, req = req, constrain = constrain, uv_required = uv_required)
     except SystemExit:
         rerun = (
-            lambda *retry: _pip_install_once(label, *retry, req = req, constrain = constrain, uv_required = uv_required) or True
+            lambda *retry: _pip_install_once(
+                label, *retry, req = req, constrain = constrain, uv_required = uv_required
+            )
+            or True
         )
         if not _mirror_retry(args, _failed_install_output, rerun):
             raise
@@ -11582,16 +11585,24 @@ def install_python_stack() -> int:
             "Updating pinned source backend packages",
             "--no-cache-dir",
             *(("--no-deps",) if NO_TORCH else ()),
-            "--reinstall-package", "unsloth",
-            "--reinstall-package", "unsloth-zoo",
+            "--reinstall-package",
+            "unsloth",
+            "--reinstall-package",
+            "unsloth-zoo",
             *source_wheels,
             uv_required = True,
         )
         if NO_TORCH:
-            pip_install("Installing pydantic (with deps for compatible core)", "--no-cache-dir", "pydantic")
-            if not _skip_step(REQ_ROOT / "no-torch-runtime.txt", "no-torch runtime deps", no_deps = True):
+            pip_install(
+                "Installing pydantic (with deps for compatible core)", "--no-cache-dir", "pydantic"
+            )
+            if not _skip_step(
+                REQ_ROOT / "no-torch-runtime.txt", "no-torch runtime deps", no_deps = True
+            ):
                 pip_install(
-                    "Installing no-torch runtime deps", "--no-cache-dir", "--no-deps",
+                    "Installing no-torch runtime deps",
+                    "--no-cache-dir",
+                    "--no-deps",
                     req = REQ_ROOT / "no-torch-runtime.txt",
                 )
     elif NO_TORCH:
