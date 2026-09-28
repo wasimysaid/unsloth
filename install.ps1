@@ -10895,7 +10895,7 @@ main()
     $_unslothDesktopInstallSpec = if ($_desktopMinVer) { "unsloth>=$_desktopMinVer" } else { $null }
     $_unslothReleaseInstallSpec = if ($_unslothDesktopInstallSpec) { $_unslothDesktopInstallSpec } else { "unsloth>=2026.9.11" }
 
-    $_zooReleaseInstallSpec = "unsloth-zoo>=2026.9.7"
+    $_zooReleaseInstallSpec = "unsloth-zoo>=2026.9.8"
     $_sourceZooSpec = @()
     if ($env:UNSLOTH_SOURCE_BACKEND_DIR) {
         if (-not $TauriMode -or $StudioLocalInstall -or $PackageName -ne 'unsloth') {

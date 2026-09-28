@@ -182,7 +182,7 @@ class SourceBackendTests(unittest.TestCase):
                 ["sh", "-c", command], env = env, capture_output = True, text = True, check = True
             )
             self.assertEqual(
-                default.stdout.splitlines(), ["unsloth>=2026.9.11", "unsloth-zoo>=2026.9.7"]
+                default.stdout.splitlines(), ["unsloth>=2026.9.11", "unsloth-zoo>=2026.9.8"]
             )
             env["UNSLOTH_SOURCE_BACKEND_DIR"] = str(bundle)
             selected = subprocess.run(
@@ -239,7 +239,7 @@ class SourceBackendTests(unittest.TestCase):
                 text = True,
                 check = True,
             )
-            self.assertEqual(default.stdout.strip(), "unsloth>=2026.9.11|unsloth-zoo>=2026.9.7")
+            self.assertEqual(default.stdout.strip(), "unsloth>=2026.9.11|unsloth-zoo>=2026.9.8")
             env["UNSLOTH_SOURCE_BACKEND_DIR"] = str(bundle)
             selected = subprocess.run(
                 ["pwsh", "-NoProfile", "-Command", script],

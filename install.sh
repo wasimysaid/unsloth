@@ -7670,7 +7670,7 @@ if [ -n "${UNSLOTH_DESKTOP_BACKEND_VERSION:-}" ]; then
 fi
 _unsloth_release_install_spec="${_unsloth_desktop_install_spec:-unsloth>=2026.9.11}"
 
-_zoo_release_install_spec="unsloth-zoo>=2026.9.7"
+_zoo_release_install_spec="unsloth-zoo>=2026.9.8"
 _source_zoo_spec=""
 if [ -n "${UNSLOTH_SOURCE_BACKEND_DIR:-}" ]; then
     if [ "$TAURI_MODE" != true ] || [ "$STUDIO_LOCAL_INSTALL" = true ] || [ "$PACKAGE_NAME" != unsloth ]; then
