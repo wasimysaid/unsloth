@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -43,8 +44,17 @@ def build_pair(
         if sha != expected[name] or not re.fullmatch(r"[0-9a-f]{40}", expected[name]):
             raise ValueError(f"{name} source SHA differs from requested immutable revision")
         before = set(output.glob("*.whl"))
+        # setuptools honours SOURCE_DATE_EPOCH for generated dist-info entries.
+        # Without it identical commits produce different wheel SHA-256s on every run.
+        source_epoch = subprocess.check_output(
+            ["git", "-C", str(source), "show", "-s", "--format=%ct", "HEAD"],
+            text = True,
+        ).strip()
+        build_env = {**os.environ, "SOURCE_DATE_EPOCH": source_epoch, "PYTHONHASHSEED": "0"}
         subprocess.run(
-            ["uv", "build", "--wheel", str(source), "--out-dir", str(output)], check = True
+            ["uv", "build", "--wheel", str(source), "--out-dir", str(output)],
+            check = True,
+            env = build_env,
         )
         wheels = set(output.glob("*.whl")) - before
         if len(wheels) != 1:

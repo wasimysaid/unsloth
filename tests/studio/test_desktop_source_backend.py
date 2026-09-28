@@ -7,8 +7,10 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -73,6 +75,42 @@ class SourceBackendTests(unittest.TestCase):
             (repo / "pyproject.toml").write_text("modified")
             with self.assertRaisesRegex(ValueError, "uncommitted"):
                 source_builder._sha(repo)
+
+    def test_builder_pins_generated_wheel_timestamps_to_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "source"
+            repo.mkdir()
+
+            def git(*args):
+                return subprocess.check_output(["git", "-C", str(repo), *args], text = True).strip()
+
+            git("init", "-q")
+            git("config", "user.email", "test@example.invalid")
+            git("config", "user.name", "Test")
+            (repo / "pyproject.toml").write_text("[build-system]\nrequires=[]\n")
+            git("add", "pyproject.toml")
+            git("commit", "-qm", "test revision")
+            sha, epoch = git("rev-parse", "HEAD"), git("show", "-s", "--format=%ct", "HEAD")
+            calls = []
+
+            def capture_build(argv, **kwargs):
+                calls.append(kwargs["env"])
+                name = "unsloth" if len(calls) == 1 else "unsloth_zoo"
+                (root / "bundle" / (name + "-1.0-py3-none-any.whl")).write_bytes(name.encode())
+
+            with patch.object(
+                source_builder,
+                "subprocess",
+                SimpleNamespace(
+                    check_output = subprocess.check_output,
+                    run = capture_build,
+                ),
+            ):
+                source_builder.build_pair(repo, repo, root / "bundle", sha, sha, "1.0")
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(all(call["SOURCE_DATE_EPOCH"] == epoch for call in calls))
+            self.assertTrue(all(call["PYTHONHASHSEED"] == "0" for call in calls))
 
     def test_update_source_core_phase_selects_both_wheels_in_both_modes(self):
         """Execute the production core branch with captured install calls, not a copy."""
