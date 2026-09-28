@@ -7668,7 +7668,7 @@ _unsloth_desktop_install_spec=""
 if [ -n "${UNSLOTH_DESKTOP_BACKEND_VERSION:-}" ]; then
     _unsloth_desktop_install_spec="unsloth>=${UNSLOTH_DESKTOP_BACKEND_VERSION}"
 fi
-_unsloth_release_install_spec="${_unsloth_desktop_install_spec:-unsloth>=2026.9.11}"
+_unsloth_release_install_spec="${_unsloth_desktop_install_spec:-unsloth>=2026.9.12}"
 
 _zoo_release_install_spec="unsloth-zoo>=2026.9.8"
 _source_zoo_spec=""

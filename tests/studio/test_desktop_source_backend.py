@@ -169,7 +169,7 @@ class SourceBackendTests(unittest.TestCase):
             (bundle / "verify.py").write_text((ROOT / "studio/source_backend.py").read_text())
             command = (
                 "TAURI_MODE=true; STUDIO_LOCAL_INSTALL=false; PACKAGE_NAME=unsloth; "
-                '_VENV_PY="$TEST_PYTHON"; UNSLOTH_DESKTOP_BACKEND_VERSION=2026.9.11; '
+                '_VENV_PY="$TEST_PYTHON"; UNSLOTH_DESKTOP_BACKEND_VERSION=2026.9.12; '
                 '_unsloth_desktop_install_spec=""'
                 + block
                 + 'printf \'%s\\n%s\\n\' "$_unsloth_release_install_spec" "$_zoo_release_install_spec"'
@@ -182,7 +182,7 @@ class SourceBackendTests(unittest.TestCase):
                 ["sh", "-c", command], env = env, capture_output = True, text = True, check = True
             )
             self.assertEqual(
-                default.stdout.splitlines(), ["unsloth>=2026.9.11", "unsloth-zoo>=2026.9.8"]
+                default.stdout.splitlines(), ["unsloth>=2026.9.12", "unsloth-zoo>=2026.9.8"]
             )
             env["UNSLOTH_SOURCE_BACKEND_DIR"] = str(bundle)
             selected = subprocess.run(
@@ -229,7 +229,7 @@ class SourceBackendTests(unittest.TestCase):
             env = {
                 **os.environ,
                 "TEST_PYTHON": sys.executable,
-                "UNSLOTH_DESKTOP_BACKEND_VERSION": "2026.9.11",
+                "UNSLOTH_DESKTOP_BACKEND_VERSION": "2026.9.12",
             }
             env.pop("UNSLOTH_SOURCE_BACKEND_DIR", None)
             default = subprocess.run(
@@ -239,7 +239,7 @@ class SourceBackendTests(unittest.TestCase):
                 text = True,
                 check = True,
             )
-            self.assertEqual(default.stdout.strip(), "unsloth>=2026.9.11|unsloth-zoo>=2026.9.8")
+            self.assertEqual(default.stdout.strip(), "unsloth>=2026.9.12|unsloth-zoo>=2026.9.8")
             env["UNSLOTH_SOURCE_BACKEND_DIR"] = str(bundle)
             selected = subprocess.run(
                 ["pwsh", "-NoProfile", "-Command", script],
