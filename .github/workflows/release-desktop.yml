@@ -645,6 +645,19 @@ jobs:
           "$PY" studio/src-tauri/source-backend/verify.py studio/src-tauri/source-backend
 
 
+      # Exercise the actual Windows source bundle before signing/uploading an
+      # installer: Tauri resources use \\?\ paths that Join-Path cannot parse.
+      - name: Test Windows source backend extended-path installation
+        if: ${{ inputs.source_backend && matrix.platform == 'windows-latest' }}
+        shell: bash
+        env:
+          UNSLOTH_TEST_SOURCE_BACKEND_DIR: studio/src-tauri/source-backend
+        run: |
+          set -euo pipefail
+          if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
+          "$PY" -m unittest discover -s tests/studio -p test_windows_source_backend_extended.py -v
+
+
       # ── Linux dependencies ──
       - name: Install Linux dependencies
         if: startsWith(matrix.artifact, 'linux-')

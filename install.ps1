@@ -10872,9 +10872,21 @@ main()
         if (-not $TauriMode -or $StudioLocalInstall -or $PackageName -ne 'unsloth') {
             return (Exit-InstallFailure 'Source backend requires a production --tauri unsloth install (not --local).')
         }
-        $verify = Join-Path $env:UNSLOTH_SOURCE_BACKEND_DIR 'verify.py'
-        $sourceWheels = @(& $VenvPython $verify $env:UNSLOTH_SOURCE_BACKEND_DIR)
-        if ($LASTEXITCODE -ne 0 -or $sourceWheels.Count -ne 2) {
+        # Tauri resources can use a Windows extended-length path (\\?\C:\...).
+        # Join-Path treats that opaque filesystem path as a PowerShell drive and
+        # throws before verifier failure handling runs. Use .NET path composition,
+        # and turn path/process failures into a nonzero installer exit.
+        $sourceWheels = @()
+        $verifyExit = 1
+        $verifyFailure = $null
+        try {
+            $verify = [System.IO.Path]::Combine($env:UNSLOTH_SOURCE_BACKEND_DIR, 'verify.py')
+            $sourceWheels = @(& $VenvPython $verify $env:UNSLOTH_SOURCE_BACKEND_DIR)
+            $verifyExit = $LASTEXITCODE
+        } catch {
+            $verifyFailure = $_.Exception.Message
+        }
+        if ($verifyFailure -or $verifyExit -ne 0 -or $sourceWheels.Count -ne 2) {
             return (Exit-InstallFailure 'Invalid desktop source backend wheels or manifest.')
         }
         $_unslothReleaseInstallSpec = $sourceWheels[0]
