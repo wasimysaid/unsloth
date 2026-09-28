@@ -614,6 +614,15 @@ jobs:
           path: backend-source
           persist-credentials: false
 
+      # Install uv as a standalone tool: Homebrew Python on macOS is PEP 668
+      # externally managed, so `python3 -m pip install uv` fails there.
+      - name: Setup uv for source wheels
+        if: ${{ inputs.source_backend }}
+        uses: astral-sh/setup-uv@557e51de59eb14aaaba2ed9621916900a91d50c6  # v6.6.1
+        with:
+          version: '0.8.17'
+          enable-cache: false
+
       - name: Build pinned desktop source backend wheels
         if: ${{ inputs.source_backend }}
         shell: bash
@@ -623,7 +632,6 @@ jobs:
         run: |
           set -euo pipefail
           if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
-          "$PY" -m pip install 'uv==0.8.17'
           git clone --no-checkout https://github.com/unslothai/unsloth-zoo.git "$RUNNER_TEMP/unsloth-zoo-source"
           git -C "$RUNNER_TEMP/unsloth-zoo-source" checkout --detach "$ZOO_SHA"
           TAG_SHA=$(git -C backend-source rev-parse HEAD)

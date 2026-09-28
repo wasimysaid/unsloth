@@ -256,6 +256,20 @@ class SourceBackendTests(unittest.TestCase):
             self.assertNotEqual(failed.returncode, 0)
             self.assertIn("checksum mismatch", failed.stderr)
 
+    def test_source_wheel_uv_bootstrap_avoids_system_pip_on_every_runner(self):
+        workflow = (ROOT / ".github/workflows/release-desktop.yml").read_text()
+        checkout = workflow.index("- name: Checkout backend tag for source wheel")
+        build = workflow.index("- name: Build pinned desktop source backend wheels", checkout)
+        setup = workflow[workflow.index("- name: Setup uv for source wheels", checkout) : build]
+        self.assertRegex(setup, r"uses: astral-sh/setup-uv@[0-9a-f]{40}")
+        self.assertIn("version: '0.8.17'", setup)
+        self.assertIn("if: ${{ inputs.source_backend }}", setup)
+        self.assertNotIn("runner.os", setup)
+        self.assertNotIn("matrix.artifact", setup)
+        wheel_step = workflow[build : workflow.index("# ── Linux dependencies", build)]
+        self.assertNotIn("-m pip install", wheel_step)
+        self.assertIn("scripts/build_desktop_source_backend.py", wheel_step)
+
     def test_release_and_installer_mode_contract(self):
         workflow = (ROOT / ".github/workflows/release-desktop.yml").read_text()
         self.assertIn("refs/heads/release/desktop-source-backend", workflow)
