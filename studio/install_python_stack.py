@@ -9509,13 +9509,14 @@ def pip_install(
     *args: str,
     req: Path | None = None,
     constrain: bool = True,
+    uv_required: bool = False,
 ) -> None:
     """Build and run a pip install command (uses uv when available, falls back to pip)."""
     try:
-        _pip_install_once(label, *args, req = req, constrain = constrain)
+        _pip_install_once(label, *args, req = req, constrain = constrain, uv_required = uv_required)
     except SystemExit:
         rerun = (
-            lambda *retry: _pip_install_once(label, *retry, req = req, constrain = constrain) or True
+            lambda *retry: _pip_install_once(label, *retry, req = req, constrain = constrain, uv_required = uv_required) or True
         )
         if not _mirror_retry(args, _failed_install_output, rerun):
             raise
@@ -9526,6 +9527,7 @@ def _pip_install_once(
     *args: str,
     req: Path | None = None,
     constrain: bool = True,
+    uv_required: bool = False,
 ) -> None:
     global _failed_install_output
     _failed_install_output = b""
@@ -9577,6 +9579,10 @@ def _pip_install_once(
                     _safe_print(_redact_install_output(result.stdout))
                 return
             _failed_install_output = result.stdout or b""
+            if uv_required:
+                # pip drops uv's targeted --reinstall-package flag and can
+                # report success without replacing an existing source wheel.
+                _report_failed_command(label, result)
             if _woa_overrides_are_load_bearing():
                 _step("error", f"{label} failed and pip cannot stand in for it", _red)
                 _safe_print(
@@ -9609,6 +9615,9 @@ def _pip_install_once(
                 )
             )
             sys.exit(1)
+
+        if uv_required:
+            raise RuntimeError(f"{label} requires uv for source wheel reinstalls")
 
         pip_cmd, pip_env = _pinned_cmd_and_env(
             _build_pip_cmd(args) + constraint_args_pip + req_args_pip
@@ -11396,6 +11405,15 @@ def install_python_stack() -> int:
     # shell-installer handoff skips that slot only while base.txt has no work.
     _TOTAL = base_total - int(skip_base and base_requirements is None)
 
+    # Fail before consuming the completed-pass manifest or changing any packages.
+    source_backend_dir = os.environ.get("UNSLOTH_SOURCE_BACKEND_DIR", "")
+    source_wheels = None
+    if source_backend_dir:
+        if package_name != "unsloth" or local_repo:
+            raise ValueError("source backend requires the managed unsloth install")
+        from studio.source_backend import wheel_paths
+        source_wheels = wheel_paths(source_backend_dir)
+
     # Before the manifest goes: it is the only copy of what the last run did. None means every step
     # runs.
     _PASS_EVIDENCE = _plan_pass(package_name, local_repo, ci_source_overlay)
@@ -11556,6 +11574,26 @@ def install_python_stack() -> int:
     if skip_base:
         # install.sh / install.ps1 already installed both core distributions.
         pass
+    elif source_wheels is not None:
+        # Both wheels are explicit requirements. Never resolve core from PyPI here,
+        # including a no-torch update or a repeated automatic repair.
+        _progress("source backend packages")
+        pip_install(
+            "Updating pinned source backend packages",
+            "--no-cache-dir",
+            *(("--no-deps",) if NO_TORCH else ()),
+            "--reinstall-package", "unsloth",
+            "--reinstall-package", "unsloth-zoo",
+            *source_wheels,
+            uv_required = True,
+        )
+        if NO_TORCH:
+            pip_install("Installing pydantic (with deps for compatible core)", "--no-cache-dir", "pydantic")
+            if not _skip_step(REQ_ROOT / "no-torch-runtime.txt", "no-torch runtime deps", no_deps = True):
+                pip_install(
+                    "Installing no-torch runtime deps", "--no-cache-dir", "--no-deps",
+                    req = REQ_ROOT / "no-torch-runtime.txt",
+                )
     elif NO_TORCH:
         # No-torch update path: --no-deps throughout (PyPI metadata makes torch a hard dep).
         _progress("base packages (no torch)")

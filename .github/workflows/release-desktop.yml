@@ -23,7 +23,7 @@ on:
         type: string
         required: true
       pypi_version:
-        description: 'Exact PyPI unsloth version just published/stamped, no leading v (for example, 2026.8.3); leave blank to use MIN_DESKTOP_BACKEND_VERSION'
+        description: 'Backend package version in tag (source mode) or exact PyPI version (default mode); leave blank to use MIN_DESKTOP_BACKEND_VERSION'
         type: string
         required: false
       draft:
@@ -31,6 +31,15 @@ on:
         type: boolean
         default: true
 
+      source_backend:
+        description: 'Fork release branch only: bundle both core packages built from immutable source commits (default false)'
+        type: boolean
+        default: false
+      zoo_sha:
+        description: 'Full 40-character immutable unslothai/unsloth-zoo commit SHA for source_backend'
+        type: string
+        default: '438ee6c89d766d5adc24c77de3ba15e0fc2ef29d'
+        required: false
 permissions:
   contents: read
 
@@ -76,6 +85,20 @@ jobs:
       pypi_version: ${{ steps.backend.outputs.pypi_version }}
 
     steps:
+      # Gate before version checkout or the publisher job can start. A workflow
+      # selected from any other ref must never activate fork source mode.
+      - name: Guard source backend release ref
+        if: ${{ inputs.source_backend }}
+        shell: bash
+        env:
+          ZOO_SHA: ${{ inputs.zoo_sha }}
+        run: |
+          if [ "$GITHUB_REPOSITORY" != 'wasimysaid/unsloth' ] || [ "$GITHUB_REF" != 'refs/heads/release/desktop-source-backend' ] || [[ ! "$ZOO_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::error::Source backend requires the dedicated fork release branch and a full immutable zoo SHA' >&2
+            exit 1
+          fi
+
+
       # Before the checkout: for a malformed studio_version, actions/checkout would
       # fail on the ref with a generic error and none of the corrections below
       # would ever be printed.
@@ -329,6 +352,7 @@ jobs:
           PY
 
       - name: Verify PyPI package and Unsloth stamp
+        if: ${{ !inputs.source_backend }}
         shell: bash
         env:
           STUDIO_VERSION: ${{ steps.prepare.outputs.studio_version }}
@@ -548,6 +572,7 @@ jobs:
       # Compiled in by preflight/version.rs. Without it the app only knows the
       # floor, so a shared venv left by the CLI installer is never upgraded again.
       UNSLOTH_DESKTOP_BACKEND_VERSION: ${{ needs.prepare-version.outputs.pypi_version }}
+      UNSLOTH_DESKTOP_SOURCE_BACKEND: ${{ inputs.source_backend && '1' || '0' }}
 
     steps:
       # harden-runner in audit mode: surfaces every egress destination in
@@ -561,13 +586,56 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Guard source backend release ref
+        if: ${{ inputs.source_backend }}
+        shell: bash
+        env:
+          ZOO_SHA: ${{ inputs.zoo_sha }}
+        run: |
+          if [ "$GITHUB_REPOSITORY" != 'wasimysaid/unsloth' ] || [ "$GITHUB_REF" != 'refs/heads/release/desktop-source-backend' ] || [[ ! "$ZOO_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::error::Source backend requires the dedicated fork release branch and a full immutable zoo SHA' >&2
+            exit 1
+          fi
+
+
       # The tag, not the dispatch ref: the release is published before this runs and
       # main keeps moving, so building the dispatch ref would attach unrelated source
       # to the release and record a SHA that is not the tag's.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          ref: ${{ needs.prepare-version.outputs.desktop_release_tag }}
+          ref: ${{ inputs.source_backend && github.sha || needs.prepare-version.outputs.desktop_release_tag }}
           persist-credentials: false
+
+      - name: Checkout backend tag for source wheel
+        if: ${{ inputs.source_backend }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.prepare-version.outputs.desktop_release_tag }}
+          path: backend-source
+          persist-credentials: false
+
+      - name: Build pinned desktop source backend wheels
+        if: ${{ inputs.source_backend }}
+        shell: bash
+        env:
+          SOURCE_VERSION: ${{ needs.prepare-version.outputs.pypi_version }}
+          ZOO_SHA: ${{ inputs.zoo_sha }}
+        run: |
+          set -euo pipefail
+          if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
+          "$PY" -m pip install 'uv==0.8.17'
+          git clone --no-checkout https://github.com/unslothai/unsloth-zoo.git "$RUNNER_TEMP/unsloth-zoo-source"
+          git -C "$RUNNER_TEMP/unsloth-zoo-source" checkout --detach "$ZOO_SHA"
+          TAG_SHA=$(git -C backend-source rev-parse HEAD)
+          "$PY" scripts/build_desktop_source_backend.py \
+            --unsloth-source backend-source --unsloth-sha "$TAG_SHA" --expected-unsloth-version "$SOURCE_VERSION" \
+            --zoo-source "$RUNNER_TEMP/unsloth-zoo-source" --zoo-sha "$ZOO_SHA" \
+            --out studio/src-tauri/source-backend
+          test -f backend-source/studio/source_backend.py || { echo '::error::Tag predates source backend update support' >&2; exit 1; }
+          cmp backend-source/studio/source_backend.py studio/source_backend.py || { echo '::error::Tag source backend verifier differs from desktop branch' >&2; exit 1; }
+          cp studio/source_backend.py studio/src-tauri/source-backend/verify.py
+          "$PY" studio/src-tauri/source-backend/verify.py studio/src-tauri/source-backend
+
 
       # ── Linux dependencies ──
       - name: Install Linux dependencies

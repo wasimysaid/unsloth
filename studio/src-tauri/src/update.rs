@@ -74,6 +74,7 @@ fn configure_tauri_update_environment(cmd: &mut Command) {
         "UNSLOTH_DESKTOP_BACKEND_VERSION",
         crate::preflight::expected_backend_version(),
     );
+    cmd.env_remove("UNSLOTH_SOURCE_BACKEND_DIR");
 }
 
 // The shell holds the retained POSIX flock around the whole update child, so the CLI must
@@ -83,6 +84,7 @@ fn configure_runtime_gate_environment(cmd: &mut Command) {
 }
 
 fn spawn_update(
+    app: &AppHandle,
     bin: &std::path::Path,
     state: &UpdateState,
 ) -> Result<
@@ -117,6 +119,9 @@ fn spawn_update(
 
     // Keep the update on the desktop-managed install and skip assets already in the bundle.
     configure_tauri_update_environment(&mut cmd);
+    if let Some(dir) = crate::install::source_backend_dir(app)? {
+        cmd.env("UNSLOTH_SOURCE_BACKEND_DIR", dir);
+    }
     configure_runtime_gate_environment(&mut cmd);
 
     // read_lossy_lines decodes as UTF-8; the child is Python, which otherwise uses the locale page.
@@ -325,7 +330,7 @@ fn run_update(
         // has the next idle launch restoring the pre-update trees over everything installed here.
         crate::staged_update::reconcile_before_update(&crate::diagnostics::studio_dir())?;
         let (stdout, stderr) =
-            spawn_update(&bin, &state).map_err(|msg| format!("spawn_update: {msg}"))?;
+            spawn_update(&app, &bin, &state).map_err(|msg| format!("spawn_update: {msg}"))?;
         let threads = stream_output(
             &app,
             progress_event,

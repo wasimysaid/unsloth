@@ -470,6 +470,25 @@ fn powershell_exe() -> PathBuf {
 
 // ── Script Resolution ──
 
+/// Only release bundles with a manifest opt into the source backend. A developer
+/// checkout and ordinary upstream bundles retain their existing install mode.
+pub(crate) fn source_backend_dir(app: &AppHandle) -> Result<Option<PathBuf>, String> {
+    if cfg!(debug_assertions) {
+        return Ok(None);
+    }
+    let source_build = option_env!("UNSLOTH_DESKTOP_SOURCE_BACKEND") == Some("1");
+    if !source_build {
+        return Ok(None);
+    }
+    let dir = app.path().resolve("source-backend", tauri::path::BaseDirectory::Resource)
+        .map_err(|error| format!("Cannot locate bundled source backend: {error}"))?;
+    if dir.join("manifest.json").is_file() {
+        Ok(Some(dir))
+    } else {
+        Err("Source-backed desktop bundle is missing its wheel manifest; refusing PyPI fallback".into())
+    }
+}
+
 /// Returns (script_path, args) depending on dev vs production mode.
 /// Dev mode: repo root script + --tauri --local
 /// Production: bundled resource + --tauri
@@ -563,6 +582,7 @@ fn emit_complete(app: &AppHandle) {
 /// Returns (stdout, stderr) handles for streaming.
 /// The GroupChild is stored in state so stop_install() can kill the entire tree.
 fn spawn_script(
+    app: &AppHandle,
     script: &Path,
     args: &[String],
     state: &InstallState,
@@ -618,6 +638,10 @@ fn spawn_script(
         "UNSLOTH_DESKTOP_BACKEND_VERSION",
         crate::preflight::expected_backend_version(),
     );
+    cmd.env_remove("UNSLOTH_SOURCE_BACKEND_DIR");
+    if let Some(dir) = source_backend_dir(app)? {
+        cmd.env("UNSLOTH_SOURCE_BACKEND_DIR", dir);
+    }
 
     // We decode this child as UTF-8 below, so its Python descendants must emit
     // UTF-8 or the log fills with U+FFFD. The .ps1 entry points set these too;
@@ -920,7 +944,7 @@ fn run_install_with_event_mode(
         &format!("Using script: {}", script.display()),
     );
 
-    let (stdout, stderr) = match spawn_script(&script, &args, &state) {
+    let (stdout, stderr) = match spawn_script(&app, &script, &args, &state) {
         Ok(handles) => handles,
         Err(msg) => {
             diagnostics::finish_attempt(

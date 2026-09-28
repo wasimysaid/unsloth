@@ -1,7 +1,8 @@
 {
   "bundle": {
     "resources": {
-      "../../install.ps1": "install.ps1"
+      "../../install.ps1": "install.ps1",
+      "source-backend/": "source-backend/"
     },
     "windows": {
       "signCommand": {

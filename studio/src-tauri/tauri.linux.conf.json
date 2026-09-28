@@ -1,7 +1,8 @@
 {
   "bundle": {
     "resources": {
-      "../../install.sh": "install.sh"
+      "../../install.sh": "install.sh",
+      "source-backend/": "source-backend/"
     }
   }
 }

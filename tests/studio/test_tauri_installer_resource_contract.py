@@ -43,9 +43,10 @@ def test_each_bundle_ships_only_the_installer_it_runs() -> None:
     # resolve_install_script picks install.sh on unix and install.ps1 elsewhere, so the other was dead weight in every
     # bundle, and the largest script body a classifier walking the AppImage finds, which is where
     # Trojan:Script/Wacatac.B!ml landed.
-    assert _bundled_resources("windows") == {"../../install.ps1": "install.ps1"}
-    assert _bundled_resources("linux") == {"../../install.sh": "install.sh"}
-    assert _bundled_resources("macos") == {"../../install.sh": "install.sh"}
+    source = {"source-backend/": "source-backend/"}
+    assert _bundled_resources("windows") == {"../../install.ps1": "install.ps1", **source}
+    assert _bundled_resources("linux") == {"../../install.sh": "install.sh", **source}
+    assert _bundled_resources("macos") == {"../../install.sh": "install.sh", **source}
 
 
 def test_no_installer_resource_leaks_through_the_shared_config() -> None:
