@@ -214,7 +214,6 @@ studio/src-tauri/gen/
 studio/src-tauri/artifacts/
 studio/src-tauri/icons/android/
 studio/src-tauri/icons/ios/
-studio/src-tauri/icons/128x128@2x.png
 studio/src-tauri/icons/64x64.png
 studio/src-tauri/icons/Square*Logo.png
 studio/src-tauri/icons/StoreLogo.png
