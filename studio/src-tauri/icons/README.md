@@ -28,6 +28,9 @@ entry for explicit image embedding). Older codegen embedded only the ICO's
 first 32 px layer even though all six layers remained intact in the executable.
 The supplied ICO stays unchanged: no directory reordering or regeneration.
 
+The CLI stays at 2.10.1 to retain the fork's finalized AppImage toolchain. CLI
+2.12 overwrites its custom GTK/GStreamer plugins, omitting the safe emoji font.
+Both Windows icon fixes are in the upgraded Rust crates, not the CLI bundler.
 
 PNG compression is lossless. Bundle/archive compression does not reduce image
 quality, so it need not be disabled. The operating system may scale icons to

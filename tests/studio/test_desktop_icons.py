@@ -44,7 +44,8 @@ class DesktopIconTests(unittest.TestCase):
         studio = TAURI.parent
         cli = json.loads((studio / "package.json").read_text(encoding="utf-8"))["devDependencies"]["@tauri-apps/cli"]
         cli_lock = json.loads((studio / "package-lock.json").read_text(encoding="utf-8"))
-        self.assertEqual(cli, "2.12.0")
+        # CLI 2.12 overwrites the custom AppImage plugins. The icon fixes are Rust-side.
+        self.assertEqual(cli, "2.10.1")
         self.assertEqual(cli_lock["packages"]["node_modules/@tauri-apps/cli"]["version"], cli)
         workflow = (studio.parent / ".github/workflows/release-desktop.yml").read_text(encoding="utf-8")
         self.assertIn(f'if [ "$out" != "tauri-cli {cli}" ]; then', workflow)
