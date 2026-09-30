@@ -13,9 +13,9 @@ TAURI = Path(__file__).resolve().parents[2] / "studio/src-tauri"
 
 class DesktopIconTests(unittest.TestCase):
     def config(self, platform=None):
-        config = json.loads((TAURI / "tauri.conf.json").read_text())
+        config = json.loads((TAURI / "tauri.conf.json").read_text(encoding="utf-8"))
         if platform:
-            override = json.loads((TAURI / f"tauri.{platform}.conf.json").read_text())
+            override = json.loads((TAURI / f"tauri.{platform}.conf.json").read_text(encoding="utf-8"))
             def merge(base, patch):
                 for key, value in patch.items():
                     if isinstance(value, dict) and isinstance(base.get(key), dict):
@@ -30,7 +30,7 @@ class DesktopIconTests(unittest.TestCase):
         # tauri-apps/tauri #15241 and #15274 first ship together in this stack.
         # Release runners may expose Python 3.9, which predates stdlib tomllib.
         packages = re.findall(r'\[\[package\]\]\s+name = "([^"]+)"\s+version = "([^"]+)"',
-                              (TAURI / "Cargo.lock").read_text())
+                              (TAURI / "Cargo.lock").read_text(encoding="utf-8"))
         versions = {name: tuple(map(int, version.split("."))) for name, version in packages if name in {
             "tauri", "tauri-codegen", "tauri-build", "tauri-macros", "tauri-runtime-wry",
         }}
@@ -42,14 +42,14 @@ class DesktopIconTests(unittest.TestCase):
             with self.subTest(package=name):
                 self.assertGreaterEqual(versions[name], minimum)
         studio = TAURI.parent
-        cli = json.loads((studio / "package.json").read_text())["devDependencies"]["@tauri-apps/cli"]
-        cli_lock = json.loads((studio / "package-lock.json").read_text())
+        cli = json.loads((studio / "package.json").read_text(encoding="utf-8"))["devDependencies"]["@tauri-apps/cli"]
+        cli_lock = json.loads((studio / "package-lock.json").read_text(encoding="utf-8"))
         self.assertEqual(cli, "2.12.0")
         self.assertEqual(cli_lock["packages"]["node_modules/@tauri-apps/cli"]["version"], cli)
-        workflow = (studio.parent / ".github/workflows/release-desktop.yml").read_text()
+        workflow = (studio.parent / ".github/workflows/release-desktop.yml").read_text(encoding="utf-8")
         self.assertIn(f'if [ "$out" != "tauri-cli {cli}" ]; then', workflow)
         # COM Interface/HSTRING must come from the same windows-core as WebView2.
-        manifest = (TAURI / "Cargo.toml").read_text()
+        manifest = (TAURI / "Cargo.toml").read_text(encoding="utf-8")
         self.assertIn('webview2-com = "0.39.1"', manifest)
         self.assertIn('windows-core = "0.62.2"', manifest)
 
@@ -111,7 +111,7 @@ class DesktopIconTests(unittest.TestCase):
         self.assertEqual(self.config("windows")["bundle"]["windows"]["nsis"]["installerIcon"], "./icons/icon.ico")
 
     def test_trays_use_platform_specific_originals(self):
-        source = (TAURI / "src/main.rs").read_text()
+        source = (TAURI / "src/main.rs").read_text(encoding="utf-8")
         for platform, image in [
             ("macos", "tray-icon@2x.png"),
             ("windows", "legacy-tray/windows.png"),
