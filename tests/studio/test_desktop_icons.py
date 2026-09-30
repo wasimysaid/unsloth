@@ -4,6 +4,7 @@
 import hashlib
 import json
 import struct
+import re
 import unittest
 from pathlib import Path
 
@@ -24,6 +25,34 @@ class DesktopIconTests(unittest.TestCase):
 
             merge(config, override)
         return config
+
+    def test_tauri_stack_contains_windows_icon_fixes(self):
+        # tauri-apps/tauri #15241 and #15274 first ship together in this stack.
+        # Release runners may expose Python 3.9, which predates stdlib tomllib.
+        packages = re.findall(r'\[\[package\]\]\s+name = "([^"]+)"\s+version = "([^"]+)"',
+                              (TAURI / "Cargo.lock").read_text())
+        versions = {name: tuple(map(int, version.split("."))) for name, version in packages if name in {
+            "tauri", "tauri-codegen", "tauri-build", "tauri-macros", "tauri-runtime-wry",
+        }}
+        for name, minimum in {
+            "tauri": (2, 12, 0), "tauri-codegen": (2, 7, 0),
+            "tauri-build": (2, 7, 0), "tauri-macros": (2, 7, 0),
+            "tauri-runtime-wry": (2, 12, 0),
+        }.items():
+            with self.subTest(package=name):
+                self.assertGreaterEqual(versions[name], minimum)
+        studio = TAURI.parent
+        cli = json.loads((studio / "package.json").read_text())["devDependencies"]["@tauri-apps/cli"]
+        cli_lock = json.loads((studio / "package-lock.json").read_text())
+        self.assertEqual(cli, "2.12.0")
+        self.assertEqual(cli_lock["packages"]["node_modules/@tauri-apps/cli"]["version"], cli)
+        workflow = (studio.parent / ".github/workflows/release-desktop.yml").read_text()
+        self.assertIn(f'if [ "$out" != "tauri-cli {cli}" ]; then', workflow)
+        # COM Interface/HSTRING must come from the same windows-core as WebView2.
+        manifest = (TAURI / "Cargo.toml").read_text()
+        self.assertIn('webview2-com = "0.39.1"', manifest)
+        self.assertIn('windows-core = "0.62.2"', manifest)
+
 
     def test_supplied_assets_are_unmodified(self):
         # SHA-256 of the designer's originals, not regenerated/resized images.
@@ -51,6 +80,7 @@ class DesktopIconTests(unittest.TestCase):
     def test_macos_and_existing_color_tray_icons_remain_unchanged(self):
         preserved = {
             "legacy-tray/windows.ico": "70d9f70d9891d5745147486c8908abe79480f78996153e91cee2385903506b64",
+            "legacy-tray/windows.png": "791d080e9e7d2f3bf2164bdbeea7ba416b7f9e6c4c06e892ade72b06563fd0fc",
             "legacy-tray/linux.png": "791d080e9e7d2f3bf2164bdbeea7ba416b7f9e6c4c06e892ade72b06563fd0fc",
             "macos/32x32.png": "791d080e9e7d2f3bf2164bdbeea7ba416b7f9e6c4c06e892ade72b06563fd0fc",
             "macos/128x128.png": "216dcc4b8b6113bbf93b9483d039188965c01b398020d184dd89fd75cb1b1eed",
@@ -84,7 +114,7 @@ class DesktopIconTests(unittest.TestCase):
         source = (TAURI / "src/main.rs").read_text()
         for platform, image in [
             ("macos", "tray-icon@2x.png"),
-            ("windows", "legacy-tray/windows.ico"),
+            ("windows", "legacy-tray/windows.png"),
             ("linux", "legacy-tray/linux.png"),
         ]:
             self.assertIn(f'#[cfg(target_os = "{platform}")]\n    let tray_icon = tauri::include_image!("./icons/{image}");', source)

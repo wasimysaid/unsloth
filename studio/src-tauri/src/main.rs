@@ -1744,8 +1744,9 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let tray_icon = tauri::include_image!("./icons/tray-icon@2x.png");
     // The supplied tray exports are monochrome. Preserve the existing colored artwork
     // independently of the updated application/bundle icons.
+    // Tauri 2.7 codegen selects the largest ICO layer; keep the old tray's exact 32px raster.
     #[cfg(target_os = "windows")]
-    let tray_icon = tauri::include_image!("./icons/legacy-tray/windows.ico");
+    let tray_icon = tauri::include_image!("./icons/legacy-tray/windows.png");
     #[cfg(target_os = "linux")]
     let tray_icon = tauri::include_image!("./icons/legacy-tray/linux.png");
 
