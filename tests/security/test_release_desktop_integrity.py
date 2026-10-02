@@ -643,10 +643,23 @@ def test_the_guard_rejects_a_prerelease_target_before_anything_is_built():
     assert "is a prerelease" in state["run"]
 
 
-def test_the_build_uses_the_release_tag_not_the_dispatch_ref():
-    build = _workflow()["jobs"]["build"]["steps"]
+def test_release_tag_remains_default_and_source_backend_is_fork_guarded():
+    workflow = _workflow()
+    build = workflow["jobs"]["build"]["steps"]
     checkout = next(s for s in build if "actions/checkout" in str(s.get("uses", "")))
-    assert checkout["with"]["ref"] == "${{ needs.prepare-version.outputs.desktop_release_tag }}"
+    assert checkout["with"]["ref"] == (
+        "${{ inputs.source_backend && github.sha || needs.prepare-version.outputs.desktop_release_tag }}"
+    )
+    backend = _step(workflow, "build", "Checkout backend tag for source wheel")
+    assert backend["if"] == "${{ inputs.source_backend }}"
+    assert backend["with"]["ref"] == "${{ needs.prepare-version.outputs.desktop_release_tag }}"
+    assert backend["with"]["path"] == "backend-source"
+    for job in ("prepare-version", "build"):
+        guard = _step(workflow, job, "Guard source backend release ref")
+        assert guard["if"] == "${{ inputs.source_backend }}"
+        assert "$GITHUB_REPOSITORY\" != 'wasimysaid/unsloth'" in guard["run"]
+        assert "$GITHUB_REF\" != 'refs/heads/release/desktop-source-backend'" in guard["run"]
+    assert build.index(_step(workflow, "build", "Guard source backend release ref")) < build.index(checkout)
 
 
 def test_the_tag_is_validated_before_it_is_checked_out(tmp_path):

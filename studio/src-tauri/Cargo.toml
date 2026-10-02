@@ -14,7 +14,7 @@ edition = "2021"
 rust-version = "1.89"
 
 [dependencies]
-# Windows resource-backed default icon and ICO selection fixes: tauri #15274 / #15241.
+# Windows executable-resource icons and ICO entry selection (tauri #15274 / #15241).
 tauri = { version = "~2.12.0", features = ["tray-icon"] }
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-autostart = "2"
@@ -52,7 +52,7 @@ libc = "0.2"
 signal-hook = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6"
+objc2 = { version = "0.6", features = ["exception"] }
 
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSAppearance", "NSButton", "NSControl", "NSResponder", "NSStatusBarButton", "NSStatusItem", "NSView"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSKeyValueObserving", "NSObject", "NSString"] }
