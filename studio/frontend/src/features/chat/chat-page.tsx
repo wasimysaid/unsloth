@@ -2934,6 +2934,7 @@ export function ChatPage({
         isReasoningProvider: provider?.isReasoningModel === true,
         baseUrl: provider?.baseUrl ?? null,
         apiType: provider?.apiType,
+        reasoningConfig: provider?.reasoningConfig,
       },
     );
     const state = useChatRuntimeStore.getState();
@@ -3087,6 +3088,7 @@ export function ChatPage({
         isReasoningProvider: provider?.isReasoningModel === true,
         baseUrl: provider?.baseUrl ?? null,
         apiType: provider?.apiType,
+        reasoningConfig: provider?.reasoningConfig,
       },
     );
     reconcilePinnedReasoningEffort({
@@ -3119,6 +3121,7 @@ export function ChatPage({
         isReasoningProvider: provider?.isReasoningModel === true,
         baseUrl: provider?.baseUrl ?? null,
         apiType: provider?.apiType,
+        reasoningConfig: provider?.reasoningConfig,
       },
     );
     useChatRuntimeStore.setState(
@@ -3678,6 +3681,7 @@ export function ChatPage({
             isReasoningProvider: selectedProvider?.isReasoningModel === true,
             baseUrl: selectedProvider?.baseUrl ?? null,
             apiType: selectedProvider?.apiType,
+            reasoningConfig: selectedProvider?.reasoningConfig,
           },
         );
         const effortLevels = reasoningCaps.reasoningEffortLevels;
