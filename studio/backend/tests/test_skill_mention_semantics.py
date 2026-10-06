@@ -37,6 +37,16 @@ from .test_explicit_skill_loading import mention_client  # noqa: F401 -- shared 
         ("~~~\n\t~~~\n@skill-creator\n~~~\n@another", ["another"]),
         ("   ```\n@skill-creator\n   ```\n@another", ["another"]),
         ("    ~~~\n@skill-creator", ["skill-creator"]),
+        ("> discussing a literal mention\n@skill-creator stays quoted", []),
+        ("> quoted prose\ncontinued prose\n@skill-creator", []),
+        ("> quoted prose\n\n@skill-creator", ["skill-creator"]),
+        ("> quoted prose\n# @skill-creator", ["skill-creator"]),
+        ("> # heading\n@skill-creator", ["skill-creator"]),
+        ("> ```\n> code\n@skill-creator", ["skill-creator"]),
+        ("> ```\n> code\n> ```\n@skill-creator", ["skill-creator"]),
+        (r'He said "type \" carefully, then @skill-creator literally"', []),
+        (r"He said 'type \' carefully, then @skill-creator literally'", []),
+        (r'He said "type \" carefully" then @skill-creator', ["skill-creator"]),
     ],
 )
 def test_plain_text_intent_contract(text, expected):

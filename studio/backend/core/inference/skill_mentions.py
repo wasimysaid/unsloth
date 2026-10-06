@@ -9,6 +9,8 @@ import hashlib
 import re
 import uuid
 
+from markdown_it import MarkdownIt
+
 from core.inference.skills import SkillError, list_skills, read_skill_instructions
 from state.tool_approvals import (
     abort_tool_decision,
@@ -20,35 +22,27 @@ from state.tool_policy import normalize_tool_permissions
 
 _TOKEN = re.compile(r"(?<!\S)@([a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)(?=$|\s|[.,;:!?)](?:$|\s))")
 _MAX_LOAD_BYTES = 32_000
+_MENTION_MARKDOWN = MarkdownIt("commonmark").disable("inline")
 
 
 def mentioned_skill_names(text: str) -> list[str]:
     """Only prose outside code, Markdown blockquotes, and balanced quotation spans."""
-    lines = []
-    fence = None
-    for line in text.splitlines(keepends = True):
-        stripped = line.lstrip()
-        marker = re.match(r" {0,3}(`{3,}|~{3,})", line)
-        if marker and marker[1][0] == "`" and "`" in stripped[len(marker[1]) :]:
-            marker = None  # CommonMark: a backtick fence line has no other backticks; inline span.
-        if marker:
-            if fence is None:
-                fence = (marker[1][0], len(marker[1]))
-            elif (
-                marker[1][0] == fence[0]
-                and len(marker[1]) >= fence[1]
-                and not stripped[len(marker[1]) :].strip()
-            ):
-                fence = None
-            lines.append("\n")
-        elif fence or stripped.startswith(">") or line.startswith(("    ", "\t")):
-            lines.append("\n")
-        else:
-            lines.append(line)
-    text = "".join(lines)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    masked_lines = set()
+    for token in _MENTION_MARKDOWN.parse(text):
+        if token.type in ("blockquote_open", "fence", "code_block") and token.map:
+            masked_lines.update(range(*token.map))
+    text = "\n".join(
+        "" if number in masked_lines else line for number, line in enumerate(text.split("\n"))
+    )
     # (?<!\w)' so the apostrophe in didn't is not an opening quote.
     text = re.sub(r"(`+).*?\1", " ", text, flags = re.DOTALL)
-    text = re.sub(r'"[^"]*"|“[^”]*”|‘[^’]*’|(?<!\w)\'[^\']*\'', " ", text)
+    text = re.sub(
+        r'"(?:\\.|[^"\\])*"|“(?:\\.|[^”\\])*”|‘(?:\\.|[^’\\])*’|(?<!\w)\'(?:\\.|[^\'\\])*\'',
+        " ",
+        text,
+        flags = re.DOTALL,
+    )
     return list(dict.fromkeys(match[1] for match in _TOKEN.finditer(text)))
 
 
