@@ -35,10 +35,11 @@ def mentioned_skill_names(text: str) -> list[str]:
     text = "\n".join(
         "" if number in masked_lines else line for number, line in enumerate(text.split("\n"))
     )
-    # (?<!\w)' so the apostrophe in didn't is not an opening quote.
-    text = re.sub(r"(`+).*?\1", " ", text, flags = re.DOTALL)
+    text = re.sub(r"(?<!`)(`+)(?!`).*?(?<!`)\1(?!`)", " ", text, flags = re.DOTALL)
     text = re.sub(
-        r'"(?:\\.|[^"\\])*"|“(?:\\.|[^”\\])*”|‘(?:\\.|[^’\\])*’|(?<!\w)\'(?:\\.|[^\'\\])*\'',
+        r'"(?:\\.|[^"\\])*"|“(?:\\.|[^”\\])*”'
+        r"|‘(?:\\.|(?<=\w)’(?=\w)|[^’\\])*(?:’(?!\w)|(?<!\w)’)"
+        r"|(?<!\w)'(?:\\.|(?<=\w)'(?=\w)|[^'\\])*(?:'(?!\w)|(?<!\w)')",
         " ",
         text,
         flags = re.DOTALL,

@@ -47,6 +47,12 @@ from .test_explicit_skill_loading import mention_client  # noqa: F401 -- shared 
         (r'He said "type \" carefully, then @skill-creator literally"', []),
         (r"He said 'type \' carefully, then @skill-creator literally'", []),
         (r'He said "type \" carefully" then @skill-creator', ["skill-creator"]),
+        ("'please don't use @skill-creator here'", []),
+        ("‘please don’t use @skill-creator here’", []),
+        ("don't use @skill-creator here", ["skill-creator"]),
+        ("‘please don’t use it’ then @skill-creator", ["skill-creator"]),
+        ("`` code ``` xx ` @skill-creator ``", []),
+        ("`` code ``` xx ` literal `` then @skill-creator", ["skill-creator"]),
     ],
 )
 def test_plain_text_intent_contract(text, expected):
