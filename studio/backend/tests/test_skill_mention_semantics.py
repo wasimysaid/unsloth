@@ -53,6 +53,10 @@ from .test_explicit_skill_loading import mention_client  # noqa: F401 -- shared 
         ("‘please don’t use it’ then @skill-creator", ["skill-creator"]),
         ("`` code ``` xx ` @skill-creator ``", []),
         ("`` code ``` xx ` literal `` then @skill-creator", ["skill-creator"]),
+        (r"\` @skill-creator \`", ["skill-creator"]),
+        (r"\\` @skill-creator `", []),
+        (r"` @skill-creator \`", []),
+        ("` unmatched\n\n@skill-creator\n\nclosing `", ["skill-creator"]),
     ],
 )
 def test_plain_text_intent_contract(text, expected):
@@ -422,6 +426,58 @@ def test_external_withdrawn_tools_skip_preload(mention_client, tool_choice, max_
     events = asyncio.run(drive())
     assert path.read_text() not in json.dumps([c.get("messages") for c in captured])
     assert not any('"type":"skill_load"' in event for event in events)
+
+
+@pytest.mark.parametrize("choice", ["auto", "none"])
+def test_safetensors_route_respects_withdrawn_tools(mention_client, monkeypatch, choice):
+    from routes import inference as api
+
+    client, gguf, manifest = mention_client
+    gguf.is_loaded = False
+    captured = []
+
+    class Backend:
+        active_model_name = "qwen"
+        models = {"qwen": {"chat_template_info": {"template": "qwen"}, "is_vision": False}}
+
+        def generate_chat_response(self, **kwargs):
+            captured.append(kwargs["messages"])
+            yield "No model tool call."
+
+        def generate_chat_completion_with_tools(self, *, messages, tools, **kwargs):
+            from core.inference.safetensors_agentic import run_safetensors_tool_loop
+            return run_safetensors_tool_loop(
+                single_turn = lambda conversation: self.generate_chat_response(messages = conversation),
+                messages = messages,
+                tools = tools,
+                execute_tool = lambda *a, **kw: pytest.fail("no model tool call"),
+                nudge_tool_calls = False,
+                permission_mode = kwargs["permission_mode"],
+            )
+
+        def reset_generation_state(self, *args):
+            pass
+
+    monkeypatch.setattr(api, "get_inference_backend", lambda: Backend())
+    monkeypatch.setattr(
+        api, "_detect_safetensors_features", lambda *a, **kw: {"supports_tools": True}
+    )
+    response = client.post(
+        "/chat/completions",
+        json = {
+            "messages": [{"role": "user", "content": "@skill-creator"}],
+            "stream": True,
+            "enable_tools": True,
+            "enabled_tools": ["read_skill"],
+            "permission_mode": "auto",
+            "tool_choice": choice,
+        },
+        headers = {"X-Unsloth-Events": "1"},
+    )
+    assert response.status_code == 200, response.text
+    assert captured, response.text
+    assert (manifest.read_text() in json.dumps(captured).replace("\\n", "\n")) == (choice == "auto")
+    assert ('"status": "loaded"' in response.text) == (choice == "auto")
 
 
 @pytest.mark.parametrize("extra", [{"tool_choice": "none"}, {"max_tool_calls_per_message": 0}])

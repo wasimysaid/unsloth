@@ -10,6 +10,7 @@ import re
 import uuid
 
 from markdown_it import MarkdownIt
+from markdown_it.rules_inline.backticks import backtick
 
 from core.inference.skills import SkillError, list_skills, read_skill_instructions
 from state.tool_approvals import (
@@ -22,20 +23,52 @@ from state.tool_policy import normalize_tool_permissions
 
 _TOKEN = re.compile(r"(?<!\S)@([a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)(?=$|\s|[.,;:!?)](?:$|\s))")
 _MAX_LOAD_BYTES = 32_000
+
+
+def _record_inline_code(state, silent: bool) -> bool:
+    start, count = state.pos, len(state.tokens)
+    matched = backtick(state, silent)
+    if (
+        matched
+        and not silent
+        and state.src is state.env.get("source")
+        and len(state.tokens) > count
+        and state.tokens[-1].type == "code_inline"
+    ):
+        state.env["spans"].append((start, state.pos))
+    return matched
+
+
 _MENTION_MARKDOWN = MarkdownIt("commonmark").disable("inline")
+_MENTION_MARKDOWN.inline.ruler.at("backticks", _record_inline_code)
 
 
 def mentioned_skill_names(text: str) -> list[str]:
     """Only prose outside code, Markdown blockquotes, and balanced quotation spans."""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
+    tokens = _MENTION_MARKDOWN.parse(text)
     masked_lines = set()
-    for token in _MENTION_MARKDOWN.parse(text):
+    for token in tokens:
         if token.type in ("blockquote_open", "fence", "code_block") and token.map:
             masked_lines.update(range(*token.map))
     text = "\n".join(
-        "" if number in masked_lines else line for number, line in enumerate(text.split("\n"))
+        " " * len(line) if number in masked_lines else line
+        for number, line in enumerate(text.split("\n"))
     )
-    text = re.sub(r"(?<!`)(`+)(?!`).*?(?<!`)\1(?!`)", " ", text, flags = re.DOTALL)
+    offsets = [0, *(match.end() for match in re.finditer("\n", text)), len(text)]
+    spans = []
+    for token in tokens:
+        if token.type == "inline" and token.map:
+            start, end = (offsets[number] for number in token.map)
+            source = text[start:end]
+            env = {"source": source, "spans": []}
+            _MENTION_MARKDOWN.inline.parse(source, _MENTION_MARKDOWN, env, [])
+            spans.extend((start + first, start + last) for first, last in env["spans"])
+    parts, end = [], 0
+    for start, stop in sorted(spans):
+        parts.extend((text[end:start], " "))
+        end = stop
+    text = "".join(parts) + text[end:]
     text = re.sub(
         r'"(?:\\.|[^"\\])*"|“(?:\\.|[^”\\])*”'
         r"|‘(?:\\.|(?<=\w)’(?=\w)|[^’\\])*(?:’(?!\w)|(?<!\w)’)"
