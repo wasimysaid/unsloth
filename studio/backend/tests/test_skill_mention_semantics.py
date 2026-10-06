@@ -33,6 +33,10 @@ from .test_explicit_skill_loading import mention_client  # noqa: F401 -- shared 
         ("```@literal```\n@skill-creator", ["skill-creator"]),
         ("````\n````python\n@skill-creator\n````\n@another", ["another"]),
         ("```\n```x```\n@skill-creator\n```\n@another", ["another"]),
+        ("```\n    ```\n@skill-creator\n```\n@another", ["another"]),
+        ("~~~\n\t~~~\n@skill-creator\n~~~\n@another", ["another"]),
+        ("   ```\n@skill-creator\n   ```\n@another", ["another"]),
+        ("    ~~~\n@skill-creator", ["skill-creator"]),
     ],
 )
 def test_plain_text_intent_contract(text, expected):
