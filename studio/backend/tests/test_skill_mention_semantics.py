@@ -235,6 +235,9 @@ def test_ask_requires_actual_scoped_approval_before_read(mention_client, monkeyp
     assert not tool_decision_is_pending(event["approval_id"])
     assert events[-1]["status"] == ("loaded" if verdict == "allow" else "unavailable")
     assert (path.read_text() in json.dumps(messages).replace("\\n", "\n")) == (verdict == "allow")
+    if verdict == "deny":
+        assert messages[0]["role"] == "system"
+        assert events[-1]["detail"] in messages[0]["content"]
 
 
 def test_closing_parked_preload_cleans_approval_slot(mention_client):
@@ -329,25 +332,28 @@ def test_safetensors_gets_complete_manifest_before_first_turn(mention_client):
     assert any(event["type"] == "skill_load" and event["status"] == "loaded" for event in events)
 
 
-def test_external_ask_flushes_skill_approval_before_waiting(mention_client, monkeypatch):
+@pytest.mark.parametrize("verdict", ["allow", "deny"])
+def test_external_ask_flushes_skill_approval_before_waiting(mention_client, monkeypatch, verdict):
     from core.inference.studio_tool_loop import (
         ToolLoopRun,
         ToolLoopPolicy,
         stream_with_studio_tools,
     )
 
-    def slow_allow(*args, **kwargs):
+    def slow_verdict(*args, **kwargs):
         import time
         time.sleep(0.3)
-        return "allow"
+        return verdict
 
-    monkeypatch.setattr(mentions, "wait_tool_decision", slow_allow)
+    monkeypatch.setattr(mentions, "wait_tool_decision", slow_verdict)
+    captured = []
 
     class Transport:
         heals_text_tool_calls = False
         sanitizes_provider_frames = False
 
         async def stream(self, **kwargs):
+            captured.append(kwargs["messages"])
             yield 'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}'
             yield "data: [DONE]"
 
@@ -377,7 +383,10 @@ def test_external_ask_flushes_skill_approval_before_waiting(mention_client, monk
     gate = next(i for i, e in enumerate(events) if '"status":"awaiting_approval"' in e)
     # The Allow / Deny card must be followed by its own keepalive write while Ask waits.
     assert events[gate + 1].startswith(":"), events[gate : gate + 2]
-    assert any('"status":"loaded"' in e for e in events)
+    assert any('"status":"loaded"' in e for e in events) == (verdict == "allow")
+    if verdict == "deny":
+        assert "@skill-creator not loaded" in captured[0][0]["content"]
+        assert "approval was denied" in captured[0][0]["content"]
 
 
 @pytest.mark.parametrize("tool_choice, max_calls", [("none", 5), ("auto", 0)])

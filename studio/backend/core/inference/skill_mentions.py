@@ -157,11 +157,9 @@ def load_mentioned_skills(
             finally:
                 abort_tool_decision(slot, approval_id)
             if verdict != "allow":
-                yield {
-                    **event,
-                    "status": "unavailable",
-                    "detail": "Skill not loaded: approval was denied, expired, or cancelled.",
-                }
+                detail = f"Skill @{name} not loaded: approval was denied, expired, or cancelled."
+                _append_system(messages, detail)
+                yield {**event, "status": "unavailable", "detail": detail}
                 continue
         yield {**event, "status": "loading"}
         try:
