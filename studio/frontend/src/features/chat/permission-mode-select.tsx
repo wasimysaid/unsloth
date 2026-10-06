@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
-import { ChevronDown, CircleAlert, Hand, ShieldCheck } from "lucide-react";
+import { ChevronDown, Hand, ShieldCheck } from "lucide-react";
+import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
 import type { ComponentType } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useFullAccessAllowed } from "@/features/auth/account-session";
+import { useSettingsDialogStore } from "@/features/settings";
+import { useT } from "@/i18n";
 
 import {
   AlertDialog,
@@ -24,11 +27,34 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Switch } from "@/components/ui/switch";
 import { ChevronDownStandardIcon } from "@/lib/chevron-icons";
+import { ShieldAlertGlyph } from "@/lib/shield-alert-icon";
 import { SparklesGlyph } from "@/lib/sparkles-icon";
 import { MenuTickIcon } from "@/lib/tick-icon";
 import { cn } from "@/lib/utils";
+import {
+  ComputerTerminal01Icon,
+  Folder01Icon,
+  HelpCircleIcon,
+  InternetIcon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import {
+  type SandboxCapability,
+  cachedSandboxCapability,
+  loadSandboxCapability,
+  onSandboxCapabilityChange,
+  sandboxReady,
+} from "./api/sandbox-capability";
+import { sandboxSwitchState } from "./sandbox-level";
+import {
+  pickSandboxLevel,
+} from "./sandbox-pick";
+import {
+  SandboxSetupDialog,
+  useSandboxSetupDialogStore,
+} from "./sandbox-setup-dialog";
 import {
   type PermissionMode,
   useChatRuntimeStore,
@@ -45,34 +71,48 @@ export const PERMISSION_MODE_OPTIONS: readonly {
   {
     value: "ask",
     label: "Ask for approval",
-    description:
-      "Always ask before tool calls, editing files or using the internet",
+    description: "Ask before using tools or the internet",
     icon: Hand,
   },
   {
     value: "auto",
     label: "Approve for me",
-    description:
-      "Run tool calls, but ask before high-risk actions like credential access, privilege escalation, or destructive commands",
+    description: "Only ask for actions that look risky",
     icon: ShieldCheck,
   },
   {
     value: "off",
     label: "Run automatically",
-    description: "Run tool calls without approval prompts inside the sandbox",
+    description: "Never ask, but keep code in the sandbox",
     icon: SparklesGlyph,
   },
   {
     value: "full",
     label: "Full access",
-    description:
-      "Unrestricted: no approval prompts and the code sandbox is disabled",
-    icon: CircleAlert,
+    description: "Full access to your computer",
+    icon: ShieldAlertGlyph,
   },
 ] as const;
 
-export const FULL_ACCESS_WARNING =
-  "Full access lets tool calls run without approval prompts or the code sandbox. They can modify or delete files, run commands, and make network requests. Enable it only when you trust the current task.";
+/** What Full access opens up, listed in its confirmation. */
+const FULL_ACCESS_SCOPES = [
+  {
+    icon: Folder01Icon,
+    title: "Files",
+    description: "Read, change or delete any file you can access",
+  },
+  {
+    icon: ComputerTerminal01Icon,
+    title: "Commands",
+    description: "Run terminal and Python code, install packages",
+  },
+  {
+    // The app's own internet glyph, as on Web search.
+    icon: InternetIcon,
+    title: "Internet",
+    description: "Browse, send data and use MCP tools",
+  },
+] as const;
 
 export function permissionModeOption(mode: PermissionMode) {
   return (
@@ -80,6 +120,95 @@ export function permissionModeOption(mode: PermissionMode) {
     // Unknown values fall back to the default ("Approve for me"), not row 0 ("Ask").
     PERMISSION_MODE_OPTIONS.find((option) => option.value === "auto") ??
     PERMISSION_MODE_OPTIONS[0]
+  );
+}
+
+/** Menu heading. `sandboxControls` adds the Sandbox Low/High switch; Settings shows its own row.
+ *  `onOsSandboxMissing` opens the install popup; by default the one at the chat-page root. */
+export function PermissionMenuLabel({
+  sandboxControls,
+  onOsSandboxMissing,
+}: {
+  sandboxControls: boolean;
+  onOsSandboxMissing?: () => void;
+}) {
+  const t = useT();
+  return (
+    <DropdownMenuLabel className="flex items-center justify-between gap-3">
+      <span>{t("settings.general.permissions.sectionTitle")}</span>
+      {sandboxControls ? <SandboxLevelMenuSwitch onOsSandboxMissing={onOsSandboxMissing} /> : null}
+    </DropdownMenuLabel>
+  );
+}
+
+/** Switch on = High (OS sandboxing), off = Low (software sandboxing). A checkbox item, so arrow
+ *  keys reach it and Enter or Space toggles it. It keeps the menu open, except when High may need
+ *  the setup popup, which cannot open over the menu. The question mark next to it opens Settings. */
+function SandboxLevelMenuSwitch({ onOsSandboxMissing }: { onOsSandboxMissing?: () => void }) {
+  const t = useT();
+  const sandboxLevel = useChatRuntimeStore((s) => s.sandboxLevel);
+  const setSandboxLevel = useChatRuntimeStore((s) => s.setSandboxLevel);
+  const setSandboxSetupOpen = useSandboxSetupDialogStore((s) => s.setOpen);
+  const openSettings = useSettingsDialogStore((s) => s.openDialog);
+  const { permissionMode } = useAccountPermissionMode();
+  const capability = useSandboxCapability(sandboxLevel === "high");
+  const { checked, disabled } = sandboxSwitchState(sandboxLevel, permissionMode, capability);
+  const descriptionId = useId();
+  const help = t("settings.sandbox.levelHelp");
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      <DropdownMenuPrimitive.CheckboxItem
+        checked={checked}
+        disabled={disabled}
+        aria-describedby={descriptionId}
+        onSelect={(event) => {
+          const known = cachedSandboxCapability();
+          if (checked || (known !== null && sandboxReady(known))) event.preventDefault();
+        }}
+        onCheckedChange={(next) => {
+          void pickSandboxLevel(next === true ? "high" : "low", setSandboxLevel, () =>
+            // Deferred past the menu's focus restore.
+            setTimeout(onOsSandboxMissing ?? (() => setSandboxSetupOpen(true)), 0),
+          );
+        }}
+        className="flex shrink-0 cursor-pointer items-center gap-2 rounded-sm font-normal outline-hidden hover:text-foreground focus-visible:text-foreground data-[disabled]:cursor-not-allowed data-[highlighted]:text-foreground"
+      >
+        <span>{t("settings.sandbox.levelLabel")}</span>
+        <span className="min-w-[2.25em] text-right text-muted-foreground">
+          {checked ? t("settings.sandbox.levelHigh") : t("settings.sandbox.levelLow")}
+        </span>
+        {/* Presentation only: the item carries the state and the keyboard. */}
+        <Switch
+          size="sm"
+          checked={checked}
+          disabled={disabled}
+          tabIndex={-1}
+          aria-hidden={true}
+          className="pointer-events-none"
+        />
+      </DropdownMenuPrimitive.CheckboxItem>
+      <DropdownMenuPrimitive.Item
+        aria-label={help}
+        title={help}
+        className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground outline-hidden hover:text-foreground focus-visible:text-foreground data-[highlighted]:text-foreground"
+        // Deferred past the menu's focus restore.
+        onSelect={() =>
+          setTimeout(
+            () => openSettings("sandbox", { scrollTarget: "sandbox-permissions" }),
+            0,
+          )
+        }
+      >
+        <HugeiconsIcon icon={HelpCircleIcon} strokeWidth={2} className="size-3.5" />
+      </DropdownMenuPrimitive.Item>
+      <span id={descriptionId} className="sr-only">
+        {disabled
+          ? t("settings.sandbox.levelFullAccessNote")
+          : checked
+            ? t("settings.sandbox.levelHighShort")
+            : t("settings.sandbox.levelLowShort")}
+      </span>
+    </span>
   );
 }
 
@@ -98,6 +227,31 @@ function useAccountPermissionMode() {
   };
 }
 
+/** Null while unknown, when the server is too old to say, or when `enabled` is false (Low needs no
+ *  OS sandbox answer, and the read probes it); follows later reads and resets. */
+export function useSandboxCapability(enabled: boolean): SandboxCapability | null {
+  const [capability, setCapability] = useState<SandboxCapability | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let live = true;
+    // Only the newest read applies: an older answer resolving last must not undo a newer one.
+    let reads = 0;
+    const read = () => {
+      const id = ++reads;
+      void loadSandboxCapability().then((next) => {
+        if (live && id === reads) setCapability(next);
+      });
+    };
+    read();
+    const stop = onSandboxCapabilityChange(read);
+    return () => {
+      live = false;
+      stop();
+    };
+  }, [enabled]);
+  return enabled ? capability : null;
+}
+
 export function PermissionModeMenuItems({
   onRequestFullAccess,
 }: {
@@ -112,9 +266,9 @@ export function PermissionModeMenuItems({
         <DropdownMenuItem
           key={option.value}
           onSelect={() => {
-            if (option.value === permissionMode) {
-              return;
-            }
+            if (option.value === permissionMode) return;
+            // Run automatically applies at once: without an OS sandbox the switch reads Low and
+            // risky Python and Terminal calls still ask.
             if (option.value === "full") {
               onRequestFullAccess();
             } else {
@@ -124,9 +278,6 @@ export function PermissionModeMenuItems({
           className={cn(
             "items-start gap-2 py-2",
             permissionMode === option.value && "font-medium",
-            option.value === "full" &&
-              permissionMode === "full" &&
-              "text-bypass",
           )}
         >
           <option.icon className="mt-0.5 size-4 shrink-0" strokeWidth={2} />
@@ -140,12 +291,110 @@ export function PermissionModeMenuItems({
             <HugeiconsIcon
               icon={MenuTickIcon}
               strokeWidth={2}
-              className="ml-auto mt-0.5 size-4 shrink-0"
+              // Centred on both lines; sized in index.css.
+              className="permission-mode-tick ml-auto size-4 shrink-0 self-center"
             />
           ) : null}
         </DropdownMenuItem>
       ))}
     </>
+  );
+}
+
+/** The level in effect, for Settings to spell out. */
+export function useActivePermissionMode() {
+  return permissionModeOption(useAccountPermissionMode().permissionMode);
+}
+
+/** The focused element, or for a closing menu its trigger (menus label themselves by it). */
+function lastFocusOutsideMenus(): HTMLElement | null {
+  let element = document.activeElement;
+  for (
+    let menu = element?.closest('[role="menu"]');
+    menu;
+    menu = element?.closest('[role="menu"]')
+  ) {
+    const triggerId = menu.getAttribute("aria-labelledby");
+    element = triggerId ? document.getElementById(triggerId) : null;
+  }
+  return element instanceof HTMLElement && element !== document.body ? element : null;
+}
+
+/** Full access confirmation body, shared by both dialogs that ask for it. */
+export function FullAccessConfirmContent({
+  onConfirm,
+  onClose,
+}: {
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const openSettings = useSettingsDialogStore((s) => s.openDialog);
+  // Focus before the dialog opened, so Settings can return there and not to a removed button.
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  return (
+    // Backdrop click cancels; no ring.
+    <AlertDialogContent
+      className="gap-5 p-7 ring-0 data-[size=default]:sm:max-w-[calc(500px*var(--ui-space-scale,1))]"
+      onOverlayClick={onClose}
+      // Focus the card, not Cancel, so Cancel shows no focus border until tabbed to.
+      onOpenAutoFocus={(event) => {
+        event.preventDefault();
+        returnFocusRef.current = lastFocusOutsideMenus();
+        (event.currentTarget as HTMLElement).focus();
+      }}
+    >
+      <AlertDialogHeader className="gap-2">
+        <AlertDialogTitle className="flex items-center gap-2.5">
+          <ShieldAlertGlyph className="size-5 shrink-0" strokeWidth={2} />
+          Turn on Full access?
+        </AlertDialogTitle>
+        {/* text-pretty: balance splits this sentence into two short lines. */}
+        <AlertDialogDescription className="text-pretty leading-relaxed">
+          Tools will run without asking and outside the sandbox, including:
+        </AlertDialogDescription>
+      </AlertDialogHeader>
+      <ul className="flex flex-col rounded-2xl bg-muted/50 px-5 py-1.5">
+        {FULL_ACCESS_SCOPES.map((scope) => (
+          <li key={scope.title} className="flex items-center gap-4 py-3">
+            <HugeiconsIcon
+              icon={scope.icon}
+              strokeWidth={1.75}
+              className="size-5 shrink-0 text-muted-foreground"
+            />
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-sm font-medium">{scope.title}</span>
+              <span className="text-xs leading-relaxed text-muted-foreground">
+                {scope.description}
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-pretty text-xs leading-relaxed text-muted-foreground">
+        Risks include data loss or exposure and prompt injection. You can turn this off
+        anytime.{" "}
+        <button
+          type="button"
+          className="cursor-pointer text-foreground underline underline-offset-2"
+          onClick={() => {
+            onClose();
+            openSettings("sandbox", {
+              scrollTarget: "sandbox-permissions",
+              opener: returnFocusRef.current,
+            });
+          }}
+        >
+          Learn more
+        </button>
+      </p>
+      <AlertDialogFooter className="mt-1">
+        {/* Muted, not outline: outline keeps a border in light mode. */}
+        <AlertDialogCancel variant="muted">Cancel</AlertDialogCancel>
+        <AlertDialogAction variant="destructive" onClick={onConfirm}>
+          Turn on
+        </AlertDialogAction>
+      </AlertDialogFooter>
+    </AlertDialogContent>
   );
 }
 
@@ -164,44 +413,34 @@ export function FullAccessConfirmDialog({
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent size="sm">
-        <AlertDialogHeader>
-          <AlertDialogTitle>Enable Full access?</AlertDialogTitle>
-          <AlertDialogDescription>
-            {FULL_ACCESS_WARNING}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            className="!bg-destructive !text-destructive-foreground hover:!bg-destructive/90"
-            onClick={() => {
-              setPermissionMode("full");
-              onOpenChange(false);
-            }}
-          >
-            I understand
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
+      <FullAccessConfirmContent
+        onConfirm={() => {
+          setPermissionMode("full");
+          onOpenChange(false);
+        }}
+        onClose={() => onOpenChange(false)}
+      />
     </AlertDialog>
   );
 }
 
 /** Select-style dropdown (like the MCP composer menu) for picking the permission level. Used in
- *  General settings and the chat settings sheet. */
+ *  Settings > Sandbox and the chat settings sheet. */
 export function PermissionModeDropdown({
   side = "bottom",
   align = "end",
   triggerClassName,
+  sandboxControls = true,
 }: {
   side?: "top" | "bottom";
   align?: "start" | "end";
   triggerClassName?: string;
+  /** Off in Settings, which shows the level and the setup in their own rows. */
+  sandboxControls?: boolean;
 } = {}) {
   const { permissionMode, fullAccessAllowed } = useAccountPermissionMode();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [sandboxSetupOpen, setSandboxSetupOpen] = useState(false);
   const active = permissionModeOption(permissionMode);
   const ActiveIcon = active.icon;
 
@@ -212,13 +451,7 @@ export function PermissionModeDropdown({
           <Button
             variant="outline"
             size="sm"
-            className={cn(
-              "gap-1.5",
-              triggerClassName,
-              // Last so a text color in triggerClassName cannot override it.
-              permissionMode === "full" &&
-                "text-bypass hover:text-bypass border-bypass/50",
-            )}
+            className={cn("gap-1.5", triggerClassName)}
             aria-label="Permission level for tool calls"
           >
             <ActiveIcon className="size-3.5 shrink-0" strokeWidth={2} />
@@ -231,12 +464,13 @@ export function PermissionModeDropdown({
         <DropdownMenuContent
           side={side}
           align={align}
-          className="w-[calc(300px*var(--ui-space-scale,1))]"
+          className="w-[calc(330px*var(--ui-space-scale,1))]"
           avoidCollisions={true}
         >
-          <DropdownMenuLabel>
-            How should tool calls be approved?
-          </DropdownMenuLabel>
+          <PermissionMenuLabel
+            sandboxControls={sandboxControls}
+            onOsSandboxMissing={() => setSandboxSetupOpen(true)}
+          />
           <PermissionModeMenuItems
             // Defer past the menu-close focus restoration so the dialog's focus trap is not broken by the
             // dropdown grabbing focus back.
@@ -250,14 +484,17 @@ export function PermissionModeDropdown({
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
       />
+      <SandboxSetupDialog
+        open={sandboxSetupOpen}
+        onOpenChange={setSandboxSetupOpen}
+      />
     </>
   );
 }
 
 /** Composer pill showing the current permission level in the chat box; clicking opens the level
- *  dropdown. Danger-styled while Full access is on. The Full access pick routes through the
- *  store-driven confirm dialog mounted at the chat-page root, so the warning survives this
- *  menu unmounting. */
+ *  dropdown. The Full access pick routes through the store-driven confirm dialog mounted at the
+ *  chat-page root, so the warning survives this menu unmounting. */
 export function PermissionModeComposerPill({
   side = "bottom",
 }: {
@@ -269,7 +506,6 @@ export function PermissionModeComposerPill({
   );
   const active = permissionModeOption(permissionMode);
   const ActiveIcon = active.icon;
-  const fullAccess = permissionMode === "full";
 
   return (
     <DropdownMenu>
@@ -278,8 +514,6 @@ export function PermissionModeComposerPill({
           type="button"
           className="composer-pill-btn composer-pill-permissions"
           data-pill-label={active.label}
-          data-active={fullAccess ? "true" : "false"}
-          data-variant={fullAccess ? "danger" : undefined}
           aria-label="Permission level for tool calls"
           title={`${active.label}: ${active.description}`}
         >
@@ -299,11 +533,9 @@ export function PermissionModeComposerPill({
         align="start"
         sideOffset={0}
         avoidCollisions={true}
-        className="unsloth-plus-menu w-[calc(300px*var(--ui-space-scale,1))]"
+        className="unsloth-plus-menu w-[calc(330px*var(--ui-space-scale,1))]"
       >
-        <DropdownMenuLabel>
-          How should tool calls be approved?
-        </DropdownMenuLabel>
+        <PermissionMenuLabel sandboxControls={true} />
         <PermissionModeMenuItems
           // Defer past the menu-close focus restoration (see PermissionModeDropdown).
           onRequestFullAccess={() =>

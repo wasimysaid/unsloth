@@ -42,6 +42,7 @@ export type {
   ApiMonitorEntry,
   BackendModelDetails,
   GgufVariantDetail,
+  GgufVariantsResponse,
   InferenceStatusResponse,
 } from "./types/api";
 export {
@@ -89,7 +90,22 @@ export {
   useToolPaneScope,
 } from "./tool-output-scope";
 export { useToolAwaitingApproval } from "./tool-approval";
-export { PermissionModeDropdown } from "./permission-mode-select";
+export {
+  PermissionModeDropdown,
+  useActivePermissionMode,
+  useSandboxCapability,
+} from "./permission-mode-select";
+export { sandboxSwitchState } from "./sandbox-level";
+export { pickSandboxLevel } from "./sandbox-pick";
+export { SandboxSetupDialog } from "./sandbox-setup-dialog";
+export {
+  type SandboxSetupAction,
+  type SandboxSetupJob,
+  type SandboxSetupOperation,
+  forgetSandboxCapability,
+  loadSandboxSetup,
+  startSandboxSetup,
+} from "./api/sandbox-capability";
 export { useChatSearchStore } from "./stores/chat-search-store";
 export type { ChatNavigationState } from "./stores/chat-navigation-store";
 export {
@@ -144,6 +160,10 @@ export {
   DRAG_THRESHOLD_PX,
   markDragging,
   DROP_CUE_CLASS,
+  liftCopy,
+  placeCue,
+  placeGhost,
+  type RowGhost,
 } from "./hooks/use-sidebar-drag";
 export {
   useSectionDrag,
@@ -213,6 +233,7 @@ export {
   releasePreStreamRunForThreadIds,
   releasePreStreamRunReservation,
   reservePreStreamRun,
+  subscribePreStreamRunReservations,
 } from "./utils/pre-stream-run-reservation";
 export { claimThreadCreation } from "./utils/chat-thread-creation-claim";
 export { useChatProjectScope } from "./chat-project-scope";
@@ -377,6 +398,14 @@ export {
   shouldAttachPastedText,
 } from "./utils/pasted-text";
 export {
+  type DocumentAnnotation,
+  type DocumentAnnotations,
+  annotationsOfFile,
+  createAnnotationsFile,
+  isAnnotationsContent,
+  parseAnnotationsContent,
+} from "./utils/document-annotations";
+export {
   deleteStoredChatThreads,
   ensureStoredChatThread,
   getStoredChatThread,
@@ -420,10 +449,7 @@ export {
   ResearchActivityPanel,
   ResearchActivitySheet,
 } from "./components/research-activity-panel";
-export {
-  useChatArtifactsStore,
-  useSelectedChatArtifact,
-} from "./artifacts/store";
+export { useChatArtifactsStore } from "./artifacts/store";
 export {
   downloadArchivedChatExport,
   downloadChatExport,
@@ -547,3 +573,6 @@ export {
 } from "./api/gguf-variants-request";
 export type { ChatModelSummary, ChatLoraSummary } from "./types/runtime";
 export { startLlamaCppAutoReload } from "./llama-cpp-auto-reload";
+export { chatLocalModelOptions } from "./local-model-options";
+export { readLastLocalModelLoad } from "./utils/last-local-model-load";
+export { wantsDownloadManagerStaging } from "./utils/model-download-staging";
