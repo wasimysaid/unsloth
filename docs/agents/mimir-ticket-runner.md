@@ -43,7 +43,7 @@ The launcher resolves the current configured integration branch into an owned ch
 
 The final implemented-UI review is human work. An operator must provide a review URL tied to the current integrated revisions; a worker may not approve itself. Resource grants are explicit, recorded, and time-bounded; GPU 7 is excluded unless repair is independently confirmed. GPU visibility does not reserve capacity. No new paid services or purchases are authorized by a campaign configuration.
 
-Default limits are two attempts per ticket, a one-hour implementation deadline, a thirty-minute review deadline, and a six-hour invocation budget. No-ready-work distinguishes fully drained from failed, interrupted, resource-blocked, human-blocked, and dependency-blocked. A blocked campaign is not reported as accepted.
+Worker sessions, independent reviews, CI waiting, and campaign invocations have **no automatic execution deadline** by default (`worker_timeout = 0`, `review_timeout = 0`, `budget_seconds = 0`). Use `stop --drain` to stop explicitly. Individual test/build commands retain their own command timeouts; a slow command does not impose a wall-clock deadline on the agent session. The default remains two attempts per ticket. No-ready-work distinguishes fully drained from failed, interrupted, resource-blocked, human-blocked, and dependency-blocked. A blocked campaign is not reported as accepted.
 
 Retries preserve work and need explicit operator intent after ambiguity. `resume` resumes the scheduler, not a nonexistent `mimir run --resume` operation. Stop sends native interruption and waits for cleanup. A PID alone never establishes process ownership.
 

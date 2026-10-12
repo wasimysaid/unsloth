@@ -163,6 +163,22 @@ class SupervisorTests(unittest.TestCase):
                           timeout=timeout, protocol=protocol, env_overrides=env)
         return job, self.settle(job, seconds=max(8, duration + 3))
 
+    def test_unlimited_job_completes_without_timeout(self):
+        job, observed = self.run_fixture(timeout=None, duration=1.2)
+        self.assertEqual(observed['status'], 'completed')
+        self.assertIsNone(read_json(job / 'job.json')['timeout'])
+        self.assertFalse(read_json(job / 'exit.json')['timed_out'])
+
+    def test_unlimited_job_can_still_be_stopped_manually(self):
+        job = self.job()
+        supervisor.launch(job, self.argv(job, duration=5), self.cwd, timeout=None)
+        self.wait(job, lambda _: (job / 'fixture-ready').exists())
+        supervisor.stop(job)
+        observed = self.settle(job)
+        self.assertEqual(observed['status'], 'needs-human')
+        self.assertTrue((job / 'sigint-observed').exists())
+        self.assertFalse(read_json(job / 'exit.json')['timed_out'])
+
     def test_complete_native_result_has_local_review_text_and_persisted_exit(self):
         job, observed = self.run_fixture()
         self.assertEqual(observed["status"], "completed")

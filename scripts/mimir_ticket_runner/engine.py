@@ -144,6 +144,9 @@ def current_pair(config):
 
 @contextmanager
 def invocation_budget(config):
+    if not config.campaign['budget_seconds']:
+        yield
+        return
     def expire():
         atomic_json(config.root / 'stop.json', {'requested_at': time.time(), 'reason': 'Invocation budget exhausted'})
     timer = threading.Timer(config.campaign['budget_seconds'], expire)
@@ -211,7 +214,7 @@ def run(config):
             # Wait for the entire fixed wave. This loop inspects durable receipts,
             # not helper-process launch exits, and admits no additional tickets.
             while any(store.get(n)['state'] == 'running' for n in wave['numbers']):
-                stopping = stop_path.exists() or time.monotonic() - started >= config.campaign['budget_seconds']
+                stopping = stop_path.exists() or (config.campaign['budget_seconds'] > 0 and time.monotonic() - started >= config.campaign['budget_seconds'])
                 if stopping:
                     for n in wave['numbers']:
                         row = store.get(n)
@@ -224,7 +227,7 @@ def run(config):
                     return {**store.status(), 'reason': 'Stopping; native cleanup still pending', 'exit_code': 4}
                 if any(store.get(n)['state'] == 'running' for n in wave['numbers']):
                     time.sleep(1)
-            if stop_path.exists() or time.monotonic() - started >= config.campaign['budget_seconds']:
+            if stop_path.exists() or (config.campaign['budget_seconds'] > 0 and time.monotonic() - started >= config.campaign['budget_seconds']):
                 return {**store.status(), 'reason': 'Stopped or invocation budget exhausted', 'exit_code': 4}
             for number in wave['numbers']:
                 row = store.get(number)

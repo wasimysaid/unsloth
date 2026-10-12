@@ -143,7 +143,7 @@ def native_job(config, workspace, prompt, kind='worker', suffix=''):
     if gpu:
         if not resource_ready(config, workspace['number']):
             raise RunnerError('GPU coordination grant is absent, unsafe, or expired')
-        prompt += '\nOperator-coordinated GPU grant (check current usage before workload): ' + json.dumps(grant, sort_keys=True)
+        prompt += '\nOperator-coordinated GPU grant (check current usage before workload; finish GPU use before expires, even if this session has no deadline): ' + json.dumps(grant, sort_keys=True)
     if not prompt_path.exists():
         prompt_path.write_text(prompt)
     elif prompt_path.read_text() != prompt:
@@ -152,7 +152,7 @@ def native_job(config, workspace, prompt, kind='worker', suffix=''):
     model = config.campaign['model'] if kind == 'worker' else config.campaign.get('review_model', config.campaign['model'])
     configure_model(config, workspace, effort, model=model)
     binary = freeze_binary(config)
-    timeout = config.campaign['worker_timeout' if kind == 'worker' else 'review_timeout']
+    timeout = config.campaign['worker_timeout' if kind == 'worker' else 'review_timeout'] or None
     cache = config.root / 'cache'
     cache.mkdir(exist_ok=True)
     env = {'CARGO_TARGET_DIR': str(cache / 'cargo'), 'CARGO_BUILD_JOBS': '4',
@@ -163,7 +163,9 @@ def native_job(config, workspace, prompt, kind='worker', suffix=''):
     if gpu:
         env['CUDA_VISIBLE_DEVICES'] = ','.join(map(str, grant['devices']))
     argv = [str(binary), 'run', '--approve', '--mode', 'build' if kind == 'worker' else 'plan',
-            '--output', 'jsonl', '--trace-dir', str(directory / 'traces'),
-            '--run-timeout-seconds', str(timeout), '-']
+            '--output', 'jsonl', '--trace-dir', str(directory / 'traces')]
+    if timeout is not None:
+        argv.extend(['--run-timeout-seconds', str(timeout)])
+    argv.append('-')
     supervisor.launch(directory, argv, Path(workspace['paths']['studio']), timeout=timeout, env_overrides=env)
     return directory

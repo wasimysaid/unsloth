@@ -13,9 +13,10 @@ review_model = "gpt-6.1-sol"
 # No max_workers: run the entire eligible frontier in each fixed wave.
 # Set a positive max_workers only if an explicit operator cap is wanted.
 max_attempts = 2
-worker_timeout = 3600
-review_timeout = 1800
-budget_seconds = 21600
+# Zero disables automatic execution deadlines; stop explicitly when needed.
+worker_timeout = 0
+review_timeout = 0
+budget_seconds = 0
 # Controller requires both command-backed and actual-browser evidence; these are
 # not interchangeable with live provider runs or human approval.
 evidence_types = ["automated", "browser"]

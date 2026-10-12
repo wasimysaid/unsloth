@@ -202,7 +202,8 @@ def merge(config, store, number, name):
     repo = config.repositories[name]
     gh = GitHub(repo['github'])
     endpoint = f'repos/{gh.repo}/pulls/{record["number"]}'
-    deadline = time.monotonic() + config.campaign['review_timeout']
+    timeout = config.campaign['review_timeout']
+    deadline = time.monotonic() + timeout if timeout else None
     while True:
         if (config.root / 'stop.json').exists():
             raise RunnerError('Stop requested; no new merge will be submitted')
@@ -235,7 +236,7 @@ def merge(config, store, number, name):
             continue  # Always obtain and persist the authoritative merged PR.
         if value.get('mergeable') is False or value.get('mergeable_state') in ('dirty', 'draft'):
             raise RunnerError('PR conflicts or is draft')
-        if (config.root / 'stop.json').exists() or time.monotonic() >= deadline:
+        if (config.root / 'stop.json').exists() or (deadline is not None and time.monotonic() >= deadline):
             raise RunnerError('Checks/reviews are still pending; resume this recorded transaction later')
         time.sleep(5)
 
