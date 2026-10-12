@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "mimir": {
+    "repository": "wasimysaid/mimir",
+    "revision": "fe821251db6d8327fb59fde5f5a2cad9de0c231c"
+  },
+  "frontend": null
+}

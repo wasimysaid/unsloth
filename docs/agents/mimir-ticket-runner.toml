@@ -1,0 +1,101 @@
+version = 1
+
+[campaign]
+id = "studio-233"
+repo = "wasimysaid/unsloth"
+parent = 233
+storage_root = "/mnt/disks/unslothai/mugi/mimir-ticket-runner/studio-233"
+mimir = "/home/mugi/.local/bin/mimir"
+provider = "chatgpt"
+model = "gpt-6.1-sol"
+max_workers = 2
+max_attempts = 2
+worker_timeout = 3600
+review_timeout = 1800
+budget_seconds = 21600
+# Controller requires both command-backed and actual-browser evidence; these are
+# not interchangeable with live provider runs or human approval.
+evidence_types = ["automated", "browser"]
+
+[repositories.studio]
+github = "wasimysaid/unsloth"
+source = "/home/mugi/unsloth"
+branch = "mimir-studio"
+[repositories.mimir]
+github = "wasimysaid/mimir"
+source = "/home/mugi/code/mimir"
+branch = "mimir-studio"
+
+# These are controller-owned mandatory checks, not worker-authored success promises.
+# Workers must additionally supply scoped test commands/evidence for every criterion.
+[profiles.frontend]
+checks = [
+ {repo="studio", argv=["npm", "--prefix", "studio/frontend", "run", "typecheck"], timeout=1800},
+ {repo="studio", argv=["npm", "--prefix", "studio/frontend", "test"], timeout=1800},
+ {repo="studio", argv=["npm", "--prefix", "studio/frontend", "run", "build"], timeout=1800}
+]
+[profiles.backend]
+checks = [
+ {repo="studio", argv=["python3", "-m", "compileall", "-q", "studio/backend"], timeout=300},
+ {repo="studio", argv=["python3", "-m", "pytest", "studio/backend/tests", "-q"], timeout=3600}
+]
+[profiles.native]
+checks = [
+ {repo="mimir", argv=["cargo", "check", "--locked", "-p", "mimir-cli", "--tests"], timeout=3600},
+ {repo="mimir", argv=["cargo", "test", "--locked", "-p", "mimir-cli", "--test", "external_frontend_cli"], timeout=3600},
+ {repo="mimir", argv=["python3", "tools/quality/verify_sdk.py"], timeout=3600}
+]
+
+# The live GPU gates require an operator grant; final UI review is never automated.
+[tickets."234"]
+profiles = ["frontend", "backend", "native"]
+[tickets."235"]
+profiles = ["frontend", "backend", "native"]
+evidence_types = ["automated", "browser", "live"]
+[tickets."236"]
+profiles = ["frontend", "backend", "native"]
+[tickets."237"]
+profiles = ["frontend", "backend", "native"]
+[tickets."238"]
+profiles = ["frontend", "backend", "native"]
+[tickets."239"]
+profiles = ["frontend", "backend", "native"]
+[tickets."240"]
+profiles = ["frontend", "backend", "native"]
+[tickets."241"]
+profiles = ["frontend", "backend", "native"]
+[tickets."242"]
+profiles = ["frontend", "backend"]
+[tickets."243"]
+profiles = ["frontend", "backend", "native"]
+[tickets."244"]
+profiles = ["frontend", "backend", "native"]
+[tickets."245"]
+profiles = ["frontend", "backend", "native"]
+[tickets."246"]
+profiles = ["frontend", "backend", "native"]
+resource = "gpu"
+evidence_types = ["automated", "browser", "live"]
+[tickets."247"]
+profiles = ["frontend", "backend", "native"]
+[tickets."248"]
+profiles = ["backend", "native"]
+[tickets."249"]
+profiles = ["frontend", "backend", "native"]
+[tickets."250"]
+profiles = ["frontend", "backend", "native"]
+[tickets."251"]
+profiles = ["frontend", "backend", "native"]
+[tickets."252"]
+profiles = ["frontend", "backend", "native"]
+[tickets."253"]
+profiles = ["frontend"]
+[tickets."254"]
+profiles = ["frontend", "backend", "native"]
+[tickets."255"]
+profiles = ["frontend", "backend", "native"]
+resource = "gpu"
+evidence_types = ["automated", "browser", "live"]
+[tickets."256"]
+profiles = ["frontend", "backend", "native"]
+human = true
