@@ -64,9 +64,11 @@ class Config:
             raise RunnerError("Campaign id must be a safe path component")
         if not self.root.name == c["id"]:
             raise RunnerError("Storage basename must equal the stable campaign id")
-        for key in ("max_attempts", "worker_timeout", "review_timeout", "budget_seconds"):
-            if type(c.get(key)) is not int or c[key] <= 0:
-                raise RunnerError(f"Positive {key} required")
+        if type(c.get("max_attempts")) is not int or c["max_attempts"] <= 0:
+            raise RunnerError("Positive max_attempts required")
+        for key in ("worker_timeout", "review_timeout", "budget_seconds"):
+            if type(c.get(key)) is not int or c[key] < 0:
+                raise RunnerError(f"Nonnegative {key} required; zero disables the deadline")
         if "max_workers" in c and (type(c["max_workers"]) is not int or c["max_workers"] <= 0):
             raise RunnerError("max_workers must be positive when supplied; omit it for the full frontier")
         models = ("gpt-6-astra", "gpt-6.1-sol")

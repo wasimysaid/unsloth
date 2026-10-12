@@ -335,7 +335,7 @@ def _environment(job_dir: Path, nonce: str, overrides: dict) -> dict:
     return env
 
 
-def launch(job_dir: Path, argv: list[str], cwd: Path, *, timeout: int,
+def launch(job_dir: Path, argv: list[str], cwd: Path, *, timeout: int | None,
            env_overrides: dict | None = None, protocol: str = "native") -> dict:
     """Persist intent, spawn a detached helper once, and return observed state.
 
@@ -356,9 +356,9 @@ def launch(job_dir: Path, argv: list[str], cwd: Path, *, timeout: int,
             raise RunnerError("argv must be a nonempty list of strings")
         if protocol not in {"native", "command"}:
             raise RunnerError("Protocol must be native or explicitly command")
-        if (type(timeout) is not int or timeout <= 0 or not cwd.is_dir()
+        if ((timeout is not None and (type(timeout) is not int or timeout <= 0)) or not cwd.is_dir()
                 or (protocol == "native" and not (job_dir / "prompt.txt").is_file())):
-            raise RunnerError("A positive timeout, existing cwd, and native prompt.txt are required")
+            raise RunnerError("Timeout must be positive or None; existing cwd and native prompt.txt are required")
         overrides = dict(env_overrides or {})
         if set(overrides) - ENV_KEYS or any(not isinstance(value, str) or "\0" in value for value in overrides.values()):
             raise RunnerError("Only explicitly trusted non-secret environment overrides are allowed")
@@ -462,14 +462,14 @@ def _serve(job_dir: Path) -> None:
             job["needs_human"] = True
         atomic_json(job_dir / "job.json", job)
     nonce, native_identity, protocol = job["nonce"], job["child"], job["protocol"]
-    deadline = time.monotonic() + job["timeout"]
+    deadline = time.monotonic() + job["timeout"] if job["timeout"] is not None else None
     timed_out = False
     while child.poll() is None:
         with _lock(job_dir):
             job = read_json(job_dir / "job.json")
             if job.get("nonce") != nonce or job.get("child") != native_identity or job.get("protocol") != protocol:
                 job["needs_human"] = True
-            if time.monotonic() >= deadline and not job.get("stop_requested"):
+            if deadline is not None and time.monotonic() >= deadline and not job.get("stop_requested"):
                 timed_out = True
                 job["stop_requested"] = {"kind": "timeout", "at": time.time(), "sigint_sent": False}
             control = job.get("stop_requested")

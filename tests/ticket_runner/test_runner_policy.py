@@ -17,7 +17,8 @@ class RunnerPolicy(TestCase):
     def setUp(self):
         self.data = tomllib.loads(DEFAULT_CONFIG.read_text())
         self.data['campaign'].update(model='gpt-6-astra', reasoning_effort='medium',
-                                     review_model='gpt-6.1-sol')
+                                     review_model='gpt-6.1-sol', worker_timeout=0,
+                                     review_timeout=0, budget_seconds=0)
         self.data['campaign'].pop('max_workers', None)
         self.config = Config(DEFAULT_CONFIG, self.data)
 
@@ -27,6 +28,13 @@ class RunnerPolicy(TestCase):
         self.assertEqual(campaign['model'], 'gpt-6-astra')
         self.assertEqual(campaign['reasoning_effort'], 'medium')
         self.assertEqual(campaign['review_model'], 'gpt-6.1-sol')
+        for key in ('worker_timeout', 'review_timeout', 'budget_seconds'):
+            self.assertEqual(campaign[key], 0)
+
+    def test_unlimited_campaign_does_not_start_a_timer(self):
+        with patch.object(engine.threading, 'Timer') as timer:
+            with engine.invocation_budget(self.config):
+                timer.assert_not_called()
 
     def test_uncapped_and_explicit_large_caps_validate(self):
         with patch('scripts.mimir_ticket_runner.config.shutil.which', return_value='/native/mimir'):
@@ -84,10 +92,12 @@ class RunnerPolicy(TestCase):
             settings.parent.mkdir(parents=True)
             settings.write_text(json.dumps({'unrelated': True}))
             with patch.object(workspaces, 'freeze_binary', return_value=Path('/native/mimir')), patch.object(
-                    supervisor, 'launch'):
+                    supervisor, 'launch') as launch:
                 for kind, model, effort in [('worker', 'gpt-6-astra', 'medium'),
                                              ('review', 'gpt-6.1-sol', 'high')]:
                     workspaces.native_job(config, workspace, 'test prompt', kind=kind)
+                    self.assertIsNone(launch.call_args.kwargs['timeout'])
+                    self.assertNotIn('--run-timeout-seconds', launch.call_args.args[1])
                     saved = json.loads(settings.read_text())
                     self.assertEqual(saved['defaultProvider'], 'chatgpt')
                     self.assertEqual(saved['defaultModel'], model)
