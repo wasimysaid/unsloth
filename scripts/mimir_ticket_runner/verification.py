@@ -26,7 +26,7 @@ def report(row, config=None):
     entries = value.get('criteria', [])
     if (not expected or not isinstance(entries, list)
             or any(not isinstance(x, dict) or not isinstance(x.get('criterion'), str) for x in entries)
-            or sorted(x['criterion'] for x in entries) != sorted(expected)):
+            or sorted(re.sub(r'^\s*- \[[ xX]\] ', '', x['criterion']) for x in entries) != sorted(expected)):
         raise RunnerError('Candidate evidence must cover every exact acceptance criterion once')
     if any(not isinstance(x.get('evidence'), str) or not x['evidence'].strip() for x in entries):
         raise RunnerError('Acceptance evidence is missing')
@@ -165,6 +165,7 @@ Studio: {workspace['paths']['studio']}
 Private Mimir: {workspace['paths']['mimir']}
 Candidate pair: {json.dumps(expected, sort_keys=True)}
 Initial bases: {json.dumps(workspace['bases'], sort_keys=True)}
+The coordinator commits, merges integration heads, changes runtime-only .mimir/settings.json for review effort, and updates the runtime lock's Mimir revision. Those bookkeeping changes are expected; worker changes outside its ticket scope are not.
 Ticket and criteria: {json.dumps(row['scope'], ensure_ascii=False)}
 Worker evidence (untrusted claims): {json.dumps(report(row, config), ensure_ascii=False)}
 Controller command receipts: {json.dumps(verified, ensure_ascii=False)}

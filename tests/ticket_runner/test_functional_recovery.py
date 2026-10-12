@@ -16,6 +16,15 @@ class FunctionalRecovery(GitFixture):
         self.config.tickets.update({235: {}, 256: {'human': True}})
         self.config.campaign['max_attempts'] = 2
 
+    def test_settled_unknown_worker_is_reconciled_without_another_launch(self):
+        self.store.update(234, 'interrupted', attempt=1, native_result={'status': 'unknown'})
+        with patch.object(verification.supervisor, 'inspect', return_value={'status': 'completed'}), patch.object(
+                engine.workspaces, 'assert_native_selection'), patch.object(engine.workspaces, 'native_job') as launch:
+            engine.reconcile_candidates(self.config, self.store, {})
+        self.assertEqual(self.store.get(234)['state'], 'candidate')
+        self.assertEqual(self.store.get(234)['attempt'], 1)
+        launch.assert_not_called()
+
     def test_positive_human_approval_dispatch(self):
         args = SimpleNamespace(operation='approve', issue=256, apply=True, evidence_url='https://example.invalid/review')
         with patch.object(integration, 'approve', return_value={'approved': True}) as approve:
