@@ -44,6 +44,16 @@ class VerificationTests(unittest.TestCase):
                          'checks': [{'repo': 'mimir', 'argv': ['python3', '-m', 'unittest'], 'timeout': 90}]}
         self.write_report()
 
+    def test_checkbox_markers_do_not_change_exact_criterion_coverage(self):
+        for item in self.evidence['criteria']:
+            item['criterion'] = '- [ ] ' + item['criterion']
+        self.write_report()
+        self.assertEqual(len(verification.report(self.row)['criteria']), 2)
+        self.evidence['criteria'][0]['criterion'] += ' changed requirement'
+        self.write_report()
+        with self.assertRaises(RunnerError):
+            verification.report(self.row)
+
     def write_report(self, value=None):
         atomic_json(Path(self.row['job']) / 'ticket-result.json', self.evidence if value is None else value)
 

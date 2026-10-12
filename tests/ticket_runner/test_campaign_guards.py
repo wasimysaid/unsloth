@@ -7,10 +7,23 @@ from unittest.mock import Mock, patch
 
 from scripts.mimir_ticket_runner.common import RunnerError
 from scripts.mimir_ticket_runner.engine import reconcile_scope, resource_ready, invocation_budget
-from scripts.mimir_ticket_runner.workspaces import assert_native_selection
+from scripts.mimir_ticket_runner.workspaces import assert_native_selection, freeze_binary
 
 
 class CampaignGuards(unittest.TestCase):
+    def test_host_wrapper_freezes_the_actual_native_executable(self):
+        import shutil
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            native = Path(shutil.which('true')).resolve()
+            wrapper = root / 'mimir'
+            wrapper.write_text('#!/bin/sh\n# mimir-pstack launcher; normal invocations pass through.\nexec python3 launch.py --mimir ' + str(native) + ' -- "$@"\n')
+            wrapper.chmod(0o700)
+            config = SimpleNamespace(root=root / 'campaign', campaign={'mimir': str(wrapper)})
+            frozen = freeze_binary(config)
+            self.assertEqual(frozen.read_bytes(), native.read_bytes())
+            self.assertEqual(freeze_binary(config), frozen)
+
     def test_all_ticket_and_parent_scope_is_frozen_before_first_wave(self):
         config = SimpleNamespace(approved={1, 2}, campaign={'parent': 3})
         snapshot = {'parent': {'body': 'spec'}, 'issues': [
@@ -48,6 +61,9 @@ class CampaignGuards(unittest.TestCase):
         with TemporaryDirectory() as directory:
             path = Path(directory) / 'stdout.jsonl'
             record = {'event': 'model_request_start', 'model': 'gpt-6.1-sol', 'reasoning_effort': 'xhigh'}
+            path.write_text(json.dumps(record) + '\n')
+            assert_native_selection(config, directory, 'xhigh')
+            record['model'] = 'chatgpt/gpt-6.1-sol'
             path.write_text(json.dumps(record) + '\n')
             assert_native_selection(config, directory, 'xhigh')
             with self.assertRaises(RunnerError):

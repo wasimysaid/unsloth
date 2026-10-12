@@ -77,6 +77,8 @@ Do not commit, push, merge, create/close/comment on GitHub issues/PRs, or change
 Required controller checks: {json.dumps(config.check_commands(number))}
 Attempt input fingerprint: {row['input_sha256']}
 Prior attempt evidence (read-only, do not alter): {json.dumps(row.get('previous_workspace'))}
+Prior attempt failure: {row.get('previous_reason', '')}
+The coordinator commits your changes BEFORE rerunning checks, then reruns checks after review and merges. Checks must work against committed snapshots, not assume files stay untracked or Git HEAD stays at the base. Local .mimir/settings.json is runtime-only and changes model effort for review. The coordinator may update only the runtime-lock Mimir revision; that bookkeeping is allowed and must not break a scope audit. Do not remove useful failing checks: correct their assumptions while preserving the acceptance assertions.
 If a product decision, credentials, actual workload, human review, or safe capacity is missing, report needs-human; never fabricate evidence. A code patch alone does not satisfy live/browser criteria.
 When finished, write the following JSON object to {output} (this task explicitly authorizes that output path):
 {{"issue": {number}, "input_sha256": "{row['input_sha256']}", "outcome": "candidate or needs-human", "summary": "short factual summary", "criteria": [{{"criterion": "exact text of each - [ ] acceptance criterion", "evidence": "observed commands/results or concrete blocker"}}], "checks": [{{"repo": "studio or mimir", "argv": ["executable", "arguments"], "timeout": 1800}}], "limitations": []}}
@@ -113,7 +115,7 @@ def reconcile_scope(config, store, snapshot):
 def reconcile_candidates(config, store, snapshot):
     from . import supervisor
     for number, row in store.tickets().items():
-        if row['state'] == 'running':
+        if row['state'] == 'running' or (row['state'] == 'interrupted' and row.get('native_result', {}).get('status') == 'unknown'):
             directory = Path(row['job'])
             result = supervisor.inspect(directory)
             if result['status'] == 'unknown' and not (directory / 'job.json').exists():
@@ -174,6 +176,10 @@ def run(config):
             reconcile_completed(config, store, snapshot)
             rows = store.tickets()
             wave = store.wave()
+            if not wave:
+                recovered = [n for n, r in rows.items() if r['state'] in ('candidate', 'verifying', 'pr_open', 'merging')]
+                if recovered:
+                    wave = store.begin_wave(sorted(recovered)[:config.campaign['max_workers']])
             if not wave:
                 projection = plan(snapshot, config.approved, completed=store.completed(), owned=set(rows),
                                   human={n for n, p in config.tickets.items() if p.get('human')})
@@ -297,7 +303,7 @@ def dispatch(config, args):
                 raise RunnerError('Attempt budget exhausted')
             # Preserve failed worktrees; the next attempt receives them as evidence.
             previous = row.get('workspace')
-            store.update(args.issue, 'claimed', attempt=row['attempt'] + 1, previous_workspace=previous,
+            store.update(args.issue, 'claimed', attempt=row['attempt'] + 1, previous_workspace=previous, previous_reason=row.get('reason'),
                          workspace=None, job=None, reason=None, commit_intents={}, integration=None, prs={}, native_result=None,
                          prepared_candidate={}, refreshed_heads={}, refresh_intents={})
             return store.status()

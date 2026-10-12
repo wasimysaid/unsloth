@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 
 from .common import RunnerError, atomic_json, command, git, read_json, within
 
@@ -73,14 +74,27 @@ def validate(config, workspace):
 
 
 def freeze_binary(config):
-    target = config.root / 'runtime' / 'mimir'
+    source = Path(shutil.which(config.campaign['mimir'])).resolve()
+    with source.open('rb') as stream:
+        header = stream.read(4)
+    if header != b'\x7fELF':
+        # This host's known pstack entry point execs a Python launcher and then
+        # the native binary. Freeze the actual executable, not that mutable chain.
+        text = source.read_text()
+        if '# mimir-pstack launcher; normal invocations pass through.' not in text:
+            raise RunnerError('Configure the native Mimir executable, not a shell wrapper')
+        tokens = shlex.split(text, comments=True)
+        source = Path(tokens[tokens.index('--mimir') + 1]).resolve()
+        with source.open('rb') as stream:
+            if stream.read(4) != b'\x7fELF':
+                raise RunnerError('Mimir wrapper does not identify a native ELF executable')
+    target = config.root / 'runtime' / 'native' / 'mimir'
     manifest = target.parent / 'mimir.json'
     if manifest.exists():
         expected = read_json(manifest)
         if not target.exists() or hashlib.sha256(target.read_bytes()).hexdigest() != expected['sha256']:
             raise RunnerError('Frozen Mimir executable was changed')
         return target
-    source = Path(shutil.which(config.campaign['mimir'])).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
         raise RunnerError('Unreceipted frozen binary exists; inspect before retry')
@@ -106,7 +120,9 @@ def configure_model(config, workspace, effort):
 def assert_native_selection(config, directory, effort):
     records = [json.loads(line) for line in (Path(directory) / 'stdout.jsonl').read_text().splitlines() if line.strip()]
     requests = [x for x in records if x.get('event') == 'model_request_start']
-    if not requests or any(x.get('model') != config.campaign['model'] or x.get('reasoning_effort') != effort for x in requests):
+    model = config.campaign['model']
+    expected = {model, config.campaign.get('provider', 'chatgpt') + '/' + model}
+    if not requests or any(x.get('model') not in expected or x.get('reasoning_effort') != effort for x in requests):
         raise RunnerError('Native run did not use the exact required model and effort; no fallback is accepted')
 
 
