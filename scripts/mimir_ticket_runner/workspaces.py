@@ -1,0 +1,145 @@
+"""Task-owned clone/worktree management; never switch the user's checkout."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+
+from .common import RunnerError, atomic_json, command, git, read_json, within
+
+
+def repository(config, name):
+    repo = config.repositories[name]
+    root = within(config.root / 'repositories' / name, config.root)
+    url = f'https://github.com/{repo["github"]}.git'
+    if not root.exists():
+        root.parent.mkdir(parents=True, exist_ok=True)
+        command(['git', 'clone', '--shared', '--no-checkout', repo['source'], root], timeout=180)
+        git(root, 'remote', 'set-url', 'origin', url)
+    if git(root, 'remote', 'get-url', 'origin') != url:
+        raise RunnerError('Owned repository origin changed')
+    return root
+
+
+def head(config, name):
+    root = repository(config, name)
+    branch = config.repositories[name]['branch']
+    git(root, 'fetch', '--no-tags', 'origin', f'refs/heads/{branch}:refs/remotes/origin/{branch}')
+    return git(root, 'rev-parse', f'refs/remotes/origin/{branch}')
+
+
+def prepare(config, number, attempt):
+    directory = within(config.root / 'attempts' / str(number) / str(attempt), config.root)
+    directory.mkdir(parents=True, exist_ok=True)
+    receipt_path = directory / 'workspace.json'
+    existing = read_json(receipt_path)
+    if existing:
+        validate(config, existing)
+        return existing
+    branch = f'mimir-ticket-{config.campaign["id"]}-{number}-a{attempt}'
+    result = {'directory': str(directory), 'branch': branch, 'paths': {}, 'bases': {}, 'number': number}
+    # Persist intent before worktree creation. Ambiguous partial preparation is
+    # recovered by exact registered branch/path validation, never by deletion.
+    atomic_json(directory / 'workspace-intent.json', result)
+    for name in sorted(config.repositories):
+        repo = repository(config, name)
+        base = head(config, name)
+        path = within(directory / name, config.root)
+        if path.exists():
+            if git(path, 'branch', '--show-current') != branch:
+                raise RunnerError('Existing attempt path has another branch')
+            base = git(path, 'rev-parse', 'HEAD')
+            if git(path, 'status', '--porcelain'):
+                raise RunnerError('Partial workspace preparation contains unreceipted work')
+        else:
+            git(repo, 'worktree', 'add', '-b', branch, str(path), base)
+        result['paths'][name] = str(path)
+        result['bases'][name] = base
+    atomic_json(receipt_path, result)
+    return result
+
+
+def validate(config, workspace):
+    for name, value in workspace['paths'].items():
+        path = within(Path(value), config.root)
+        if git(path, 'branch', '--show-current') != workspace['branch']:
+            raise RunnerError(f'Attempt branch was changed in {name}')
+        common = Path(git(path, 'rev-parse', '--git-common-dir')).resolve()
+        expected = (config.root / 'repositories' / name / '.git').resolve()
+        if common != expected:
+            raise RunnerError('Worktree no longer belongs to this campaign')
+
+
+def freeze_binary(config):
+    target = config.root / 'runtime' / 'mimir'
+    manifest = target.parent / 'mimir.json'
+    if manifest.exists():
+        expected = read_json(manifest)
+        if not target.exists() or hashlib.sha256(target.read_bytes()).hexdigest() != expected['sha256']:
+            raise RunnerError('Frozen Mimir executable was changed')
+        return target
+    source = Path(shutil.which(config.campaign['mimir'])).resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        raise RunnerError('Unreceipted frozen binary exists; inspect before retry')
+    shutil.copy2(source, target)
+    atomic_json(manifest, {'source': str(source), 'sha256': hashlib.sha256(target.read_bytes()).hexdigest(),
+                          'version': command([target, '--version'])})
+    return target
+
+
+def configure_model(config, workspace, effort):
+    path = Path(workspace['paths']['studio']) / '.mimir/settings.json'
+    # Only task-owned worktrees are touched. Never overwrite an existing tracked
+    # project setting; preserve every unrelated key in a valid document.
+    settings = read_json(path, {})
+    if not isinstance(settings, dict):
+        raise RunnerError('Project model settings must be a JSON object')
+    settings.update(defaultProvider=config.campaign['provider'], defaultModel=config.campaign['model'])
+    settings['model'] = {**settings.get('model', {}), 'thinkingEffort': effort}
+    atomic_json(path, settings)
+    # These runtime-only settings are never staged; commit checks exclude them.
+
+
+def assert_native_selection(config, directory, effort):
+    records = [json.loads(line) for line in (Path(directory) / 'stdout.jsonl').read_text().splitlines() if line.strip()]
+    requests = [x for x in records if x.get('event') == 'model_request_start']
+    if not requests or any(x.get('model') != config.campaign['model'] or x.get('reasoning_effort') != effort for x in requests):
+        raise RunnerError('Native run did not use the exact required model and effort; no fallback is accepted')
+
+
+def native_job(config, workspace, prompt, kind='worker', suffix=''):
+    from . import supervisor
+    directory = Path(workspace['directory']) / f'{kind}{suffix}'
+    directory.mkdir(parents=True, exist_ok=True)
+    prompt_path = directory / 'prompt.txt'
+    grant = read_json(config.root / 'gpu-grant.json', {})
+    from .engine import resource_ready
+    gpu = kind == 'worker' and config.tickets[workspace['number']].get('resource') == 'gpu'
+    if gpu:
+        if not resource_ready(config, workspace['number']):
+            raise RunnerError('GPU coordination grant is absent, unsafe, or expired')
+        prompt += '\nOperator-coordinated GPU grant (check current usage before workload): ' + json.dumps(grant, sort_keys=True)
+    if not prompt_path.exists():
+        prompt_path.write_text(prompt)
+    elif prompt_path.read_text() != prompt:
+        raise RunnerError('An existing job cannot be retargeted to a different prompt')
+    configure_model(config, workspace, 'xhigh' if kind == 'worker' else 'high')
+    binary = freeze_binary(config)
+    timeout = config.campaign['worker_timeout' if kind == 'worker' else 'review_timeout']
+    cache = config.root / 'cache'
+    cache.mkdir(exist_ok=True)
+    env = {'CARGO_TARGET_DIR': str(cache / 'cargo'), 'CARGO_BUILD_JOBS': '4',
+           'TMPDIR': str(directory / 'tmp'), 'CUDA_VISIBLE_DEVICES': ''}
+    Path(env['TMPDIR']).mkdir(exist_ok=True)
+    env.update(PIP_CACHE_DIR=str(cache / 'pip'), UV_CACHE_DIR=str(cache / 'uv'),
+               npm_config_cache=str(cache / 'npm'), HF_HOME=str(cache / 'huggingface'))
+    if gpu:
+        env['CUDA_VISIBLE_DEVICES'] = ','.join(map(str, grant['devices']))
+    argv = [str(binary), 'run', '--approve', '--mode', 'build' if kind == 'worker' else 'plan',
+            '--output', 'jsonl', '--trace-dir', str(directory / 'traces'),
+            '--run-timeout-seconds', str(timeout), '-']
+    supervisor.launch(directory, argv, Path(workspace['paths']['studio']), timeout=timeout, env_overrides=env)
+    return directory
