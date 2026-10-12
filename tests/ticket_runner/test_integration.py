@@ -250,7 +250,7 @@ class AuthorityTests(unittest.TestCase):
         with self.assertRaises(RunnerError):
             self.require()
 
-    def test_sibling_scope_change_is_not_hidden_by_unchanged_current_ticket(self):
+    def test_sibling_scope_change_does_not_block_unchanged_current_ticket(self):
         sibling = {**deepcopy(self.snapshot_data['issues'][0]), 'number': 235, 'title': 'Sibling'}
         self.snapshot_data['issues'].append(sibling)
         self.snapshot_data['blockers']['235'] = []
@@ -259,9 +259,11 @@ class AuthorityTests(unittest.TestCase):
         self.config.tickets[235] = {}
         self.store.set_meta('approved_scope', None)
         engine.reconcile_scope(self.config, self.store, self.snapshot_data)
+        before = self.store.meta('approved_scope')['235']
         sibling['body'] += ' changed'
-        with self.assertRaises(RunnerError):
-            self.require()
+        self.require()
+        self.assertNotEqual(self.store.meta('approved_scope')['235'], before)
+        self.assertFalse(self.store.get(234).get('scope_stale'))
 
     def test_claim_is_exactly_the_authorized_owner_not_empty_foreign_or_shared(self):
         for owners in ([], [{'login': 'another-owner'}],

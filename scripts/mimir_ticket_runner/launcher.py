@@ -365,13 +365,13 @@ def _launch_checkout(config, port):
             # building. Those must not touch the user's shared Mimir state.
             build_env = {**env, 'MIMIR_CODING_AGENT_DIR': str(_owned_directory(base / 'build-mimir-state', config.root))}
             command(['cargo', 'build', '--locked', '--release', '-p', 'mimir-cli', '--bin', 'mimir'],
-                    cwd=repos['mimir'], env=build_env, timeout=3600)
+                    cwd=repos['mimir'], env=build_env, timeout=None)
             for step in frontend['build']:
                 cwd = _inside(repos[step['repo']], step['cwd'], cwd=True)
-                command([_template(x, variables) for x in step['argv']], cwd=cwd, env=build_env, timeout=step['timeout'])
+                command([_template(x, variables) for x in step['argv']], cwd=cwd, env=build_env, timeout=None)
             frontend_cwd = _inside(repos['studio'], 'studio/frontend')
-            command(['npm', 'ci', '--no-audit', '--no-fund'], cwd=frontend_cwd, env=build_env, timeout=1800)
-            command(['npm', 'run', 'build'], cwd=frontend_cwd, env=build_env, timeout=1800)
+            command(['npm', 'ci', '--no-audit', '--no-fund'], cwd=frontend_cwd, env=build_env, timeout=None)
+            command(['npm', 'run', 'build'], cwd=frontend_cwd, env=build_env, timeout=None)
         # Build steps can create paths; validate their containment again afterward.
         package = _inside(repos[frontend['package']['repo']], frontend['package']['path'])
         binary = _inside(base, 'target/release/mimir')

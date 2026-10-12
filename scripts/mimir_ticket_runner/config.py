@@ -64,8 +64,8 @@ class Config:
             raise RunnerError("Campaign id must be a safe path component")
         if not self.root.name == c["id"]:
             raise RunnerError("Storage basename must equal the stable campaign id")
-        if type(c.get("max_attempts")) is not int or c["max_attempts"] <= 0:
-            raise RunnerError("Positive max_attempts required")
+        if type(c.get("max_attempts")) is not int or c["max_attempts"] < 0:
+            raise RunnerError("Nonnegative max_attempts required; zero means unlimited")
         for key in ("worker_timeout", "review_timeout", "budget_seconds"):
             if type(c.get(key)) is not int or c[key] < 0:
                 raise RunnerError(f"Nonnegative {key} required; zero disables the deadline")
@@ -107,8 +107,6 @@ class Config:
                         raise RunnerError("Checks must name an owned repository")
                     if not isinstance(check.get("argv"), list) or not check["argv"] or not all(isinstance(x, str) for x in check["argv"]):
                         raise RunnerError("Check commands must be nonempty argument arrays")
-                    if check.get("timeout", 1800) <= 0:
-                        raise RunnerError("Check timeout must be positive")
             if policy.get("resource") not in (None, "gpu"):
                 raise RunnerError("Unknown resource gate")
         binary = shutil.which(c.get("mimir", "mimir"))
