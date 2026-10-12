@@ -24,24 +24,25 @@ class CampaignGuards(unittest.TestCase):
             self.assertEqual(frozen.read_bytes(), native.read_bytes())
             self.assertEqual(freeze_binary(config), frozen)
 
-    def test_all_ticket_and_parent_scope_is_frozen_before_first_wave(self):
+    def test_ticket_and_parent_edits_refresh_the_recorded_scope(self):
         config = SimpleNamespace(approved={1, 2}, campaign={'parent': 3})
         snapshot = {'parent': {'body': 'spec'}, 'issues': [
             {'number': 1, 'body': 'one', 'title': 'first'}, {'number': 2, 'body': 'two', 'title': 'second'}],
             'comments': {}, 'blockers': {'1': [], '2': []}}
         store = Mock()
+        store.tickets.return_value = {}
         store.meta.return_value = None
         reconcile_scope(config, store, snapshot)
         frozen = store.set_meta.call_args.args[1]
         store.meta.return_value = frozen
         reconcile_scope(config, store, snapshot)
         snapshot['issues'][1]['body'] = 'edited before it was dispatched'
-        with self.assertRaisesRegex(RunnerError, 'scope changed'):
-            reconcile_scope(config, store, snapshot)
+        reconcile_scope(config, store, snapshot)
+        self.assertNotEqual(store.set_meta.call_args.args[1]['2'], frozen['2'])
         snapshot['issues'][1]['body'] = 'two'
         snapshot['parent']['body'] = 'new parent policy'
-        with self.assertRaisesRegex(RunnerError, 'scope changed'):
-            reconcile_scope(config, store, snapshot)
+        reconcile_scope(config, store, snapshot)
+        self.assertNotEqual(store.set_meta.call_args.args[1]['parent'], frozen['parent'])
 
     def test_gpu_requires_coordinated_peak_and_never_device_seven(self):
         config = SimpleNamespace(root=Path('/owned'), tickets={1: {'resource': 'gpu'}}, campaign={'worker_timeout': 60})

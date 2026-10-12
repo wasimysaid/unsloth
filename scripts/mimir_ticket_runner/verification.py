@@ -36,7 +36,7 @@ def report(row, config=None):
     for check in checks:
         if (not isinstance(check, dict) or check.get('repo') not in ('studio', 'mimir') or not isinstance(check.get('argv'), list)
                 or not check['argv'] or any(not isinstance(x, str) or not x for x in check['argv'])
-                or type(check.get('timeout', 1800)) is not int or not 0 < check.get('timeout', 1800) <= 3600):
+                or type(check.get('timeout', 0)) is not int or check.get('timeout', 0) < 0):
             raise RunnerError('Invalid scoped verification command')
     required = set(config.tickets[row['scope']['number']].get('evidence_types', config.campaign.get('evidence_types', []))) if config else set()
     observed = set()
@@ -133,7 +133,7 @@ def verify(config, row, stage):
         env['PATH'] = str(cwd / '.venv/bin') + os.pathsep + os.environ.get('PATH', '')
         env['TMPDIR'] = str(directory / 'tmp')
         Path(env['TMPDIR']).mkdir(exist_ok=True)
-        supervisor.launch(directory, check['argv'], cwd, timeout=check.get('timeout', 1800),
+        supervisor.launch(directory, check['argv'], cwd, timeout=None,
                           env_overrides=env, protocol='command')
         outcome = wait(config, directory)
         outcomes.append({'check': check, 'result': outcome, 'directory': str(directory)})

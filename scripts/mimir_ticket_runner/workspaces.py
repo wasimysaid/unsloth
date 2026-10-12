@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import shlex
+import subprocess
 
 from .common import RunnerError, atomic_json, command, git, read_json, within
 
@@ -37,7 +38,59 @@ def head(config, name):
     return git(root, 'rev-parse', f'refs/remotes/origin/{branch}')
 
 
-def prepare(config, number, attempt):
+def _carry_changes(source, target, base):
+    # Git selects source files (including tracked files now ignored), rather than
+    # copying a checkout with its environments, caches, and runtime settings.
+    generated = {'.git', 'node_modules', 'target', 'build', 'dist', '.venv', 'venv',
+                 '__pycache__', '.cache', '.pytest_cache', '.mypy_cache', '.ruff_cache',
+                 '.tox', '.next', '.nuxt', '.svelte-kit'}
+    paths = ['.', ':(exclude).mimir/settings.json']
+    paths.extend(f':(glob,exclude)**/{name}/**' for name in sorted(generated))
+    diff = ['git', '-C', str(source), 'diff', '--no-ext-diff', '--no-textconv', '--no-renames']
+    patch = subprocess.check_output([*diff, '--binary', base, '--', *paths], timeout=120)
+    if patch:
+        applied = subprocess.run(['git', '-C', str(target), 'apply', '--3way', '--binary', '-'],
+                                 input=patch, capture_output=True, timeout=120)
+        if applied.returncode:
+            # Only this freshly prepared worktree is reset. A conflicting replay
+            # must not strand the retry: retain saved candidate file contents,
+            # without conflict markers, atop the new base for the agent to repair.
+            git(target, 'reset', '--hard', 'HEAD')
+            changed = subprocess.check_output([*diff, '--name-only', '-z', base, '--', *paths], timeout=120)
+            for name in changed.split(b'\0'):
+                if name:
+                    _copy_saved_path(source / os.fsdecode(name), target / os.fsdecode(name))
+    untracked = subprocess.check_output(['git', '-C', str(source), 'ls-files', '--others',
+                                         '--exclude-standard', '-z', '--', *paths], timeout=120)
+    for name in untracked.split(b'\0'):
+        if name:
+            _copy_saved_path(source / os.fsdecode(name), target / os.fsdecode(name))
+
+
+def _copy_saved_path(source, target):
+    if target.is_symlink() or target.is_file():
+        target.unlink()
+    elif target.is_dir():
+        shutil.rmtree(target)
+    if source.exists() or source.is_symlink():
+        parents = []
+        parent = target.parent
+        while not parent.is_dir() or parent.is_symlink():
+            parents.append(parent)
+            parent = parent.parent
+        for parent in reversed(parents):
+            if parent.is_symlink() or parent.is_file():
+                parent.unlink()
+            parent.mkdir()
+        shutil.copy2(source, target, follow_symlinks=False)
+
+
+def prepare(config, number, attempt, previous=None):
+    """Prepare current-base worktrees, optionally carrying a prior candidate's code.
+
+    Carried commits become working/index changes, not inherited branch history.
+    Existing receipts are returned unchanged, without replaying the old attempt.
+    """
     directory = within(config.root / 'attempts' / str(number) / str(attempt), config.root)
     directory.mkdir(parents=True, exist_ok=True)
     receipt_path = directory / 'workspace.json'
@@ -45,6 +98,8 @@ def prepare(config, number, attempt):
     if existing:
         validate(config, existing)
         return existing
+    if previous:
+        validate(config, previous)
     branch = f'mimir-ticket-{config.campaign["id"]}-{number}-a{attempt}'
     result = {'directory': str(directory), 'branch': branch, 'paths': {}, 'bases': {}, 'number': number}
     # Persist intent before worktree creation. Ambiguous partial preparation is
@@ -64,6 +119,8 @@ def prepare(config, number, attempt):
             git(repo, 'worktree', 'add', '-b', branch, str(path), base)
         result['paths'][name] = str(path)
         result['bases'][name] = base
+        if previous and name in previous['paths']:
+            _carry_changes(Path(previous['paths'][name]), path, previous['bases'][name])
     atomic_json(receipt_path, result)
     return result
 

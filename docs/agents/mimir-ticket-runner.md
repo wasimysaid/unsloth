@@ -22,12 +22,12 @@ The default campaign targets the 23 children of [Build a polished Mimir coding e
 
 ## Determinism and safety
 
-- Fixed waves, sorted by issue number, containing the entire eligible frontier by default. There is no built-in worker ceiling; an optional positive `campaign.max_workers` sets an operator-chosen cap. Resource and human gates still apply. A wave is persisted before dispatch. Integration is serialized in the same order.
+- Rolling frontier: launch all eligible tickets, ordered by issue number, and integrate finished candidates without waiting for unrelated slower workers. Recompute dependencies after each integration. The stored `wave` is now the active set, not a barrier. An optional positive `campaign.max_workers` sets an operator-chosen cap; none is configured. Resource and human gates still apply. Integration remains serialized.
 - A dependency is satisfied by a closed-completed issue **and** a verified integration receipt, not a closed/cancelled issue, a model's completion promise, a successful process exit, or an open PR.
 - All pages of native sub-issues and native blockers are read. Unknown/error/cyclic dependencies fail closed. Unapproved newly added children are reported, never silently added to the campaign.
 - Each attempt has paired isolated worktrees; existing checkout content and main branches are not modified. Worktrees are not a security sandbox. This runner assumes trusted workers operating under the user's native OS/tool policy.
 - SQLite and a single-host campaign lock own scheduling. Assignment is the visible claim, not a distributed lease. Running a second coordinator on another machine is unsupported.
-- Policy and the runner-side executable are frozen for a campaign. Shared provider credentials are not copied. Ticket sessions use ChatGPT GPT-6 Astra with medium reasoning (`model` / `reasoning_effort`); independent reviews use GPT-6.1 Sol with high reasoning (`review_model`). Worker prompts explicitly request GPT-6.1 Sol with high reasoning for all delegation, including implementation. Missing models never trigger fallback. Older campaign files without the new model fields retain their recorded defaults.
+- Operator configuration changes are adopted on coordinator restart, preserving ticket state. Ticket edits refresh affected attempts rather than blocking unrelated work. Ticket sessions use ChatGPT GPT-6 Astra with medium reasoning; independent reviews and prompted delegation use GPT-6.1 Sol with high reasoning. Shared credentials remain unchanged; model fallback is not silently accepted.
 - Only the coordinator may commit/push, create/merge PRs, and close tickets. Worker environments exclude inherited GitHub token variables and use an empty GitHub CLI configuration directory. This reduces accidental publication, not filesystem sandboxing.
 - JSONL must include a valid `mimir.run.v2` completion and the supervised process must settle successfully. Interaction-required, timeouts, malformed output, and cleanup failures cannot pass.
 - Verification is performed by the coordinator, followed by an independent Plan-mode review bound to exact candidate revisions. Existing failed tests cannot be weakened to obtain a pass. Missing required CI contexts block merging.
@@ -43,9 +43,9 @@ The launcher resolves the current configured integration branch into an owned ch
 
 The final implemented-UI review is human work. An operator must provide a review URL tied to the current integrated revisions; a worker may not approve itself. Resource grants are explicit, recorded, and time-bounded; GPU 7 is excluded unless repair is independently confirmed. GPU visibility does not reserve capacity. No new paid services or purchases are authorized by a campaign configuration.
 
-Worker sessions, independent reviews, CI waiting, and campaign invocations have **no automatic execution deadline** by default (`worker_timeout = 0`, `review_timeout = 0`, `budget_seconds = 0`). Use `stop --drain` to stop explicitly. Individual test/build commands retain their own command timeouts; a slow command does not impose a wall-clock deadline on the agent session. The default remains two attempts per ticket. No-ready-work distinguishes fully drained from failed, interrupted, resource-blocked, human-blocked, and dependency-blocked. A blocked campaign is not reported as accepted.
+Worker sessions, reviews, controller verification commands, launcher builds, CI waiting, and campaign invocations have **no automatic execution deadline**. There is **no retry cap** (`max_attempts = 0`). Routine code/test/review failures automatically start repair attempts with saved code and failure evidence. GitHub/network errors retry instead of terminating the coordinator. Failing tests still must be fixed; no failure is counted as a pass. Use `stop --drain` to stop explicitly. Real missing access, human decisions, GPU coordination, and the final human-review ticket remain explicit blockers.
 
-Retries preserve work and need explicit operator intent after ambiguity. `resume` resumes the scheduler, not a nonexistent `mimir run --resume` operation. Stop sends native interruption and waits for cleanup. A PID alone never establishes process ownership.
+Automatic retries preserve the old worktree and carry committed, uncommitted, and non-ignored source files into a fresh current-base worktree. Compatible changes merge; conflicting paths retain the saved code for the agent to repair. Environments/caches are not copied. A running/uncertain process is never duplicated. `resume` resumes the scheduler and adopts surviving workers; it is not a nonexistent `mimir run --resume` operation. For a coordinator upgrade, Ctrl-C the old coordinator (not `stop --drain`), then run `resume --apply`; detached workers survive. Run the coordinator in `tmux` for unattended use.
 
 ## Evidence and tests
 
@@ -59,7 +59,7 @@ Unit/subprocess/fake-GitHub tests are deterministic contract coverage, not real-
 
 ## Versioned acceptance policy
 
-Policy v1 combines the pinned TOML command/evidence profiles with the exact checkbox criteria and A-row mappings in GitHub. At the first apply, **all** approved ticket scopes, dependencies, comments, and parent specification are fingerprinted in SQLite. Material edits stop the active campaign; they do not silently change the work. The worker report must cover each exact criterion once. Typed evidence links each criterion to scoped commands that the controller reruns. Browser evidence needs local artifacts; live evidence additionally needs native workload IDs. An independent reviewer checks whether those artifacts actually establish the claimed category; classification alone is not proof.
+The TOML command/evidence profiles and GitHub checkbox criteria define acceptance. Configuration edits are adopted on restart. Ticket and specification updates are recorded; stale candidates are repaired against current requirements, without stopping unrelated tickets. The worker report must cover each exact criterion once. Browser evidence needs local artifacts; live evidence additionally needs native workload IDs. An independent reviewer checks the evidence. Automatic repair does not remove or weaken acceptance checks.
 
 | Ticket | Parent acceptance rows | Additional gate |
 |---|---|---|
@@ -88,7 +88,7 @@ For a GPU-gated ticket, create a task-owned `gpu-grant.json` in the campaign sto
 
 Human completion requires an operator-authored comment on the exact human ticket containing `HUMAN-REVIEW approved studio=<current full SHA> mimir=<current full SHA>` plus the actual review evidence. Then use `approve <issue> --evidence-url <comment URL> --apply`. The runner validates the author, ticket, and exact current revision pair. This never lets an agent approve itself.
 
-A settled unsuccessful attempt can be retried with `retry <issue> --apply`, then `resume --apply`, within the two-attempt budget. Use `retry <issue> --verify --apply` after fixing a local setup/check problem to reuse the existing candidate instead of launching another implementation session. For an interrupted integration, retry creates a new verification/review attempt while preserving merged revisions and prior evidence; it never replays completed merges. Unknown process settlement and scope changes still require reconciliation. A stopped check/review is not a passed check.
+Ordinary unsuccessful attempts retry automatically; manual `retry <issue> --apply` remains available after an explicit external blocker is resolved. `retry <issue> --verify --apply` reruns verification of an existing candidate without another implementation session. Automatic repair records prior merged revisions, supersedes open unmerged PRs, and starts from current integration heads; it never rolls back shared history. A partially integrated ticket retains integration priority while independent coding sessions continue. A stopped or failed check is never counted as passing.
 
 ## Primary-source research
 

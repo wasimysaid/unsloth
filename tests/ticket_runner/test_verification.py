@@ -150,7 +150,7 @@ class VerificationTests(unittest.TestCase):
     def test_invalid_scoped_commands_are_rejected(self):
         valid = self.evidence['checks'][0]
         for change in ({'repo': 'other'}, {'argv': []}, {'argv': 'python3'}, {'argv': ['']},
-                       {'argv': ['python3', 1]}, {'timeout': 0}, {'timeout': -1}, {'timeout': 3601},
+                       {'argv': ['python3', 1]}, {'timeout': -1},
                        {'timeout': True}, {'timeout': 1.5}, {'timeout': '60'}):
             with self.subTest(change=change):
                 self.write_report({**self.evidence, 'checks': [{**valid, **change}]})
@@ -164,8 +164,13 @@ class VerificationTests(unittest.TestCase):
                 with self.assertRaises(RunnerError):
                     verification.report(self.row)
 
+    def test_verification_commands_have_no_supervisor_deadline(self):
+        _, launch = self.verify()
+        self.assertTrue(launch.call_args_list)
+        self.assertTrue(all(call.kwargs['timeout'] is None for call in launch.call_args_list))
+
     def test_valid_timeout_boundary_and_default(self):
-        for timeout in (1, 3600, None):
+        for timeout in (0, 1, 3600, 86400, None):
             with self.subTest(timeout=timeout):
                 check = deepcopy(self.evidence['checks'][0])
                 if timeout is None:
@@ -261,7 +266,7 @@ class VerificationTests(unittest.TestCase):
         for call, check in zip(launch.call_args_list, [self.required, *self.evidence['checks']]):
             self.assertEqual(call.args[1], check['argv'])
             self.assertEqual(call.args[2], Path(self.workspace['paths'][check['repo']]))
-            self.assertEqual(call.kwargs['timeout'], check['timeout'])
+            self.assertIsNone(call.kwargs['timeout'])
             self.assertEqual(call.kwargs['protocol'], 'command')
             self.assertEqual(call.kwargs['env_overrides']['CUDA_VISIBLE_DEVICES'], '')
             self.assertTrue(Path(call.kwargs['env_overrides']['TMPDIR']).is_dir())

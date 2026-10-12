@@ -180,7 +180,7 @@ def require_authority(config, store, number):
     reconcile_scope(config, store, snapshot)
     reconcile_completed(config, store, snapshot)
     row = store.get(number)
-    if digest(scope(snapshot, number)) != row['input_sha256']:
+    if row.get('scope_stale') or digest(scope(snapshot, number)) != row['input_sha256']:
         raise RunnerError('Ticket/dependency scope changed after candidate verification')
     issue = next(x for x in snapshot['issues'] if x['number'] == number)
     closed_after_verification = (issue.get('state') == 'closed' and issue.get('state_reason') == 'completed'
@@ -362,8 +362,6 @@ def reconcile_completed(config, store, snapshot):
         issue = issues.get(number, {})
         if issue.get('state') != 'closed' or issue.get('state_reason') != 'completed':
             raise RunnerError('Completed ticket reopened/cancelled; reconciliation required')
-        if digest(scope(snapshot, number)) != row['completed_scope']:
-            raise RunnerError('Integrated ticket scope/dependencies changed')
         for name, revision in row['completed_pair'].items():
             root = workspaces.repository(config, name)
             if git(root, 'merge-base', revision, heads[name]) != revision:

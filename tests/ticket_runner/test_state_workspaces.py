@@ -31,14 +31,15 @@ class StateTests(unittest.TestCase):
             self.assertEqual(store.wave()['numbers'], [3, 7])
             self.assertEqual(store.get(3)['attempt'], 1)
 
-    def test_cannot_overwrite_policy_or_completion(self):
+    def test_updated_policy_preserves_completed_receipts(self):
         with Store(self.config) as store:
             store.update(3, 'completed')
             with self.assertRaises(RunnerError):
                 store.update(3, 'running')
         self.config.fingerprint = 'changed'
-        with self.assertRaises(RunnerError):
-            Store(self.config)
+        with Store(self.config) as store:
+            self.assertEqual(store.meta('policy_sha256'), 'changed')
+            self.assertEqual(store.completed(), {3})
 
     def test_lock_is_per_queue_not_campaign_name(self):
         other = copy.copy(self.config)

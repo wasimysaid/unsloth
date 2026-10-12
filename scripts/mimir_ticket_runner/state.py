@@ -55,12 +55,16 @@ class Store:
                 CREATE TABLE IF NOT EXISTS waves (id INTEGER PRIMARY KEY, numbers TEXT NOT NULL, state TEXT NOT NULL);
             ''')
             previous = self.meta('policy_sha256')
-            if previous is not None and previous != config.fingerprint:
-                self.db.close()
-                raise RunnerError('Campaign policy changed; use its original configuration or a separately approved campaign')
-            if previous is None:
+            if previous != config.fingerprint:
+                # The operator may tune this runner between invocations. Receipts
+                # retain their old policy hashes, so affected checks rerun normally.
                 self.set_meta('policy_sha256', config.fingerprint)
-                self.set_meta('created_at', time.time())
+                if previous is None:
+                    self.set_meta('created_at', time.time())
+                else:
+                    with self.db:
+                        self.db.execute('INSERT INTO events(at,number,event,data) VALUES (?,?,?,?)',
+                                        (time.time(), None, 'policy_updated', json.dumps({'previous': previous, 'current': config.fingerprint})))
                 atomic_json(config.root / 'policy.json', config.data)
         self.db.row_factory = sqlite3.Row
 

@@ -10,9 +10,10 @@ provider = "chatgpt"
 model = "gpt-6-astra"
 reasoning_effort = "medium"
 review_model = "gpt-6.1-sol"
-# No max_workers: run the entire eligible frontier in each fixed wave.
+# No max_workers: dispatch the entire eligible frontier as dependencies unblock.
 # Set a positive max_workers only if an explicit operator cap is wanted.
-max_attempts = 2
+# Zero permits automatic repair attempts until the ticket passes or needs real input.
+max_attempts = 0
 # Zero disables automatic execution deadlines; stop explicitly when needed.
 worker_timeout = 0
 review_timeout = 0
@@ -34,20 +35,20 @@ branch = "mimir-studio"
 # Workers must additionally supply scoped test commands/evidence for every criterion.
 [profiles.frontend]
 checks = [
- {repo="studio", argv=["npm", "--prefix", "studio/frontend", "run", "typecheck"], timeout=1800},
- {repo="studio", argv=["npm", "--prefix", "studio/frontend", "test"], timeout=1800},
- {repo="studio", argv=["npm", "--prefix", "studio/frontend", "run", "build"], timeout=1800}
+ {repo="studio", argv=["npm", "--prefix", "studio/frontend", "run", "typecheck"]},
+ {repo="studio", argv=["npm", "--prefix", "studio/frontend", "test"]},
+ {repo="studio", argv=["npm", "--prefix", "studio/frontend", "run", "build"]}
 ]
 [profiles.backend]
 checks = [
- {repo="studio", argv=["python3", "-m", "compileall", "-q", "studio/backend"], timeout=300},
- {repo="studio", argv=["python3", "-m", "pytest", "studio/backend/tests", "-q"], timeout=3600}
+ {repo="studio", argv=["python3", "-m", "compileall", "-q", "studio/backend"]},
+ {repo="studio", argv=["python3", "-m", "pytest", "studio/backend/tests", "-q"]}
 ]
 [profiles.native]
 checks = [
- {repo="mimir", argv=["cargo", "check", "--locked", "-p", "mimir-cli", "--tests"], timeout=3600},
- {repo="mimir", argv=["cargo", "test", "--locked", "-p", "mimir-cli", "--test", "external_frontend_cli"], timeout=3600},
- {repo="mimir", argv=["python3", "tools/quality/verify_sdk.py"], timeout=3600}
+ {repo="mimir", argv=["cargo", "check", "--locked", "-p", "mimir-cli", "--tests"]},
+ {repo="mimir", argv=["cargo", "test", "--locked", "-p", "mimir-cli", "--test", "external_frontend_cli"]},
+ {repo="mimir", argv=["python3", "tools/quality/verify_sdk.py"]}
 ]
 
 # The live GPU gates require an operator grant; final UI review is never automated.
