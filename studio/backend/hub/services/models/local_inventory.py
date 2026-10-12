@@ -32,6 +32,7 @@ from hub.utils.paths import (
     lmstudio_model_dirs,
     normalize_path,
     ollama_model_dirs,
+    omlx_model_dirs,
     outputs_root,
     path_is_same_or_child,
     studio_root,
@@ -62,6 +63,7 @@ class _LocalInventorySources(NamedTuple):
     ollama_dirs: tuple[Path, ...]
     hermes_dirs: tuple[Path, ...]
     known_hf_caches: tuple[Path, ...]
+    omlx_dirs: tuple[Path, ...] = ()
 
 
 _LocalInventoryKey = tuple[str, _LocalInventorySources, tuple[str, ...], int]
@@ -82,6 +84,7 @@ class _LocalCacheChanged(RuntimeError):
 
 
 # Local aliases keep the extracted code close to the original implementation.
+LocalModelSource = model_common.LocalModelSource
 _is_model_directory = model_common._is_model_directory
 _local_inventory_id = model_common._local_inventory_id
 _local_model_info = model_common._local_model_info
@@ -106,10 +109,17 @@ def _http_error(status_code: int, detail: str):
     return HTTPException(status_code = status_code, detail = detail)
 
 
+def _is_image_lora_file(path: Path) -> bool:
+    from core.inference.diffusion_lora import is_image_lora_file
+    return is_image_lora_file(path)
+
+
 def _is_immediate_model_weight_file(path: Path) -> bool:
     if is_appledouble_metadata(path):
         return False
     suffix = path.suffix.lower()
+    if suffix in (".safetensors", ".gguf") and _is_image_lora_file(path):
+        return False
     if suffix == ".safetensors":
         return True
     if suffix == ".gguf":
@@ -337,6 +347,7 @@ def _local_inventory_sources() -> _LocalInventorySources:
         tuple(ollama_model_dirs()),
         tuple(hermes_model_dirs()),
         tuple(known_hf_hub_caches()),
+        tuple(omlx_model_dirs()),
     )
 
 
@@ -385,6 +396,7 @@ def _scan_models_dir(
                 and child.suffix.lower() == ".gguf"
                 and child.is_file()
                 and not is_appledouble_metadata(child)
+                and not _is_image_lora_file(child)
             )
             if not is_dir and not is_gguf_file:
                 continue
@@ -407,7 +419,51 @@ def _scan_models_dir(
             rows = rows[: max(0, limit - len(found))]
         found.extend(rows)
 
+    if limit is None or len(found) < limit:
+        found.extend(
+            loose_diffusion_checkpoint_rows(
+                models_dir,
+                limit = None if limit is None else limit - len(found),
+                entry_limit = entry_limit,
+            )
+        )
     return found
+
+
+def loose_diffusion_checkpoint_rows(
+    folder: Path,
+    *,
+    limit: int | None = None,
+    entry_limit: int | None = None,
+) -> List[LocalModelInfo]:
+    from hub.utils.comfy_models import loose_diffusion_checkpoints
+
+    rows: List[LocalModelInfo] = []
+    for path in loose_diffusion_checkpoints(folder, entry_limit = entry_limit):
+        if limit is not None and len(rows) >= limit:
+            break
+        try:
+            stat_result = path.stat()
+        except OSError:
+            continue
+        rows.append(
+            model_common._local_model_info(
+                scan_path = path,
+                load_path = path,
+                source = "models_dir",
+                model_format = "unknown",
+                artifact_kind = "single_file_checkpoint",
+                updated_at = stat_result.st_mtime,
+                size_bytes = stat_result.st_size,
+            )
+        )
+    return rows
+
+
+def _is_loose_diffusion_checkpoint_row(model: LocalModelInfo) -> bool:
+    return model.artifact_kind == "single_file_checkpoint" and model.path.lower().endswith(
+        ".safetensors"
+    )
 
 
 def _safe_is_dir(path: Path) -> bool:
@@ -660,8 +716,14 @@ def _scan_hf_cache(
     return found
 
 
-def _scan_lmstudio_dir(lm_dir: Path, *, entry_limit: int | None = None) -> List[LocalModelInfo]:
-    """Scan an LM Studio models dir (``publisher/model-name`` folders of GGUFs, or top-level standalone GGUFs)."""
+def _scan_lmstudio_dir(
+    lm_dir: Path,
+    *,
+    entry_limit: int | None = None,
+    source: LocalModelSource = "lmstudio",
+) -> List[LocalModelInfo]:
+    """Scan a ``publisher/model-name`` tree (or top-level standalone GGUFs); LM Studio and oMLX
+    share this layout, ``source`` names the app."""
     if not lm_dir.exists() or not lm_dir.is_dir():
         return []
 
@@ -673,7 +735,7 @@ def _scan_lmstudio_dir(lm_dir: Path, *, entry_limit: int | None = None) -> List[
             updated_at = None
         rows = _classify_local_path(
             lm_dir,
-            "lmstudio",
+            source,
             updated_at = updated_at,
         )
         return _apply_payload_partial(lm_dir, rows)
@@ -700,6 +762,7 @@ def _scan_lmstudio_dir(lm_dir: Path, *, entry_limit: int | None = None) -> List[
                     child.suffix.lower() == ".gguf"
                     and child.is_file()
                     and not is_appledouble_metadata(child)
+                    and not _is_image_lora_file(child)
                 ):
                     try:
                         updated_at = child.stat().st_mtime
@@ -707,7 +770,7 @@ def _scan_lmstudio_dir(lm_dir: Path, *, entry_limit: int | None = None) -> List[
                         updated_at = None
                     rows = _classify_local_path(
                         child,
-                        "lmstudio",
+                        source,
                         updated_at = updated_at,
                     )
                     found.extend(_apply_payload_partial(child, rows))
@@ -721,7 +784,7 @@ def _scan_lmstudio_dir(lm_dir: Path, *, entry_limit: int | None = None) -> List[
                     updated_at = None
                 rows = _classify_local_path(
                     child,
-                    "lmstudio",
+                    source,
                     updated_at = updated_at,
                 )
                 found.extend(_apply_payload_partial(child, rows))
@@ -744,7 +807,7 @@ def _scan_lmstudio_dir(lm_dir: Path, *, entry_limit: int | None = None) -> List[
                             updated_at = None
                         rows = _classify_local_path(
                             model_dir,
-                            "lmstudio",
+                            source,
                             display_name = model_dir.name,
                             model_id = model_id,
                             updated_at = updated_at,
@@ -754,6 +817,7 @@ def _scan_lmstudio_dir(lm_dir: Path, *, entry_limit: int | None = None) -> List[
                         model_dir.suffix.lower() == ".gguf"
                         and model_dir.is_file()
                         and not is_appledouble_metadata(model_dir)
+                        and not _is_image_lora_file(model_dir)
                     ):
                         try:
                             updated_at = model_dir.stat().st_mtime
@@ -761,7 +825,7 @@ def _scan_lmstudio_dir(lm_dir: Path, *, entry_limit: int | None = None) -> List[
                             updated_at = None
                         rows = _classify_local_path(
                             model_dir,
-                            "lmstudio",
+                            source,
                             model_id = f"{child.name}/{model_dir.stem}",
                             updated_at = updated_at,
                         )
@@ -952,6 +1016,7 @@ async def _collect_models_from_default_sources(
     hermes_dirs: tuple[Path, ...],
     known_hf_caches: tuple[Path, ...],
     custom_folders: list[dict],
+    omlx_dirs: tuple[Path, ...] = (),
 ) -> List[LocalModelInfo]:
     local_models = await _scan_source("models directory", _scan_models_dir, models_root)
     hf_sources = [("HF cache", hf_cache_dir, True)]
@@ -976,6 +1041,12 @@ async def _collect_models_from_default_sources(
             continue
         seen_hf.add(key)
         hf_sources.append(("previous HF cache", previous_cache, False))
+    # oMLX also serves models--* repos kept under its own roots.
+    for omlx_dir in omlx_dirs:
+        key = os.path.normcase(str(omlx_dir.resolve(strict = False)))
+        if key not in seen_hf:
+            seen_hf.add(key)
+            hf_sources.append(("oMLX HF cache", omlx_dir, False))
 
     discovered_sources = []
     custom_sources = []
@@ -1027,6 +1098,13 @@ async def _collect_models_from_default_sources(
 
     for lm_dir in lm_dirs:
         local_models += await _scan_source("LM Studio", _scan_lmstudio_dir, lm_dir)
+
+    for omlx_dir in omlx_dirs:
+        local_models += await _scan_source(
+            "oMLX",
+            lambda path: _scan_lmstudio_dir(path, source = "omlx"),
+            omlx_dir,
+        )
 
     for ollama_dir in ollama_dirs:
         local_models += await _scan_source("Ollama", scan_ollama_dir, ollama_dir)
@@ -1130,9 +1208,18 @@ def _scan_custom_folder(
 
     def _is_supported(m: LocalModelInfo) -> bool:
         # A diffusers pipeline keeps its weights in component subdirs, so its root lands as "unknown"; judge it on its shape rather than on a format the layout cannot report.
-        if m.model_format in supported_formats:
+        if m.model_format in supported_formats or _is_loose_diffusion_checkpoint_row(m):
             return True
         return _is_diffusers_pipeline_dir(Path(m.path))
+
+    # A ComfyUI root / models/: its denoiser folders are scanned like nested roots.
+    from hub.utils.comfy_models import comfy_dit_scan_roots
+
+    comfy_roots = tuple(
+        root for root in comfy_dit_scan_roots(folder_path) if root not in nested_roots
+    )
+    if comfy_roots:
+        nested_roots = (*nested_roots, *comfy_roots)
 
     generic = [
         m
@@ -1228,10 +1315,10 @@ async def _load_custom_folders() -> list[dict]:
 def _merge_custom_rows_listed_natively(
     custom_models: List[LocalModelInfo], native_models: List[LocalModelInfo]
 ) -> tuple[list[LocalModelInfo], list[LocalModelInfo]]:
-    """A custom folder overlapping the models dir or LM Studio re-lists their models (#9164)."""
+    """A custom folder overlapping the models dir, LM Studio or oMLX re-lists their models (#9164)."""
     native: dict[tuple[str, str], LocalModelInfo] = {}
     for model in native_models:
-        if model.source in ("models_dir", "lmstudio"):
+        if model.source in ("models_dir", "lmstudio", "omlx"):
             native.setdefault((_inventory_physical_identity(model.path), model.model_format), model)
     if not native:
         return list(native_models), list(custom_models)
@@ -1242,8 +1329,8 @@ def _merge_custom_rows_listed_natively(
         # A symlink below the scan root is a deliberate alias with its own settings (#10605), so it stays.
         if twin is None or _local_model_path_is_symlink(_custom_alias_key(model)):
             kept_custom.append(model)
-        elif twin.source == "lmstudio" and model.capabilities.can_train:
-            # The train picker refuses LM Studio rows, so the trainable custom row wins.
+        elif twin.source in ("lmstudio", "omlx") and model.capabilities.can_train:
+            # The train picker refuses LM Studio and oMLX rows, so the trainable custom row wins.
             replaced.add(id(twin))
             kept_custom.append(model)
     return [m for m in native_models if id(m) not in replaced], kept_custom
@@ -1317,9 +1404,16 @@ async def _scan_local_models_response(
     models_dir: str, custom_folders: list[dict], sources: _LocalInventorySources
 ) -> LocalModelListResponse:
     """List local model candidates from every supported on-device source."""
-    hf_cache_dir, legacy_hf, hf_default, lm_dirs, ollama_dirs, hermes_dirs, known_hf_caches = (
-        sources
-    )
+    (
+        hf_cache_dir,
+        legacy_hf,
+        hf_default,
+        lm_dirs,
+        ollama_dirs,
+        hermes_dirs,
+        known_hf_caches,
+        omlx_dirs,
+    ) = sources
 
     allowed_roots: list[Path] = [Path("./models").resolve(), hf_cache_dir]
     if _safe_is_dir(legacy_hf):
@@ -1344,6 +1438,7 @@ async def _scan_local_models_response(
             hermes_dirs,
             known_hf_caches,
             custom_folders,
+            omlx_dirs = omlx_dirs,
         )
         models = await asyncio.to_thread(_filter_and_dedupe_local_models, local_models)
         return LocalModelListResponse(

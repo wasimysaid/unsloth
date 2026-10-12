@@ -14,11 +14,7 @@
 // every pre-existing row and React skips those subtrees. A `components` object would allocate fresh props per row
 // per commit, so every delete would re-render every body, action bar and tooltip: the regression #9042 removed.
 
-import {
-  MessageByIndexProvider,
-  useAui,
-  useAuiState,
-} from "@assistant-ui/react";
+import { AuiProvider, useAui, useAuiState } from "@assistant-ui/react";
 import {
   type FC,
   type ReactElement,
@@ -33,6 +29,8 @@ import {
   useState,
 } from "react";
 
+import { createRowNotificationGate } from "@/components/assistant-ui/row-notification-gate";
+import { MessageByIndexProvider } from "@/components/assistant-ui/stale-safe-scopes";
 import {
   type AnchorSample,
   type MountWindow,
@@ -531,6 +529,8 @@ export const ProgressiveMessages: FC<{
   ({ renderMessage, resetKey, viewportRef }) => {
     const count = useAuiState(({ thread }) => thread.messages.length);
     const mountWindow = useProgressiveMountWindow(count, resetKey, viewportRef);
+    const aui = useAui();
+    const gate = useMemo(() => createRowNotificationGate(aui), [aui]);
 
     return useMemo(() => {
       if (count === 0) return null;
@@ -548,13 +548,13 @@ export const ProgressiveMessages: FC<{
       const rows: ReactElement[] = [];
       for (let index = first; index < count; index += 1) {
         rows.push(
-          <MessageByIndexProvider key={index} index={index}>
-            {message}
-          </MessageByIndexProvider>,
+          <AuiProvider key={index} value={gate.row(index)}>
+            <MessageByIndexProvider index={index}>{message}</MessageByIndexProvider>
+          </AuiProvider>,
         );
       }
       return <>{rows}</>;
-    }, [count, mountWindow, renderMessage]);
+    }, [count, mountWindow, renderMessage, gate]);
   },
   (prev, next) =>
     prev.resetKey === next.resetKey &&

@@ -25,6 +25,7 @@ export {
   loadModel,
   unloadModel,
   notifyChatHistoryUpdated,
+  notifyChatProjectsUpdated,
   removeScanFolder,
   revealCachedModel,
   revealFineTunedModel,
@@ -64,7 +65,12 @@ export {
   refreshModelDisclaimerPreference,
   saveModelDisclaimerPreference,
 } from "./sync-model-disclaimer-preference";
-export { useChatActive, useInComparePane } from "./runtime-provider";
+export {
+  pythonToolRunsInStudio,
+  useChatActive,
+  useInComparePane,
+} from "./runtime-provider";
+export { withAttachmentOriginal } from "./attachment-originals";
 export {
   CHAT_RAG_CAPTION_KEY,
   CHAT_RAG_OCR_KEY,
@@ -271,6 +277,7 @@ export {
   discardQueuedChatRunSettings,
   discardQueuedChatRunSettingsForThread,
   registerQueuedChatRunSettings,
+  resolveDeferredQueuedModelSettings,
   snapshotQueuedChatRunSettings,
   type QueuedChatRunSettings,
 } from "./utils/queued-chat-run-settings";
@@ -348,6 +355,7 @@ export {
   forkChatRow,
   getSidebarItemThreadIds,
   recordedSandboxSessionIds,
+  regenerateChatTitle,
   sandboxSessionIdsHolding,
   type ConversationExportFormat,
 } from "./components/chat-row-menu";
@@ -428,6 +436,7 @@ export { forkCountFor, subscribeForkCounts } from "./utils/fork-count-store";
 export { resolveReasoningGroupDuration } from "./utils/reasoning-duration";
 export {
   reasoningFollowsPreference,
+  reasoningTailCapped,
   resolveReasoningOpen,
   startsNewReasoningRound,
 } from "./utils/reasoning-visibility";
@@ -443,6 +452,7 @@ export {
   resolveOpen,
 } from "./utils/display-visibility";
 export { ArtifactCard } from "./artifacts/artifact-card";
+export { ReactPreview } from "./artifacts/react-preview/react-preview";
 export { ArtifactHtmlFrame } from "./artifacts/html-frame";
 export { ResearchMessage } from "./components/research-message";
 export {

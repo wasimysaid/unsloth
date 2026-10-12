@@ -1901,7 +1901,8 @@ _DRAFTER_DIR_KINDS = ("mtp", "dspark")
 def _is_mtp_drafter(path: str) -> bool:
     """True for a separate-file drafter, a companion to the main model rather
     than a selectable quant: the repo-root ``mtp-*.gguf``, the ``MTP/`` subdir
-    copies (Gemma 4), the ``dspark/`` drafters (DeepSeek V4 Flash) or the
+    copies (Gemma 4), the ``dspark/`` drafters (DeepSeek V4 Flash), the
+    ``<model>-dspark-<quant>.gguf`` drafters (prism-ml Bonsai) or the
     ``eagle3-*.gguf`` draft heads (ggml-org gpt-oss).
 
     Mirrors hub.utils.gguf.is_mtp_drafter_path (utils cannot import hub). Must be
@@ -1910,18 +1911,20 @@ def _is_mtp_drafter(path: str) -> bool:
     resolve to ``MTP/...-Q8_0-MTP.gguf``, which sorts ahead of the real weight,
     or to ``dspark/dspark-...-Q8_0.gguf``.
 
-    Prefix, or an exact directory for ``_DRAFTER_DIR_KINDS``; never a substring,
-    since the kind names double as family names
-    (``Qwen3.6-35B-A3B-DFlash-Q4_K_M.gguf`` IS the model, as is anything in a
-    user's ``dflash/`` folder).
+    Prefix, an exact directory for ``_DRAFTER_DIR_KINDS``, or
+    ``_DSPARK_BEFORE_QUANT_RE``; never a bare substring, since the kind names
+    double as family names (``Qwen3.6-35B-A3B-DFlash-Q4_K_M.gguf`` IS the model,
+    as is anything in a user's ``dflash/`` folder).
     """
     p = path.replace("\\", "/").lower()
     if not p.endswith(".gguf"):
         return False
     parts = [segment for segment in p.split("/") if segment]
     name, parents = parts[-1], parts[:-1]
-    return any(name.startswith(f"{kind}-") for kind in _DRAFTER_KINDS) or any(
-        kind in parents for kind in _DRAFTER_DIR_KINDS
+    return (
+        any(name.startswith(f"{kind}-") for kind in _DRAFTER_KINDS)
+        or any(kind in parents for kind in _DRAFTER_DIR_KINDS)
+        or _DSPARK_BEFORE_QUANT_RE.search(name) is not None
     )
 
 
@@ -2769,7 +2772,7 @@ def _extract_quant_label(filename: str) -> str:
         r"|IQ[0-9]+_[A-Z]+(?:_[A-Z0-9]+)?"  # IQ variants: IQ4_XS, IQ4_NL, IQ1_S
         r"|P?TQ[0-9]+_[0-9]+"  # Ternary quant: TQ1_0, TQ2_0
         r"|Q[0-9]+_K_[A-Z]+"  # K-quant: Q4_K_M, Q3_K_S
-        r"|P?Q[0-9]+_[0-9]+(?:_G[0-9]+)?"  # Standard/Packed: Q8_0, PQ2_0, Q2_0_g64
+        r"|P?Q[0-9]+_(?:[0-9]+(?:_G[0-9]+)?|G[0-9]+)"  # Standard/Packed/Grouped: Q8_0, PQ2_0, Q2_0_g64, Q2_g64
         r"|Q[0-9]+_K"  # Short K-quant: Q6_K
         r"|BF16|F16|F32)"  # Full precision
         # Optional bits-per-weight modifier so repos shipping several files at one base quant
@@ -2801,9 +2804,14 @@ _GGUF_KNOWN_QUANT_RE = re.compile(
     r"|IQ[0-9]+_[A-Z]+(?:_[A-Z0-9]+)?"
     r"|P?TQ[0-9]+_[0-9]+"
     r"|Q[0-9]+_K_[A-Z]+"
-    r"|P?Q[0-9]+_[0-9]+(?:_G[0-9]+)?"
+    r"|P?Q[0-9]+_(?:[0-9]+(?:_G[0-9]+)?|G[0-9]+)"
     r"|Q[0-9]+_K"
     r"|BF16|F16|F32)",
+    re.IGNORECASE,
+)
+# Mirrors hub.utils.gguf._DSPARK_BEFORE_QUANT_RE, for _is_mtp_drafter.
+_DSPARK_BEFORE_QUANT_RE = re.compile(
+    rf"-dspark-(?:{_GGUF_KNOWN_QUANT_RE.pattern})(?:-[0-9]{{5}}-of-[0-9]{{5}})?\.gguf$",
     re.IGNORECASE,
 )
 
@@ -3751,6 +3759,99 @@ def is_embedding_model(model_name: str, hf_token: Optional[str] = None) -> bool:
         return is_emb
 
 
+_LAYA_MARKER = "rl_agent_config.json"
+# Clef: a backbone (merged, or LoRA adapters over the base LLM) plus the joint schema head.
+CLEF_HEAD_MARKERS = ("joint_head.safetensors", "joint_head_config.json")
+CLEF_MARKERS = ("config.json", *CLEF_HEAD_MARKERS)
+CLEF_ADAPTER_MARKERS = ("adapter_config.json", *CLEF_HEAD_MARKERS)
+
+
+def clef_files_kind(has) -> Optional[str]:
+    """ "merged", "adapter" or None, from has(name) -> bool over a folder's files."""
+    if all(has(name) for name in CLEF_MARKERS):
+        return "merged"
+    if all(has(name) for name in CLEF_ADAPTER_MARKERS):
+        return "adapter"
+    return None
+
+
+def clef_folder_kind(folder: Path) -> Optional[str]:
+    return clef_files_kind(lambda name: (folder / name).is_file())
+
+
+def _folder_decision_layout(folder: Path) -> Optional[str]:
+    if clef_folder_kind(folder) is not None:
+        return "clef"
+    if all((folder / name).is_file() for name in (_LAYA_MARKER, "model.safetensors")) and all(
+        (folder / name).is_dir() for name in ("encoder", "tokenizer")
+    ):
+        return "laya"
+    return None
+
+
+def decision_layout(
+    model_name: str,
+    hf_token: Optional[str] = None,
+    local_files_only: bool = False,
+    subfolder: Optional[str] = None,
+) -> Optional[str]:
+    """ "laya", "clef" or None for a model that is not a decision model."""
+    if is_local_path(model_name):
+        folder = Path(normalize_path(model_name))
+        # The subfolder first, as on the Hub; an escaping one is refused later by request validation.
+        nested = None
+        if subfolder and not Path(subfolder).is_absolute() and ".." not in Path(subfolder).parts:
+            nested = _folder_decision_layout(folder / subfolder)
+        return nested or _folder_decision_layout(folder)
+    from utils.utils import hf_cache_snapshot_dir, hf_env_offline
+
+    prefix = f"{subfolder}/" if subfolder else ""
+    if not (local_files_only or hf_env_offline()):
+        try:
+            info = _hub_model_info(model_name, hf_token)
+            files = {getattr(sibling, "rfilename", None) for sibling in info.siblings or ()}
+            if clef_files_kind(lambda name: prefix + name in files) is not None:
+                return "clef"
+            return "laya" if prefix + _LAYA_MARKER in files else None
+        except Exception as e:
+            logger.warning(f"Could not determine if {model_name} is a decision model: {e}")
+    if not cache_reads_authorized(hf_token, repo_id = model_name):
+        return None
+    snapshot = hf_cache_snapshot_dir(model_name)
+    if snapshot is None:
+        return None
+    if clef_folder_kind(snapshot / prefix) is not None:
+        return "clef"
+    # The Decision API caches only the checkpoint subfolder it serves.
+    laya = (snapshot / _LAYA_MARKER, *snapshot.glob(f"*/{_LAYA_MARKER}"))
+    return "laya" if any(path.is_file() for path in laya) else None
+
+
+def is_decision_model(
+    model_name: str,
+    hf_token: Optional[str] = None,
+    local_files_only: bool = False,
+    subfolder: Optional[str] = None,
+) -> bool:
+    return decision_layout(model_name, hf_token, local_files_only, subfolder) is not None
+
+
+LLM_DECISION_DEFAULTS = (
+    Path(__file__).parent.parent.parent
+    / "assets"
+    / "configs"
+    / "model_defaults"
+    / "decision"
+    / "llm_decision_defaults.yaml"
+)
+
+
+def load_llm_decision_defaults() -> Dict[str, Any]:
+    """The recipe for training a text or vision LLM as a decision model (a new Clef head)."""
+    with open(LLM_DECISION_DEFAULTS, "r", encoding = "utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
 def _has_model_weight_files(model_dir: Path) -> bool:
     """Return True when a directory contains loadable model weights."""
 
@@ -3856,6 +3957,8 @@ def scan_exported_models(
     if exports_dir is None:
         exports_dir = str(exports_root())
 
+    from core.inference.diffusion_lora import is_image_lora_file
+
     results = []
     exports_path = resolve_export_dir(exports_dir)
 
@@ -3872,7 +3975,9 @@ def scan_exported_models(
             gguf_files = [
                 f
                 for f in _iter_gguf_files(run_dir)
-                if not _is_mmproj(f.name) and not _is_imatrix_path(f.name)
+                if not _is_mmproj(f.name)
+                and not _is_imatrix_path(f.name)
+                and not is_image_lora_file(f)
             ]
             if gguf_files:
                 base_model = None
@@ -3905,7 +4010,9 @@ def scan_exported_models(
                 gguf_list = [
                     f
                     for f in _iter_gguf_files(checkpoint_dir)
-                    if not _is_mmproj(f.name) and not _is_imatrix_path(f.name)
+                    if not _is_mmproj(f.name)
+                    and not _is_imatrix_path(f.name)
+                    and not is_image_lora_file(f)
                 ]
                 has_gguf = bool(gguf_list)
 

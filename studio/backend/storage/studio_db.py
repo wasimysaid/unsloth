@@ -28,6 +28,7 @@ from typing import Any, Callable, Iterable, Iterator, Mapping, Optional
 
 
 from core import chat_originals
+from storage import sqlite_gate
 from utils.account_context import is_owner_context
 from utils.paths import (
     ensure_account_dir,
@@ -140,33 +141,8 @@ def contains_sensitive_path_component(path: str) -> bool:
 _schema_lock = threading.Lock()
 _schema_ready: set[Path] = set()
 
-# SQLite 3.51.0-3.51.1 deadlocks when one thread's WAL close (unixIsSharingShmNode) races another
-# thread's open or close of the same file: they take the VFS and inode mutexes in opposite order
-# (fixed in 3.51.2, #10022). Gating only close() still deadlocks; opens must share the lock.
-# Reentrant: a GC finalizer can close a pooled connection inside a gated connect on this thread.
-_CONNECTION_GATE = threading.RLock()
-
-
-def _reset_connection_gate_after_fork() -> None:
-    global _CONNECTION_GATE
-    _CONNECTION_GATE = threading.RLock()
-
-
-if hasattr(os, "register_at_fork"):
-    os.register_at_fork(after_in_child = _reset_connection_gate_after_fork)
-
-
-class _StudioDbConnection(sqlite3.Connection):
-    # A connection dropped without close() is finalized natively and bypasses this gate.
-    def close(self) -> None:
-        with _CONNECTION_GATE:
-            super().close()
-
-
-def connect_studio_db(database: str | os.PathLike[str], **kwargs: Any) -> sqlite3.Connection:
-    """sqlite3.connect for studio.db, with opens and closes serialized process-wide."""
-    with _CONNECTION_GATE:
-        return sqlite3.connect(str(database), factory = _StudioDbConnection, **kwargs)
+# Opens and closes serialized process-wide against the SQLite 3.51.0-3.51.1 deadlock (#10022).
+connect_studio_db = sqlite_gate.connect
 
 
 _SQLITE_IN_CHUNK_SIZE = 900
@@ -792,6 +768,18 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         ) WITHOUT ROWID
         """
     )
+    # Import ledger: without it a re-import cannot tell a turn deleted in Studio from a newly appended one.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS external_import_sessions (
+            source TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            turns_imported INTEGER NOT NULL,
+            revision TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (source, session_id)
+        ) WITHOUT ROWID
+        """
+    )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS prompt_entries (
@@ -1003,6 +991,11 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    document_source_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(research_document_sources)").fetchall()
+    }
+    if "kind" not in document_source_cols:
+        conn.execute("ALTER TABLE research_document_sources ADD COLUMN kind TEXT")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS research_events (
@@ -2550,6 +2543,18 @@ def _reparent_surviving_forks(conn: sqlite3.Connection, deleted_ids: set[str]) -
             "UPDATE chat_threads SET forked_from_thread_id = ? WHERE id = ?",
             (source_id, row["id"]),
         )
+
+
+def lift_chat_thread_tombstones(thread_ids: Iterable[str]) -> None:
+    """Forget these deleted thread ids, so an import into an emptied Studio can recreate them."""
+    conn = get_connection()
+    try:
+        conn.executemany(
+            "DELETE FROM chat_thread_tombstones WHERE id = ?", [(i,) for i in set(thread_ids)]
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _tombstone_chat_threads(conn: sqlite3.Connection, thread_ids: Iterable[str]) -> None:
@@ -5409,5 +5414,44 @@ def upsert_chat_legacy_imports(legacy_thread_ids: list[str]) -> tuple[int, int]:
                 inserted += 1
         conn.commit()
         return len(ids), inserted
+    finally:
+        conn.close()
+
+
+def get_external_import_mark(source: str, session_id: str) -> Optional[tuple[int, str]]:
+    """(turns brought over, source revision they came from), or None if never imported."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT turns_imported, revision FROM external_import_sessions"
+            " WHERE source = ? AND session_id = ?",
+            (source, session_id),
+        ).fetchone()
+        return None if row is None else (row["turns_imported"], row["revision"])
+    finally:
+        conn.close()
+
+
+def record_external_import_mark(
+    source: str,
+    session_id: str,
+    turns: int,
+    revision: str = "",
+) -> None:
+    conn = get_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO external_import_sessions (source, session_id, turns_imported, revision)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(source, session_id) DO UPDATE SET
+                turns_imported = CASE WHEN excluded.revision = external_import_sessions.revision
+                    THEN MAX(excluded.turns_imported, external_import_sessions.turns_imported)
+                    ELSE excluded.turns_imported END,
+                revision = excluded.revision
+            """,
+            (source, session_id, int(turns), revision),
+        )
+        conn.commit()
     finally:
         conn.close()
