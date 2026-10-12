@@ -10,7 +10,12 @@ import { readSrc } from "./helpers/kit.ts";
 let vite: ViteDevServer;
 
 before(async () => {
-  vite = await createServer({ appType: "custom", server: { middlewareMode: true } });
+  // SSR loading does not need a browser scan, watcher or shared HMR port.
+  vite = await createServer({
+    appType: "custom",
+    optimizeDeps: { noDiscovery: true },
+    server: { middlewareMode: true, hmr: false, watch: null },
+  });
 });
 
 after(async () => {

@@ -657,6 +657,9 @@ function DesktopChromeVarsEffect({
 
 function TauriWrapper({ children }: { children: ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  // Coding owns its runtime UI. Unmount this observer to stop ordinary-model
+  // polling, without unloading models or disturbing retained workspace work.
+  const showLoadedModelsIndicator = pathname !== "/coding";
   const {
     status,
     logs,
@@ -912,7 +915,9 @@ function TauriWrapper({ children }: { children: ReactNode }) {
           />
           <DownloadManagerPanel positioned={false} />
           {/* Last in the stack, so the persistent card sits at the corner. */}
-          <LoadedModelsIndicator positioned={false} />
+          {showLoadedModelsIndicator && (
+            <LoadedModelsIndicator positioned={false} />
+          )}
         </div>
       </>
     );
@@ -947,7 +952,9 @@ function TauriWrapper({ children }: { children: ReactNode }) {
                 enabled={!hidesTitlebarSidebar}
               />
               <DownloadManagerPanel positioned={false} />
-              <LoadedModelsIndicator positioned={false} />
+              {showLoadedModelsIndicator && (
+                <LoadedModelsIndicator positioned={false} />
+              )}
             </TauriUpdateLayer>
           </AppReadinessBoundary>
         </div>

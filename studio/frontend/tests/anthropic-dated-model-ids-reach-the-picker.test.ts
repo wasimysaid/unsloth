@@ -25,7 +25,13 @@ const DATED = [
 const UNDATED = ["claude-opus-5", "claude-opus-4-8", "claude-sonnet-4-6"];
 
 before(async () => {
-  vite = await createServer({ appType: "custom", server: { middlewareMode: true } });
+  // SSR contract tests need Vite transforms, not a browser dependency scan or
+  // HMR socket. A scan racing close() can crash the native optimizer at teardown.
+  vite = await createServer({
+    appType: "custom",
+    optimizeDeps: { noDiscovery: true },
+    server: { middlewareMode: true, hmr: false, watch: null },
+  });
   const loaded = await vite.ssrLoadModule("/src/features/chat/sync-external-providers.ts");
   pruneProviderModelIds = loaded.pruneProviderModelIds as Prune;
 });

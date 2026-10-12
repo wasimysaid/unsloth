@@ -65,7 +65,8 @@ Object.assign(globalThis, {
 const server = await createServer({
   appType: "custom",
   logLevel: "silent",
-  server: { middlewareMode: true },
+  optimizeDeps: { noDiscovery: true },
+  server: { middlewareMode: true, hmr: false, watch: null },
 });
 const { useTrainingConfigStore } = await server.ssrLoadModule(
   "/src/features/training/stores/training-config-store.ts",

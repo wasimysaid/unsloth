@@ -1,0 +1,169 @@
+# Coding: trusted-project opening slice (#234)
+
+## Boundary and source audit
+
+This attempt revalidates Studio `1152ca6decda2a0e1a7e09ad8f806d5f76207453`
+and private Mimir `8b90a6f9b934c72813539ba99e11a8591a63cbb0`.
+The carried-forward attempt used Studio
+`1ba38a92b9c2f78e597c8ef26d0230c63171fdb9`; the intervening tracked changes
+are coordinator/runner changes, not part of this ticket's implementation.
+The recovered implementation was originally audited at Studio
+`7bdad61371a811c6001832908cf36d4d4af3fe8c` and Mimir
+`fe821251db6d8327fb59fde5f5a2cad9de0c231c`; prior-attempt evidence is not a
+substitute for this attempt's verification.
+These are audit baselines, not assertions that HEAD must remain unchanged. The
+coordinator records the delivered native revision in `mimir-runtime.lock.json`.
+Validation must work on committed snapshots as well as an uncommitted patch.
+The standalone `external_frontend_cli` suite prepares current workspace guests
+and its extracted-SDK consumer once per invocation, so check ordering or cached
+Wasm cannot substitute for current-source verification. Preparation does not
+serialize the actual native scenarios or relax their assertions/deadlines.
+
+The product source is **Mimir `plugins/studio-frontend`**, ID
+`studio.frontend`, a runtime-lifetime, headless frontend using the existing SDK.
+It is not `tools/quality/fixtures/external-frontend`, which remains the packaged
+SDK acceptance consumer. There is no companion session/provider plugin. See the
+product package README/PROTOCOL in the pinned Mimir checkout for locked build,
+installation, framing, resource bounds, and public-state projection.
+
+Studio supervises `mimir plugin run studio.frontend` over private pipes. Set
+`UNSLOTH_MIMIR_EXECUTABLE` to the built pinned executable when it is not on PATH.
+`UNSLOTH_MIMIR_PLUGIN_PACKAGE` names the built package; before its first launch the
+bridge validates the product ID and installs that package with the same executable.
+Without that setting, install the package with the executable's `plugin install` command.
+Production inherits normal Mimir configuration/history; Studio never creates an
+agent profile, copies credentials, edits trust records, or supplies a coding
+folder allowlist. Test runs alone override `MIMIR_CODING_AGENT_DIR`.
+
+`core/coding_runtime.py` retains one process, multiplexes bounded framed responses
+and ordered lifecycle views, and awaits shutdown. Browser disconnection does not
+replay commands or release conversation owners. Fatal private-transport failures
+initiate supervised EOF and await process cleanup without restart/replay. Slow SSE readers receive an explicit
+reconstruction error, not a silently truncated suffix. Disconnecting a browser
+closes only its view. Idle retirement/restart/recovery are later tickets.
+
+All `/api/coding` routes use Studio's existing `get_current_subject`; conversation
+IDs, history, catalogs, folder browsing, and SSE have no auth bypass. This slice
+adds no new owner-only policy. Existing model-folder browsing safeguards remain
+untouched. The coding folder browser lists OS-readable directories only; native
+Session Control validates canonical read/search access again at opening. A folder
+is a working directory, **not an upload or a sandbox**.
+
+Explicit selection/reopen/catalog sends the narrow effective trust input through
+Session Control. Trust is non-persisting, controller-scoped, and inherited by
+native children. Native live-trust mismatches and execution leases remain native
+refusals; neither Studio nor the plugin cancels or takes over an owner.
+
+## Presentation audit and isolation
+
+The installed manifest pins `@assistant-ui/react` **0.12.28**, core **0.1.17**.
+The opening shell uses the shipped `useExternalStoreRuntime`,
+`AssistantRuntimeProvider`, and `ComposerPrimitive` APIs; tests exercise that
+installed artifact, not assumed newer documentation. Opening has an explicitly
+disabled composer/Send: this ticket does **not** implement prompt execution.
+
+Ordinary chat's page, runtime store, history database, model loading, and tool
+orchestration are not reused in coding. Shared button/input/dialog/sidebar
+primitives and existing composer CSS are presentation-only. `/coding` branches
+into its isolated visual shell before ordinary-chat execution hooks mount.
+Backend route re-exports are lazy so importing coding/auth does not initialize
+chat/training; the full application still imports the same established routers.
+
+## Replacement inventory
+
+Before the native edits, Session Control catalog/create/open lacked an explicit
+effective-trust opening input. Their SDK WIT, native trait/carrier implementations,
+CLI controller/catalog callers, Rust mocks, packaged external-frontend fixture,
+SDK guide and external-frontend guide are updated together. The prior call forms
+are superseded rather than maintained as a competing fallback. Generated bindings
+remain generated by the SDK's existing WIT mechanism.
+
+Existing CLI launch trust resolution remains distinct from explicit controller
+opening trust: do not replace shared saved policy or TUI trust behavior. Existing
+native child configuration already carries the parent's resolved trust; focused
+tests verify inheritance. No history schema, generic tool result, model-folder
+safeguard, provider inventory, or TUI capability is superseded by this ticket.
+Historical profiles, MCP management and headless inventories belong to their
+respective later capability tickets, not this patch.
+
+## Reproducible actual-browser driver
+
+After building frontend and native/product artifacts, run from Studio root:
+
+```sh
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir-source /path/to/paired/pinned/mimir-checkout \
+  --evidence-dir /path/to/attempt/worker/browser
+```
+
+`--mimir-source` rebuilds the native executable and product package from that
+checkout before running the browser. For separately verified builds, use
+`--mimir /path/to/pinned/mimir --plugin-package /path/to/built/package` instead.
+The report records native/package hashes and both source revisions; a source
+revision alone is not evidence that an uncommitted patch was built.
+
+Use a task-owned Python environment with backend test dependencies and
+`playwright`; the driver uses installed Chrome (override `--chrome`), or
+`--browser firefox` with Playwright's Firefox installed under a task-owned
+`PLAYWRIGHT_BROWSERS_PATH`. Both paths disable hardware acceleration; the report
+records the engine/version actually used. Firefox provides a software-rendered
+alternative when host Chromium launch/screenshot support is unavailable. It binds
+loopback only, creates isolated Studio auth/native history/disposable projects,
+installs the real product package, authenticates using the real password endpoint,
+and exercises the **built `/coding` page → production Studio coding/auth routers
+→ private plugin → native Mimir**. The acceptance composition omits unrelated
+ML/training startup, not any coding or authentication implementation. It makes no
+provider calls and requires no GPU. It is not evidence of a full Studio/ordinary
+chat or model workload. It preserves screenshots, scenario facts, native IDs and
+server logs outside Git; passwords/tokens are never included in the report.
+
+Desktop is 1440×1000; narrow is 390×844. The driver asserts placement, disabled
+Send, invalid/missing/OS-denied paths, canonical symlink identity, changed-project
+identity, deliberate reopen, and unauthenticated refusal on all six coding
+surfaces (browse/catalog/history/create/open/SSE), including valid command inputs
+and known IDs. It also checks focus, dismissal and overflow. It fingerprints the native saved policy at
+`MIMIR_CODING_AGENT_DIR/trust.json`, or `~/.mimir/agent/trust.json` when unset,
+before and after acceptance; the separate isolated ancestor-distrust fixture is
+also checked. Run `python3 -m unittest discover -s studio/tools -p
+test_coding_browser_acceptance.py` to verify that evidence-path contract without
+reading or writing real policy. Generated evidence and logs must never be committed.
+
+## Shared A1–A10 evidence ledger
+
+This is the shared record for follow-on tickets. **Implemented is not accepted.**
+The task-local `worker/ticket-result.json` and browser `report.json` identify actual
+commands/artifacts/results; this tracked matrix intentionally contains no stale
+claim tied to a mutable local HEAD or absent screenshots.
+
+| ID | Current #234 coverage | Remaining capability evidence |
+|---|---|---|
+| A1 | Native opening contracts/SDK consumers; single product plugin and supervised process; authenticated HTTP/SSE; separate coding shell; lifecycle start/state/reset projection | Full ordered transcript/history reconstruction and bounded reads in execution/history tickets |
+| A2 | No execution controls exposed | Real tools, questions, Stop, modes, plans/goals, children and diagnostics (#235 onward) |
+| A3 | No diff implementation or fabricated effects | Typed live/historical reported changes (#238) |
+| A4 | No model picker in opening slice | Model/reasoning interactions (#244) |
+| A5 | No model request submitted | Actual provider/local-model requests and whole-request protection (#246/#255) |
+| A6 | Canonical/native validated opening, effective trust, isolated saved-policy tests, child inheritance, mismatch and lease refusals, route access | Concurrent execution/same-folder warning and retirement/recovery (#247–249) |
+| A7 | Browser disconnect releases view, not owner; no automatic command replay; EOF shutdown awaits native closes | Submission identity, execution recovery, clocks and full interruption scenarios (#236/#248/#249) |
+| A8 | No Settings management surface | Native MCP and headless inventory/settings (#250–252) |
+| A9 | Ordinary-chat store/engine untouched; existing tests included in verification | Real ordinary-chat smoke and cross-feature regression (#254/#255) |
+| A10 | Reproducible rendered opening/failure driver at exact desktop/narrow widths | Full execution UI checks and user's implemented-UI review (#255/#256) |
+
+## Source-sensitive command-admission follow-ups
+
+At the native audit baseline, `runtime/controller/plugin.rs::commands` filters
+terminal-only Human Commands and projects `Any`/`IdleOnly`; `command` delegates to
+`invoke_command`. #243 must exercise unknown/terminal-only/idle-only refusals, not
+turn unknown slash text into prompts or infer admission from a visible button.
+
+`plugin.rs::decide_plan` delegates to the native controller. #239 must verify stale
+plan identity and native busy-state decisions for each implement/fresh-context/
+save-and-stop action; changing mode is not plan acceptance.
+
+`plugin.rs::change_goal` delegates to `SessionController::execute_goal` in
+`runtime/controller/goals.rs`. The inspected source acquires a prompt lease for
+Start/Resume, while Edit/Pause/Clear use the existing running-goal path and capture
+cancellation for Pause/Clear. Thus the historical blanket-busy discrepancy must
+be tested at the exact delivered source in #240; do not bypass guards or claim
+support solely from the enum. #235 must await exact cancellation settlement;
+#237 must address pending questions by native identity; #242 must use native
+image/skill admission. These capabilities are deliberately not wired here.

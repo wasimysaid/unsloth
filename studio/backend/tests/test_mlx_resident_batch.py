@@ -17,6 +17,9 @@ from unittest.mock import MagicMock
 import pytest
 
 
+_STUBBED: list[str] = []
+
+
 def _stub_if_missing(name, attrs):
     if name in sys.modules:
         return
@@ -25,6 +28,7 @@ def _stub_if_missing(name, attrs):
         return
     except Exception:  # noqa: BLE001 - stub unusable imports
         pass
+    _STUBBED.append(name)
     mod = types.ModuleType(name)
     mod.__spec__ = None
     for attr in attrs:
@@ -33,10 +37,22 @@ def _stub_if_missing(name, attrs):
 
 
 _stub_if_missing("unsloth", ("FastLanguageModel", "FastVisionModel", "is_bfloat16_supported"))
+_stub_if_missing("unsloth.chat_templates", ("get_chat_template",))
 
+from core.inference.inference import InferenceBackend  # noqa: E402
 from core.inference import worker  # noqa: E402
 from core.inference.worker import RowRefused  # noqa: E402
 from core.inference.worker import StopLedger  # noqa: E402
+
+# The worker holds its imported references. Do not leave our collection-only
+# stub hiding the real num_proc policy (or other packages) from later tests.
+for _name in reversed(_STUBBED):
+    sys.modules.pop(_name, None)
+
+
+def test_collection_stubs_do_not_outlive_this_module():
+    for name in _STUBBED:
+        assert name not in sys.modules, name
 
 
 class _RespQueue:
@@ -405,8 +421,6 @@ def test_a_batch_that_will_not_open_still_answers_the_reply(monkeypatch):
 
 def test_a_row_override_the_backend_cannot_take_is_dropped_not_raised():
     """The route varies the seed per row, and the fallback decodes on backends without one."""
-    InferenceBackend = pytest.importorskip("core.inference.inference").InferenceBackend
-
     class _NoSeedBackend(_DecliningBackend):
         """Transformers-shaped: wraps() carries the real signature, which declares no seed."""
 

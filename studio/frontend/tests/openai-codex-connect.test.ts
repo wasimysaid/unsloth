@@ -34,7 +34,8 @@ let OpenAICodexConnect: ConnectComponent;
 before(async () => {
   vite = await createServer({
     appType: "custom",
-    server: { middlewareMode: true },
+    optimizeDeps: { noDiscovery: true },
+    server: { middlewareMode: true, hmr: false, watch: null },
   });
   const loaded = await vite.ssrLoadModule(
     "/src/features/chat/openai-codex-connect.tsx",

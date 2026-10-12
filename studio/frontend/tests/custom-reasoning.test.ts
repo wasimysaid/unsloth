@@ -9,7 +9,11 @@ import { installLocalStorageFake } from "./helpers/kit.ts";
 
 installLocalStorageFake();
 Object.assign(window.location, { href: "http://localhost/" });
-const vite = await createServer({ server: { middlewareMode: true } });
+// SSR loading does not need a browser scan, watcher or shared HMR port.
+const vite = await createServer({
+  optimizeDeps: { noDiscovery: true },
+  server: { middlewareMode: true, hmr: false, watch: null },
+});
 after(() => vite.close());
 const caps = await vite.ssrLoadModule(
   "/src/features/chat/provider-capabilities.ts",

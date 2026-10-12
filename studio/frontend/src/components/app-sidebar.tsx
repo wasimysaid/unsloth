@@ -5573,6 +5573,16 @@ export function AppSidebar() {
 
           <SidebarGroupContent>
             <SidebarMenu>
+              <NavItem
+                icon={Folder01Icon}
+                label="Coding"
+                active={false}
+                testId="nav-row-coding"
+                onClick={() => {
+                  void navigate({ to: "/coding" });
+                  closeMobileIfOpen();
+                }}
+              />
               {/* Order and pin state come from Settings -> Appearance ->
                   Sidebar navigation. */}
               {inlineNavIds.map((id) => {

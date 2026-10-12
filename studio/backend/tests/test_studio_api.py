@@ -595,6 +595,9 @@ def test_anthropic_basic(base_url: str, api_key: str):
         body = {
             "model": "default",
             "max_tokens": 100,
+            # This checks visible plain text, not whether a reasoning model can
+            # finish its hidden thinking inside this deliberately short cap.
+            "thinking": {"type": "disabled"},
             "messages": [{"role": "user", "content": "Say just the word hello"}],
         },
         headers = {"Authorization": f"Bearer {api_key}"},
@@ -618,6 +621,7 @@ def test_anthropic_streaming(base_url: str, api_key: str):
         body = {
             "model": "default",
             "max_tokens": 100,
+            "thinking": {"type": "disabled"},
             "messages": [{"role": "user", "content": "Count from 1 to 3"}],
             "stream": True,
         },
@@ -643,10 +647,13 @@ def test_anthropic_sdk(base_url: str, api_key: str):
         print("  SKIP  anthropic SDK not installed")
         return
 
-    client = Anthropic(base_url = f"{base_url}/v1", api_key = api_key)
+    # The SDK appends /v1/messages itself. Studio uses bearer authentication,
+    # matching the direct HTTP checks above, not Anthropic's x-api-key header.
+    client = Anthropic(base_url = base_url, auth_token = api_key)
     message = client.messages.create(
         model = "default",
         max_tokens = 100,
+        thinking = {"type": "disabled"},
         messages = [{"role": "user", "content": "What is 2+2? Answer with just the number."}],
     )
     assert message.role == "assistant"
@@ -779,6 +786,9 @@ def _start_server(model: str, variant: str | None) -> tuple[subprocess.Popen, st
         "unsloth",
         "studio",
         "run",
+        # This suite validates HTTP APIs, not frontend assets. A clean committed
+        # backend checkout need not have an ignored frontend/dist build.
+        "--api-only",
         "--model",
         model,
         "--port",

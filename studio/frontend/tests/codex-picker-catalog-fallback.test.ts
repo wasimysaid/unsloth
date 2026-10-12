@@ -23,7 +23,11 @@ let resolveCodexPickerModels: Resolve;
 const CURATED = ["gpt-5.4", "gpt-5.5"];
 
 before(async () => {
-  vite = await createServer({ appType: "custom", server: { middlewareMode: true } });
+  vite = await createServer({
+    appType: "custom",
+    optimizeDeps: { noDiscovery: true },
+    server: { middlewareMode: true, hmr: false, watch: null },
+  });
   const loaded = await vite.ssrLoadModule(
     "/src/features/chat/chat-providers-dialog.tsx",
   );

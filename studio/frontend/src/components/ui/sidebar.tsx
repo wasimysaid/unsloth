@@ -82,6 +82,7 @@ function useSidebar() {
 
 function SidebarProvider({
   defaultOpen = true,
+  shortcutEnabled = true,
   open: openProp,
   onOpenChange: setOpenProp,
   pinned: pinnedProp,
@@ -93,6 +94,8 @@ function SidebarProvider({
   ...props
 }: React.ComponentProps<"div"> & {
   defaultOpen?: boolean
+  /** Parked workspace shells must not compete with the visible sidebar chord. */
+  shortcutEnabled?: boolean
   open?: boolean
   onOpenChange?: (open: boolean) => void
   pinned?: boolean
@@ -158,7 +161,7 @@ function SidebarProvider({
   }, [isMobile, setOpen, setOpenMobile, hasPinMode, togglePinnedProp])
 
   // Chord comes from the shortcuts store, so Settings -> Shortcuts can rebind or clear it.
-  useShortcut("toggleSidebar", toggleSidebar)
+  useShortcut("toggleSidebar", toggleSidebar, { enabled: shortcutEnabled })
 
   const pinned = pinnedProp ?? false
   const setPinned = setPinnedProp ?? noop

@@ -1000,6 +1000,9 @@ async def lifespan(app: FastAPI):
     if _invalidate_detection is not None:
         _invalidate_detection()
 
+    from core.coding_runtime import close_coding_runtime
+    await close_coding_runtime(app)
+
     await asyncio.to_thread(_release_api_usage_writer, _api_usage_writer_lease)
 
     from core.inference.openai_codex_auth import shutdown_flows
@@ -1780,6 +1783,10 @@ from utils.remote_access_settings import RemoteAccessStopResponseMiddleware  # n
 app.add_middleware(RemoteAccessStopResponseMiddleware)
 
 app.include_router(auth_router, prefix = "/api/auth", tags = ["auth"])
+app.include_router(
+    __import__("routes.coding", fromlist = ["router"]).router,
+    prefix = "/api/coding", tags = ["coding"],
+)
 app.include_router(
     __import__("routes.accounts", fromlist = ["router"]).router,
     prefix = "/api/accounts",

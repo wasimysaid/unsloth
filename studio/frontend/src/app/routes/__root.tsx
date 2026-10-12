@@ -219,9 +219,11 @@ function ChatSettingsHydrationMount() {
 
 function CredentialBootstrapGate({
   active,
+  settingsActive = true,
   children,
 }: {
   active: boolean;
+  settingsActive?: boolean;
   children: ReactNode;
 }) {
   const [ready, setReady] = useState(false);
@@ -268,7 +270,7 @@ function CredentialBootstrapGate({
 
   return (
     <>
-      <SettingsDialogMount active={active && ready} />
+      <SettingsDialogMount active={active && ready && settingsActive} />
       {active && !ready ? <RouteFallback /> : children}
     </>
   );
@@ -277,6 +279,7 @@ function CredentialBootstrapGate({
 const CHAT_ONLY_ALLOWED = new Set([
   "/",
   "/chat",
+  "/coding",
   "/projects",
   "/library",
   "/hub",
@@ -334,15 +337,41 @@ export const Route = createRootRoute({
       throw redirect({ to: "/chat" });
     }
   },
-  component: RootLayout,
+  component: RootRouteLayout,
 });
+
+// A direct coding visit does not mount the general-chat shell or its engine
+// hydration. If Studio was already visited, park its retained workspaces rather
+// than cancelling unrelated in-flight work when switching to the coding route.
+function RootRouteLayout() {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const isCodingRoute = pathname === "/coding";
+  const isAuthRoute = HIDDEN_NAVBAR_ROUTES.includes(pathname);
+  const [studioMounted, setStudioMounted] = useState(!isCodingRoute && !isAuthRoute);
+  if (!isCodingRoute && !isAuthRoute && !studioMounted) setStudioMounted(true);
+  return (
+    <AppProvider>
+      {studioMounted && (
+        <div className={isCodingRoute ? "hidden" : "contents"} inert={isCodingRoute || undefined}>
+          <RootLayout parked={isCodingRoute} />
+        </div>
+      )}
+      {!studioMounted && isAuthRoute && <RootLayout />}
+      {isCodingRoute && (
+        <RouteBoundary readyWhenCommitted={false}>
+          <Outlet />
+        </RouteBoundary>
+      )}
+    </AppProvider>
+  );
+}
 
 const HIDDEN_NAVBAR_ROUTES = ["/login", "/change-password"];
 
 // Fallback when no matched route declares a `staticData.title`.
 const DEFAULT_DOCUMENT_TITLE = "Unsloth";
 
-function RootLayout() {
+function RootLayout({ parked = false }: { parked?: boolean }) {
   const t = useT();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const hideNavbar = HIDDEN_NAVBAR_ROUTES.includes(pathname);
@@ -470,10 +499,11 @@ function RootLayout() {
     settingsDialogOpen && !isAuthFlowRoute ? t("settings.title") : matchedTitle;
 
   useLayoutEffect(() => {
+    if (parked) return;
     document.title = documentTitle
       ? `${documentTitle} - ${DEFAULT_DOCUMENT_TITLE}`
       : DEFAULT_DOCUMENT_TITLE;
-  }, [documentTitle]);
+  }, [documentTitle, parked]);
 
   // Settings predating the server override map live only here, so an API load would use
   // app defaults. Backfill once, after auth; pins are restored from the account's server copy.
@@ -496,13 +526,13 @@ function RootLayout() {
   useShortcut(
     "openSettings",
     () => useSettingsDialogStore.getState().openDialog(),
-    { enabled: !isAuthFlowRoute },
+    { enabled: !parked && !isAuthFlowRoute },
   );
   useShortcut(
     "openKeyboardShortcuts",
     () =>
       useSettingsDialogStore.getState().openDialog("keyboard-shortcuts"),
-    { enabled: !isAuthFlowRoute },
+    { enabled: !parked && !isAuthFlowRoute },
   );
   /** Every "new chat" chord lands here. `incognito` skips history,
    *  `standalone` leaves the open project. */
@@ -531,7 +561,7 @@ function RootLayout() {
 
   // Gated like the workspace chords below: /login has no shell, and /chat
   // bounces straight back off requireAuth.
-  const routeShortcutEnabled = !isAuthFlowRoute && !settingsDialogOpen;
+  const routeShortcutEnabled = !parked && !isAuthFlowRoute && !settingsDialogOpen;
   useShortcut("newChat", () => startNewChat(), {
     enabled: routeShortcutEnabled,
   });
@@ -560,7 +590,7 @@ function RootLayout() {
   // Pages this account cannot open stay disabled, as in Go > Settings.
   const isOwner = useIsAccountOwner();
   const helpAction = (action: HelpAction) =>
-    isAuthFlowRoute || !helpActionAvailable(action, isOwner) ? null : () => runHelpAction(action);
+    parked || isAuthFlowRoute || !helpActionAvailable(action, isOwner) ? null : () => runHelpAction(action);
   // Workspaces for the Go menu, gated like their chords below.
   const goTo = (to: string) => () => void navigate({ to });
   const goAction = (enabled: boolean, go: () => void) => (enabled ? go : null);
@@ -568,7 +598,7 @@ function RootLayout() {
   const settingsActions = Object.fromEntries(
     SETTINGS_TABS.map((tab) => [
       `settings-${tab}`,
-      !isAuthFlowRoute && settingsTabVisible(tab, isOwner)
+      !parked && !isAuthFlowRoute && settingsTabVisible(tab, isOwner)
         ? () => useSettingsDialogStore.getState().openDialog(tab)
         : null,
     ]),
@@ -682,18 +712,21 @@ function RootLayout() {
       <ReloadSnapshotPrivacy />
       {!isAuthFlowRoute && <ChatSettingsHydrationMount />}
       {!isAuthFlowRoute && <LowDiskNoticeMount />}
-      {/* Opens itself when API traffic arrives; hides on the full monitor page. */}
-      {!isAuthFlowRoute && <ApiMonitorOverlay />}
-      <HfTokenWarningDialog />
-      <RemoteCodeConsentDialog />
-      <DownloadApprovalDialog />
-      <TransformersUpgradeDialog />
-      <ManagedEngineOfferDialog />
-      <LlmCompressorConsentDialog />
-      {/* At the root, not under /chat: a swap can start from the Hub too. */}
-      <StopRunningChatsDialog />
-      <ImageViewer />
-      {!hideNavbar && <CommandPalette />}
+      {/* Parked Studio must not leak body-portaled controls over Coding. */}
+      {!parked && <>
+        {/* Opens itself when API traffic arrives; hides on the full monitor page. */}
+        {!isAuthFlowRoute && <ApiMonitorOverlay />}
+        <HfTokenWarningDialog />
+        <RemoteCodeConsentDialog />
+        <DownloadApprovalDialog />
+        <TransformersUpgradeDialog />
+        <ManagedEngineOfferDialog />
+        <LlmCompressorConsentDialog />
+        {/* At the root, not under /chat: a swap can start from the Hub too. */}
+        <StopRunningChatsDialog />
+        <ImageViewer />
+        {!hideNavbar && <CommandPalette />}
+      </>}
       {hideNavbar ? (
         <main className="flex-1 pt-[var(--studio-hidden-route-top-inset,0px)] [--studio-titlebar-height:var(--studio-hidden-route-top-inset,0px)]">
           <RouteBoundary readyWhenCommitted={!routeOwnsReloadReadiness}>
@@ -702,13 +735,14 @@ function RootLayout() {
         </main>
       ) : (
         <SidebarProvider
+          shortcutEnabled={!parked}
           pinned={pinned}
           setPinned={setPinned}
           togglePinned={togglePinned}
           className="!min-h-0 h-[calc(100dvh-var(--studio-titlebar-height,0px))] overflow-hidden"
         >
-          <AppSidebar />
-          <SidebarEdgeTrigger />
+          {!parked && <AppSidebar />}
+          {!parked && <SidebarEdgeTrigger />}
           <SidebarInset
             className={
               isChatLike
@@ -806,7 +840,7 @@ function RootLayout() {
                   "popLayout" allows the new route to mount immediately while the
                   old one animates out, avoiding blocking on expensive exit renders.
                   See issue #5850. */}
-              {!isChatRoute && !isImagesRoute && !isVideoRoute && !isAudioRoute && (
+              {!parked && !isChatRoute && !isImagesRoute && !isVideoRoute && !isAudioRoute && (
                 <AnimatePresence initial={false} mode="popLayout">
                   <motion.div
                     key={pathname}
@@ -832,13 +866,11 @@ function RootLayout() {
   );
 
   return (
-    <AppProvider>
-      <CredentialBootstrapGate active={!isAuthFlowRoute}>
-        <SharedRunConfigLinkHandler
-          chatSearch={shouldMountChat ? chatSearch : null}
-        />
-        {content}
-      </CredentialBootstrapGate>
-    </AppProvider>
+    <CredentialBootstrapGate active={!isAuthFlowRoute} settingsActive={!parked}>
+      {!parked && <SharedRunConfigLinkHandler
+        chatSearch={shouldMountChat ? chatSearch : null}
+      />}
+      {content}
+    </CredentialBootstrapGate>
   );
 }

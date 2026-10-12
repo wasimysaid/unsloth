@@ -74,6 +74,9 @@ def test_object_route_account_matrix(case, actor, request):
     accounts = request.getfixturevalue("accounts")
     auth_db = request.getfixturevalue("isolated_auth")
     factory = FACTORIES[case.key]
+    coding_boundary = (
+        request.getfixturevalue("coding_native_boundary") if case.module == "routes.coding" else None
+    )
     initialize_workspaces(accounts)
     params = seed_resource(factory, accounts["alice"], actor)
     before = snapshot_resource(accounts["alice"])
@@ -112,12 +115,24 @@ def test_object_route_account_matrix(case, actor, request):
             assert factory.absent not in response.text, response.text
         if factory.name == "api-key":
             assert len(auth_db.list_api_keys("alice")) == 1
+    if coding_boundary is not None:
+        # Standard Studio authentication must bind the real subject before the
+        # shared-native boundary, and rejected identities must never reach it.
+        allowed = actor in ("owner", "right", "wrong")
+        assert coding_boundary.subjects == ([username] if allowed else [])
+        operation = "open" if case.method == "POST" else "view"
+        assert coding_boundary.operations == ([operation] if allowed else [])
+        assert coding_boundary.released == (
+            ["matrix-view-1"] if allowed and operation == "view" else []
+        )
 
 
 @pytest.mark.parametrize(
     "case", [case for case in OBJECT_ROUTES if case.key in FACTORIES], ids = lambda case: case.key
 )
-def test_owner_can_still_use_own_resource(case, accounts):
+def test_owner_can_still_use_own_resource(case, accounts, request):
+    if case.module == "routes.coding":
+        request.getfixturevalue("coding_native_boundary")
     initialize_workspaces(accounts)
     factory = FACTORIES[case.key]
     params = seed_resource(factory, accounts["unsloth"])

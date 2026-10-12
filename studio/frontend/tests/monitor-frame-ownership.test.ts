@@ -197,7 +197,7 @@ test("settings and monitor are eagerly imported and mounted without outer loadin
 });
 
 test("eager settings surfaces remain gated on auth and credential readiness", () => {
-  assert.match(ROOT_SOURCE, /<CredentialBootstrapGate active=\{!isAuthFlowRoute\}>/);
-  assert.match(ROOT_SOURCE, /<SettingsDialogMount active=\{active && ready\} \/>/);
+  assert.match(ROOT_SOURCE, /<CredentialBootstrapGate active=\{!isAuthFlowRoute\} settingsActive=\{!parked\}>/);
+  assert.match(ROOT_SOURCE, /<SettingsDialogMount active=\{active && ready && settingsActive\} \/>/);
   assert.match(SETTINGS_MOUNT_SOURCE, /if \(!active\) return null;/);
 });

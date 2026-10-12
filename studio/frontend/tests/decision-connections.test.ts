@@ -8,7 +8,10 @@ import { installLocalStorageFake } from "./helpers/kit.ts";
 
 installLocalStorageFake();
 Object.assign(window.location, { href: "http://localhost/" });
-const vite = await createServer({ server: { middlewareMode: true } });
+const vite = await createServer({
+  optimizeDeps: { noDiscovery: true },
+  server: { middlewareMode: true, hmr: false, watch: null },
+});
 after(() => vite.close());
 
 test("System One connections stay decision-only after a reload", async () => {

@@ -96,7 +96,7 @@ test("Go > Settings lists every Settings page, in the dialog's order", () => {
   assert.deepEqual([...settingsActions].sort(), known.map((tab) => `settings-${tab}`).sort());
   assert.match(CHORDS, /export type SettingsMenuAction = `settings-\$\{SettingsTab\}`;/);
   // Only the pages this account can open are live, as in the dialog's own tab rail.
-  assert.match(ROOT, /`settings-\$\{tab\}`,\s*!isAuthFlowRoute && settingsTabVisible\(tab, isOwner\)/);
+  assert.match(ROOT, /`settings-\$\{tab\}`,\s*!parked && !isAuthFlowRoute && settingsTabVisible\(tab, isOwner\)/);
 });
 
 test("every action is handled in the app shell", () => {

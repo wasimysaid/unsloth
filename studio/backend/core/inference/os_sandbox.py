@@ -413,6 +413,21 @@ def _looks_like_our_scratch_dir(path: str) -> bool:
 def _ipc_endpoint_is_dead(path: str) -> bool:
     """Whether nothing is listening on this socket; False for anything the probe cannot settle."""
     verdict = _unix_socket_is_refused(path)
+    if verdict is None and sys.platform == "linux":
+        # A redirected TMPDIR can be longer than sun_path too. Hold the parent
+        # open and probe through its short proc-fd spelling, without changing cwd
+        # or requiring a writable alias outside the caller's temporary root.
+        directory_fd = None
+        try:
+            directory_fd = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY)
+            verdict = _unix_socket_is_refused(
+                f"/proc/self/fd/{directory_fd}/{os.path.basename(path)}"
+            )
+        except OSError:
+            verdict = None
+        finally:
+            if directory_fd is not None:
+                os.close(directory_fd)
     if verdict is None:
         # sun_path is 108 bytes: reach long paths through a temporary symlink alias.
         import tempfile
@@ -722,7 +737,7 @@ def _importable_entries(
 ) -> tuple[str, ...]:
     """Grant package entries, never the checkout's .env, .git or unrelated fixtures."""
     import_roots = [
-        entry
+        os.path.abspath(entry)
         for entry in sys.path
         if entry
         and (
@@ -747,7 +762,10 @@ def _importable_entries(
                 continue
             entry = os.path.join(import_root, name)
             declared_here = name in declared or name.removesuffix(".py") in declared
-            if import_root in guessed and not declared_here:
+            # sys.path also holds test roots and an in-checkout venv. Being
+            # importable there does not make a file part of this distribution:
+            # granting every entry exposed fixtures and inflated Seatbelt profiles.
+            if not declared_here:
                 continue
             # Both backends grant resolved targets, so a declared symlink must stay in the checkout.
             if not _within_root(entry, project_root):

@@ -313,13 +313,45 @@ def test_system_directories_are_bound_whole_and_never_file_by_file(prepared):
         *sandbox_linux._NETWORK_FILES,
     }
     identity_dir = prepared.cleanup_paths[0]
+    editable = set(sandbox_linux.editable_source_roots())
     for flag in ("--bind", "--ro-bind", "--ro-bind-try"):
-        for source, _ in _pairs(prepared.argv, flag):
+        for source, destination in _pairs(prepared.argv, flag):
             if os.path.isdir(source):
                 continue
             if source in named or os.path.dirname(source) == identity_dir:
                 continue
+            # A source checkout can expose individual importable Python modules
+            # (e.g. cli.py). Those are not SYSTEM directories, and their documented
+            # runtime grant must remain read-only, at the same path, outside /usr.
+            if source in editable:
+                assert flag == "--ro-bind", source
+                assert destination == source, source
+                assert not any(
+                    sandbox_linux._within(source, root) for root in sandbox_linux._SYSTEM_ROOTS
+                ), source
+                continue
             assert os.path.basename(source) == "pyvenv.cfg", source
+
+
+@pytest.mark.parametrize("flag, relocated", [("--bind", False), ("--ro-bind", True)])
+def test_editable_module_grants_cannot_be_writable_or_relocated(
+    prepared, tmp_path, monkeypatch, flag, relocated
+):
+    import re
+    from types import SimpleNamespace
+
+    entry_path = tmp_path / "entry.py"
+    entry_path.write_text("value = 1\n", encoding = "utf-8")
+    entry = str(entry_path)
+    original = sandbox_linux.editable_source_roots()
+    monkeypatch.setattr(sandbox_linux, "editable_source_roots", lambda: (*original, entry))
+    destination = str(tmp_path / "elsewhere.py") if relocated else entry
+    altered = SimpleNamespace(
+        argv = (*prepared.argv, flag, entry, destination),
+        cleanup_paths = prepared.cleanup_paths,
+    )
+    with pytest.raises(AssertionError, match = re.escape(entry)):
+        test_system_directories_are_bound_whole_and_never_file_by_file(altered)
 
 
 def test_the_interpreter_contributes_only_a_handful_of_read_only_binds(prepared):
@@ -1579,6 +1611,12 @@ def _fake_editable(
         encoding = "utf-8",
     )
     monkeypatch.syspath_prepend(str(site_dir))
+    # Read the real synthetic dist-info, but not the developer's unrelated
+    # editable installs. Prepending sys.path alone still enumerates all of them.
+    from importlib import metadata
+
+    distributions = metadata.distributions
+    monkeypatch.setattr(metadata, "distributions", lambda: distributions(path = [str(site_dir)]))
     os_sandbox.editable_source_roots.cache_clear()
     return site_dir
 

@@ -41,3 +41,13 @@ def accounts(isolated_auth):
 def account_client(isolated_auth):
     with TestClient(make_app()) as client:
         yield client
+
+
+@pytest.fixture
+def coding_native_boundary(monkeypatch):
+    from routes import coding
+    from .factories_coding import NativeCodingBoundary
+
+    boundary = NativeCodingBoundary()
+    monkeypatch.setattr(coding, "runtime_for", lambda app: boundary)
+    return boundary
