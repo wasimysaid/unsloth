@@ -74,6 +74,7 @@ Private Mimir worktree: {workspace['paths']['mimir']}
 Original host source references have been remapped to these task-owned paths. Never modify the user's original checkouts.
 Mimir owns application execution/history; Studio is its frontend/bridge. Work end-to-end through the required SDK contracts, native implementations, frontend plugin, Studio backend/UI, and tests as the ticket needs.
 Do not commit, push, merge, create/close/comment on GitHub issues/PRs, or change runner policy/control files. The coordinator owns publication. Do not change any git branch, shared auth/config/trust records, or another attempt. Do not weaken/skip failed tests. No new spending or public exposure of private code/logs. Do not use GPU devices without an explicit resource grant in this prompt.
+Delegation is optional. For every delegated task, including implementation, explicitly use model="chatgpt/gpt-6.1-sol" and reasoning_level="high". This overrides older delegation model/effort preferences for this attempt. Do not inherit the parent Astra model or use xhigh for children. Pass this instruction to any delegate that may delegate further.
 Required controller checks: {json.dumps(config.check_commands(number))}
 Attempt input fingerprint: {row['input_sha256']}
 Prior attempt evidence (read-only, do not alter): {json.dumps(row.get('previous_workspace'))}
@@ -125,7 +126,7 @@ def reconcile_candidates(config, store, snapshot):
                 result = supervisor.inspect(directory)
             if result['status'] == 'completed':
                 try:
-                    workspaces.assert_native_selection(config, directory, 'xhigh')
+                    workspaces.assert_native_selection(config, directory, config.campaign.get('reasoning_effort', 'xhigh'))
                     store.update(number, 'candidate', native_result=result)
                 except RunnerError as error:
                     store.update(number, 'needs-human', reason=str(error), native_result=result)
@@ -179,13 +180,13 @@ def run(config):
             if not wave:
                 recovered = [n for n, r in rows.items() if r['state'] in ('candidate', 'verifying', 'pr_open', 'merging')]
                 if recovered:
-                    wave = store.begin_wave(sorted(recovered)[:config.campaign['max_workers']])
+                    wave = store.begin_wave(sorted(recovered)[:config.campaign.get('max_workers')])
             if not wave:
                 projection = plan(snapshot, config.approved, completed=store.completed(), owned=set(rows),
                                   human={n for n, p in config.tickets.items() if p.get('human')})
                 ready = [x for x in projection['ready'] if x['number'] not in rows or rows[x['number']]['state'] == 'claimed']
                 ready = [x for x in ready if resource_ready(config, x['number'])]
-                ready = ready[:config.campaign['max_workers']]
+                ready = ready[:config.campaign.get('max_workers')]
                 if not ready:
                     done = len(store.completed()) == len(config.approved)
                     return {**store.status(), 'frontier': [{'number': x['number'], 'title': x['title']} for x in projection['ready']],

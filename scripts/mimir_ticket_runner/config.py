@@ -64,13 +64,17 @@ class Config:
             raise RunnerError("Campaign id must be a safe path component")
         if not self.root.name == c["id"]:
             raise RunnerError("Storage basename must equal the stable campaign id")
-        for key in ("max_workers", "max_attempts", "worker_timeout", "review_timeout", "budget_seconds"):
+        for key in ("max_attempts", "worker_timeout", "review_timeout", "budget_seconds"):
             if type(c.get(key)) is not int or c[key] <= 0:
                 raise RunnerError(f"Positive {key} required")
-        if c["max_workers"] > 4:
-            raise RunnerError("This shared-host runner caps concurrency at four")
-        if c.get("provider") != "chatgpt" or c.get("model") != "gpt-6.1-sol":
-            raise RunnerError("This campaign requires configured ChatGPT GPT-6.1 Sol; no silent fallback")
+        if "max_workers" in c and (type(c["max_workers"]) is not int or c["max_workers"] <= 0):
+            raise RunnerError("max_workers must be positive when supplied; omit it for the full frontier")
+        models = ("gpt-6-astra", "gpt-6.1-sol")
+        if (c.get("provider") != "chatgpt" or c.get("model") not in models
+                or c.get("review_model", c.get("model")) not in models):
+            raise RunnerError("Configured ChatGPT Astra/Sol models required; no silent fallback")
+        if c.get("reasoning_effort", "xhigh") not in ("low", "medium", "high", "xhigh"):
+            raise RunnerError("Unsupported reasoning_effort")
         if set(self.repositories) != {"studio", "mimir"}:
             raise RunnerError("Paired studio/mimir repository declarations required")
         seen = set()

@@ -35,7 +35,9 @@ def doctor(config):
         if not shutil.which(executable):
             raise RunnerError(f"Missing {executable}")
     return {"read_only": True, "mimir_version": version, "repositories": reports,
-            "model": "chatgpt/gpt-6.1-sol", "model_authentication": "not exercised by doctor",
+            "model": config.campaign['provider'] + '/' + config.campaign['model'],
+            "reasoning_effort": config.campaign.get('reasoning_effort', 'xhigh'),
+            "model_authentication": "not exercised by doctor",
             "policy_sha256": config.fingerprint, "storage": str(config.root)}
 
 
