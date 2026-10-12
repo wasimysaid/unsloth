@@ -54,6 +54,7 @@ def main(argv=None):
     p = sub.add_parser("retry")
     p.add_argument("issue", type=int)
     p.add_argument("--apply", action="store_true")
+    p.add_argument("--verify", action="store_true", help="Retry checks/integration without another implementation session")
     p = sub.add_parser("approve")
     p.add_argument("issue", type=int)
     p.add_argument("--evidence-url", required=True)

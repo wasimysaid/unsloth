@@ -289,11 +289,13 @@ def dispatch(config, args):
                 jobs.update(p.parent for p in Path(row['workspace']['directory']).rglob('job.json'))
             if any(supervisor.inspect(p)['status'] in ('running', 'unknown', 'absent') for p in jobs):
                 raise RunnerError('Previous native/check/review work is not conclusively settled')
-            if row['state'] == 'merging':
+            if row['state'] == 'merging' or getattr(args, 'verify', False):
+                if not row.get('workspace') or (not row.get('integration') and row.get('native_result', {}).get('status') != 'completed'):
+                    raise RunnerError('Verification retry requires a settled native candidate')
                 phase_attempt = row.get('phase_attempt', 0) + 1
                 if phase_attempt >= config.campaign['max_attempts']:
                     raise RunnerError('Verification retry budget exhausted')
-                store.update(args.issue, 'merging', phase_attempt=phase_attempt, reason=None)
+                store.update(args.issue, 'merging' if row.get('integration') else 'verifying', phase_attempt=phase_attempt, reason=None)
                 return store.status()
             if not row.get('attempt'):
                 # A selected ticket can become blocked before its first claim.

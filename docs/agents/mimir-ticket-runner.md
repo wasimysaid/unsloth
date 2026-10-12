@@ -88,7 +88,7 @@ For a GPU-gated ticket, create a task-owned `gpu-grant.json` in the campaign sto
 
 Human completion requires an operator-authored comment on the exact human ticket containing `HUMAN-REVIEW approved studio=<current full SHA> mimir=<current full SHA>` plus the actual review evidence. Then use `approve <issue> --evidence-url <comment URL> --apply`. The runner validates the author, ticket, and exact current revision pair. This never lets an agent approve itself.
 
-A settled unsuccessful attempt can be retried with `retry <issue> --apply`, then `resume --apply`, within the two-attempt budget. For an interrupted integration, retry creates a new verification/review attempt while preserving merged revisions and prior evidence; it never replays completed merges. Unknown process settlement and scope changes still require reconciliation. A stopped check/review is not a passed check.
+A settled unsuccessful attempt can be retried with `retry <issue> --apply`, then `resume --apply`, within the two-attempt budget. Use `retry <issue> --verify --apply` after fixing a local setup/check problem to reuse the existing candidate instead of launching another implementation session. For an interrupted integration, retry creates a new verification/review attempt while preserving merged revisions and prior evidence; it never replays completed merges. Unknown process settlement and scope changes still require reconciliation. A stopped check/review is not a passed check.
 
 ## Primary-source research
 

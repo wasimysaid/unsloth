@@ -21,6 +21,12 @@ def repository(config, name):
         git(root, 'remote', 'set-url', 'origin', url)
     if git(root, 'remote', 'get-url', 'origin') != url:
         raise RunnerError('Owned repository origin changed')
+    # A clone does not inherit repository-local author settings. Use the user's
+    # established Studio identity only in these owned repositories, never globally.
+    identity = git(config.repositories['studio']['source'], 'var', 'GIT_AUTHOR_IDENT')
+    name, email = identity.rsplit(' <', 1)
+    git(root, 'config', 'user.name', name)
+    git(root, 'config', 'user.email', email.split('>', 1)[0])
     return root
 
 
