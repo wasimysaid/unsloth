@@ -174,7 +174,8 @@ Your entire final answer MUST be a single JSON object without Markdown: {{"verdi
 '''
     workspaces.native_job(config, workspace, prompt, kind='review', suffix='-' + identity)
     native = wait(config, directory)
-    workspaces.assert_native_selection(config, directory, 'high')
+    workspaces.assert_native_selection(config, directory, 'high',
+                                       model=config.campaign.get('review_model', config.campaign['model']))
     records = [json.loads(x) for x in (directory / 'stdout.jsonl').read_text().splitlines() if x.strip()]
     terminal = next(x for x in records if x.get('event') == 'run_finished')
     text = terminal.get('output_text', '').strip()

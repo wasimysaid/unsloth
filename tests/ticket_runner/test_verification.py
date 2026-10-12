@@ -33,7 +33,7 @@ class VerificationTests(unittest.TestCase):
             self.workspace['bases'][name] = git(path, 'rev-parse', 'HEAD')
         self.required = {'repo': 'studio', 'argv': ['python3', '-m', 'unittest'], 'timeout': 60}
         self.config = SimpleNamespace(root=self.root / 'campaign', fingerprint='policy-a',
-                                      tickets={234: {}}, campaign={'model': 'gpt-6.1-sol'},
+                                      tickets={234: {}}, campaign={'model': 'gpt-6-astra', 'review_model': 'gpt-6.1-sol'},
                                       check_commands=lambda number: [deepcopy(self.required)])
         self.row = {'workspace': self.workspace, 'job': str(self.root / 'worker'),
                     'scope': {'number': 234, 'body': '- [ ] First criterion\n- [x] Second criterion'},
@@ -77,7 +77,7 @@ class VerificationTests(unittest.TestCase):
             response = verdict if verdict is not None else {
                 'verdict': 'pass', 'pair': verified['pair'], 'findings': [], 'acceptance_verified': True}
             text = raw if raw is not None else json.dumps(response)
-            records = [{'event': 'model_request_start', 'model': config.campaign['model'],
+            records = [{'event': 'model_request_start', 'model': config.campaign['review_model'],
                         'reasoning_effort': 'high'}, {'event': 'run_finished', 'output_text': text}]
             (directory / 'stdout.jsonl').write_text(''.join(json.dumps(record) + '\n' for record in records))
             if mutate:

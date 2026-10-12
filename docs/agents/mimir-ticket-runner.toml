@@ -7,8 +7,11 @@ parent = 233
 storage_root = "/mnt/disks/unslothai/mugi/mimir-ticket-runner/studio-233"
 mimir = "/home/mugi/.mimir/bin/mimir"
 provider = "chatgpt"
-model = "gpt-6.1-sol"
-max_workers = 2
+model = "gpt-6-astra"
+reasoning_effort = "medium"
+review_model = "gpt-6.1-sol"
+# No max_workers: run the entire eligible frontier in each fixed wave.
+# Set a positive max_workers only if an explicit operator cap is wanted.
 max_attempts = 2
 worker_timeout = 3600
 review_timeout = 1800

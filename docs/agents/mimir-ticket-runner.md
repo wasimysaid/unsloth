@@ -22,12 +22,12 @@ The default campaign targets the 23 children of [Build a polished Mimir coding e
 
 ## Determinism and safety
 
-- Fixed waves, sorted by issue number, at most two workers by default. A wave is persisted before dispatch. Integration is serialized in the same order.
+- Fixed waves, sorted by issue number, containing the entire eligible frontier by default. There is no built-in worker ceiling; an optional positive `campaign.max_workers` sets an operator-chosen cap. Resource and human gates still apply. A wave is persisted before dispatch. Integration is serialized in the same order.
 - A dependency is satisfied by a closed-completed issue **and** a verified integration receipt, not a closed/cancelled issue, a model's completion promise, a successful process exit, or an open PR.
 - All pages of native sub-issues and native blockers are read. Unknown/error/cyclic dependencies fail closed. Unapproved newly added children are reported, never silently added to the campaign.
 - Each attempt has paired isolated worktrees; existing checkout content and main branches are not modified. Worktrees are not a security sandbox. This runner assumes trusted workers operating under the user's native OS/tool policy.
 - SQLite and a single-host campaign lock own scheduling. Assignment is the visible claim, not a distributed lease. Running a second coordinator on another machine is unsupported.
-- Policy and the runner-side executable are frozen for a campaign. Shared provider credentials are not copied. Native project overrides request GPT-6.1 Sol with xhigh implementation effort and high review effort; missing models never trigger fallback.
+- Policy and the runner-side executable are frozen for a campaign. Shared provider credentials are not copied. Ticket sessions use ChatGPT GPT-6 Astra with medium reasoning (`model` / `reasoning_effort`); independent reviews use GPT-6.1 Sol with high reasoning (`review_model`). Worker prompts explicitly request GPT-6.1 Sol with high reasoning for all delegation, including implementation. Missing models never trigger fallback. Older campaign files without the new model fields retain their recorded defaults.
 - Only the coordinator may commit/push, create/merge PRs, and close tickets. Worker environments exclude inherited GitHub token variables and use an empty GitHub CLI configuration directory. This reduces accidental publication, not filesystem sandboxing.
 - JSONL must include a valid `mimir.run.v2` completion and the supervised process must settle successfully. Interaction-required, timeouts, malformed output, and cleanup failures cannot pass.
 - Verification is performed by the coordinator, followed by an independent Plan-mode review bound to exact candidate revisions. Existing failed tests cannot be weakened to obtain a pass. Missing required CI contexts block merging.

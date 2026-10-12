@@ -110,23 +110,23 @@ def freeze_binary(config):
     return target
 
 
-def configure_model(config, workspace, effort):
+def configure_model(config, workspace, effort, model=None):
     path = Path(workspace['paths']['studio']) / '.mimir/settings.json'
     # Only task-owned worktrees are touched. Never overwrite an existing tracked
     # project setting; preserve every unrelated key in a valid document.
     settings = read_json(path, {})
     if not isinstance(settings, dict):
         raise RunnerError('Project model settings must be a JSON object')
-    settings.update(defaultProvider=config.campaign['provider'], defaultModel=config.campaign['model'])
+    settings.update(defaultProvider=config.campaign['provider'], defaultModel=model or config.campaign['model'])
     settings['model'] = {**settings.get('model', {}), 'thinkingEffort': effort}
     atomic_json(path, settings)
     # These runtime-only settings are never staged; commit checks exclude them.
 
 
-def assert_native_selection(config, directory, effort):
+def assert_native_selection(config, directory, effort, model=None):
     records = [json.loads(line) for line in (Path(directory) / 'stdout.jsonl').read_text().splitlines() if line.strip()]
     requests = [x for x in records if x.get('event') == 'model_request_start']
-    model = config.campaign['model']
+    model = model or config.campaign['model']
     expected = {model, config.campaign.get('provider', 'chatgpt') + '/' + model}
     if not requests or any(x.get('model') not in expected or x.get('reasoning_effort') != effort for x in requests):
         raise RunnerError('Native run did not use the exact required model and effort; no fallback is accepted')
@@ -148,7 +148,9 @@ def native_job(config, workspace, prompt, kind='worker', suffix=''):
         prompt_path.write_text(prompt)
     elif prompt_path.read_text() != prompt:
         raise RunnerError('An existing job cannot be retargeted to a different prompt')
-    configure_model(config, workspace, 'xhigh' if kind == 'worker' else 'high')
+    effort = config.campaign.get('reasoning_effort', 'xhigh') if kind == 'worker' else 'high'
+    model = config.campaign['model'] if kind == 'worker' else config.campaign.get('review_model', config.campaign['model'])
+    configure_model(config, workspace, effort, model=model)
     binary = freeze_binary(config)
     timeout = config.campaign['worker_timeout' if kind == 'worker' else 'review_timeout']
     cache = config.root / 'cache'
