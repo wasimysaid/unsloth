@@ -450,7 +450,10 @@ async def conversation_events(conversation_id: str, request: Request):
             if isinstance(item, CodingRuntimeError):
                 yield "event: disconnected\ndata: " + json.dumps({"message": item.message}) + "\n\n"
                 return
-            yield "event: view\ndata: " + json.dumps(item, separators = (",", ":")) + "\n\n"
+            # Scope repeated native positions to one runtime without rewriting
+            # subscription, position or event, or mutating the native queue item.
+            envelope = {**item, "observation_epoch": runtime.observation_epoch}
+            yield "event: view\ndata: " + json.dumps(envelope, separators = (",", ":")) + "\n\n"
             if item.get("event", {}).get("type") == "closed":
                 return
 

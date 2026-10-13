@@ -28,6 +28,9 @@ completion and scope assertions require actual native HTTP evidence.
 --workload file-changes verifies real write/edit/edit profiles and replay, followed
 by separately labelled synthetic rendered history edge cases. file-changes-live
 requests the same operations from the existing host provider (180-second deadline).
+--workload reading verifies paced real native streaming and reader geometry/focus
+at desktop/narrow sizes, then explicitly SYNTHETIC bounded long-history pages,
+repeated/large diffs and tool outputs with backward/forward access and reopen.
 """
 from __future__ import annotations
 
@@ -61,10 +64,11 @@ from coding_retirement_scenarios import run_retirement_scenarios
 from coding_concurrency_scenarios import run_concurrency_scenarios
 from coding_child_scenarios import CHILD_EVENT_CAPTURE, run_child_scenarios
 from coding_file_change_scenarios import LIVE_PROFILE_OBSERVER, run_file_change_scenarios
+from coding_reading_scenarios import READING_VIEW_FAULT, run_reading_scenarios
 
 
-WORKLOADS = ("opening", "deterministic", "picker", "catalog", "recovery", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live")
-FIXTURE_WORKLOADS = ("deterministic", "picker", "catalog", "recovery", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "file-changes")
+WORKLOADS = ("opening", "deterministic", "picker", "catalog", "recovery", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live", "reading")
+FIXTURE_WORKLOADS = ("deterministic", "picker", "catalog", "recovery", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "file-changes", "reading")
 
 
 def shared_trust_path() -> Path:
@@ -179,10 +183,22 @@ def main() -> None:
         page.screenshot(path = str(path), full_page = True, animations = "disabled")
         report["artifacts"].append(str(path))
     # No shared configuration or trust records are modified by installation.
-    with (evidence / "plugin-install.log").open("w") as output:
-        for package in [args.plugin_package.resolve(), *extension_packages]:
-            subprocess.run([str(args.mimir.resolve()), "plugin", "install", str(package)],
-                           env = env, stdout = output, stderr = subprocess.STDOUT, check = True, timeout = 240)
+    try:
+        with (evidence / "plugin-install.log").open("w") as output:
+            for package in [args.plugin_package.resolve(), *extension_packages]:
+                subprocess.run([str(args.mimir.resolve()), "plugin", "install", str(package)],
+                               env = env, stdout = output, stderr = subprocess.STDOUT, check = True, timeout = 240)
+    except BaseException as exc:
+        # Setup is not browser/native-workload success. Preserve source/run/hash
+        # evidence even when an incompatible or stale runtime refuses installation.
+        denied.chmod(0o700)
+        if provider:
+            provider.close()
+        report.update(status="failed", setup_stage="product-plugin-install", error=str(exc),
+                      cleanup={"hosted_runtime_started": False,
+                               "provider_thread_settled": not provider.thread.is_alive() if provider else None})
+        (evidence / "report.json").write_text(json.dumps(report, indent=2) + "\n")
+        raise
     if args.workload == "commands":
         with (evidence / "commands-install.log").open("w") as output:
             subprocess.run([str(args.mimir.resolve()), "plugin", "install", str(args.commands_package.resolve())],
@@ -264,6 +280,8 @@ def main() -> None:
                 context.add_init_script(CHILD_EVENT_CAPTURE)
             if args.workload in ("file-changes", "file-changes-live"):
                 context.add_init_script(LIVE_PROFILE_OBSERVER)
+            if args.workload == "reading":
+                context.add_init_script(READING_VIEW_FAULT)
             page = context.new_page()
             page.on("pageerror", lambda error: report.setdefault("page_errors", []).append(str(error)))
             ordinary_status_requests = []
@@ -439,6 +457,9 @@ def main() -> None:
                     elif args.workload in ("file-changes", "file-changes-live"):
                         run_file_change_scenarios(page, context, base, provider, first, second_id,
                                                   report, scenario, snapshot, live = live)
+                    elif args.workload == "reading":
+                        run_reading_scenarios(page, context, base, provider, first, second_id,
+                                             report, scenario, snapshot)
                     else:
                         run_scenarios(page, context, base, provider, first, second_id,
                                       report, scenario, snapshot, live = live)

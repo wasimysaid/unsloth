@@ -60,7 +60,11 @@ export interface CodingRunState {
   recovering: boolean;
   older: boolean;
   viewingEarlier: boolean;
+  /** More saved entries after the bounded reading window, at its captured cut. */
+  newer: boolean;
   loadingEarlier: boolean;
+  /** Actual public live events only, never capture/checkpoint reconstruction. */
+  activityVersion: number;
   submitting: boolean;
   configuring: boolean;
   configurationUncertain: boolean;
@@ -132,7 +136,9 @@ export function createCodingRun(
     recovering: false,
     older: false,
     viewingEarlier: false,
+    newer: false,
     loadingEarlier: false,
+    activityVersion: 0,
     submitting: false,
     configuring: false,
     configurationUncertain: false,
@@ -189,8 +195,19 @@ export function createCodingRun(
   let firstEntry: string | null = null;
   let latestOlder = false;
   let historyWindow: EntryPage | null = null;
+  // A bounded reading snapshot, retained only while away. It protects the reader
+  // when the latest window evicts an entry or a reconnect captures a newer page.
+  let readingWindow: EntryPage | null = null;
+  // Explicit latest navigation supersedes historical UI intent, independently
+  // of the native watcher/cut whose authoritative reconstruction must complete.
+  let readingIntentRevision = 0;
   let position: number | null = null;
   let subscription: string | null = null;
+  // Native views replay from their captured checkpoint. A same-process position
+  // already observed is reconstruction, not unread activity. The transport's
+  // opaque process epoch prevents suppression after native position numbering restarts.
+  let observationEpoch: string | null = null;
+  let observedThrough: number | null = null;
   let incarnation = 0;
   // A fresh watcher does not supersede an outstanding exact cancellation.
   // Only detach, a newer Stop attempt, or native settlement does that.
@@ -423,14 +440,30 @@ export function createCodingRun(
     if (omitted) {
       latestOlder = true;
       firstEntry = saved.find((row) => row.entry_id)?.entry_id ?? firstEntry;
+      if (!historyWindow && readingWindow) historyWindow = readingWindow;
     }
     childView.history(historyWindow ? historyWindow.rows : rows);
     update({
       rows: historyWindow ? mergeRows(historyWindow.rows) : rows,
       older: historyWindow ? historyWindow.older : latestOlder,
       viewingEarlier: historyWindow !== null,
+      newer: historyWindow?.newer ?? false,
     });
+    // Follow the currently displayed reading rows until an actual eviction or
+    // reconnect requires freezing them. Never revive the initial pause snapshot.
+    if (readingWindow && !historyWindow && cut)
+      readingWindow = readingSnapshot(cut);
   };
+  const readingSnapshot = (captured: JournalCut): EntryPage => ({
+    cut: captured,
+    rows: state.rows.map((row) => ({ ...row, historical: true })),
+    older: latestOlder,
+    newer: false,
+    first_id: firstEntry,
+    last_id:
+      [...state.rows].reverse().find((row) => row.entry_id)?.entry_id ??
+      captured.leaf,
+  });
   const verifyPage = (page: EntryPage, expected: JournalCut) => {
     if (
       JSON.stringify(page.cut) !== JSON.stringify(expected) ||
@@ -444,6 +477,8 @@ export function createCodingRun(
     root: { cut: JournalCut; live_invocations: string[] },
     recovering: boolean,
     signal: AbortSignal,
+    retainedWindow: EntryPage | null,
+    retainedIntentRevision: number,
   ) {
     const page = await api.readEntries(id, root.cut, "latest", signal);
     if (signal.aborted) return;
@@ -455,7 +490,13 @@ export function createCodingRun(
     cut = root.cut;
     firstEntry = page.first_id;
     latestOlder = page.older;
-    historyWindow = null;
+    historyWindow =
+      retainedIntentRevision === readingIntentRevision &&
+      retainedWindow &&
+      JSON.stringify(retainedWindow.cut.journal) ===
+        JSON.stringify(root.cut.journal)
+        ? retainedWindow
+        : null;
     update({ recovering, loadingEarlier: false });
     publishRows();
   }
@@ -516,12 +557,15 @@ export function createCodingRun(
     if (signal.aborted) return;
     const view = value as {
       subscription: string;
+      observation_epoch?: string;
       position: number;
       event: Record<string, unknown>;
     };
     if (
       !view ||
       typeof view.subscription !== "string" ||
+      (view.observation_epoch !== undefined &&
+        typeof view.observation_epoch !== "string") ||
       !Number.isSafeInteger(view.position) ||
       !view.event
     )
@@ -536,6 +580,16 @@ export function createCodingRun(
       throw new Error(
         "Native view items were not ordered. Reconnect to reconstruct.",
       );
+    const epoch = view.observation_epoch ?? null;
+    // Reset rebuilds the transcript branch, not this runtime's observation
+    // lifetime. Its already-seen delivery can be replayed after reconnect too.
+    if (epoch !== observationEpoch) {
+      observationEpoch = epoch;
+      observedThrough = null;
+    }
+    const freshObservation =
+      observedThrough === null || view.position > observedThrough;
+    observedThrough = Math.max(observedThrough ?? view.position, view.position);
     position = view.position;
     subscription = view.subscription;
     if (event.type === "start" || event.type === "reset") {
@@ -544,23 +598,33 @@ export function createCodingRun(
       if (native.info.id !== id)
         throw new Error("Native view belongs to another conversation.");
       childView.setConnected(false);
+      const retainedWindow =
+        event.type === "start" ? (historyWindow ?? readingWindow) : null;
+      const retainedIntentRevision = readingIntentRevision;
+      if (event.type === "reset") readingWindow = null;
       saved = [];
       provisional = [];
       historyWindow = null;
       cut = null;
       update({
         native,
-        rows: [],
+        // A same-conversation reconnect keeps the existing projection visibly
+        // busy until capture, preserving mounted expansion/focus state. A reset
+        // must hide the superseded branch immediately.
+        rows: event.type === "reset" ? [] : state.rows,
         connection: "loading",
         completion: null,
         recovering: Boolean(event.recovering),
         older: false,
+        newer: false,
         viewingEarlier: false,
       });
       await capture(
         event.root as { cut: JournalCut; live_invocations: string[] },
         Boolean(event.recovering),
         signal,
+        retainedWindow,
+        retainedIntentRevision,
       );
       if (signal.aborted) return;
       // Child metadata/cuts apply synchronously. Optional inspection reads are
@@ -598,12 +662,23 @@ export function createCodingRun(
         throw new Error("Native state belongs to another conversation.");
       update({
         native,
+        activityVersion:
+          state.activityVersion +
+          // Numeric usage can be reconstructed by a fresh view; it is not new
+          // public transcript activity. Keep the diagnostics, not an unread flag.
+          (freshObservation &&
+          JSON.stringify({ ...native, usage: undefined }) !==
+            JSON.stringify({ ...state.native, usage: undefined })
+            ? 1
+            : 0),
         retryStop:
           state.retryStop && native.active_request === state.retryStop
             ? state.retryStop
             : null,
       });
     } else if (event.type === "child") {
+      if (freshObservation)
+        update({ activityVersion: state.activityVersion + 1 });
       void childView.child(event.child as ChildAttempt);
     } else if (event.type === "checkpoint") {
       if (event.child) {
@@ -620,6 +695,8 @@ export function createCodingRun(
         childView.setConnected(true);
       }
     } else if (event.type === "activity") {
+      if (freshObservation && (event.rows as CodingRow[]).length)
+        update({ activityVersion: state.activityVersion + 1 });
       if (event.child) {
         childView.activity(
           event.child as ChildIdentity,
@@ -639,6 +716,7 @@ export function createCodingRun(
       const stopped = state.stopping === completion.request_id;
       update({
         completion,
+        activityVersion: state.activityVersion + (freshObservation ? 1 : 0),
         stopping: stopped ? null : state.stopping,
         reconcilingAction: stopped ? null : state.reconcilingAction,
         retryStop:
@@ -1104,6 +1182,109 @@ export function createCodingRun(
         update({ inspectingDiagnostic: null });
     }
   }
+  async function loadHistory(direction: "before" | "after") {
+    const previousWindow = historyWindow;
+    const anchor =
+      direction === "before"
+        ? (previousWindow?.first_id ?? firstEntry)
+        : previousWindow?.last_id;
+    if (
+      !cut ||
+      !anchor ||
+      state.loadingEarlier ||
+      state.connection !== "connected" ||
+      !(direction === "before" ? state.older : state.newer)
+    )
+      return;
+    const current = incarnation;
+    const captured = previousWindow?.cut ?? cut;
+    const intentRevision = readingIntentRevision;
+    const retained = previousWindow?.rows ?? state.rows;
+    const label = direction === "before" ? "Earlier" : "Newer";
+    update({ loadingEarlier: true, error: null });
+    try {
+      const page = await api.readEntries(
+        id,
+        captured,
+        direction === "before" ? { before: anchor } : { after: anchor },
+        abort?.signal,
+      );
+      if (
+        current !== incarnation ||
+        intentRevision !== readingIntentRevision ||
+        historyWindow !== previousWindow ||
+        (!previousWindow && cut !== captured)
+      )
+        return;
+      verifyPage(page, captured);
+      const edge = direction === "before" ? page.first_id : page.last_id;
+      if (!page.rows.length || !edge || edge === anchor)
+        throw new Error(
+          `${label} history is incomplete: the native page made no progress. Retry loading ${label.toLowerCase()} history or reconnect for a fresh capture.`,
+        );
+      if (
+        page.rows.length > MAX_ROWS ||
+        page.rows.reduce((n, row) => n + codingRowSize(row), 0) > MAX_TEXT
+      )
+        throw new Error(
+          `${label} history is incomplete: the native page exceeded the presentation bound. Reconnect for a fresh bounded capture.`,
+        );
+      const seen = new Set<string>();
+      const combined =
+        direction === "before"
+          ? [...page.rows, ...retained]
+          : [...retained, ...page.rows];
+      const rows = mergeRows(
+        combined.filter((row) => {
+          if (seen.has(row.id)) return false;
+          seen.add(row.id);
+          return true;
+        }),
+      ).map((row) => ({ ...row, historical: true }));
+      let size = rows.reduce((n, row) => n + codingRowSize(row), 0);
+      let trimmed = false;
+      // Drop whole saved entries from the opposite edge: never present half an
+      // entry as complete. Both directions remain accessible at this immutable cut.
+      while (rows.length > MAX_ROWS || size > MAX_TEXT) {
+        const edgeRow = direction === "before" ? rows.at(-1) : rows[0];
+        if (!edgeRow) break;
+        do {
+          const removed = direction === "before" ? rows.pop() : rows.shift();
+          if (removed) size -= codingRowSize(removed);
+        } while (
+          rows.length &&
+          edgeRow.entry_id &&
+          (direction === "before" ? rows.at(-1) : rows[0])?.entry_id ===
+            edgeRow.entry_id
+        );
+        trimmed = true;
+      }
+      historyWindow = {
+        cut: captured,
+        rows,
+        older:
+          direction === "before"
+            ? page.older
+            : trimmed || Boolean(previousWindow?.older),
+        newer:
+          direction === "after"
+            ? page.newer
+            : trimmed || Boolean(previousWindow?.newer),
+        first_id: rows.find((row) => row.entry_id)?.entry_id ?? page.first_id,
+        last_id:
+          [...rows].reverse().find((row) => row.entry_id)?.entry_id ??
+          page.last_id,
+      };
+      publishRows();
+    } catch (reason) {
+      if (current === incarnation && intentRevision === readingIntentRevision)
+        update({ error: errorText(reason) });
+    } finally {
+      // Even superseded reading intent must release this incarnation's loading
+      // flag. Jump does not abort the authoritative native watcher or its reads.
+      if (current === incarnation) update({ loadingEarlier: false });
+    }
+  }
   return {
     discoverCommands,
     executeCommand,
@@ -1527,61 +1708,25 @@ export function createCodingRun(
         connect();
       }
     },
+    setReading(away: boolean) {
+      if (!away) {
+        readingWindow = null;
+        return;
+      }
+      if (cut && state.rows.length)
+        readingWindow = historyWindow ?? readingSnapshot(cut);
+    },
     showLatest() {
+      ++readingIntentRevision;
       historyWindow = null;
+      readingWindow = null;
       publishRows();
     },
-    async loadEarlier() {
-      if (
-        !cut ||
-        !firstEntry ||
-        !state.older ||
-        state.loadingEarlier ||
-        state.connection !== "connected"
-      )
-        return;
-      const current = incarnation;
-      const captured = historyWindow?.cut ?? cut;
-      const anchor = historyWindow?.first_id ?? firstEntry;
-      const previousWindow = historyWindow;
-      update({ loadingEarlier: true, error: null });
-      try {
-        const page = await api.readEntries(
-          id,
-          captured,
-          { before: anchor },
-          abort?.signal,
-        );
-        if (
-          current !== incarnation ||
-          historyWindow !== previousWindow ||
-          (!previousWindow && cut !== captured)
-        )
-          return;
-        verifyPage(page, captured);
-        if (
-          page.rows.length === 0 ||
-          (page.older && (!page.first_id || page.first_id === anchor))
-        )
-          throw new Error(
-            "Earlier history is incomplete: the native page made no progress. Retry loading earlier history or reconnect for a fresh capture.",
-          );
-        if (
-          page.rows.length > MAX_ROWS ||
-          page.rows.reduce((size, row) => size + codingRowSize(row), 0) >
-            MAX_TEXT
-        )
-          throw new Error(
-            "Earlier history is incomplete: the native page exceeded the presentation bound. Reconnect for a fresh bounded capture.",
-          );
-        const rows = page.rows.map((row) => ({ ...row, historical: true }));
-        historyWindow = { ...page, rows };
-        publishRows();
-      } catch (reason) {
-        if (current === incarnation) update({ error: errorText(reason) });
-      } finally {
-        if (current === incarnation) update({ loadingEarlier: false });
-      }
+    loadEarlier() {
+      return loadHistory("before");
+    },
+    loadNewer() {
+      return loadHistory("after");
     },
   };
 }

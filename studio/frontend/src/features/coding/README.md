@@ -348,9 +348,11 @@ public output without claiming no files changed. Structured effects count toward
 the same ephemeral transcript memory budget; no diff database is added.
 
 Browser defence-in-depth bounds are 64 files, 400 rendered diff lines and 16 Ki
-characters per expanded diff; plugin bounds apply first. Omission is disclosed,
-not treated as complete output. Existing scroll handling is not triggered by
-expansion alone; it continues to follow only readers already at the bottom.
+characters per expanded diff section; plugin bounds apply first. Supplied diff
+sections are keyboard-navigable in both directions. Native partial/truncated
+content remains explicitly labelled; section navigation cannot recover content
+that the native public profile did not supply. Expanding a report is a reading
+request, not a request to follow its growth. See #253 below.
 
 ## Mimir Settings (#250–251)
 
@@ -442,6 +444,50 @@ remain visible without fallback, with catalog retry or replacement. Setup,
 credentials and downloads remain in their existing workflows. Native execution
 boundary preparation/protection and fresh live selectability are implemented by
 subsequent #245–246 slices, not a browser scheduler or compatibility checker.
+
+## Long-conversation reading (#253)
+
+`transcript-reader.ts` retains viewport geometry and focus intent only. Streaming
+follows while the main transcript is already at its bottom (48px tolerance).
+Reading above the bottom or expanding a report pauses following; keyboard-operable
+**Jump to latest** explicitly rejoins the latest projection and focuses the reading
+region. **New activity** reports observed native state/activity/completion changes,
+not an invented unread-message count. Captures/checkpoints, historical pagination
+and replayed already-observed positions do not themselves mark new activity.
+The authenticated bridge tags observations with an opaque native-process epoch;
+one ephemeral position watermark suppresses replay without suppressing unseen
+activity or low positions after an explicit runtime restart. Numeric usage-only
+state reconstruction is diagnostic, not unread content. Being at the
+bottom of a historical window is not being at the live transcript's bottom.
+
+Native invocation and accepted request/question identities supply stable
+presentation keys without rewriting the native entry IDs. Anchors compensate for
+inline expansion/collapse, saved-row replacement and history prepending. A
+same-conversation reconnect retains the visibly busy projection and its mounted
+controls until reconstruction completes; a native reset discards the superseded
+branch rather than claiming it is still authoritative. Focus restoration does not
+steal focus from the composer, picker, inspector or Settings.
+
+Older/newer native pages are read at one immutable cut and merged into a bounded
+historical window. Opposite-edge eviction drops complete saved entries, discloses
+omitted content and leaves **Load earlier history**, **Load newer history** and
+**Jump to latest** access. The latest projection and historical reading window
+are each bounded to 1000 rows / 2,097,152 measured JavaScript text/profile code
+units. While away, an ephemeral reading snapshot follows the displayed projection
+until eviction/reconnect requires freezing it. It is not a history database or a
+performance guarantee; native output/read bounds and their partial labels remain.
+
+Collapsed tool output is mounted lazily. Expanded tool/diff output is independently
+keyboard-scrollable; long native messages (over 4000 characters or 80 lines) have
+a labelled scrollable viewport without dropping their supplied text. Diff-section
+navigation preserves access to supplied content beyond the per-section bound.
+
+Run the CPU-only rendered driver with `--workload reading`; it records desktop
+1440×1000 and narrow 390×844 row geometry, scrollTop and focus assertions. Real
+native tool/streaming work uses a deterministic HTTP provider; 1664-row long-history
+fixtures and delayed/disconnected browser transports are separately labelled.
+Neither is live-model acceptance or human implemented-UI review. Evidence and the
+cross-feature acceptance boundary are recorded in `studio/docs/coding-reading-253-evidence.md`.
 
 ## Verification
 
