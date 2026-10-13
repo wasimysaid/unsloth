@@ -3,7 +3,7 @@
 
 import { authFetch } from "@/features/auth/api";
 import { readFastApiError } from "@/lib/format-fastapi-error";
-import { CodingHttpError } from "./errors";
+import { CodingHttpError, CodingOverlapError, projectOverlap } from "./errors";
 import { consumeCodingEvents } from "./events";
 import type {
   ExtensionInventory,
@@ -42,6 +42,20 @@ async function codingRequest(
     throw reason;
   }
   if (!response.ok) {
+    // The host guard closes the preflight race without submitting native work.
+    if (response.status === 409) {
+      const body = await response
+        .clone()
+        .json()
+        .catch(() => null);
+      const overlap = projectOverlap(body?.detail?.overlap);
+      if (
+        body?.detail?.code === "overlap_required" &&
+        overlap &&
+        overlap.conversations.length
+      )
+        throw new CodingOverlapError(overlap);
+    }
     throw new CodingHttpError(
       response.status,
       await readFastApiError(response, "Coding request failed"),
@@ -148,6 +162,17 @@ export async function discoverCodingSkills(id: string, signal?: AbortSignal) {
 }
 
 export const codingRunApi: RunApi = {
+  async checkOverlap(id) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/overlap`,
+    );
+    const overlap = projectOverlap(await response.json());
+    if (!overlap)
+      throw new Error(
+        "The native project overlap check could not be confirmed. No prompt was sent.",
+      );
+    return overlap;
+  },
   async readChild(id, handle, attempt, signal) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/children/${encodeURIComponent(handle)}/attempts/${attempt}`,
@@ -155,7 +180,7 @@ export const codingRunApi: RunApi = {
     );
     return await response.json();
   },
-  async submit(id, submissionKey, text, extras) {
+  async submit(id, submissionKey, text, extras, overlapConfirmed = false) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/prompts`,
       {
@@ -165,6 +190,7 @@ export const codingRunApi: RunApi = {
           submission_key: submissionKey,
           text,
           ...extras,
+          ...(overlapConfirmed ? { overlap_confirmed: true } : {}),
         }),
       },
     );

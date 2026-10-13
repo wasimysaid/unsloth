@@ -23,10 +23,11 @@ PLUGIN_ID = "studio.frontend"
 
 
 class CodingRuntimeError(Exception):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, overlap: dict | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.overlap = overlap
 
 
 class CodingRuntime:
@@ -188,6 +189,18 @@ class CodingRuntime:
                         isinstance(error.get(key), str) for key in ("code", "message")
                     ):
                         raise ValueError("invalid error envelope")
+                    if error["code"] == "overlap_required":
+                        overlap = error.get("overlap")
+                        if (
+                            not isinstance(overlap, dict)
+                            or not isinstance(overlap.get("cwd"), str)
+                            or not overlap["cwd"]
+                            or not isinstance(overlap.get("conversations"), list)
+                            or not 1 <= len(overlap["conversations"]) <= 32
+                            or any(not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"]
+                                   for row in overlap["conversations"])
+                        ):
+                            raise ValueError("invalid overlap refusal")
                 identifier = payload["id"]
                 future = self._pending.pop(identifier, None)
                 if identifier in self._abandoned_views:
@@ -200,7 +213,9 @@ class CodingRuntime:
                     continue
                 if "error" in payload:
                     error = payload["error"]
-                    future.set_exception(CodingRuntimeError(error["code"], error["message"]))
+                    future.set_exception(CodingRuntimeError(
+                        error["code"], error["message"], error.get("overlap"),
+                    ))
                 elif "result" in payload:
                     result = payload["result"]
                     if isinstance(result, dict) and isinstance(result.get("subscription"), str):

@@ -46,6 +46,7 @@ from coding_run_scenarios import run_scenarios
 from coding_extension_scenarios import prepare_extension_fixtures, run_extension_scenarios
 from coding_input_scenarios import prepare_input_project, input_scenarios, live_input_scenario
 from coding_recovery_scenarios import run_recovery_scenarios
+from coding_concurrency_scenarios import run_concurrency_scenarios
 from coding_child_scenarios import CHILD_EVENT_CAPTURE, run_child_scenarios
 from coding_file_change_scenarios import LIVE_PROFILE_OBSERVER, run_file_change_scenarios
 
@@ -63,7 +64,7 @@ def main() -> None:
     runtime_input.add_argument("--mimir-source", type = Path, help = "Build the current paired source and product package before acceptance")
     parser.add_argument("--plugin-package", type = Path)
     parser.add_argument("--evidence-dir", type = Path, required = True)
-    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live"), default = "deterministic",
+    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live"), default = "deterministic",
                         help = "Live uses the existing native provider/credential profile; never copies credentials")
     parser.add_argument("--extensions", action = "store_true", help = "Run ticket-252 Settings inventory and scoped reload scenarios (requires deterministic workload)")
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
@@ -94,7 +95,7 @@ def main() -> None:
     live = args.workload in ("live", "inputs-live", "file-changes-live")
     native = shared_trust_path().parent if live else state_root / "mimir-home"
     native.mkdir(exist_ok = True)
-    provider = ProviderFixture() if args.workload in ("deterministic", "recovery", "children", "inputs", "file-changes") else None
+    provider = ProviderFixture() if args.workload in ("deterministic", "recovery", "concurrency", "children", "inputs", "file-changes") else None
     if provider:
         provider.configure(native, images = args.workload == "inputs")
     extension_packages = prepare_extension_fixtures(state_root, native, args.plugin_package.resolve()) if args.extensions else []
@@ -180,7 +181,8 @@ def main() -> None:
         report.setdefault("runtime_generations", []).append({"pid": before, "native_settled": True})
         server = subprocess.Popen(server_args, cwd = root / "studio" / "backend", env = env,
                                   stdout = output, stderr = subprocess.STDOUT)
-        for _ in range(100):
+        startup_deadline = time.monotonic() + 60
+        while time.monotonic() < startup_deadline:
             assert server.poll() is None, "Restarted acceptance server exited"
             try:
                 urllib.request.urlopen(base + "/api/auth/status", timeout = 1).close()
@@ -190,7 +192,12 @@ def main() -> None:
         raise AssertionError("Restarted acceptance server did not become ready")
 
     try:
-        for _ in range(100):
+        # Cold imports on this shared host can exceed the former 10-second
+        # connection-refusal loop. Bound setup by a recorded wall-clock deadline;
+        # native protocol, behavioral assertions and cleanup deadlines are unchanged.
+        report["server_startup_deadline_seconds"] = 60
+        startup_deadline = time.monotonic() + 60
+        while time.monotonic() < startup_deadline:
             if server.poll() is not None:
                 raise RuntimeError("Acceptance server exited; inspect server.log")
             try:
@@ -213,6 +220,9 @@ def main() -> None:
                                  "rendering": "hardware acceleration disabled"}
             context = browser.new_context(viewport = {"width": 1440, "height": 1000})
             context.add_init_script("localStorage.setItem('unsloth_show_loaded_models_indicator', 'true')")
+            if args.workload == "concurrency":
+                from coding_recovery_scenarios import VIEW_FAULT_SCRIPT
+                context.add_init_script(VIEW_FAULT_SCRIPT)
             if args.workload == "children":
                 context.add_init_script(CHILD_EVENT_CAPTURE)
             if args.workload in ("file-changes", "file-changes-live"):
@@ -353,6 +363,9 @@ def main() -> None:
                                    if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
                         assert len(product) == 1
                         report["supervised_pid"] = product[0].pid
+                    elif args.workload == "concurrency":
+                        run_concurrency_scenarios(page, context, base, provider, first, second, second_id,
+                                                  alias, report, scenario, snapshot)
                     elif args.workload == "children":
                         run_child_scenarios(page, context, base, provider, first, second_id,
                                             report, scenario, snapshot)
@@ -431,7 +444,7 @@ def main() -> None:
             product = [child for child in children if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
             assert len(product) == 1, "Studio must supervise one product process across conversations"
             assert report["supervised_pid"] == product[0].pid, "Studio replaced the native owner during browser scenarios"
-            scenario("A1-one-runtime", "Three native conversations retained in one Studio-supervised product process")
+            scenario("A1-one-runtime", f"{len(report['conversation_ids'])} native conversations retained in one Studio-supervised product process; PID unchanged")
             page.set_viewport_size({"width": 390, "height": 844})
             expect(page.get_by_test_id("coding-project-chooser")).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
@@ -458,6 +471,7 @@ def main() -> None:
                 ("get", "/api/coding/diagnostics", {}),
                 ("get", f"/api/coding/conversations/{first_id}/extensions", {}),
                 ("post", f"/api/coding/conversations/{first_id}/plugins/reload", {"data": {"operation_id": "unauthenticated-reload-valid-key"}}),
+                ("get", f"/api/coding/conversations/{first_id}/overlap", {}),
                 ("get", f"/api/coding/conversations/{first_id}/skills", {}),
                 ("post", f"/api/coding/conversations/{first_id}/prompts", {"data": {"submission_key": "unauthenticated-valid-key", "text": "Must not execute"}}),
                 ("post", f"/api/coding/conversations/{first_id}/requests/{report.get('workload', report.get('recovery', report.get('children', report.get('file_changes', {})))).get('requests', [{}])[0].get('request_id', 'known-request')}/cancel", {}),
@@ -476,7 +490,7 @@ def main() -> None:
             if provider:
                 provider.assert_no_request()
             report["unauthenticated_requests"] = denied_requests
-            scenario("A6-known-id-auth", "All thirteen coding surfaces (browse/catalog/history/create/open/SSE/diagnostics/inventory/reload/skills/prompt/cancel/bounded entries), including real conversation/request IDs, refused unauthenticated requests")
+            scenario("A6-known-id-auth", "All fourteen coding surfaces (browse/catalog/history/create/open/SSE/diagnostics/inventory/reload/overlap/skills/prompt/cancel/bounded entries), including real conversation/request IDs, refused unauthenticated requests")
             # Measure over more than two ordinary indicator polling intervals.
             # No ordinary-model status response is mocked and no model is loaded.
             page.wait_for_timeout(11000)
