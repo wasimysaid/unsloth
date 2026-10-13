@@ -85,6 +85,22 @@ async def test_browse_symlink_loop_is_an_actionable_invalid_directory(coding_app
 
 
 @pytest.mark.asyncio
+async def test_idle_cleanup_failure_is_not_reported_as_successful_reopen(coding_app):
+    app, headers = coding_app
+    message = "Idle cleanup failed. Resources may still be owned; inspect native diagnostics before retrying."
+    class FailedCleanupRuntime:
+        async def command(self, method, params):
+            assert method == "open"
+            assert params == {"conversation_id": "saved-id"}
+            raise CodingRuntimeError("failed", message)
+    app.state.coding_runtime = FailedCleanupRuntime()
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        response = await client.post("/api/coding/conversations/saved-id/open")
+    assert response.status_code == 502
+    assert response.json() == {"detail": message}
+
+
+@pytest.mark.asyncio
 async def test_open_never_accepts_a_replacement_working_directory(coding_app):
     app, headers = coding_app
     class RecordingRuntime:

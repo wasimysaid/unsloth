@@ -270,6 +270,14 @@ export function CodingPage() {
                   </p>
                 </div>
               )}
+              {state.reopened && (
+                <output
+                  data-testid="coding-reopened"
+                  className="block text-xs text-muted-foreground"
+                >
+                  Reopened saved conversation · no work automatically resumed.
+                </output>
+              )}
               {state.opening && (
                 <output className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
                   <LoaderCircle
@@ -280,19 +288,19 @@ export function CodingPage() {
                 </output>
               )}
               {state.openingUncertainty && (
-                <p
-                  role="status"
+                <output
                   data-testid="coding-opening-reconciliation"
-                  className="text-sm text-muted-foreground"
+                  className="block text-sm text-muted-foreground"
                 >
                   {state.openingUncertainty.inspected
                     ? "Shared native history inspected. Opening remains unconfirmed; deliberately reopen a saved identity from the sidebar. No create/open command was replayed."
                     : "Opening is unconfirmed. Inspecting shared native history before offering another action; refresh history if inspection failed."}
-                </p>
+                </output>
               )}
               {!folderOpen && state.openingError && (
                 <p
                   role="alert"
+                  data-testid="coding-opening-error"
                   className="break-words text-sm text-destructive"
                 >
                   {state.openingError}

@@ -36,6 +36,7 @@ import urllib.request
 from coding_provider_fixture import ProviderFixture
 from coding_run_scenarios import run_scenarios
 from coding_recovery_scenarios import run_recovery_scenarios
+from coding_retirement_scenarios import run_retirement_scenarios
 
 
 def shared_trust_path() -> Path:
@@ -51,7 +52,7 @@ def main() -> None:
     runtime_input.add_argument("--mimir-source", type = Path, help = "Build the current paired source and product package before acceptance")
     parser.add_argument("--plugin-package", type = Path)
     parser.add_argument("--evidence-dir", type = Path, required = True)
-    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "live"), default = "deterministic",
+    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "retirement", "live"), default = "deterministic",
                         help = "Live uses the existing native provider/credential profile; never copies credentials")
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
     parser.add_argument("--chrome", default = "/usr/bin/google-chrome", help = "Chromium executable; ignored for Firefox")
@@ -69,7 +70,8 @@ def main() -> None:
             metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--no-deps", "--format-version", "1"], cwd = source))
             args.mimir = Path(metadata["target_directory"]) / "debug" / ("mimir.exe" if os.name == "nt" else "mimir")
             args.plugin_package = evidence / "current-product-package"
-            subprocess.run([sys.executable, "plugins/studio-frontend/build.py", "--output", str(args.plugin_package)],
+            fixture_flags = ["--retirement-fixtures"] if args.workload == "retirement" else []
+            subprocess.run([sys.executable, "plugins/studio-frontend/build.py", "--output", str(args.plugin_package), *fixture_flags],
                            cwd = source, stdout = build_log, stderr = subprocess.STDOUT, check = True, timeout = 1000)
     elif args.plugin_package is None:
         parser.error("--plugin-package is required with --mimir")
@@ -79,7 +81,7 @@ def main() -> None:
     live = args.workload == "live"
     native = shared_trust_path().parent if live else state_root / "mimir-home"
     native.mkdir(exist_ok = True)
-    provider = ProviderFixture() if args.workload in ("deterministic", "recovery") else None
+    provider = ProviderFixture() if args.workload in ("deterministic", "recovery", "retirement") else None
     if provider:
         provider.configure(native)
     projects = state_root / "projects"
@@ -107,6 +109,9 @@ def main() -> None:
                UNSLOTH_MIMIR_EXECUTABLE = str(args.mimir.resolve()),
                UNSLOTH_MIMIR_PLUGIN_PACKAGE = str(args.plugin_package.resolve()), CODING_ACCEPTANCE_PASSWORD = password,
                CUDA_VISIBLE_DEVICES = "", PYTHONPATH = str(root / "studio" / "backend"))
+    if args.workload == "retirement":
+        env["CODING_ACCEPTANCE_RETIREMENT_FIXTURES"] = "1"
+        report_clock = "compile-gated frozen/advanced plugin monotonic clock; not a 30-minute live workload"
     if not live:
         # Fixture tools must not discover the user's native instructions or credentials.
         env.update(HOME = str(state_root), MIMIR_DISABLE_MODELS_FETCH = "1",
@@ -126,6 +131,8 @@ def main() -> None:
               "provider_workload": args.workload, "run_id": state_root.name,
               "viewports": [[1440, 1000], [390, 844]], "scenarios": [],
               "conversation_ids": [], "artifacts": [], "limitations": ["Unrelated Studio ML/training routers are not mounted by this CPU-only acceptance composition."]}
+    if args.workload == "retirement":
+        report["retention_clock"] = report_clock
     if provider:
         report["limitations"].append("Deterministic HTTP protocol fixture is not live-model success; native plugin/runtime/tools are real.")
     def scenario(name, detail):
@@ -319,6 +326,9 @@ def main() -> None:
                                    if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
                         assert len(product) == 1
                         report["supervised_pid"] = product[0].pid
+                    elif args.workload == "retirement":
+                        run_retirement_scenarios(page, context, base, provider, first, second_id,
+                                                 report, scenario, snapshot)
                     else:
                         run_scenarios(page, context, base, provider, first, second_id,
                                       report, scenario, snapshot, live = live)

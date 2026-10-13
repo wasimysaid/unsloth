@@ -1,4 +1,54 @@
-# Coding: trusted projects, native run/stop, reopen and reconnect (#234–236)
+# Coding: trusted projects, native run/stop, recovery and idle retirement
+
+## Continuous idle retirement (#248)
+
+Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`
+and private Mimir `91b975adae2df627d7c67c6bcede6d910a592a7d`.
+The product frontend retains owning handles across navigation/disconnect as before.
+It now starts a monotonic 30-minute interval only when no native browser views
+remain **and** Session Control reports authoritative quiescence. A new view or
+native admission interrupts the interval. Native's incarnation-local admission
+epoch detects even work that starts and finishes between maintenance ticks.
+Unknown eligibility is never idle. The periodic tick is retained across stream
+selections, so activity in one conversation cannot starve another's maintenance.
+
+At expiry the native conditional close atomically rechecks the same epoch and
+busy exclusions. The plugin retains its handle until awaited confirmation; other
+owning attachments retain their session and lease. Closing this attachment is
+not reported as execution-lease release unless native confirms last-owner cleanup.
+Failed cleanup retains retry-only ownership and an explicit error; it is not an
+automatic retry loop or a clean release. Deliberate reopening retries that exact
+failed retirement before opening a new trusted incarnation. It never cancels new
+work to make a stale retirement succeed.
+
+Retirement never deletes saved history or changes the canonical folder. Deliberate
+reopen reapplies `Some(true)` effective trust without persisting shared policy,
+reconstructs saved history, and does not submit/resume work. The UI names reopening
+and displays cleanup errors without replacing the current conversation identity.
+The timer owns no model/request protection: whole-request protection remains a
+separate lifetime (#246), not a 30-minute conversation reservation.
+
+Verification is deliberately split: pure controlled-clock timer tests; native busy,
+owner/race/failure fixtures; production Wasm compilation; authenticated HTTP and
+frontend tests; and the real coding-route browser driver with a separately compiled
+`retirement-fixtures` component. Its clock freezes/advances retention only; native
+busy/close/history and actual native file tools remain real. Default production
+builds reject the clock command. The isolated acceptance app alone exposes the
+authenticated clock endpoint; production routes never expose it. The browser's
+502 error-rendering scenario is explicitly an HTTP projection fault, not execution
+of native cleanup failure. **None of these are 30-minute live-model workload evidence.**
+
+```sh
+python3 plugins/studio-frontend/build.py --retirement-fixtures \
+  --output /path/to/acceptance-only-package
+# From Studio, after building dist and the paired native runtime:
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir /path/to/paired/mimir --plugin-package /path/to/acceptance-only-package \
+  --workload retirement --browser firefox --evidence-dir /path/to/task/evidence
+```
+
+Never install the acceptance-only component into normal shared Mimir state.
+Full external-provider/local-model and human PoC acceptance remain #255–256.
 
 ## Reopen/reconnect slice (#236)
 
@@ -28,8 +78,8 @@ For uncertain non-prompt responses, rebuild the authoritative native view before
 allowing another action. Stop is never blindly replayed; cancellation acknowledgment
 is not terminal cleanup. This shared pattern does **not** promise generic
 exactly-once commands. Capability-specific stale question/plan/goal tests remain
-with their feature tickets. Production process restart and idle retirement remain
-#249 and #248 respectively.
+with their feature tickets. Production process restart remains #249; continuous
+idle retirement is described above (#248).
 
 Run the actual-browser recovery driver after building the frontend/native package:
 
@@ -125,7 +175,8 @@ and ordered lifecycle views, and awaits shutdown. Browser disconnection does not
 replay commands or release conversation owners. Fatal private-transport failures
 initiate supervised EOF and await process cleanup without restart/replay. Slow SSE readers receive an explicit
 reconstruction error, not a silently truncated suffix. Disconnecting a browser
-closes only its view. Idle retirement/restart/recovery are later tickets.
+closes only its view. Continuous idle retirement is described above; whole-runtime
+maintenance remains #249.
 
 All `/api/coding` routes use Studio's existing `get_current_subject`; conversation
 IDs, history, catalogs, folder browsing, and SSE have no auth bypass. This slice
@@ -235,8 +286,8 @@ claim tied to a mutable local HEAD or absent screenshots.
 | A3 | No diff implementation or fabricated effects | Typed live/historical reported changes (#238) |
 | A4 | No model picker | Model/reasoning interactions (#244) |
 | A5 | Externally configured provider admission; no Studio local-model serving | Local-model requests and whole-request protection (#246/#255) |
-| A6 | Canonical/native validated opening, non-persisting effective trust, saved-policy tests, child inheritance, mismatch/lease refusals, authenticated run/Stop/history access | Concurrent execution/same-folder warning and retirement/recovery (#247–249) |
-| A7 | Exact request cancellation; Stop acknowledgment distinct from cleanup; disconnect never stops owners; typed native failures; durable submission identity across reload/native restart, automatic authoritative reconnect and non-prompt reconciliation (#236); no automatic work replay; awaited EOF shutdown | Controlled idle clocks and full process-interruption/maintenance scenarios (#248/#249) |
+| A6 | Canonical/native validated opening, non-persisting effective trust, saved-policy tests, child inheritance, mismatch/lease refusals, authenticated run/Stop/history access; same-identity trusted history reopening after idle retirement (#248) | Concurrent execution/same-folder warning and process-loss recovery (#247/#249) |
+| A7 | Exact request cancellation; Stop acknowledgment distinct from cleanup; disconnect never stops owners; typed native failures; durable submission identity across reload/native restart, automatic authoritative reconnect and non-prompt reconciliation (#236); no automatic work replay; awaited EOF shutdown; continuous unviewed/native-quiescent retention, controlled clocks, atomic native retirement and failure-safe cleanup retry (#248) | Full process-interruption/maintenance scenarios (#249) and cross-feature live-model acceptance (#254–255) |
 | A8 | No Settings management surface | Native MCP and headless inventory/settings (#250–252) |
 | A9 | Ordinary-chat store/engine untouched; affected shared/ordinary-chat tests; coding route excludes ordinary model observers and chat execution imports | Real ordinary-chat smoke and cross-feature regression (#254/#255) |
 | A10 | Rendered opening, deterministic provider/native-tool, cancellation/failure, keyboard/narrow, and separate live-provider driver | Full cross-feature execution UI checks and user's implemented-UI review (#255/#256) |
