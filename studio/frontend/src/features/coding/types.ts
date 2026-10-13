@@ -8,6 +8,8 @@ export interface CodingConversation {
   title?: string | null;
   /** Supervisor incarnation that actually opened this live owner (not catalog identity). */
   runtime_generation?: number;
+  /** Native live-owner presence, not proof this frontend owns it or it is busy. */
+  live?: boolean;
 }
 
 export interface CodingProjectDirectory {

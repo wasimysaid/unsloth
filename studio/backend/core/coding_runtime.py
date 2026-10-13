@@ -26,10 +26,11 @@ PLUGIN_ID = "studio.frontend"
 
 
 class CodingRuntimeError(Exception):
-    def __init__(self, code: str, message: str, *, requires_reopen: bool = False):
+    def __init__(self, code: str, message: str, overlap: dict | None = None, *, requires_reopen: bool = False):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.overlap = overlap
         self.requires_reopen = requires_reopen
 
 
@@ -105,6 +106,32 @@ class CodingRuntime:
                 # failures cannot authorize cancellation or a replacement.
                 pass
         return self.status()
+
+    def diagnostics(self) -> dict[str, Any]:
+        """Bounded supervisor facts only; inspecting must not start/restart Mimir.
+
+        Never expose executable/package paths, environment, stderr, pending command
+        bodies, raw exceptions or credentials. Session execution remains native.
+        """
+        if self._closing:
+            connection = "closing"
+        elif self._failure:
+            connection = "disconnected"
+        elif self.process is None:
+            connection = "not_started"
+        elif self.process.returncode is not None:
+            connection = "exited"
+        else:
+            connection = "connected"
+        return {
+            "connection": connection,
+            "frontend_plugin": PLUGIN_ID,
+            "protocol": 1,
+            "pending_commands": len(self._pending),
+            "open_views": len(self._subscriptions),
+            "command_timeout_seconds": COMMAND_TIMEOUT,
+            "max_frame_bytes": MAX_FRAME,
+        }
 
     async def start(self, *, maintenance: bool = False) -> None:
         async with self._start_lock:
@@ -224,6 +251,18 @@ class CodingRuntime:
                         isinstance(error.get(key), str) for key in ("code", "message")
                     ):
                         raise ValueError("invalid error envelope")
+                    if error["code"] == "overlap_required":
+                        overlap = error.get("overlap")
+                        if (
+                            not isinstance(overlap, dict)
+                            or not isinstance(overlap.get("cwd"), str)
+                            or not overlap["cwd"]
+                            or not isinstance(overlap.get("conversations"), list)
+                            or not 1 <= len(overlap["conversations"]) <= 32
+                            or any(not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"]
+                                   for row in overlap["conversations"])
+                        ):
+                            raise ValueError("invalid overlap refusal")
                 identifier = payload["id"]
                 future = self._pending.pop(identifier, None)
                 if identifier in self._abandoned_views:
@@ -236,7 +275,9 @@ class CodingRuntime:
                     continue
                 if "error" in payload:
                     error = payload["error"]
-                    future.set_exception(CodingRuntimeError(error["code"], error["message"]))
+                    future.set_exception(CodingRuntimeError(
+                        error["code"], error["message"], error.get("overlap"),
+                    ))
                 elif "result" in payload:
                     result = payload["result"]
                     if isinstance(result, dict) and isinstance(result.get("subscription"), str):
@@ -309,10 +350,14 @@ class CodingRuntime:
                 result = {**result, "info": {**result["info"], "runtime_generation": generation}}
             return result
         except TimeoutError as exc:
-            raise CodingRuntimeError(
-                "uncertain", "Mimir has not confirmed this operation. It was not retried; "
+            reconciliation = (
+                "load the saved MCP version for comparison before deliberately retrying. Your draft is retained."
+                if method == "mcp_save" else
                 "reconnect the native view to reconcile its state. Prompt retries must reuse "
-                "the original submission identity; do not blindly retry other commands.",
+                "the original submission identity; do not blindly retry other commands."
+            )
+            raise CodingRuntimeError(
+                "uncertain", "Mimir has not confirmed this operation. It was not retried; " + reconciliation,
             ) from exc
         except (BrokenPipeError, ConnectionResetError) as exc:
             raise CodingRuntimeError("disconnected", "The coding runtime disconnected; nothing was replayed.") from exc

@@ -3,8 +3,8 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createCodingSession } from "../src/features/coding/session.ts";
 import { CodingHttpError } from "../src/features/coding/errors.ts";
+import { createCodingSession } from "../src/features/coding/session.ts";
 import type {
   CodingApi,
   CodingConversation,
@@ -78,10 +78,14 @@ test("history loading does not implicitly reopen; explicit reopening uses the na
   );
   await session.refreshConversations();
   assert.equal(session.getSnapshot().active, null);
+  assert.equal(session.getSnapshot().reopened, false);
   assert.deepEqual(opened, []);
   await session.openConversation("saved-native");
   assert.deepEqual(opened, ["saved-native"]);
   assert.equal(session.getSnapshot().active?.cwd, "/native/revalidated");
+  assert.equal(session.getSnapshot().reopened, true);
+  await session.createConversation("/another-project");
+  assert.equal(session.getSnapshot().reopened, false);
 });
 
 test("successful same-ID reopening advances the view incarnation, but failed reopening preserves it", async () => {
@@ -103,6 +107,31 @@ test("successful same-ID reopening advances the view incarnation, but failed reo
   assert.equal(await session.openConversation("same-native-id"), false);
   assert.equal(session.getSnapshot().openingGeneration, 2);
   assert.equal(session.getSnapshot().active?.id, "same-native-id");
+});
+
+test("idle cleanup refusal preserves saved identity and actionable error without claiming release", async () => {
+  const message =
+    "Idle cleanup failed. Resources may still be owned; inspect native diagnostics before retrying.";
+  const session = createCodingSession(
+    nativeApi({
+      openConversation: async () => {
+        throw new CodingHttpError(502, message);
+      },
+    }),
+  );
+  await session.createConversation("/canonical");
+  assert.equal(await session.openConversation("retained-history"), false);
+  assert.equal(session.getSnapshot().active?.id, "native-new");
+  assert.equal(
+    session.getSnapshot().openingError,
+    `${message} Opening is unconfirmed, not failed. Inspect shared native history, then deliberately reopen a saved conversation; do not create another copy. Close the folder picker to inspect or refresh history.`,
+  );
+  assert.equal(session.getSnapshot().openingUncertainty?.operation, "open");
+  assert.equal(
+    session.getSnapshot().openingUncertainty?.id,
+    "retained-history",
+  );
+  assert.equal(session.getSnapshot().reopened, false);
 });
 
 test("loading and concurrent keyboard/click activation issue just one native opening", async () => {

@@ -391,6 +391,7 @@ async def test_owner_http_calls_are_fenced_before_delivery_even_after_other_tab_
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         for method, path, body in (
             ("POST", "/conversations/same-saved-id/prompts", {"submission_key": "old-tab-new-key", "text": "must not run"}),
+            ("POST", "/conversations/same-saved-id/commands", {"operation_id": "old-tab-command", "name": "compress", "tail": ""}),
             ("POST", "/conversations/same-saved-id/requests/exact/cancel", None),
             ("POST", "/conversations/same-saved-id/entries", {"cut": {"journal": "root", "leaf": None}}),
             ("GET", "/conversations/same-saved-id/events", None),
@@ -403,5 +404,5 @@ async def test_owner_http_calls_are_fenced_before_delivery_even_after_other_tab_
             assert stale.headers["X-Mimir-Requires-Reopen"] == "true"
             assert "Deliberately reopen" in stale.json()["detail"]
     assert runtime.process.returncode is None
-    assert not (tmp_path / "native-command-trace").exists(), "No stale prompt, Stop, view, or history command reached the new owner"
+    assert not (tmp_path / "native-command-trace").exists(), "No stale prompt, native command, Stop, view, or history command reached the new owner"
     await runtime.close()

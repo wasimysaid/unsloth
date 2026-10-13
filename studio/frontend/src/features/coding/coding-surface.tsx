@@ -4,13 +4,12 @@
 import { Button } from "@/components/ui/button";
 import {
   AssistantRuntimeProvider,
-  ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
   useExternalStoreRuntime,
   useMessage,
 } from "@assistant-ui/react";
-import { ArrowDown, ArrowUp, Square } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -19,7 +18,13 @@ import {
   useSyncExternalStore,
 } from "react";
 import { createCodingRunApi } from "./api";
+import { ChildActivityRows, ChildInspector } from "./child-inspector";
+import { CodingComposer } from "./coding-composer";
+import { CodingCommandControls } from "./command-controls";
+import { createInputDraft } from "./input";
+import { CodingModelPicker } from "./model-configuration-popover";
 import { nativeMessageRow } from "./presentation";
+import { ProjectOverlapDialog } from "./project-overlap-dialog";
 import { codingRunAdapter } from "./run-runtime";
 import {
   codingRunCompletion,
@@ -34,14 +39,15 @@ import type { CodingRuntimeStatus } from "./runtime-maintenance";
 function NativeMessage() {
   const message = useMessage();
   const row = nativeMessageRow(message);
-  if (!row) return null;
+  if (!row || row.child || row.tool?.subagent?.attempt) return null;
   const tool = row.tool;
   const tools = row.grouped ?? [row];
   const visible = tools.filter(
     (item) =>
       !item.tool?.quiet ||
       item.tool?.status === "failed" ||
-      item.tool?.semantic_content,
+      item.tool?.semantic_content ||
+      item.tool?.output_profile?.kind === "file_change",
   );
   const quiet = tools.filter((item) => !visible.includes(item));
   const reports = (
@@ -96,6 +102,13 @@ function NativeMessage() {
           <div className="whitespace-pre-wrap text-sm leading-relaxed">
             {row.text}
           </div>
+          {row.kind === "user" && (row.image_count ?? 0) > 0 && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Native saved input · {row.image_count}{" "}
+              {row.image_count === 1 ? "image" : "images"} · request outcome
+              shown separately
+            </p>
+          )}
           {row.clipped && (
             <p className="mt-2 text-xs font-medium">
               Content clipped to the presentation bound.
@@ -144,8 +157,11 @@ export function CodingSurface({
     run?.subscribe ?? (() => () => {}),
     run?.getSnapshot ?? (() => null),
   );
-  const runtime = useExternalStoreRuntime(codingRunAdapter(state, run));
+  const [draft] = useState(createInputDraft);
+  const runtime = useExternalStoreRuntime(codingRunAdapter(state, run, draft));
   const viewport = useRef<HTMLDivElement>(null);
+  const promptInput = useRef<HTMLTextAreaElement>(null);
+  const statusFocus = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const [away, setAway] = useState(false);
   useEffect(() => {
@@ -179,12 +195,42 @@ export function CodingSurface({
       !state.recovering &&
       !state.stopping &&
       !state.submitting &&
+      !state.configuring &&
+      !state.configurationUncertain &&
       !state.uncertainSubmission &&
       !state.storageError &&
-      !state.reconcilingAction,
+      !state.reconcilingAction &&
+      !state.commandBusy &&
+      !state.uncertainCommand &&
+      !state.overlapWarning,
   );
   return (
     <AssistantRuntimeProvider runtime={runtime}>
+      <ProjectOverlapDialog
+        overlap={state?.overlapWarning?.overlap ?? null}
+        disabled={Boolean(
+          !state ||
+            state.connection !== "connected" ||
+            state.recovering ||
+            state.submitting ||
+            state.configuring ||
+            state.configurationUncertain ||
+            state.stopping ||
+            state.reconcilingAction ||
+            state.commandBusy ||
+            state.uncertainCommand ||
+            state.storageError,
+        )}
+        onContinue={() => void run?.continueOverlap()}
+        onCancel={() => run?.cancelOverlap()}
+        onCloseFocus={() =>
+          requestAnimationFrame(() => {
+            const input = promptInput.current;
+            if (input && !input.disabled) input.focus({ preventScroll: true });
+            else statusFocus.current?.focus({ preventScroll: true });
+          })
+        }
+      />
       <ThreadPrimitive.Root className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
         {conversationId && !run && (
           <p role="alert" className="break-words text-sm text-destructive">
@@ -195,7 +241,11 @@ export function CodingSurface({
         )}
         {state && (
           <div
-            className="max-h-[35dvh] shrink-0 space-y-2 overflow-y-auto rounded-xl border border-border/60 px-3 py-2 text-xs"
+            ref={statusFocus}
+            role="region"
+            aria-label="Coding request status"
+            tabIndex={-1}
+            className="max-h-[35dvh] shrink-0 space-y-2 overflow-y-auto rounded-xl border border-border/60 px-3 py-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             data-testid="coding-event-status"
           >
             <output
@@ -220,10 +270,26 @@ export function CodingSurface({
                 {state.stopping || active || completion?.request_id}
               </p>
             )}
+            {active && (
+              <p
+                className="break-all text-muted-foreground"
+                data-testid="coding-running-model"
+              >
+                Running coding model:{" "}
+                {state.native?.running_configuration
+                  ? `${state.native.running_configuration.provider}/${state.native.running_configuration.model}${state.native.running_configuration.reasoning ? ` · ${state.native.running_configuration.reasoning}` : ""}`
+                  : "Awaiting native execution configuration"}
+              </p>
+            )}
             {state.native?.configuration.provider && (
-              <p className="break-all text-muted-foreground">
-                Configured model: {state.native.configuration.provider}/
+              <p
+                className="break-all text-muted-foreground"
+                data-testid="coding-next-model"
+              >
+                Next request: {state.native.configuration.provider}/
                 {state.native.configuration.model}
+                {state.native.configuration.reasoning &&
+                  ` · ${state.native.configuration.reasoning}`}
               </p>
             )}
             {completion?.error && (
@@ -249,39 +315,45 @@ export function CodingSurface({
               </p>
             )}
             {state.disconnected && (
-              <p
-                role="status"
+              <output
                 data-testid="coding-disconnect-banner"
-                className="break-words font-medium"
+                className="block break-words font-medium"
               >
                 {state.reopenRequired
                   ? "Disconnected · work may still be running. The native view closed; deliberately reopen the saved conversation."
                   : "Disconnected · work may still be running. Reconnecting automatically; this warning stays until native history is rebuilt."}
-              </p>
+              </output>
             )}
             <CodingRecoveryControls state={state} run={run} />
             {(state.reconcilingAction || state.retryStop) && (
-              <p role="status" data-testid="coding-action-reconciliation">
+              <output
+                className="block"
+                data-testid="coding-action-reconciliation"
+              >
                 {state.reconcilingAction
                   ? "Inspecting a fresh native view before another action; cancellation was not replayed."
                   : "Fresh native view inspected. Explicit retry targets only the same active request; cancellation is not exactly-once."}
-              </p>
+              </output>
             )}
             {state.deliveryRecovered && (
-              <p role="status" data-testid="coding-submission-recovered">
+              <output
+                className="block"
+                data-testid="coding-submission-recovered"
+              >
                 Native prompt acceptance confirmed. Delivery recovery does not
                 start a new continuation.
-              </p>
+              </output>
             )}
-            {state.disconnected && !state.reopenRequired && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => run?.connect()}
-              >
-                Reconnect native events
-              </Button>
-            )}
+            {!state.reopenRequired &&
+              (state.disconnected || state.configurationUncertain) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => run?.connect()}
+                >
+                  Reconnect native events
+                </Button>
+              )}
             {state.uncertainSubmission && (
               <div
                 data-testid="coding-delivery-recovery"
@@ -300,6 +372,8 @@ export function CodingSurface({
                     state.connection !== "connected" ||
                     state.recovering ||
                     state.submitting ||
+                    state.configuring ||
+                    state.configurationUncertain ||
                     Boolean(
                       state.stopping ||
                         state.storageError ||
@@ -314,47 +388,51 @@ export function CodingSurface({
             )}
           </div>
         )}
-        <div
-          ref={viewport}
-          className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto"
-          data-testid="coding-transcript"
-          aria-label="Coding transcript"
-          aria-busy={state?.connection === "loading" || state?.recovering}
-          onScroll={() => {
-            const node = viewport.current;
-            if (!node) return;
-            follow.current =
-              node.scrollHeight - node.scrollTop - node.clientHeight < 48;
-            setAway(!follow.current);
-          }}
-        >
-          {state?.older && (
-            <div className="text-center text-xs text-muted-foreground">
-              <p>Earlier history is not shown in this bounded view.</p>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={state.loadingEarlier}
-                onClick={() => {
-                  follow.current = false;
-                  void run
-                    ?.loadEarlier()
-                    .then(() => viewport.current?.scrollTo({ top: 0 }));
-                }}
-              >
-                {state.loadingEarlier
-                  ? "Loading earlier history…"
-                  : "Load earlier history"}
-              </Button>
-            </div>
-          )}
-          {state?.viewingEarlier && (
-            <p className="text-center text-xs text-muted-foreground">
-              Historical page · newer messages and live activity are not shown.
-              Native work may still be running.
-            </p>
-          )}
-          <ThreadPrimitive.Messages components={messageComponents} />
+        <div className="relative flex min-h-0 min-w-0 flex-1 gap-3">
+          <div
+            ref={viewport}
+            className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto"
+            data-testid="coding-transcript"
+            aria-label="Coding transcript"
+            aria-busy={state?.connection === "loading" || state?.recovering}
+            onScroll={() => {
+              const node = viewport.current;
+              if (!node) return;
+              follow.current =
+                node.scrollHeight - node.scrollTop - node.clientHeight < 48;
+              setAway(!follow.current);
+            }}
+          >
+            {state?.older && (
+              <div className="text-center text-xs text-muted-foreground">
+                <p>Earlier history is not shown in this bounded view.</p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={state.loadingEarlier}
+                  onClick={() => {
+                    follow.current = false;
+                    void run
+                      ?.loadEarlier()
+                      .then(() => viewport.current?.scrollTo({ top: 0 }));
+                  }}
+                >
+                  {state.loadingEarlier
+                    ? "Loading earlier history…"
+                    : "Load earlier history"}
+                </Button>
+              </div>
+            )}
+            {state?.viewingEarlier && (
+              <p className="text-center text-xs text-muted-foreground">
+                Historical page · newer messages and live activity are not
+                shown. Native work may still be running.
+              </p>
+            )}
+            <ThreadPrimitive.Messages components={messageComponents} />
+            {run && <ChildActivityRows view={run.childView} />}
+          </div>
+          {run && <ChildInspector view={run.childView} />}
         </div>
         {(away || state?.viewingEarlier) && (
           <Button
@@ -378,72 +456,36 @@ export function CodingSurface({
           className="shrink-0 space-y-3"
           aria-label="Coding project and prompt"
         >
+          {state && run && <CodingCommandControls run={run} state={state} />}
           {state?.unsentDraft && <CodingUnsentDraft text={state.unsentDraft} />}
-          <ComposerPrimitive.Root
-            className="aui-composer-root relative w-full"
-            aria-label="Coding composer"
+          <CodingComposer
+            conversationId={conversationId}
+            run={run}
+            state={state}
+            draft={draft}
+            canSend={canSend}
+            inputRef={promptInput}
           >
-            <div className="unsloth-composer-surface">
-              <div className="flex min-w-0 items-end gap-2">
-                <ComposerPrimitive.Input
-                  className="unsloth-composer-input disabled:cursor-not-allowed"
-                  aria-label="Coding prompt"
-                  aria-describedby="coding-send-explanation"
-                  placeholder="What would you like to build?"
-                  submitMode="enter"
-                  disabled={!canSend}
-                  minRows={2}
-                  maxRows={5}
-                  addAttachmentOnPaste={false}
-                  unstable_focusOnThreadSwitched={false}
-                  unstable_focusOnRunStart={false}
-                  unstable_focusOnScrollToBottom={false}
-                />
-                {active || state?.stopping ? (
-                  <Button
-                    type="button"
-                    size="icon"
-                    aria-label={
-                      state?.stopping
-                        ? "Stopping…"
-                        : state?.retryStop
-                          ? "Retry Stop for same request"
-                          : "Stop"
-                    }
-                    title={
-                      state?.stopping
-                        ? "Waiting for native terminal cleanup"
-                        : "Cancel this exact native request"
-                    }
-                    disabled={
-                      Boolean(
-                        state?.stopping ||
-                          state?.reconcilingAction ||
-                          state?.recovering,
-                      ) || state?.connection !== "connected"
-                    }
-                    className="mb-1 shrink-0 rounded-full"
-                    onClick={() => void run?.stop()}
-                  >
-                    <Square className="size-4" aria-hidden="true" />
-                  </Button>
-                ) : (
-                  <ComposerPrimitive.Send asChild={true}>
-                    <Button
-                      type="submit"
-                      size="icon"
-                      aria-label="Send"
-                      disabled={!canSend}
-                      aria-describedby="coding-send-explanation"
-                      className="mb-1 shrink-0 rounded-full"
-                    >
-                      <ArrowUp className="size-5" aria-hidden="true" />
-                    </Button>
-                  </ComposerPrimitive.Send>
-                )}
-              </div>
-            </div>
-          </ComposerPrimitive.Root>
+            <CodingModelPicker
+              cwd={state?.native?.info.cwd ?? null}
+              configuration={state?.native?.configuration ?? null}
+              disabled={
+                state?.connection !== "connected" ||
+                Boolean(
+                  state?.recovering ||
+                    state?.configurationUncertain ||
+                    state?.commandBusy ||
+                    state?.uncertainCommand,
+                )
+              }
+              configuring={Boolean(state?.configuring)}
+              configure={(change) =>
+                run
+                  ? run.configure(change)
+                  : Promise.reject(new Error("Choose a project first."))
+              }
+            />
+          </CodingComposer>
           {children}
           <p
             id="coding-send-explanation"

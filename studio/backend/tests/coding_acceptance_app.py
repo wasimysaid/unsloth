@@ -11,7 +11,8 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -21,6 +22,11 @@ from .coding_transport_faults import CodingTransportFaults
 from core.coding_runtime import close_coding_runtime, runtime_for
 from routes.auth import router as auth_router
 from routes.coding import router as coding_router
+
+
+class RetentionClock(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    advance_ns: int = Field(default = 0, ge = 0, le = 9_007_199_254_740_991)
 
 
 def create_app() -> FastAPI:
@@ -58,6 +64,13 @@ def create_app() -> FastAPI:
         # terminal cleanup result instead of treating uvicorn exit as proof.
         await close_coding_runtime(app)
         return runtime_for(app).status()
+
+    if os.environ.get("CODING_ACCEPTANCE_RETIREMENT_FIXTURES") == "1":
+        @app.post("/api/coding-acceptance/retention-clock", dependencies = [Depends(get_current_subject)])
+        async def retention_clock(body: RetentionClock, request: Request):
+            # Only an explicitly built acceptance component implements this command.
+            # Production routers and the default component have no clock controls.
+            return await runtime_for(request.app).command("retention_fixture", body.model_dump())
 
     @app.get("/api/{path:path}")
     async def unavailable(path: str):

@@ -122,7 +122,11 @@ def test_object_route_account_matrix(case, actor, request):
         # shared-native boundary, and rejected identities must never reach it.
         allowed = actor in ("owner", "right", "wrong")
         assert coding_boundary.subjects == ([username] if allowed else [])
-        operation = "open" if case.method == "POST" else "view"
+        operation = (
+            "mcp_release_edit" if case.path.endswith("/mcp/release")
+            else "mcp_" + case.path.rsplit("/", 1)[-1] if "/mcp/" in case.path
+            else "open" if case.method == "POST" else "view"
+        )
         assert coding_boundary.operations == ([operation] if allowed else [])
         assert coding_boundary.released == (
             ["matrix-view-1"] if allowed and operation == "view" else []

@@ -11,6 +11,7 @@ export interface CodingSessionState {
   conversations: CodingConversation[];
   active: CodingConversation | null;
   openingGeneration: number;
+  reopened: boolean;
   loadingConversations: boolean;
   historyError: string | null;
   opening: boolean;
@@ -39,6 +40,7 @@ export function createCodingSession(
     conversations: [],
     active: null,
     openingGeneration: 0,
+    reopened: false,
     loadingConversations: false,
     historyError: null,
     opening: false,
@@ -116,6 +118,7 @@ export function createCodingSession(
         opening: false,
         openingUncertainty: null,
         openingGeneration: state.openingGeneration + 1,
+        reopened: kind === "open",
       });
       void refreshConversations();
       return true;
