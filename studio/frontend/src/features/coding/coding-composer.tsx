@@ -345,14 +345,14 @@ export function CodingComposer({
             <Button
               type="button"
               size="icon"
-              aria-label={state?.stopping ? "Stopping…" : "Stop"}
+              aria-label={state?.stopping ? "Stopping…" : state?.retryStop ? "Retry Stop for same request" : "Stop"}
               title={
                 state?.stopping
                   ? "Waiting for native terminal cleanup"
                   : "Cancel this exact native request"
               }
               disabled={
-                Boolean(state?.stopping) || state?.connection !== "connected"
+                Boolean(state?.stopping || state?.reconcilingAction || state?.recovering) || state?.connection !== "connected"
               }
               className="mb-1 shrink-0 rounded-full"
               onClick={() => void run?.stop()}

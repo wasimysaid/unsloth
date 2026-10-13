@@ -28,6 +28,7 @@ import {
   createCodingRun,
 } from "./run-session";
 import { ToolReport } from "./tool-report";
+import { CodingUnsentDraft } from "./unsent-draft";
 
 function NativeMessage() {
   const message = useMessage();
@@ -149,7 +150,9 @@ export function CodingSurface({
       !state.recovering &&
       !state.stopping &&
       !state.submitting &&
-      !state.uncertainSubmission,
+      !state.uncertainSubmission &&
+      !state.storageError &&
+      !state.reconcilingAction,
   );
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -197,7 +200,43 @@ export function CodingSurface({
                 {state.error}
               </p>
             )}
-            {state.connection === "disconnected" && (
+            {state.storageError && (
+              <p
+                role="alert"
+                data-testid="coding-submission-storage-error"
+                className="break-words text-destructive"
+              >
+                {state.storageError}{" "}
+                {state.unsentDraft
+                  ? "Copy the retained unsent draft below before reopening. Restore browser storage before sending."
+                  : "Restore browser storage and deliberately reopen before sending."}
+              </p>
+            )}
+            {state.disconnected && (
+              <p
+                role="status"
+                data-testid="coding-disconnect-banner"
+                className="break-words font-medium"
+              >
+                {state.reopenRequired
+                  ? "Disconnected · work may still be running. The native view closed; deliberately reopen the saved conversation."
+                  : "Disconnected · work may still be running. Reconnecting automatically; this warning stays until native history is rebuilt."}
+              </p>
+            )}
+            {(state.reconcilingAction || state.retryStop) && (
+              <p role="status" data-testid="coding-action-reconciliation">
+                {state.reconcilingAction
+                  ? "Inspecting a fresh native view before another action; cancellation was not replayed."
+                  : "Fresh native view inspected. Explicit retry targets only the same active request; cancellation is not exactly-once."}
+              </p>
+            )}
+            {state.deliveryRecovered && (
+              <p role="status" data-testid="coding-submission-recovered">
+                Native prompt acceptance confirmed. Delivery recovery does not
+                start a new continuation.
+              </p>
+            )}
+            {state.disconnected && !state.reopenRequired && (
               <Button
                 variant="outline"
                 size="sm"
@@ -207,19 +246,34 @@ export function CodingSurface({
               </Button>
             )}
             {state.uncertainSubmission && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={
-                  state.connection !== "connected" ||
-                  state.recovering ||
-                  state.submitting ||
-                  Boolean(state.stopping)
-                }
-                onClick={() => void run?.retrySubmission()}
+              <div
+                data-testid="coding-delivery-recovery"
+                data-submission-key={state.uncertainSubmission.key}
+                className="space-y-2"
               >
-                Retry same submission
-              </Button>
+                <p>
+                  Prompt delivery is unconfirmed. The original submission
+                  identity is saved; no prompt is replayed automatically.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  data-testid="coding-retry-submission"
+                  disabled={
+                    state.connection !== "connected" ||
+                    state.recovering ||
+                    state.submitting ||
+                    Boolean(
+                      state.stopping ||
+                        state.storageError ||
+                        state.reconcilingAction,
+                    )
+                  }
+                  onClick={() => void run?.retrySubmission()}
+                >
+                  Retry same submission
+                </Button>
+              </div>
             )}
           </div>
         )}
@@ -287,6 +341,7 @@ export function CodingSurface({
           className="shrink-0 space-y-3"
           aria-label="Coding project and prompt"
         >
+          {state?.unsentDraft && <CodingUnsentDraft text={state.unsentDraft} />}
           <CodingComposer
             conversationId={conversationId}
             run={run}

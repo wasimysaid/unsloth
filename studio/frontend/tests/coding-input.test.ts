@@ -13,6 +13,7 @@ import {
 import { codingRunAdapter } from "../src/features/coding/run-runtime.ts";
 import { createCodingRun } from "../src/features/coding/run-session.ts";
 import type { RunApi } from "../src/features/coding/run-types.ts";
+import { memorySubmissionStorage } from "./coding-storage-fixture.ts";
 
 const skill = {
   name: "review",
@@ -198,7 +199,7 @@ test("image attachment contract rejects unsupported, empty, oversized and spoofe
   );
 });
 
-async function harness() {
+async function harness(storage = memorySubmissionStorage()) {
   const calls: unknown[] = [];
   let deliver!: (value: unknown) => Promise<void>;
   let failure: Error | null = null;
@@ -236,7 +237,9 @@ async function harness() {
       );
     },
   };
-  const run = createCodingRun("conversation", api, () => "submission-exact");
+  const run = createCodingRun("conversation", api, () => "submission-exact", {
+    storage: () => storage,
+  });
   run.connect();
   await deliver({
     subscription: "view",
@@ -267,6 +270,27 @@ async function harness() {
     },
   };
 }
+test("reopening preserves the full rich-input payload and retries its original identity", async () => {
+  const storage = memorySubmissionStorage();
+  const first = await harness(storage);
+  first.fail(new Error("Lost response"));
+  const extras = {
+    skill_mentions: [{ name: "review", path: "/project/skill.md", start: 0, end: 7 }],
+    images: [{ mime_type: "image/png", data: "original-image-bytes" }],
+  };
+  await first.run.send("@review inspect", extras);
+  const expected = structuredClone(first.calls[0]);
+  first.run.detach();
+  extras.images[0].data = "changed after send";
+  const reopened = await harness(storage);
+  assert.equal(reopened.calls.length, 0, "reopen must not replay automatically");
+  assert.equal(reopened.run.getSnapshot().uncertainSubmission?.images?.[0].data, "original-image-bytes");
+  assert.equal(await reopened.run.retrySubmission(), true);
+  assert.deepEqual(reopened.calls, [expected]);
+  assert.equal(reopened.run.getSnapshot().uncertainSubmission, null);
+  reopened.run.detach();
+});
+
 test("uncertain delivery retains the exact text/skill/image snapshot and retries the same key, with no accepted local row", async () => {
   const h = await harness();
   h.fail(new Error("Lost response"));

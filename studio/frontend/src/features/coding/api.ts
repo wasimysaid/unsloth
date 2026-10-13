@@ -16,10 +16,25 @@ async function codingRequest(
   path: string,
   init?: RequestInit,
 ): Promise<Response> {
-  const response = await authFetch(`/api/coding${path}`, init, {
-    // A transport failure may follow a committed native creation. Never replay it.
-    retryNetworkErrors: false,
-  });
+  let response: Response;
+  try {
+    response = await authFetch(`/api/coding${path}`, init, {
+      // A transport failure may follow a committed native creation. Never replay it.
+      retryNetworkErrors: false,
+    });
+  } catch (reason) {
+    if (
+      reason instanceof Error &&
+      "unslothTransportFailure" in reason &&
+      reason.unslothTransportFailure === true
+    )
+      throw new Error(
+        "Coding response unconfirmed; work may still be running. Reconnect or inspect native history before another action. No coding request was replayed.",
+        { cause: reason },
+      );
+    // Aborts and account/authentication policy errors retain their own identity.
+    throw reason;
+  }
   if (!response.ok) {
     throw new CodingHttpError(
       response.status,

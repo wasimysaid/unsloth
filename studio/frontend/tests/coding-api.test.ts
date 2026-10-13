@@ -271,3 +271,52 @@ test("event stream uses authenticated fetch, exposes a disconnect event and is c
   });
   assert.deepEqual(c.requests[0].options, { retryNetworkErrors: false });
 });
+
+test("coding transport failure stays unconfirmed without claiming native work died or suggesting relaunch", async () => {
+  const transport = Object.assign(
+    new Error("Unsloth isn't running -- please relaunch it."),
+    { unslothTransportFailure: true },
+  );
+  const c = client(() => {
+    throw transport;
+  });
+  await assert.rejects(
+    c.api.codingRunApi.readEntries(
+      "conversation",
+      { journal: "root", leaf: "captured" },
+      "latest",
+    ),
+    (reason: unknown) => {
+      assert.ok(reason instanceof Error);
+      assert.match(
+        reason.message,
+        /Coding response unconfirmed.*work may still be running/,
+      );
+      assert.doesNotMatch(reason.message, /relaunch|isn't running/);
+      assert.equal(reason.cause, transport);
+      assert.equal("admissionRejected" in reason, false);
+      return true;
+    },
+  );
+  assert.equal(
+    c.requests.length,
+    1,
+    "transport loss must not replay a coding request",
+  );
+});
+
+test("coding request preserves abort and non-transport authentication errors", async () => {
+  for (const original of [
+    new DOMException("Detached", "AbortError"),
+    new Error("Another tab is switching accounts; this tab will reload."),
+  ]) {
+    const c = client(() => {
+      throw original;
+    });
+    await assert.rejects(
+      c.api.codingApi.openConversation("saved"),
+      (reason: unknown) => reason === original,
+    );
+    assert.equal(c.requests.length, 1);
+  }
+});
