@@ -1,4 +1,48 @@
-# Coding: trusted projects, native run/stop, reopen and reconnect (#234–236)
+# Coding: native opening, run/stop, reconnect and rich inputs (#234–236, #242)
+
+## Skill/image slice (#242)
+
+Implementation baselines: Studio `a784d9193d38c640562b5464d5e9c10def6ac82d`,
+private Mimir `7ddec52c566497dd6e0cf572a18272a88d8fa10a`.
+The product plugin reuses native `session.skills()` and supported `Input.skills` /
+`Input.images` without a new SDK registry, scheduler, upload store or provider gate.
+Authenticated conversation-scoped discovery returns only effective metadata; a disk
+skill's exact descriptor path and a plugin skill's full qualified name survive Send.
+The composer converts edited UTF-16 ranges to native UTF-8 byte ranges and snapshots
+all associations and original image bytes under the existing keyed submission.
+Browser edit ranges distinguish selected occurrences from identical literal text;
+ambiguous/unavailable edits discard associations instead of guessing native intent.
+Escape dismisses mention suggestions without cancelling work; Stop remains explicit.
+
+PNG/JPEG/WebP/GIF images support inspect/remove/paste with explicit type, decode,
+dimension, aggregate-size and native provider failures. Four images / 512 KiB aggregate
+bytes / 4096×4096 dimensions keep the existing 1 MiB private transport bound useful;
+larger content fails explicitly rather than being dropped. A preview is not native
+acceptance. Definite pre-admission refusal retains Restore rejected input; uncertain
+retry uses the exact saved text/skills/images and key. Reload persistence remains #236.
+The native input surface and public history remain authoritative; ordinary-chat
+execution/tool pills are not imported.
+
+Run the rich-input actual-browser contract scenarios after building current artifacts:
+
+```sh
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir /path/to/current/mimir --plugin-package /path/to/current/package \
+  --workload inputs --browser firefox --evidence-dir /path/to/worker/browser-inputs
+```
+
+This exercises rendered desktop/narrow composer controls and the authenticated coding
+route into a real native request consuming both skill body and image content. The HTTP
+provider is a deterministic protocol fixture, **not real-model multimodal acceptance**.
+Transport refusal/response-loss scenarios are separately labeled fault injection. Native
+contract tests cover qualified-name collisions, path identity and decoder/provider
+rejections. `--workload inputs-live` separately uses the existing native provider profile
+(no credential copies), a 128×128 visual fixture and skill instructions prepared before
+native opening. It requires image recognition, a skill-only JSON marker, actual native
+write/read effects and terminal completion; fixture success cannot satisfy that check.
+Completed full-feature provider and Studio-local-model workloads,
+full ordinary-chat smoke and human implemented-UI review remain separate acceptance
+responsibilities (#255–256), not claims implied by these deterministic checks.
 
 ## Reopen/reconnect slice (#236)
 
