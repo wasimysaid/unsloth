@@ -39,6 +39,7 @@ def coding_app(monkeypatch, tmp_path):
     ("POST", "/conversations/known-id/mcp/edit", {"source": "native-source", "name": "server"}),
     ("POST", "/conversations/known-id/mcp/save", {"edit_id": "edit-1", "revision": "r1", "json": "{}"}),
     ("POST", "/conversations/known-id/mcp/release", {"edit_id": "edit-1"}),
+    ("GET", "/conversations/known-id/overlap", None),
     ("POST", "/conversations/known-id/prompts", {"submission_key": "exact-key", "text": "work"}),
     ("POST", "/conversations/known-id/requests/exact-request/cancel", None),
     ("POST", "/conversations/known-id/entries", {"cut": {"journal": "root", "leaf": None}}),
@@ -146,7 +147,7 @@ async def test_run_stop_and_history_preserve_exact_native_identities(coding_app)
         invalid = await client.post("/api/coding/conversations/exact-conversation/prompts", json = {"submission_key": "same-key", "text": "work", "api_key": "must-not-pass"})
         assert invalid.status_code == 422
     assert calls == [
-        ("prompt", {"conversation_id": "exact-conversation", "submission_key": "same-key", "text": "Please work"}),
+        ("prompt", {"conversation_id": "exact-conversation", "submission_key": "same-key", "text": "Please work", "overlap_confirmed": False}),
         ("cancel", {"conversation_id": "exact-conversation", "request_id": "native-request"}),
         ("read_entries", {"conversation_id": "exact-conversation", "cut": cut, "anchor": "latest", "max_entries": 100, "max_bytes": 262144}),
     ]
@@ -416,6 +417,42 @@ async def test_mcp_forwards_only_native_scoped_operations_and_actual_results(cod
 
 
 @pytest.mark.asyncio
+async def test_overlap_preflight_and_refusal_carry_canonical_identity_without_opening(coding_app):
+    app, headers = coding_app
+    overlap = {"cwd": "/canonical/project", "conversations": [{"id": "other-native"}]}
+    calls = []
+    class RecordingRuntime:
+        async def command(self, method, params):
+            calls.append((method, params))
+            if method == "overlap":
+                return overlap
+            if not params["overlap_confirmed"]:
+                raise CodingRuntimeError("overlap_required", "Review overlapping work before submitting.", overlap)
+            return {"conversation_id": params["conversation_id"], "submission_key": params["submission_key"], "request_id": "native-request"}
+    app.state.coding_runtime = RecordingRuntime()
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        check = await client.get("/api/coding/conversations/exact-id/overlap")
+        assert check.status_code == 200 and check.json() == overlap
+        body = {"submission_key": "original-key", "text": "draft"}
+        refused = await client.post("/api/coding/conversations/exact-id/prompts", json = body)
+        assert refused.status_code == 409
+        assert refused.json()["detail"]["code"] == "overlap_required"
+        assert refused.json()["detail"]["overlap"] == overlap
+        assert "request_id" not in refused.json()
+        for invalid in ("true", 1, None):
+            bad = await client.post("/api/coding/conversations/exact-id/prompts", json = {**body, "overlap_confirmed": invalid})
+            assert bad.status_code == 422
+        accepted = await client.post("/api/coding/conversations/exact-id/prompts", json = {**body, "overlap_confirmed": True})
+        assert accepted.status_code == 202
+        assert accepted.json()["request_id"] == "native-request"
+    assert calls == [
+        ("overlap", {"conversation_id": "exact-id"}),
+        ("prompt", {"conversation_id": "exact-id", **body, "overlap_confirmed": False}),
+        ("prompt", {"conversation_id": "exact-id", **body, "overlap_confirmed": True}),
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("code,status", [("conflict", 409), ("busy", 409), ("invalid", 400), ("denied", 403), ("not_found", 404), ("failed", 502), ("uncertain", 504)])
 async def test_mcp_native_refusals_do_not_cancel_apply_reopen_or_retry(coding_app, code, status):
     app, headers = coding_app
@@ -468,4 +505,40 @@ async def test_uncertain_mcp_save_is_not_replayed_and_requires_saved_version_com
         await runtime.command("mcp_save", {"edit_id": "host-edit", "revision": "r1", "json": "{}"})
     assert refused.value.code == "uncertain"
     assert len(commands) == 1
+    assert not runtime._pending
+
+
+@pytest.mark.asyncio
+async def test_private_overlap_error_retains_structured_warning_and_settles_exact_command():
+    stream = asyncio.StreamReader()
+    runtime = CodingRuntime()
+    runtime.process = SimpleNamespace(stdout = stream, returncode = 0)
+    future = asyncio.get_running_loop().create_future()
+    runtime._pending[7] = future
+    overlap = {"cwd": "/canonical/project", "conversations": [{"id": "native-owner"}]}
+    data = json.dumps({"id": 7, "error": {"code": "overlap_required", "message": "Review overlap", "overlap": overlap}}).encode()
+    stream.feed_data(struct.pack(">I", len(data)) + data)
+    stream.feed_eof()
+    await runtime._read_responses()
+    with pytest.raises(CodingRuntimeError) as error:
+        await future
+    assert error.value.code == "overlap_required"
+    assert error.value.overlap == overlap
+    assert not runtime._pending
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("overlap", [None, {}, {"cwd": "/project", "conversations": []}, {"cwd": "/project", "conversations": [{"id": None}]}])
+async def test_malformed_overlap_refusal_fails_transport_without_orphaning_command(overlap):
+    stream = asyncio.StreamReader()
+    runtime = CodingRuntime()
+    runtime.process = SimpleNamespace(stdout = stream, returncode = 0)
+    future = asyncio.get_running_loop().create_future()
+    runtime._pending[1] = future
+    data = json.dumps({"id": 1, "error": {"code": "overlap_required", "message": "Review", "overlap": overlap}}).encode()
+    stream.feed_data(struct.pack(">I", len(data)) + data)
+    stream.feed_eof()
+    await runtime._read_responses()
+    with pytest.raises(CodingRuntimeError, match = "disconnected"):
+        await future
     assert not runtime._pending

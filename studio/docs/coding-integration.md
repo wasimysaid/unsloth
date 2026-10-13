@@ -1,4 +1,61 @@
-# Coding: trusted projects, run/stop, recovery, reported file changes and rich inputs (#234–238, #242)
+# Coding: trusted projects, run/stop, recovery, reported file changes, rich inputs and concurrency (#234–238, #242, #247)
+
+## Independent conversations and overlap slice (#247)
+
+Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`
+and private Mimir `91b975adae2df627d7c67c6bcede6d910a592a7d`.
+The existing one-process bridge and native Session Control owners remain the
+execution authority; no Studio scheduler, browser-owned process or new global
+execution cap is introduced. Provider/native capacity refusals remain actionable.
+
+`GET /api/coding/conversations/{id}/overlap` is an authenticated read-only native
+preflight. Before a new prompt POST, the browser warns if other retained, busy
+conversations share its canonical folder, including symlink aliases. The native
+prompt guard checks again before admission, returning a structured
+`overlap_required` refusal if another conversation became busy after preflight.
+The warning offers initially focused Cancel prompt, Escape cancellation, trapped
+keyboard focus and explicit Continue anyway; the original text/key is retained
+until the user chooses. Cancellation abandons only this known-unadmitted draft.
+It never stops another request. An explicit continuation supplies the strict
+optional boolean `overlap_confirmed`; it is not remembered project authority.
+Already accepted native submission keys retain original request identity and
+bypass new overlap warnings during delivery recovery. The narrowly added native
+Session Control **10.1.0** `submitted_request(context,key)` reads the same whole-journal
+lookup as native keyed admission, including inactive branches after reopen. The
+plugin uses no current-branch request-state guess or separate key registry. SDK
+WIT consumers, native trait/carrier/registry, fixtures and guides are updated coherently. Rebuild
+both the native executable and product component against this exact paired SDK;
+an older cached executable/package is not compatible evidence.
+
+Detection covers exact canonical folders among the supervised plugin's retained
+owners, not comprehensive cross-process or nested-workspace overlap. It is **not a
+filesystem lock or sandbox**, grants no authority over another owner and cannot
+guarantee absence of file conflicts. Execution leases stay mandatory: a foreign
+process's conversation is in use until native cleanup releases it, never
+force-opened, forked or stolen. Project changes create distinct conversations;
+reconnect preserves the conversation identity, canonical folder and owner.
+
+Reproduce the focused rendered/route scenarios after building frontend and the
+matching native package:
+
+```sh
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir /path/to/paired/mimir --plugin-package /path/to/current/package \
+  --workload concurrency --browser firefox --evidence-dir /path/to/worker/concurrency
+```
+
+The driver exercises concurrent independent native shell workloads in the same
+supervised process, canonical alias warning before any prompt POST, cancellation
+and explicit keyboard continuation, the route admission guard, narrow rendering
+at 390×844 and desktop at 1440×1000, exact Stop isolation, native tool process
+settlement, foreign-process lease refusal, and authenticated overlap access.
+Paired product/native tests additionally exercise native tool capacity refusal,
+keyed deduplication and settled lease handoff. Reports include exact native IDs,
+PIDs, build hashes, filesystem outcomes, policy fingerprints and cleanup results.
+These are deterministic provider/real native tool checks, not live-model or full
+PoC acceptance. Live-provider/local-model acceptance and human UI review remain
+#255–256; attempt evidence records actual completed checks and limitations.
+
 
 ## Reported file changes slice (#238)
 
@@ -341,7 +398,7 @@ claim tied to a mutable local HEAD or absent screenshots.
 | A3 | Shared typed live/historical reported changes; collapsed inspection-only rows, bounded unified hunks, optional counts and incomplete/binary labels (#238) | See task-local file-change browser and SDK reports; cross-feature/live acceptance (#254/#255) |
 | A4 | No model picker | Model/reasoning interactions (#244) |
 | A5 | Externally configured provider admission; no Studio local-model serving | Local-model requests and whole-request protection (#246/#255) |
-| A6 | Canonical/native validated opening, non-persisting effective trust, saved-policy tests, child inheritance, mismatch/lease refusals, authenticated run/Stop/history access | Concurrent execution/same-folder warning and retirement/recovery (#247–249) |
+| A6 | Canonical/native validated opening, non-persisting effective trust, saved-policy tests, child inheritance, mismatch/lease refusals, authenticated run/Stop/history access; independent concurrent native workloads and canonical-folder warning/admission (#247) | Retirement/process recovery (#248–249) |
 | A7 | Exact request cancellation; Stop acknowledgment distinct from cleanup; disconnect never stops owners; typed native failures; durable submission identity across reload/native restart, automatic authoritative reconnect and non-prompt reconciliation (#236); no automatic work replay; awaited EOF shutdown | Controlled idle clocks and full process-interruption/maintenance scenarios (#248/#249) |
 | A8 | #250: scoped native MCP inventory, revision-checked persistence and draft reconciliation; save-only Settings with configured/applied distinction | MCP live apply/reconnect (#251), headless extensions and maintenance (#252) |
 | A9 | Ordinary-chat store/engine untouched; affected shared/ordinary-chat tests; coding route excludes ordinary model observers and chat execution imports | Real ordinary-chat smoke and cross-feature regression (#254/#255) |

@@ -3,6 +3,7 @@
 
 import type { ChildAttempt, ChildIdentity } from "./child-types.ts";
 import { createChildView } from "./child-view.ts";
+import { CodingOverlapError } from "./errors.ts";
 import { codingRowSize } from "./file-changes.ts";
 import type { CodingInput, CodingInputExtras } from "./input.ts";
 import {
@@ -14,6 +15,7 @@ import type {
   EntryPage,
   JournalCut,
   NativeState,
+  ProjectOverlap,
   RunApi,
 } from "./run-types.ts";
 
@@ -43,6 +45,7 @@ export interface CodingRunState {
   reopenRequired: boolean;
   reconcilingAction: string | null;
   retryStop: string | null;
+  overlapWarning: (CodingInput & { key: string; overlap: ProjectOverlap }) | null;
 }
 const MAX_ROWS = 1000;
 const MAX_TEXT = 2 * 1024 * 1024;
@@ -83,6 +86,7 @@ export function createCodingRun(
     reopenRequired: false,
     reconcilingAction: null,
     retryStop: null,
+    overlapWarning: null,
   };
   try {
     state.uncertainSubmission = pendingStore.load();
@@ -478,7 +482,7 @@ export function createCodingRun(
         reconnectTimer = setTimeout(connect, delay);
       });
   }
-  async function submit(input: CodingInput, key: string): Promise<boolean> {
+  async function submit(input: CodingInput, key: string, overlapConfirmed = false): Promise<boolean> {
     if (
       state.connection !== "connected" ||
       state.recovering ||
@@ -520,7 +524,7 @@ export function createCodingRun(
     });
     try {
       const { text, ...extras } = input;
-      const result = await api.submit(id, key, text, extras);
+      const result = await api.submit(id, key, text, extras, overlapConfirmed);
       if (
         result.conversation_id !== id ||
         result.submission_key !== key ||
@@ -535,13 +539,19 @@ export function createCodingRun(
       return true;
     } catch (reason) {
       if (state.acceptedSubmissionKey === key) return true;
-      if (
+      if (reason instanceof CodingOverlapError) {
+        clearPending(key, false);
+        update({
+          overlapWarning: { key, ...input, overlap: reason.overlap },
+          error: null,
+        });
+      } else if (
         reason instanceof Error &&
         "admissionRejected" in reason &&
         reason.admissionRejected === true
       ) {
         clearPending(key, false);
-        update({ rejectedSubmission: input, error: errorText(reason) });
+        update({ rejectedSubmission: input, error: errorText(reason), unsentDraft: input.text });
       } else if (state.uncertainSubmission?.key === key) {
         update({
           error: `${errorText(reason)} Delivery is unconfirmed; do not send a new copy. Reconnect or retry the same submission identity.`,
@@ -576,9 +586,77 @@ export function createCodingRun(
         throw new Error(
           "Reconcile the unconfirmed submission before sending new input.",
         );
-      // Snapshot the complete input once. Later edits/removals never change an
-      // uncertain delivery retry, including its image bytes and mention ranges.
-      return await submit(structuredClone({ text, ...extras }), makeKey());
+      if (
+        state.overlapWarning ||
+        state.submitting ||
+        state.stopping ||
+        state.reconcilingAction ||
+        state.storageError ||
+        state.recovering ||
+        state.connection !== "connected"
+      )
+        throw new Error(
+          "Wait for a connected, reconstructed native view and resolve the current warning before sending.",
+        );
+      // Freeze rich input before preflight and retain it through confirmation/retry.
+      const input = structuredClone({ text, ...extras });
+      const key = makeKey();
+      const current = incarnation;
+      update({ submitting: true, error: null, unsentDraft: null });
+      let overlap: ProjectOverlap;
+      try {
+        overlap = await api.checkOverlap(id);
+      } catch (reason) {
+        update({
+          submitting: false,
+          error:
+            current === incarnation
+              ? `Project overlap check failed. No prompt was sent. ${errorText(reason)}`
+              : state.error,
+          unsentDraft: input.text,
+          rejectedSubmission: input,
+        });
+        return false;
+      }
+      if (
+        current !== incarnation ||
+        state.connection !== "connected" ||
+        state.recovering ||
+        state.stopping ||
+        state.reconcilingAction
+      ) {
+        update({ submitting: false, unsentDraft: input.text, rejectedSubmission: input });
+        return false; // Reconnect/detach invalidated preflight, not permission to send.
+      }
+      update({ submitting: false });
+      if (overlap.conversations.length) {
+        update({ overlapWarning: { key, ...input, overlap } });
+        return false;
+      }
+      return await submit(input, key);
+    },
+    async continueOverlap() {
+      const warning = state.overlapWarning;
+      if (
+        !warning ||
+        state.connection !== "connected" ||
+        state.recovering ||
+        state.submitting ||
+        state.stopping ||
+        state.reconcilingAction ||
+        state.storageError
+      )
+        return false;
+      const { key, overlap: _overlap, ...input } = warning;
+      update({ overlapWarning: null });
+      return await submit(input, key, true);
+    },
+    cancelOverlap() {
+      const warning = state.overlapWarning;
+      if (!warning) return;
+      const { key: _key, overlap: _overlap, ...input } = warning;
+      // Only abandon this known-unadmitted draft; never cancel another request.
+      update({ overlapWarning: null, unsentDraft: input.text, rejectedSubmission: input, error: null });
     },
     async retrySubmission() {
       const pending = state.uncertainSubmission;

@@ -1,4 +1,4 @@
-# Coding native run/stop, delivery recovery, reported changes and Mimir Settings
+# Coding native run/stop, recovery, reported changes, rich inputs, concurrency and Mimir Settings
 
 `/coding` keeps Studio’s authenticated route gate, sidebar primitives and composer
 CSS, without importing ordinary chat execution, tool orchestration, model loading
@@ -30,9 +30,13 @@ All `/api/coding` routes use established Studio auth, including IDs and fetch SS
 - Browse/catalog/list/create/open retain the #234 canonical-folder and effective,
   non-persisting trust behavior. Selecting a folder always creates a new native
   conversation; reopening preserves its saved native identity and directory.
+- `GET /conversations/{id}/overlap` reads native canonical-folder overlap against
+  other retained, busy owners; it never opens an owner or changes project identity.
 - `POST /conversations/{id}/prompts` accepts `{submission_key,text}` plus optional
-  `skill_mentions` and `images`, and returns native conversation/submission/request
-  identities. Transport retries are disabled.
+  `skill_mentions`, `images` and `overlap_confirmed`, and returns native
+  conversation/submission/request identities. Confirmation defaults to false;
+  the host refuses newly overlapping work before native admission with a structured
+  `overlap_required` warning. Transport retries are disabled.
 - `GET /conversations/{id}/skills` discovers the already-open controller's effective
   native skill metadata. It neither loads skill bodies nor creates another registry.
 - `POST /conversations/{id}/requests/{request_id}/cancel` targets exactly that native
@@ -63,6 +67,29 @@ content is authoritative, not model-only output. Starts/results of one invocatio
 share a compact chronological slot; repeated invocations remain separate. Historical
 reports are labeled and are not claims about the current filesystem. There are no
 Apply/Revert controls or tool-selection pills.
+
+## Concurrent conversations and overlap (#247)
+
+Independent requests use the same supervised native process, with no browser-owned
+process or Studio execution serialization cap. Native/provider admission remains
+responsible for capacity, same-conversation busy state, and execution leases.
+
+Before a new prompt POST, a read-only overlap preflight checks other retained busy
+conversations in the **same canonical folder**. The accessible warning focuses
+Cancel, traps keyboard focus, supports Escape cancellation, and offers explicit
+Continue anyway. Cancelling retains a known-unsent in-memory draft and never sends
+Stop to another owner. The prompt-side native guard closes races after preflight;
+its rejection opens the same warning while clearing definitively rejected pending
+delivery. Only explicit continuation supplies `overlap_confirmed: true` for this
+submission; no remembered project permission or durable authority is created.
+Already accepted key retries remain native deduplication and do not run a fresh
+preflight or acquire new authority. Failed/superseded preflight sends nothing.
+
+This warning is **not** a filesystem lock, sandbox, comprehensive nested-workspace
+or cross-process work detector. It grants no authority over another owner and
+cannot guarantee absence of file conflicts. Another process's saved conversation
+is still in use; Studio never forces it open, forks it, or steals its lease.
+Project changes create distinct conversations; reconnect retains native identity.
 
 ## Child-attempt inspection (#241)
 
