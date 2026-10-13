@@ -204,6 +204,12 @@ async function harness(storage = memorySubmissionStorage()) {
   let deliver!: (value: unknown) => Promise<void>;
   let failure: Error | null = null;
   const api: RunApi = {
+    async checkOverlap() {
+      return { cwd: "/project", conversations: [] };
+    },
+    async readChild() {
+      throw new Error("Input submission must not inspect child attempts");
+    },
     async submit(id, key, text, extras) {
       calls.push(structuredClone({ id, key, text, ...extras }));
       if (failure) throw failure;

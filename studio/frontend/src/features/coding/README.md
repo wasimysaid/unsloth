@@ -1,4 +1,4 @@
-# Coding native run/stop, delivery recovery and reported changes (#234–238)
+# Coding native run/stop, recovery, reported changes, rich inputs and concurrency (#234–238, #242, #247)
 
 `/coding` keeps Studio’s authenticated route gate, sidebar primitives and composer
 CSS, without importing ordinary chat execution, tool orchestration, model loading
@@ -30,15 +30,22 @@ All `/api/coding` routes use established Studio auth, including IDs and fetch SS
 - Browse/catalog/list/create/open retain the #234 canonical-folder and effective,
   non-persisting trust behavior. Selecting a folder always creates a new native
   conversation; reopening preserves its saved native identity and directory.
+- `GET /conversations/{id}/overlap` reads native canonical-folder overlap against
+  other retained, busy owners; it never opens an owner or changes project identity.
 - `POST /conversations/{id}/prompts` accepts `{submission_key,text}` plus optional
-  `skill_mentions` and `images`, and returns native conversation/submission/request
-  identities. Transport retries are disabled.
+  `skill_mentions`, `images` and `overlap_confirmed`, and returns native
+  conversation/submission/request identities. Confirmation defaults to false;
+  the host refuses newly overlapping work before native admission with a structured
+  `overlap_required` warning. Transport retries are disabled.
 - `GET /conversations/{id}/skills` discovers the already-open controller's effective
   native skill metadata. It neither loads skill bodies nor creates another registry.
 - `POST /conversations/{id}/requests/{request_id}/cancel` targets exactly that native
   request. Acknowledgment is not terminal cleanup. It never closes the owner.
-- `POST /conversations/{id}/entries` reads only the native immutable root `cut`, with
+- `POST /conversations/{id}/entries` reads a native immutable root or child `cut`, with
   an exact `latest`, `before` or `after` anchor and bounded entry/byte selection.
+- `GET /conversations/{id}/children/{handle}/attempts/{attempt}` reads bounded
+  descriptive details and exactly that attempt’s retained outcome without claiming
+  the completion owed to Mimir. A newer attempt is never returned as the requested one.
 - `GET /conversations/{id}/events` consumes the native atomic start capture, then
   ordered activity, checkpoints, whole state, completion and reset items. Position
   gaps are allowed; backward positions and wrong conversation IDs are errors.
@@ -60,6 +67,61 @@ content is authoritative, not model-only output. Starts/results of one invocatio
 share a compact chronological slot; repeated invocations remain separate. Historical
 reports are labeled and are not claims about the current filesystem. There are no
 Apply/Revert controls or tool-selection pills.
+
+## Concurrent conversations and overlap (#247)
+
+Independent requests use the same supervised native process, with no browser-owned
+process or Studio execution serialization cap. Native/provider admission remains
+responsible for capacity, same-conversation busy state, and execution leases.
+
+Before a new prompt POST, a read-only overlap preflight checks other retained busy
+conversations in the **same canonical folder**. The accessible warning focuses
+Cancel, traps keyboard focus, supports Escape cancellation, and offers explicit
+Continue anyway. Cancelling retains a known-unsent in-memory draft and never sends
+Stop to another owner. The prompt-side native guard closes races after preflight;
+its rejection opens the same warning while clearing definitively rejected pending
+delivery. Only explicit continuation supplies `overlap_confirmed: true` for this
+submission; no remembered project permission or durable authority is created.
+Already accepted key retries remain native deduplication and do not run a fresh
+preflight or acquire new authority. Failed/superseded preflight sends nothing.
+
+This warning is **not** a filesystem lock, sandbox, comprehensive nested-workspace
+or cross-process work detector. It grants no authority over another owner and
+cannot guarantee absence of file conflicts. Another process's saved conversation
+is still in use; Studio never forces it open, forks it, or steals its lease.
+Project changes create distinct conversations; reconnect retains native identity.
+
+## Child-attempt inspection (#241)
+
+Native agent-icon rows open a right-hand, inspection-only panel; no launch,
+continue, steer, or individual Stop is exposed. On narrow screens the dismissible
+panel fills the transcript width, leaving connection feedback and the **main-session
+Stop** available below. Enter/Space activate native buttons, Escape dismisses from
+inside the inspector, and focus returns to the activating row (or its replacement
+or composer if that row is no longer available). Hidden narrow-screen transcript
+content is inert, while the inspector remains non-modal.
+
+`child-view.ts` consumes children from the same atomic parent start/reset and ordered
+child/activity/checkpoint items. Exact `(handle, attempt)` keys isolate continuation
+outcomes. History-only observations cannot make old work live. Descriptive reads
+cannot advance the ordered cut or lifecycle; terminal outcomes come only from the
+non-consuming native outcome read. Inspector navigation cancels obsolete reads,
+not native work. Disconnect/reconstruction leaves status unconfirmed until recapture.
+
+Child journals are loaded lazily at captured cuts, with native bounded paging and
+explicit clipping/unavailable labels. A journal through an attempt’s cut may include
+earlier retained context; it is not mislabeled as an attempt-only transcript. When
+an old attempt has no available exact cut, the current child journal is **not**
+substituted. The inspector retains at most 200 rows / 512 KiB of text and 512 compact
+attempt rows, and discloses omitted content. Results/errors use the bridge’s bounded
+public prefix with explicit clipping labels, never raw model context/private history.
+Reconnect uses a new atomic capture and preserves the selected exact historical
+attempt without relabeling it as current. Inspection never consumes parent delivery.
+
+Stable selectors: `coding-child-row` and `coding-child-inspector` carry
+`data-child-handle` / `data-child-attempt`; the panel is the `Subagent inspector`
+dialog. `--workload children` in the coding-route driver exercises actual native
+delegation with a deterministic protocol provider, not real-model acceptance.
 
 ## Skill mentions and images (#242)
 

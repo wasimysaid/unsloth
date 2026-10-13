@@ -2,6 +2,11 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 import type {
+  ChildAttempt,
+  ChildDetail,
+  ChildPresentation,
+} from "./child-types.ts";
+import type {
   CodingDiagnostic,
   CommandCatalog,
   CommandOutcome,
@@ -47,13 +52,14 @@ export interface NativeState {
   } | null;
 }
 export interface JournalCut {
-  journal: "root";
+  journal: "root" | { child: string };
   leaf: string | null;
 }
 export type EntryAnchor = "latest" | { before: string } | { after: string };
 export interface CodingRow {
   id: string;
-  kind: "user" | "assistant" | "tool" | "notice";
+  kind: "user" | "assistant" | "tool" | "notice" | "child";
+  child?: ChildAttempt;
   text?: string;
   entry_id?: string | null;
   request_id?: string | null;
@@ -73,6 +79,7 @@ export interface CodingRow {
     row_group: { key: string; label: string; item: string } | null;
     semantic_content?: unknown;
     display_kind?: string | null;
+    subagent?: ChildPresentation | null;
     output_profile?: ToolOutputProfile | null;
     historical?: boolean;
   };
@@ -85,6 +92,10 @@ export interface EntryPage {
   first_id: string | null;
   last_id: string | null;
 }
+export interface ProjectOverlap {
+  cwd: string;
+  conversations: { id: string }[];
+}
 export interface RunApi {
   commands?(id: string): Promise<CommandCatalog>;
   command?(
@@ -95,11 +106,19 @@ export interface RunApi {
   ): Promise<CommandOutcome>;
   commandReceipt?(id: string, operationId: string): Promise<CommandReceipt>;
   diagnostics?(id: string, kind: DiagnosticKind): Promise<CodingDiagnostic>;
+  checkOverlap(id: string): Promise<ProjectOverlap>;
+  readChild(
+    id: string,
+    handle: string,
+    attempt: number,
+    signal?: AbortSignal,
+  ): Promise<ChildDetail>;
   submit(
     id: string,
     submissionKey: string,
     text: string,
     extras?: CodingInputExtras,
+    overlapConfirmed?: boolean,
   ): Promise<{
     conversation_id: string;
     request_id: string;

@@ -29,6 +29,12 @@ function harness(storage = memorySubmissionStorage()) {
   let failure: Error | null = null;
   let largeDiagnostic = false;
   const api: RunApi = {
+    async checkOverlap() {
+      return { cwd: "/project", conversations: [] };
+    },
+    async readChild() {
+      return { child: null, outcome: null };
+    },
     async commands(id) {
       return {
         conversation_id: id,
@@ -220,6 +226,57 @@ test("unknown/terminal-only and busy errors are authoritative native refusals wi
   assert.deepEqual(h.prompts, []);
   assert.equal(h.run.getSnapshot().native?.active_request, "active");
   h.run.detach();
+});
+
+test("overlap continuation retains rich input while a command is pending or uncertain", async () => {
+  const h = harness();
+  const overlap = { cwd: "/project", conversations: [{ id: "other-native" }] };
+  const input = {
+    text: "@review inspect",
+    skill_mentions: [
+      { name: "review", path: "/project/review/SKILL.md", start: 0, end: 7 },
+    ],
+    images: [{ mime_type: "image/png", data: "original-base64" }],
+  };
+  h.api.checkOverlap = async () => overlap;
+  await h.start();
+  const { text, ...extras } = input;
+  await h.run.send(text, extras);
+  const warning = structuredClone(h.run.getSnapshot().overlapWarning);
+  let rejectCommand!: (reason: Error) => void;
+  h.api.command = async () =>
+    await new Promise((_resolve, reject) => {
+      rejectCommand = reject;
+    });
+  const command = h.run.executeCommand("inspect");
+  try {
+    assert.equal(await h.run.continueOverlap(), false);
+    assert.deepEqual(h.run.getSnapshot().overlapWarning, warning);
+    rejectCommand(new Error("Command reply lost"));
+    await command;
+    await h.start();
+    assert.ok(h.run.getSnapshot().uncertainCommand);
+    assert.equal(await h.run.continueOverlap(), false);
+    assert.deepEqual(h.run.getSnapshot().overlapWarning, warning);
+    assert.deepEqual(h.prompts, []);
+    h.api.commandReceipt = async () => ({
+      conversation_id: "session",
+      operation_id: "key",
+      status: "completed",
+      result: {
+        conversation_id: "session",
+        operation_id: "key",
+        outcome: "handled",
+      },
+    });
+    await h.run.reconcileCommand();
+    assert.equal(await h.run.continueOverlap(), true);
+    assert.deepEqual(h.prompts, [text]);
+  } finally {
+    rejectCommand(new Error("Command reply lost"));
+    await command;
+    h.run.detach();
+  }
 });
 
 test("lost command reply reconstructs a fresh view and never blindly retries or fabricates outcome", async () => {
