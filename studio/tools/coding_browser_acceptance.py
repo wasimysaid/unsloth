@@ -17,6 +17,9 @@ Disposable projects, Studio auth and evidence stay in evidence-dir. Use a distin
 evidence directory for each run. --workload opening runs the previous opening suite.
 --workload picker adds ticket-244 rendered model/reasoning/favorites/layout checks
 and a held real native provider call to distinguish running from next selection.
+--workload file-changes verifies real write/edit/edit profiles and replay, followed
+by separately labelled synthetic rendered history edge cases. file-changes-live
+requests the same operations from the existing host provider (180-second deadline).
 """
 from __future__ import annotations
 
@@ -38,6 +41,9 @@ import urllib.request
 from coding_provider_fixture import ProviderFixture
 from coding_run_scenarios import run_scenarios
 from coding_picker_scenarios import run_picker_scenarios
+from coding_input_scenarios import prepare_input_project, input_scenarios, live_input_scenario
+from coding_recovery_scenarios import run_recovery_scenarios
+from coding_file_change_scenarios import LIVE_PROFILE_OBSERVER, run_file_change_scenarios
 
 
 def shared_trust_path() -> Path:
@@ -53,7 +59,7 @@ def main() -> None:
     runtime_input.add_argument("--mimir-source", type = Path, help = "Build the current paired source and product package before acceptance")
     parser.add_argument("--plugin-package", type = Path)
     parser.add_argument("--evidence-dir", type = Path, required = True)
-    parser.add_argument("--workload", choices = ("opening", "deterministic", "picker", "live"), default = "deterministic",
+    parser.add_argument("--workload", choices = ("opening", "deterministic", "picker", "recovery", "inputs", "live", "inputs-live", "file-changes", "file-changes-live"), default = "deterministic",
                         help = "Live uses the existing native provider/credential profile; never copies credentials")
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
     parser.add_argument("--chrome", default = "/usr/bin/google-chrome", help = "Chromium executable; ignored for Firefox")
@@ -78,18 +84,20 @@ def main() -> None:
     state_root = evidence / ("state-" + secrets.token_hex(4))
     state_root.mkdir()
     home = state_root / "studio-home"
-    live = args.workload == "live"
+    live = args.workload in ("live", "inputs-live", "file-changes-live")
     native = shared_trust_path().parent if live else state_root / "mimir-home"
     native.mkdir(exist_ok = True)
-    provider = ProviderFixture() if args.workload in ("deterministic", "picker") else None
+    provider = ProviderFixture() if args.workload in ("deterministic", "picker", "recovery", "inputs", "file-changes") else None
     if provider:
-        provider.configure(native, picker = args.workload == "picker")
+        provider.configure(native, picker = args.workload == "picker", images = args.workload == "inputs")
     projects = state_root / "projects"
     projects.mkdir(exist_ok = True)
     first, second, denied = [projects / name for name in ("first-project", "second-project", "os-denied")]
     for folder in (first, second, denied):
         folder.mkdir(exist_ok = True)
     (first / "src").mkdir(exist_ok = True)
+    if args.workload in ("inputs", "inputs-live"):
+        prepare_input_project(first, live = args.workload == "inputs-live")
     alias = projects / "first-alias"
     if not alias.exists():
         alias.symlink_to(first, target_is_directory = True)
@@ -145,9 +153,33 @@ def main() -> None:
         port = sock.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
     output = (evidence / "server.log").open("w")
-    server = subprocess.Popen([sys.executable, "-m", "uvicorn", "tests.coding_acceptance_app:create_app", "--factory",
-                               "--host", "127.0.0.1", "--port", str(port)],
-                              cwd = root / "studio" / "backend", env = env, stdout = output, stderr = subprocess.STDOUT)
+    server_args = [sys.executable, "-m", "uvicorn", "tests.coding_acceptance_app:create_app", "--factory",
+                   "--host", "127.0.0.1", "--port", str(port)]
+    server = subprocess.Popen(server_args, cwd = root / "studio" / "backend", env = env,
+                              stdout = output, stderr = subprocess.STDOUT)
+
+    def restart_server():
+        nonlocal server
+        import psutil
+        children = [child for child in psutil.Process(server.pid).children()
+                    if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
+        assert len(children) == 1
+        before = children[0].pid
+        server.terminate()
+        assert server.wait(timeout = 45) in (0, -15)
+        assert not children[0].is_running(), "Clean acceptance restart did not await native cleanup"
+        report.setdefault("runtime_generations", []).append({"pid": before, "native_settled": True})
+        server = subprocess.Popen(server_args, cwd = root / "studio" / "backend", env = env,
+                                  stdout = output, stderr = subprocess.STDOUT)
+        for _ in range(100):
+            assert server.poll() is None, "Restarted acceptance server exited"
+            try:
+                urllib.request.urlopen(base + "/api/auth/status", timeout = 1).close()
+                return
+            except (urllib.error.URLError, TimeoutError):
+                time.sleep(0.1)
+        raise AssertionError("Restarted acceptance server did not become ready")
+
     try:
         for _ in range(100):
             if server.poll() is not None:
@@ -172,6 +204,8 @@ def main() -> None:
                                  "rendering": "hardware acceleration disabled"}
             context = browser.new_context(viewport = {"width": 1440, "height": 1000})
             context.add_init_script("localStorage.setItem('unsloth_show_loaded_models_indicator', 'true')")
+            if args.workload in ("file-changes", "file-changes-live"):
+                context.add_init_script(LIVE_PROFILE_OBSERVER)
             page = context.new_page()
             page.on("pageerror", lambda error: report.setdefault("page_errors", []).append(str(error)))
             ordinary_status_requests = []
@@ -271,11 +305,42 @@ def main() -> None:
             expect(page.get_by_test_id("coding-canonical-cwd")).to_have_text(str(first))
             expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout = 60000)
             scenario("A6-change-reopen", "Different project creates a different native identity; deliberate reopen preserves first ID and cwd")
+            if args.workload == "recovery":
+                saved_second = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text = second_id)
+                for failure, expected_error in (("denied", "denies access"), ("missing", "does not exist")):
+                    if failure == "denied":
+                        second.chmod(0)
+                    else:
+                        second.rmdir()  # This empty disposable folder was created above by this run.
+                    try:
+                        saved_second.click()
+                        expect(page.get_by_role("alert").filter(has_text = expected_error)).to_be_visible(timeout = 60000)
+                        expect(page.get_by_test_id("coding-conversation-id")).to_have_text(first_id)
+                        snapshot(page, "recovery-saved-folder-" + failure)
+                    finally:
+                        if failure == "missing":
+                            second.mkdir()
+                        second.chmod(0o700)
+                scenario("A6-saved-folder-reopen-errors", "Missing and OS-denied saved folders were refused on deliberate reopen even with retained native ownership; current conversation identity stayed unchanged, no replacement folder or fork")
             if args.workload != "opening":
                 try:
                     if args.workload == "picker":
                         run_picker_scenarios(page, context, base, provider, first,
                                              report, scenario, snapshot)
+                    elif args.workload == "inputs":
+                        input_scenarios(page, context, base, provider, first, report, scenario, snapshot)
+                    elif args.workload == "inputs-live":
+                        live_input_scenario(page, context, base, first, report, scenario, snapshot)
+                    elif args.workload == "recovery":
+                        run_recovery_scenarios(page, context, base, provider, first, second_id,
+                                               report, scenario, snapshot, restart_server)
+                        product = [child for child in psutil.Process(server.pid).children()
+                                   if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
+                        assert len(product) == 1
+                        report["supervised_pid"] = product[0].pid
+                    elif args.workload in ("file-changes", "file-changes-live"):
+                        run_file_change_scenarios(page, context, base, provider, first, second_id,
+                                                  report, scenario, snapshot, live = live)
                     else:
                         run_scenarios(page, context, base, provider, first, second_id,
                                       report, scenario, snapshot, live = live)
@@ -372,8 +437,9 @@ def main() -> None:
                 ("post", "/api/coding/conversations", {"data": {"cwd": str(first)}}),
                 ("post", f"/api/coding/conversations/{first_id}/open", {}),
                 ("get", f"/api/coding/conversations/{first_id}/events", {}),
+                ("get", f"/api/coding/conversations/{first_id}/skills", {}),
                 ("post", f"/api/coding/conversations/{first_id}/prompts", {"data": {"submission_key": "unauthenticated-valid-key", "text": "Must not execute"}}),
-                ("post", f"/api/coding/conversations/{first_id}/requests/{report.get('workload', {}).get('requests', [{}])[0].get('request_id', 'known-request')}/cancel", {}),
+                ("post", f"/api/coding/conversations/{first_id}/requests/{report.get('workload', report.get('recovery', report.get('file_changes', {}))).get('requests', [{}])[0].get('request_id', 'known-request')}/cancel", {}),
                 ("post", f"/api/coding/conversations/{first_id}/entries", {"data": {"cut": {}, "anchor": "latest", "max_entries": 10, "max_bytes": 1024}}),
             ):
                 response = getattr(unauth, method)(path, **kwargs)
@@ -383,7 +449,7 @@ def main() -> None:
             if provider:
                 provider.assert_no_request()
             report["unauthenticated_requests"] = denied_requests
-            scenario("A6-known-id-auth", "All nine coding surfaces (browse/catalog/history/create/open/SSE/prompt/cancel/bounded entries), including real conversation/request IDs, refused unauthenticated requests")
+            scenario("A6-known-id-auth", "All ten coding surfaces (browse/catalog/history/create/open/SSE/skills/prompt/cancel/bounded entries), including real conversation/request IDs, refused unauthenticated requests")
             # Measure over more than two ordinary indicator polling intervals.
             # No ordinary-model status response is mocked and no model is loaded.
             page.wait_for_timeout(11000)

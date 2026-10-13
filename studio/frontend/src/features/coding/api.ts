@@ -17,10 +17,25 @@ async function codingRequest(
   path: string,
   init?: RequestInit,
 ): Promise<Response> {
-  const response = await authFetch(`/api/coding${path}`, init, {
-    // A transport failure may follow a committed native creation. Never replay it.
-    retryNetworkErrors: false,
-  });
+  let response: Response;
+  try {
+    response = await authFetch(`/api/coding${path}`, init, {
+      // A transport failure may follow a committed native creation. Never replay it.
+      retryNetworkErrors: false,
+    });
+  } catch (reason) {
+    if (
+      reason instanceof Error &&
+      "unslothTransportFailure" in reason &&
+      reason.unslothTransportFailure === true
+    )
+      throw new Error(
+        "Coding response unconfirmed; work may still be running. Reconnect or inspect native history before another action. No coding request was replayed.",
+        { cause: reason },
+      );
+    // Aborts and account/authentication policy errors retain their own identity.
+    throw reason;
+  }
   if (!response.ok) {
     throw new CodingHttpError(
       response.status,
@@ -98,6 +113,14 @@ export const codingModelApi: CodingModelApi = {
   },
 };
 
+export async function discoverCodingSkills(id: string, signal?: AbortSignal) {
+  const response = await codingRequest(
+    `/conversations/${encodeURIComponent(id)}/skills`,
+    { signal },
+  );
+  return (await response.json()) as { skills: import("./input").CodingSkill[] };
+}
+
 export const codingRunApi: RunApi = {
   async configure(id, change) {
     const response = await codingRequest(
@@ -110,13 +133,17 @@ export const codingRunApi: RunApi = {
     );
     return await response.json();
   },
-  async submit(id, submissionKey, text) {
+  async submit(id, submissionKey, text, extras) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/prompts`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ submission_key: submissionKey, text }),
+        body: JSON.stringify({
+          submission_key: submissionKey,
+          text,
+          ...extras,
+        }),
       },
     );
     return await response.json();

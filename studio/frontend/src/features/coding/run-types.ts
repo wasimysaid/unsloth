@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import type { ToolOutputProfile } from "./file-changes.ts";
+import type { CodingInputExtras } from "./input.ts";
 import type {
   CodingConfiguration,
   CodingConfigurationChange,
@@ -41,6 +43,7 @@ export interface CodingRow {
   request_id?: string | null;
   clipped?: boolean;
   historical?: boolean;
+  image_count?: number;
   tool?: {
     invocation_id: string | null;
     call_id: string;
@@ -54,6 +57,8 @@ export interface CodingRow {
     row_group: { key: string; label: string; item: string } | null;
     semantic_content?: unknown;
     display_kind?: string | null;
+    output_profile?: ToolOutputProfile | null;
+    historical?: boolean;
   };
 }
 export interface EntryPage {
@@ -73,6 +78,7 @@ export interface RunApi {
     id: string,
     submissionKey: string,
     text: string,
+    extras?: CodingInputExtras,
   ): Promise<{
     conversation_id: string;
     request_id: string;
