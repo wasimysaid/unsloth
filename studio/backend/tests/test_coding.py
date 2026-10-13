@@ -31,6 +31,9 @@ def coding_app(monkeypatch, tmp_path):
 @pytest.mark.parametrize("method,path,body", [
     ("GET", "/projects/browse", None),
     ("GET", "/catalog?cwd=/", None),
+    ("GET", "/diagnostics", None),
+    ("GET", "/conversations/known-id/extensions", None),
+    ("POST", "/conversations/known-id/plugins/reload", {"operation_id": "exact-operation"}),
     ("GET", "/conversations", None),
     ("POST", "/conversations", {"cwd": "/"}),
     ("POST", "/conversations/known-id/open", None),
@@ -91,6 +94,22 @@ async def test_browse_symlink_loop_is_an_actionable_invalid_directory(coding_app
     assert response.status_code == 400
     assert "path" in response.json()["detail"]
     assert not hasattr(app.state, "coding_runtime")
+
+
+@pytest.mark.asyncio
+async def test_idle_cleanup_failure_is_not_reported_as_successful_reopen(coding_app):
+    app, headers = coding_app
+    message = "Idle cleanup failed. Resources may still be owned; inspect native diagnostics before retrying."
+    class FailedCleanupRuntime:
+        async def command(self, method, params):
+            assert method == "open"
+            assert params == {"conversation_id": "saved-id"}
+            raise CodingRuntimeError("failed", message)
+    app.state.coding_runtime = FailedCleanupRuntime()
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        response = await client.post("/api/coding/conversations/saved-id/open")
+    assert response.status_code == 502
+    assert response.json() == {"detail": message}
 
 
 @pytest.mark.asyncio
@@ -389,6 +408,67 @@ async def test_fatal_framing_closes_stdin_and_reaps_actual_child(tmp_path):
     await asyncio.wait_for(runtime._shutdown_task, timeout = 5)
     assert process.returncode == 0
     assert reaped.read_text() == "EOF"
+
+
+@pytest.mark.asyncio
+async def test_extension_maintenance_forwards_only_target_and_operation(coding_app):
+    app, headers = coding_app
+    calls = []
+    class RecordingRuntime:
+        async def command(self, method, params):
+            calls.append((method, params))
+            if method == "extensions.inspect":
+                return {"conversation_id": params["conversation_id"], "plugins": [], "skills": [], "reload": None}
+            return {"operation_id": params["operation_id"], "status": "deferred"}
+    app.state.coding_runtime = RecordingRuntime()
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        inspected = await client.get("/api/coding/conversations/exact-target/extensions")
+        assert inspected.status_code == 200
+        assert inspected.json()["conversation_id"] == "exact-target"
+        reconciled = await client.get("/api/coding/conversations/exact-target/extensions", params = {"operation_id": "exact-operation"})
+        assert reconciled.status_code == 200
+        reload = await client.post("/api/coding/conversations/exact-target/plugins/reload", json = {"operation_id": "exact-operation"})
+        assert reload.status_code == 200
+        assert reload.json()["status"] == "deferred", "HTTP acceptance must not claim native completion"
+        for body in ({"operation_id": "exact-operation", "all_sessions": True}, {"operation_id": "exact-operation", "api_key": "secret"}, {"operation_id": "contains spaces"}):
+            assert (await client.post("/api/coding/conversations/exact-target/plugins/reload", json = body)).status_code == 422
+    assert calls == [("extensions.inspect", {"conversation_id": "exact-target"}),
+                     ("extensions.inspect", {"conversation_id": "exact-target", "operation_id": "exact-operation"}),
+                     ("plugins.reload", {"conversation_id": "exact-target", "operation_id": "exact-operation"})]
+
+
+@pytest.mark.asyncio
+async def test_plugin_reload_uncertain_is_not_replayed(coding_app):
+    app, headers = coding_app
+    calls = []
+    class RecordingRuntime:
+        async def command(self, method, params):
+            calls.append((method, params))
+            raise CodingRuntimeError("uncertain", "Native outcome is uncertain; inspect before retrying.")
+    app.state.coding_runtime = RecordingRuntime()
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        response = await client.post("/api/coding/conversations/exact-target/plugins/reload", json = {"operation_id": "lost-response"})
+    assert response.status_code == 504
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_are_bounded_allowlisted_and_do_not_launch(coding_app):
+    app, headers = coding_app
+    runtime = CodingRuntime(executable = "/private/api-key-secret/executable")
+    runtime.package = "/private/package-secret"
+    app.state.coding_runtime = runtime
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        response = await client.get("/api/coding/diagnostics")
+        assert response.status_code == 200
+        assert response.json() == {"connection": "not_started", "frontend_plugin": "studio.frontend", "protocol": 1, "pending_commands": 0, "open_views": 0, "command_timeout_seconds": 60, "max_frame_bytes": 1048576}
+        assert runtime.process is None
+        runtime._failure = CodingRuntimeError("failed", "raw-provider-credential-secret")
+        response = await client.get("/api/coding/diagnostics")
+        assert response.json()["connection"] == "disconnected"
+        assert "secret" not in response.text
+        runtime._closing = True
+        assert (await client.get("/api/coding/diagnostics")).json()["connection"] == "closing"
 
 
 @pytest.mark.asyncio

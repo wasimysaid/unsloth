@@ -19,6 +19,8 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { SettingsDialog } from "@/features/settings/settings-dialog";
+import { useSettingsDialogStore } from "@/features/settings/stores/settings-dialog-store";
 import { Link } from "@tanstack/react-router";
 import {
   ArrowLeft,
@@ -29,6 +31,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import {
+  type RefObject,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -46,10 +49,12 @@ function CodingSidebar({
   session,
   state,
   onNew,
+  focusFallback,
 }: {
   session: CodingSession;
   state: CodingSessionState;
   onNew: (invoker: HTMLElement) => void;
+  focusFallback: RefObject<HTMLButtonElement | null>;
 }) {
   const { isMobile, setOpenMobile } = useSidebar();
   return (
@@ -163,6 +168,22 @@ function CodingSidebar({
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="gap-3 p-4">
+        <Button
+          variant="ghost"
+          className="justify-start"
+          onClick={(event) => {
+            if (isMobile) setOpenMobile(false);
+            useSettingsDialogStore.setState({
+              mimirConversationRequested: state.active?.id ?? null,
+            });
+            useSettingsDialogStore.getState().openDialog("mimir", {
+              opener: event.currentTarget,
+              focusFallback: focusFallback.current,
+            });
+          }}
+        >
+          Mimir Settings
+        </Button>
         <p className="text-xs leading-relaxed text-muted-foreground">
           Conversations and project folders are owned by Mimir on this host.
         </p>
@@ -182,6 +203,7 @@ export function CodingPage() {
   const [folderOpen, setFolderOpen] = useState(false);
   const folderInvoker = useRef<HTMLElement | null>(null);
   const projectChooser = useRef<HTMLButtonElement | null>(null);
+  const sidebarToggle = useRef<HTMLButtonElement | null>(null);
   const signalReady = useAppShellReadySignal();
   useLayoutEffect(() => {
     document.title = "Coding - Unsloth";
@@ -205,10 +227,18 @@ export function CodingPage() {
       className="!min-h-0 h-[calc(100dvh-var(--studio-titlebar-height,0px))] overflow-hidden"
       data-testid="coding-shell"
     >
-      <CodingSidebar session={session} state={state} onNew={chooseFolder} />
+      <CodingSidebar
+        session={session}
+        state={state}
+        onNew={chooseFolder}
+        focusFallback={sidebarToggle}
+      />
       <SidebarInset className="min-w-0 overflow-hidden">
         <header className="flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-3 sm:px-5">
-          <SidebarTrigger aria-label="Toggle coding sidebar" />
+          <SidebarTrigger
+            ref={sidebarToggle}
+            aria-label="Toggle coding sidebar"
+          />
           <Code2 className="size-4 text-muted-foreground" aria-hidden="true" />
           <span className="font-heading text-sm font-medium">Coding</span>
           <span className="ml-auto text-xs text-muted-foreground">
@@ -270,6 +300,14 @@ export function CodingPage() {
                   </p>
                 </div>
               )}
+              {state.reopened && (
+                <output
+                  data-testid="coding-reopened"
+                  className="block text-xs text-muted-foreground"
+                >
+                  Reopened saved conversation · no work automatically resumed.
+                </output>
+              )}
               {state.opening && (
                 <output className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
                   <LoaderCircle
@@ -280,19 +318,19 @@ export function CodingPage() {
                 </output>
               )}
               {state.openingUncertainty && (
-                <p
-                  role="status"
+                <output
                   data-testid="coding-opening-reconciliation"
-                  className="text-sm text-muted-foreground"
+                  className="block text-sm text-muted-foreground"
                 >
                   {state.openingUncertainty.inspected
                     ? "Shared native history inspected. Opening remains unconfirmed; deliberately reopen a saved identity from the sidebar. No create/open command was replayed."
                     : "Opening is unconfirmed. Inspecting shared native history before offering another action; refresh history if inspection failed."}
-                </p>
+                </output>
               )}
               {!folderOpen && state.openingError && (
                 <p
                   role="alert"
+                  data-testid="coding-opening-error"
                   className="break-words text-sm text-destructive"
                 >
                   {state.openingError}
@@ -352,6 +390,9 @@ export function CodingPage() {
         session={session}
         state={state}
       />
+      {/* The ordinary Studio shell is parked/unmounted on this route. Mount only
+          its shared settings presentation, not FloatingMonitor or chat owners. */}
+      <SettingsDialog />
     </SidebarProvider>
   );
 }
