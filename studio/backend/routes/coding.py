@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path as ApiPath, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -101,9 +101,14 @@ class PromptSubmission(BaseModel):
         return self
 
 
-class RootCut(BaseModel):
+class ChildJournal(BaseModel):
     model_config = ConfigDict(extra = "forbid")
-    journal: Literal["root"]
+    child: str = Field(min_length = 1, max_length = 128, pattern = r"^[^\x00]+$")
+
+
+class JournalCut(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    journal: Literal["root"] | ChildJournal
     leaf: str | None = Field(max_length = 128)
 
 
@@ -120,7 +125,7 @@ class AfterEntry(BaseModel):
 class HistorySelection(BaseModel):
     """An immutable native view cut, never an independently moving snapshot."""
     model_config = ConfigDict(extra = "forbid")
-    cut: RootCut
+    cut: JournalCut
     anchor: Literal["latest"] | BeforeEntry | AfterEntry = "latest"
     max_entries: int = Field(default = 100, ge = 1, le = 128)
     max_bytes: int = Field(default = 262144, ge = 1024, le = 262144)
@@ -255,6 +260,17 @@ async def cancel_request(conversation_id: str, request_id: str, request: Request
 @router.post("/conversations/{conversation_id}/entries")
 async def read_entries(conversation_id: str, body: HistorySelection, request: Request):
     return await _command(request, "read_entries", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+@router.get("/conversations/{conversation_id}/children/{handle}/attempts/{attempt}")
+async def child_detail(conversation_id: str, request: Request,
+                       handle: str = ApiPath(min_length = 1, max_length = 128, pattern = r"^[^\x00]+$"),
+                       attempt: int = ApiPath(ge = 1, le = 4294967295)):
+    # SDK inspection never claims the terminal completion owed to Mimir's parent.
+    # A current child's newer attempt is not relabeled as the selected old one.
+    return await _command(request, "child_detail", {
+        "conversation_id": conversation_id, "handle": handle, "attempt": attempt,
+    })
 
 
 @router.get("/conversations/{conversation_id}/events")
