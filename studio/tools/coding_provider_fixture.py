@@ -114,7 +114,7 @@ class ProviderFixture:
         self.server.server_close()
         self.thread.join(timeout=5)
 
-    def configure(self, native: Path) -> None:
+    def configure(self, native: Path, *, images: bool = False) -> None:
         (native / "settings.json").write_text(json.dumps({
             "defaultProvider": "coding-acceptance", "defaultModel": "offline",
             "model": {"thinkingEffort": "high"}}) + "\n")
@@ -122,4 +122,4 @@ class ProviderFixture:
             "name": "Deterministic acceptance HTTP provider", "baseUrl": self.base_url,
             "api": "openai-chat-completions", "auth": "none", "models": {"offline": {
                 "name": "Deterministic protocol (not a live model)", "limit": {"context": 128000},
-                "input": ["text"], "reasoning": True, "thinkingLevelMap": {"high": "high"}}}}}}) + "\n")
+                "input": ["text", "image"] if images else ["text"], "reasoning": True, "thinkingLevelMap": {"high": "high"}}}}}}) + "\n")

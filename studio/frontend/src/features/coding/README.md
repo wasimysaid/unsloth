@@ -30,8 +30,11 @@ All `/api/coding` routes use established Studio auth, including IDs and fetch SS
 - Browse/catalog/list/create/open retain the #234 canonical-folder and effective,
   non-persisting trust behavior. Selecting a folder always creates a new native
   conversation; reopening preserves its saved native identity and directory.
-- `POST /conversations/{id}/prompts` accepts only `{submission_key,text}` and returns
-  native conversation/submission/request identities. Transport retries are disabled.
+- `POST /conversations/{id}/prompts` accepts `{submission_key,text}` plus optional
+  `skill_mentions` and `images`, and returns native conversation/submission/request
+  identities. Transport retries are disabled.
+- `GET /conversations/{id}/skills` discovers the already-open controller's effective
+  native skill metadata. It neither loads skill bodies nor creates another registry.
 - `POST /conversations/{id}/requests/{request_id}/cancel` targets exactly that native
   request. Acknowledgment is not terminal cleanup. It never closes the owner.
 - `POST /conversations/{id}/entries` reads only the native immutable root `cut`, with
@@ -57,6 +60,37 @@ content is authoritative, not model-only output. Starts/results of one invocatio
 share a compact chronological slot; repeated invocations remain separate. Historical
 reports are labeled and are not claims about the current filesystem. There are no
 Apply/Revert controls or tool-selection pills.
+
+## Skill mentions and images (#242)
+
+`coding-composer.tsx` retains the shipped assistant-ui text field/Send ownership.
+`input.ts` tracks only ephemeral draft associations, not execution or history.
+Selecting a skill inserts its exact qualified `@name`, preserving the native disk
+`path` where supplied (plugin names are not shortened). Edits shift intact ranges
+or invalidate touched/extended tokens. JS UTF-16 offsets are converted to half-open
+native UTF-8 byte ranges against the exact untrimmed text at submission. Typing a
+short display name alone does not invent a native skill reference or load its body.
+
+Images can be selected or pasted, inspected and removed before Send. Supported
+PNG/JPEG/WebP/GIF images are bounded to four, 512 KiB aggregate original bytes, and
+4096×4096 dimensions. GIF is image input, not a promise to forward every animation
+frame. Browser checks give immediate feedback; authenticated Studio validates the
+transport shape/bytes and the plugin independently decodes and enforces bounds.
+Native provider image refusal and request failures remain explicit. Images are
+base64 bytes, never user-supplied host paths or remote URLs; no upload store exists.
+Include text with attachments. Existing 1 MiB private frame bounds remain in place.
+
+Every send snapshots text, exact skill identities/paths/ranges and original image
+bytes once under its native submission key. Uncertain delivery retries that whole
+snapshot, not the current composer. A definite pre-admission rejection retains
+**Restore rejected input**; neither it nor a preview creates an accepted transcript
+row. Native acceptance/reconciliation clears draft associations. Cross-reload durable
+recovery remains #236; this slice preserves rich input wherever #235's in-memory
+uncertain-delivery capability is present.
+
+The mention list supports search, keyboard Arrow/Enter selection from `@` input,
+Escape dismissal and focus return. Attachment/mention controls wrap on narrow screens;
+they are not ordinary-chat tool-selection pills.
 
 ## Delivery and lifetime
 

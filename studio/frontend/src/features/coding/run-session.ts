@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import type { CodingInput, CodingInputExtras } from "./input.ts";
 import type {
   CodingRow,
   EntryPage,
@@ -25,7 +26,9 @@ export interface CodingRunState {
     stop_reason: string;
     error: string | null;
   } | null;
-  uncertainSubmission: { key: string; text: string } | null;
+  uncertainSubmission: (CodingInput & { key: string }) | null;
+  rejectedSubmission?: CodingInput | null;
+  acceptedSubmissionKey?: string;
 }
 const MAX_ROWS = 1000;
 const MAX_TEXT = 2 * 1024 * 1024;
@@ -287,7 +290,12 @@ export function createCodingRun(
       state.native?.requests.find(
         (request) => request.submission_key === state.uncertainSubmission?.key,
       );
-    if (accepted) update({ uncertainSubmission: null });
+    if (accepted)
+      update({
+        acceptedSubmissionKey: state.uncertainSubmission?.key,
+        uncertainSubmission: null,
+        error: null,
+      });
   }
   function connect() {
     abort?.abort();
@@ -309,7 +317,7 @@ export function createCodingRun(
         update({ connection: "disconnected", error: errorText(reason) });
       });
   }
-  async function submit(text: string, key: string) {
+  async function submit(input: CodingInput, key: string): Promise<boolean> {
     if (
       state.connection !== "connected" ||
       state.recovering ||
@@ -322,10 +330,13 @@ export function createCodingRun(
     update({
       submitting: true,
       error: null,
-      uncertainSubmission: { key, text },
+      uncertainSubmission: { key, ...input },
+      rejectedSubmission: null,
+      acceptedSubmissionKey: undefined,
     });
     try {
-      const result = await api.submit(id, key, text);
+      const { text, ...extras } = input;
+      const result = await api.submit(id, key, text, extras);
       if (
         result.conversation_id !== id ||
         result.submission_key !== key ||
@@ -334,20 +345,27 @@ export function createCodingRun(
         throw new Error(
           "The native acceptance identity could not be confirmed.",
         );
-      update({ uncertainSubmission: null });
+      update({ uncertainSubmission: null, acceptedSubmissionKey: key });
       // No optimistic transcript or running state: both come from the view.
+      return true;
     } catch (reason) {
+      if (state.acceptedSubmissionKey === key) return true;
       if (
         reason instanceof Error &&
         "admissionRejected" in reason &&
         reason.admissionRejected === true
       ) {
-        update({ uncertainSubmission: null, error: errorText(reason) });
+        update({
+          uncertainSubmission: null,
+          rejectedSubmission: input,
+          error: errorText(reason),
+        });
       } else {
         update({
           error: `${errorText(reason)} Delivery is unconfirmed; do not send a new copy. Reconnect or retry the same submission identity.`,
         });
       }
+      return false;
     } finally {
       update({ submitting: false });
     }
@@ -366,17 +384,26 @@ export function createCodingRun(
       abort?.abort();
       abort = null;
     },
-    async send(text: string) {
-      if (!text.trim()) return;
+    async send(text: string, extras: CodingInputExtras = {}) {
+      if (!text.trim()) return false;
       if (state.uncertainSubmission)
         throw new Error(
           "Reconcile the unconfirmed submission before sending new input.",
         );
-      await submit(text, makeKey());
+      // Snapshot the complete input once. Later edits/removals never change an
+      // uncertain delivery retry, including its image bytes and mention ranges.
+      return await submit(structuredClone({ text, ...extras }), makeKey());
     },
     async retrySubmission() {
       const pending = state.uncertainSubmission;
-      if (pending) await submit(pending.text, pending.key);
+      if (pending) {
+        const { key, ...input } = pending;
+        return await submit(input, key);
+      }
+      return false;
+    },
+    clearRejectedSubmission() {
+      update({ rejectedSubmission: null });
     },
     async stop() {
       const request = state.native?.active_request;
