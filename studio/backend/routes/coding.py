@@ -197,6 +197,32 @@ async def browse_projects(path: str | None = Query(default = None, max_length = 
     return await asyncio.to_thread(_browse, path)
 
 
+@router.get("/diagnostics")
+async def diagnostics(request: Request):
+    # Does not launch Mimir. This is transport state, not a second execution owner.
+    return runtime_for(request.app).diagnostics()
+
+
+@router.get("/conversations/{conversation_id}/extensions")
+async def extensions(conversation_id: str, request: Request,
+                     operation_id: str | None = Query(default = None, min_length = 1, max_length = 128, pattern = r"^[A-Za-z0-9_-]+$")):
+    params = {"conversation_id": conversation_id}
+    if operation_id is not None:
+        params["operation_id"] = operation_id
+    return await _command(request, "extensions.inspect", params)
+
+
+class PluginReload(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    operation_id: str = Field(min_length = 1, max_length = 128, pattern = r"^[A-Za-z0-9_-]+$")
+
+
+@router.post("/conversations/{conversation_id}/plugins/reload")
+async def reload_plugins(conversation_id: str, body: PluginReload, request: Request):
+    # No retry, cancellation, MCP apply, catalog refresh or frontend replacement.
+    return await _command(request, "plugins.reload", {"conversation_id": conversation_id, **body.model_dump()})
+
+
 @router.get("/catalog")
 async def catalog(request: Request, cwd: str = Query(min_length = 1, max_length = 32768)):
     return await _command(request, "catalog", {"cwd": cwd})

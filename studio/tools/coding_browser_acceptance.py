@@ -15,6 +15,11 @@ fixture and real native tools, not a live model. --workload live uses the existi
 native provider/credential profile directly; history remains Mimir-owned there.
 Disposable projects, Studio auth and evidence stay in evidence-dir. Use a distinct
 evidence directory for each run. --workload opening runs the previous opening suite.
+--extensions adds focused ticket-252 Settings scenarios before the execution suite;
+use only deterministic isolated setup, never the shared live profile. It installs
+real disabled/TUI-only packages and native HOME skills. POST response loss and
+inventory-read errors are explicitly reported browser transport injection, while
+completion and scope assertions require actual native HTTP evidence.
 --workload file-changes verifies real write/edit/edit profiles and replay, followed
 by separately labelled synthetic rendered history edge cases. file-changes-live
 requests the same operations from the existing host provider (180-second deadline).
@@ -38,8 +43,10 @@ import urllib.request
 
 from coding_provider_fixture import ProviderFixture
 from coding_run_scenarios import run_scenarios
+from coding_extension_scenarios import prepare_extension_fixtures, run_extension_scenarios
 from coding_input_scenarios import prepare_input_project, input_scenarios, live_input_scenario
 from coding_recovery_scenarios import run_recovery_scenarios
+from coding_retirement_scenarios import run_retirement_scenarios
 from coding_concurrency_scenarios import run_concurrency_scenarios
 from coding_child_scenarios import CHILD_EVENT_CAPTURE, run_child_scenarios
 from coding_file_change_scenarios import LIVE_PROFILE_OBSERVER, run_file_change_scenarios
@@ -58,11 +65,14 @@ def main() -> None:
     runtime_input.add_argument("--mimir-source", type = Path, help = "Build the current paired source and product package before acceptance")
     parser.add_argument("--plugin-package", type = Path)
     parser.add_argument("--evidence-dir", type = Path, required = True)
-    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live"), default = "deterministic",
+    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live"), default = "deterministic",
                         help = "Live uses the existing native provider/credential profile; never copies credentials")
+    parser.add_argument("--extensions", action = "store_true", help = "Run ticket-252 Settings inventory and scoped reload scenarios (requires deterministic workload)")
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
     parser.add_argument("--chrome", default = "/usr/bin/google-chrome", help = "Chromium executable; ignored for Firefox")
     args = parser.parse_args()
+    if args.extensions and args.workload != "deterministic":
+        parser.error("--extensions requires --workload deterministic; shared live profiles are never modified")
     root = Path(__file__).resolve().parents[2]
     evidence = args.evidence_dir.resolve()
     if evidence.is_relative_to(root):
@@ -76,7 +86,8 @@ def main() -> None:
             metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--no-deps", "--format-version", "1"], cwd = source))
             args.mimir = Path(metadata["target_directory"]) / "debug" / ("mimir.exe" if os.name == "nt" else "mimir")
             args.plugin_package = evidence / "current-product-package"
-            subprocess.run([sys.executable, "plugins/studio-frontend/build.py", "--output", str(args.plugin_package)],
+            fixture_flags = ["--retirement-fixtures"] if args.workload == "retirement" else []
+            subprocess.run([sys.executable, "plugins/studio-frontend/build.py", "--output", str(args.plugin_package), *fixture_flags],
                            cwd = source, stdout = build_log, stderr = subprocess.STDOUT, check = True, timeout = 1000)
     elif args.plugin_package is None:
         parser.error("--plugin-package is required with --mimir")
@@ -86,9 +97,10 @@ def main() -> None:
     live = args.workload in ("live", "inputs-live", "file-changes-live")
     native = shared_trust_path().parent if live else state_root / "mimir-home"
     native.mkdir(exist_ok = True)
-    provider = ProviderFixture() if args.workload in ("deterministic", "recovery", "concurrency", "children", "inputs", "file-changes") else None
+    provider = ProviderFixture() if args.workload in ("deterministic", "recovery", "retirement", "concurrency", "children", "inputs", "file-changes") else None
     if provider:
         provider.configure(native, images = args.workload == "inputs")
+    extension_packages = prepare_extension_fixtures(state_root, native, args.plugin_package.resolve()) if args.extensions else []
     projects = state_root / "projects"
     projects.mkdir(exist_ok = True)
     first, second, denied = [projects / name for name in ("first-project", "second-project", "os-denied")]
@@ -116,11 +128,14 @@ def main() -> None:
                UNSLOTH_MIMIR_EXECUTABLE = str(args.mimir.resolve()),
                UNSLOTH_MIMIR_PLUGIN_PACKAGE = str(args.plugin_package.resolve()), CODING_ACCEPTANCE_PASSWORD = password,
                CUDA_VISIBLE_DEVICES = "", PYTHONPATH = str(root / "studio" / "backend"))
+    if args.workload == "retirement":
+        env["CODING_ACCEPTANCE_RETIREMENT_FIXTURES"] = "1"
+        report_clock = "compile-gated frozen/advanced plugin monotonic clock; not a 30-minute live workload"
     if not live:
         # Fixture tools must not discover the user's native instructions or credentials.
         env.update(HOME = str(state_root), MIMIR_DISABLE_MODELS_FETCH = "1",
                    MIMIR_MODELS_PATH = str(native / "catalog.json"))
-        for key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"):
+        for key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "MIMIR_SKILLS_DIR"):
             env.pop(key, None)
     source_revisions = {"studio": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd = root, text = True).strip()}
     paired_source = args.mimir_source.resolve() if args.mimir_source else root.parent / "mimir"
@@ -135,6 +150,8 @@ def main() -> None:
               "provider_workload": args.workload, "run_id": state_root.name,
               "viewports": [[1440, 1000], [390, 844]], "scenarios": [],
               "conversation_ids": [], "artifacts": [], "limitations": ["Unrelated Studio ML/training routers are not mounted by this CPU-only acceptance composition."]}
+    if args.workload == "retirement":
+        report["retention_clock"] = report_clock
     if provider:
         report["limitations"].append("Deterministic HTTP protocol fixture is not live-model success; native plugin/runtime/tools are real.")
     def scenario(name, detail):
@@ -145,8 +162,9 @@ def main() -> None:
         report["artifacts"].append(str(path))
     # No shared configuration or trust records are modified by installation.
     with (evidence / "plugin-install.log").open("w") as output:
-        subprocess.run([str(args.mimir.resolve()), "plugin", "install", str(args.plugin_package.resolve())],
-                       env = env, stdout = output, stderr = subprocess.STDOUT, check = True, timeout = 240)
+        for package in [args.plugin_package.resolve(), *extension_packages]:
+            subprocess.run([str(args.mimir.resolve()), "plugin", "install", str(package)],
+                           env = env, stdout = output, stderr = subprocess.STDOUT, check = True, timeout = 240)
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -315,6 +333,13 @@ def main() -> None:
             expect(page.get_by_test_id("coding-canonical-cwd")).to_have_text(str(first))
             expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout = 60000)
             scenario("A6-change-reopen", "Different project creates a different native identity; deliberate reopen preserves first ID and cwd")
+            if args.extensions:
+                try:
+                    run_extension_scenarios(page, context, base, provider, first_id, second_id,
+                                            report, scenario, snapshot, native = native)
+                except Exception:
+                    snapshot(page, "failed-extensions")
+                    raise
             if args.workload == "recovery":
                 saved_second = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text = second_id)
                 for failure, expected_error in (("denied", "denies access"), ("missing", "does not exist")):
@@ -345,6 +370,9 @@ def main() -> None:
                                    if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
                         assert len(product) == 1
                         report["supervised_pid"] = product[0].pid
+                    elif args.workload == "retirement":
+                        run_retirement_scenarios(page, context, base, provider, first, second_id,
+                                                 report, scenario, snapshot)
                     elif args.workload == "concurrency":
                         run_concurrency_scenarios(page, context, base, provider, first, second, second_id,
                                                   alias, report, scenario, snapshot)
@@ -450,6 +478,9 @@ def main() -> None:
                 ("post", "/api/coding/conversations", {"data": {"cwd": str(first)}}),
                 ("post", f"/api/coding/conversations/{first_id}/open", {}),
                 ("get", f"/api/coding/conversations/{first_id}/events", {}),
+                ("get", "/api/coding/diagnostics", {}),
+                ("get", f"/api/coding/conversations/{first_id}/extensions", {}),
+                ("post", f"/api/coding/conversations/{first_id}/plugins/reload", {"data": {"operation_id": "unauthenticated-reload-valid-key"}}),
                 ("get", f"/api/coding/conversations/{first_id}/overlap", {}),
                 ("get", f"/api/coding/conversations/{first_id}/skills", {}),
                 ("post", f"/api/coding/conversations/{first_id}/prompts", {"data": {"submission_key": "unauthenticated-valid-key", "text": "Must not execute"}}),
@@ -469,7 +500,7 @@ def main() -> None:
             if provider:
                 provider.assert_no_request()
             report["unauthenticated_requests"] = denied_requests
-            scenario("A6-known-id-auth", "All eleven coding surfaces (browse/catalog/history/create/open/SSE/overlap/skills/prompt/cancel/bounded entries), including real conversation/request IDs, refused unauthenticated requests")
+            scenario("A6-known-id-auth", "All fourteen coding surfaces (browse/catalog/history/create/open/SSE/diagnostics/inventory/reload/overlap/skills/prompt/cancel/bounded entries), including real conversation/request IDs, refused unauthenticated requests")
             # Measure over more than two ordinary indicator polling intervals.
             # No ordinary-model status response is mocked and no model is loaded.
             page.wait_for_timeout(11000)
