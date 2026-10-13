@@ -71,6 +71,43 @@ class ProviderRequest:
         return content
 
 
+PICKER_PROVIDER_A = "coding-picker-a"
+PICKER_PROVIDER_B = "coding-picker-b"
+PICKER_MODEL = "shared"
+PICKER_PLAIN_MODEL = "plain"
+PICKER_API_A = "acceptance-wire-a"
+PICKER_API_B = "acceptance-wire-b"
+PICKER_API_PLAIN = "acceptance-wire-plain"
+PICKER_PROVIDER_LABEL = "Shared acceptance provider"
+PICKER_MODEL_LABEL = "Shared coding model"
+PICKER_LEVELS_A = ("low", "medium", "high")
+PICKER_LEVELS_B = ("minimal", "high")
+
+
+def picker_providers(base_url: str) -> dict:
+    """Only native models.json input, never a Studio-owned inventory.
+
+    Deliberately collide labels and provider-local IDs while preserving distinct
+    wire IDs. Extra native entries make the rendered list require scrolling.
+    The isolated global high default is offered by both reasoning models.
+    """
+    def model(name, api_model, levels=()):
+        return {"name": name, "apiModel": api_model,
+                "limit": {"context": 128000}, "input": ["text"],
+                "reasoning": bool(levels),
+                **({"thinkingLevelMap": {level: level for level in levels}} if levels else {})}
+
+    first = {PICKER_MODEL: model(PICKER_MODEL_LABEL, PICKER_API_A, PICKER_LEVELS_A)}
+    first.update({f"scroll-{index:02d}": model(f"Scrollable native model {index:02d}", f"acceptance-scroll-{index:02d}")
+                  for index in range(32)})
+    second = {PICKER_MODEL: model(PICKER_MODEL_LABEL, PICKER_API_B, PICKER_LEVELS_B),
+              PICKER_PLAIN_MODEL: model("No reasoning control", PICKER_API_PLAIN)}
+    return {identifier: {"name": PICKER_PROVIDER_LABEL, "baseUrl": base_url,
+                         "api": "openai-chat-completions", "auth": "none",
+                         "defaultModel": PICKER_MODEL, "models": models}
+            for identifier, models in ((PICKER_PROVIDER_A, first), (PICKER_PROVIDER_B, second))}
+
+
 class ProviderFixture:
     def __init__(self):
         self.requests = queue.Queue()
@@ -155,12 +192,14 @@ class ProviderFixture:
         self.thread.join(timeout=5)
         assert not self.thread.is_alive(), "External provider fixture did not settle"
 
-    def configure(self, native: Path, *, images: bool = False) -> None:
+    def configure(self, native: Path, *, picker: bool = False, images: bool = False) -> None:
         (native / "settings.json").write_text(json.dumps({
-            "defaultProvider": "coding-acceptance", "defaultModel": "offline",
+            "defaultProvider": PICKER_PROVIDER_A if picker else "coding-acceptance",
+            "defaultModel": PICKER_MODEL if picker else "offline",
             "model": {"thinkingEffort": "high"}}) + "\n")
-        (native / "models.json").write_text(json.dumps({"providers": {"coding-acceptance": {
+        providers = picker_providers(self.base_url) if picker else {"coding-acceptance": {
             "name": "Deterministic acceptance HTTP provider", "baseUrl": self.base_url,
             "api": "openai-chat-completions", "auth": "none", "models": {"offline": {
                 "name": "Deterministic protocol (not a live model)", "limit": {"context": 128000},
-                "input": ["text", "image"] if images else ["text"], "reasoning": True, "thinkingLevelMap": {"high": "high"}}}}}}) + "\n")
+                "input": ["text", "image"] if images else ["text"], "reasoning": True, "thinkingLevelMap": {"high": "high"}}}}}
+        (native / "models.json").write_text(json.dumps({"providers": providers}) + "\n")

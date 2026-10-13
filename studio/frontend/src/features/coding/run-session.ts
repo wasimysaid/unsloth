@@ -6,6 +6,7 @@ import { createChildView } from "./child-view.ts";
 import { CodingOverlapError } from "./errors.ts";
 import { codingRowSize } from "./file-changes.ts";
 import type { CodingInput, CodingInputExtras } from "./input.ts";
+import type { CodingConfigurationChange } from "./model-selection.ts";
 import {
   type SubmissionStorage,
   pendingSubmissionStore,
@@ -28,6 +29,8 @@ export interface CodingRunState {
   viewingEarlier: boolean;
   loadingEarlier: boolean;
   submitting: boolean;
+  configuring: boolean;
+  configurationUncertain: boolean;
   stopping: string | null;
   error: string | null;
   completion: {
@@ -45,7 +48,9 @@ export interface CodingRunState {
   reopenRequired: boolean;
   reconcilingAction: string | null;
   retryStop: string | null;
-  overlapWarning: (CodingInput & { key: string; overlap: ProjectOverlap }) | null;
+  overlapWarning:
+    | (CodingInput & { key: string; overlap: ProjectOverlap })
+    | null;
 }
 const MAX_ROWS = 1000;
 const MAX_TEXT = 2 * 1024 * 1024;
@@ -75,6 +80,8 @@ export function createCodingRun(
     viewingEarlier: false,
     loadingEarlier: false,
     submitting: false,
+    configuring: false,
+    configurationUncertain: false,
     stopping: null,
     error: null,
     completion: null,
@@ -104,6 +111,9 @@ export function createCodingRun(
   let position: number | null = null;
   let subscription: string | null = null;
   let incarnation = 0;
+  // Configuration delivery outlives any one stream incarnation. A view opened
+  // before an operation's outcome cannot reconcile that operation's uncertainty.
+  let configurationEpoch = 0;
   let abort: AbortController | null = null;
   const listeners = new Set<() => void>();
   const update = (patch: Partial<CodingRunState>) => {
@@ -285,7 +295,11 @@ export function createCodingRun(
     update({ recovering: false });
     publishRows();
   }
-  async function consume(value: unknown, signal: AbortSignal) {
+  async function consume(
+    value: unknown,
+    signal: AbortSignal,
+    configurationCut: number,
+  ) {
     if (signal.aborted) return;
     const view = value as {
       subscription: string;
@@ -355,6 +369,10 @@ export function createCodingRun(
         );
       update({
         connection: "connected",
+        configurationUncertain:
+          !state.configuring && configurationCut === configurationEpoch
+            ? false
+            : state.configurationUncertain,
         stopping: stopped ? null : state.stopping,
         retryStop:
           state.retryStop === native.active_request ? state.retryStop : null,
@@ -442,6 +460,7 @@ export function createCodingRun(
     abort?.abort();
     childView.setConnected(false);
     const current = ++incarnation;
+    const configurationCut = configurationEpoch;
     const controller = new AbortController();
     abort = controller;
     position = null;
@@ -456,7 +475,7 @@ export function createCodingRun(
         id,
         controller.signal,
         () => {},
-        (view) => consume(view, controller.signal),
+        (view) => consume(view, controller.signal, configurationCut),
       )
       .then(() => {
         if (!controller.signal.aborted)
@@ -482,11 +501,17 @@ export function createCodingRun(
         reconnectTimer = setTimeout(connect, delay);
       });
   }
-  async function submit(input: CodingInput, key: string, overlapConfirmed = false): Promise<boolean> {
+  async function submit(
+    input: CodingInput,
+    key: string,
+    overlapConfirmed = false,
+  ): Promise<boolean> {
     if (
       state.connection !== "connected" ||
       state.recovering ||
       state.submitting ||
+      state.configuring ||
+      state.configurationUncertain ||
       state.stopping ||
       state.reconcilingAction ||
       state.storageError
@@ -496,9 +521,15 @@ export function createCodingRun(
       );
     try {
       const existing = pendingStore.load();
-      if (existing && (existing.key !== key || existing.text !== input.text ||
-          JSON.stringify(existing.skill_mentions ?? []) !== JSON.stringify(input.skill_mentions ?? []) ||
-          JSON.stringify(existing.images ?? []) !== JSON.stringify(input.images ?? [])))
+      if (
+        existing &&
+        (existing.key !== key ||
+          existing.text !== input.text ||
+          JSON.stringify(existing.skill_mentions ?? []) !==
+            JSON.stringify(input.skill_mentions ?? []) ||
+          JSON.stringify(existing.images ?? []) !==
+            JSON.stringify(input.images ?? []))
+      )
         throw new Error(
           "Another pending submission must be reconciled before sending.",
         );
@@ -551,7 +582,11 @@ export function createCodingRun(
         reason.admissionRejected === true
       ) {
         clearPending(key, false);
-        update({ rejectedSubmission: input, error: errorText(reason), unsentDraft: input.text });
+        update({
+          rejectedSubmission: input,
+          error: errorText(reason),
+          unsentDraft: input.text,
+        });
       } else if (state.uncertainSubmission?.key === key) {
         update({
           error: `${errorText(reason)} Delivery is unconfirmed; do not send a new copy. Reconnect or retry the same submission identity.`,
@@ -572,6 +607,39 @@ export function createCodingRun(
       };
     },
     connect,
+    async configure(change: CodingConfigurationChange) {
+      if (
+        state.connection !== "connected" ||
+        state.recovering ||
+        state.configuring ||
+        state.configurationUncertain
+      )
+        throw new Error(
+          "Wait for a connected, reconstructed native view before changing configuration.",
+        );
+      ++configurationEpoch;
+      update({ configuring: true, error: null });
+      try {
+        await api.configure(id, change);
+        // Never install the HTTP response as a newer view state: a later ordered
+        // native item may already have arrived. No active or queued prompt is edited.
+      } catch (reason) {
+        const rejected =
+          reason instanceof Error &&
+          "admissionRejected" in reason &&
+          reason.admissionRejected === true;
+        update({
+          configurationUncertain: !rejected,
+          error: rejected
+            ? errorText(reason)
+            : `${errorText(reason)} Configuration is unconfirmed; reconnect to reconstruct before changing it again. It was not retried.`,
+        });
+        throw reason;
+      } finally {
+        ++configurationEpoch;
+        update({ configuring: false });
+      }
+    },
     detach() {
       ++incarnation;
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
@@ -625,7 +693,11 @@ export function createCodingRun(
         state.stopping ||
         state.reconcilingAction
       ) {
-        update({ submitting: false, unsentDraft: input.text, rejectedSubmission: input });
+        update({
+          submitting: false,
+          unsentDraft: input.text,
+          rejectedSubmission: input,
+        });
         return false; // Reconnect/detach invalidated preflight, not permission to send.
       }
       update({ submitting: false });
@@ -642,6 +714,8 @@ export function createCodingRun(
         state.connection !== "connected" ||
         state.recovering ||
         state.submitting ||
+        state.configuring ||
+        state.configurationUncertain ||
         state.stopping ||
         state.reconcilingAction ||
         state.storageError
@@ -656,7 +730,12 @@ export function createCodingRun(
       if (!warning) return;
       const { key: _key, overlap: _overlap, ...input } = warning;
       // Only abandon this known-unadmitted draft; never cancel another request.
-      update({ overlapWarning: null, unsentDraft: input.text, rejectedSubmission: input, error: null });
+      update({
+        overlapWarning: null,
+        unsentDraft: input.text,
+        rejectedSubmission: input,
+        error: null,
+      });
     },
     async retrySubmission() {
       const pending = state.uncertainSubmission;

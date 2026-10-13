@@ -240,6 +240,35 @@ characters per expanded diff; plugin bounds apply first. Omission is disclosed,
 not treated as complete output. Existing scroll handling is not triggered by
 expansion alone; it continues to follow only readers already at the bottom.
 
+## Next-request model picker (#244)
+
+The composer bottom-right trigger opens native model configuration; its heading
+opens the searchable, provider-navigable list in the same popover. Selecting a model
+returns to configuration without dismissal. Shared Studio popover/button/slider
+primitives are presentation only. Keyboard Tab remains ordinary focus navigation;
+Escape returns from search to configuration or dismisses to the trigger.
+
+`GET /catalog?cwd=…` is the only inventory. Exact provider ID + provider-local model
+ID select a model; labels and API-model mapping are display/search metadata, never
+replacement identities. Favorites persist only identity pairs. Reasoning positions
+come only from the selected model's offered native values and disappear when none
+exist. Switching models sends only the identity patch and lets Mimir reset effort
+to its native default; there is no per-model remembered effort.
+
+`POST /conversations/{id}/configuration` accepts only `{provider?,model?,reasoning?}`.
+It is separate from prompts, which still carry only submission key/text. Native
+ordered state exposes next `configuration` and separate `running_configuration`.
+The browser never rewrites active work or installs a potentially stale HTTP reply
+as newer view state. Definite native refusal retains the selection; an uncertain
+configuration response is not retried and requires authoritative reconstruction
+before further configuration or input. Stop remains available during selection.
+
+Catalog presence is not a health/credential check. Missing selected identities
+remain visible without fallback, with catalog retry or replacement. Setup,
+credentials and downloads remain in their existing workflows. Native execution
+boundary preparation/protection and fresh live selectability are implemented by
+subsequent #245–246 slices, not a browser scheduler or compatibility checker.
+
 ## Verification
 
 ```sh

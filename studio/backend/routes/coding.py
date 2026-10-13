@@ -102,6 +102,14 @@ class PromptSubmission(BaseModel):
         return self
 
 
+class ModelConfiguration(BaseModel):
+    """Exact native identity/effort only; credential and provider setup stay external."""
+    model_config = ConfigDict(extra = "forbid")
+    provider: str | None = Field(default = None, min_length = 1, max_length = 1024)
+    model: str | None = Field(default = None, min_length = 1, max_length = 1024)
+    reasoning: str | None = Field(default = None, min_length = 1, max_length = 1024)
+
+
 class ChildJournal(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     child: str = Field(min_length = 1, max_length = 128, pattern = r"^[^\x00]+$")
@@ -241,6 +249,16 @@ async def create_conversation(body: ProjectSelection, request: Request):
 async def open_conversation(conversation_id: str, request: Request):
     state = await _command(request, "open", {"conversation_id": conversation_id})
     return state["info"]
+
+
+@router.post("/conversations/{conversation_id}/configuration")
+async def configure_model(conversation_id: str, body: ModelConfiguration, request: Request):
+    # No Studio scheduler/config store. Mimir orders selection against dequeue and
+    # keeps running work frozen; prompts deliberately carry no model configuration.
+    return await _command(request, "configure", {
+        "conversation_id": conversation_id,
+        "configuration": body.model_dump(exclude_unset = True),
+    })
 
 
 @router.get("/conversations/{conversation_id}/overlap")

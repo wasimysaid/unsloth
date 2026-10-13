@@ -344,6 +344,39 @@ success is not live-model evidence. Task-local reports record native identities,
 filesystem effects, exact desktop/narrow sizes, cleanup, and concrete external
 blockers. Human/full-PoC review and Studio-local-model acceptance remain #255–256.
 
+## Next-request model and reasoning slice (#244)
+
+Implementation baselines are Studio `a784d9193d38c640562b5464d5e9c10def6ac82d`
+and paired private Mimir `7ddec52c566497dd6e0cf572a18272a88d8fa10a`.
+The coding composer uses the native catalog only; IDs remain independent of labels
+and native API mappings. The authenticated configuration command contains no
+provider setup, credentials or model administration, and prompts still contain
+only their native submission key and text.
+
+Mimir publishes next-request configuration separately from pinned running
+configuration. Its serialized `prepare_execution` boundary resolves the latest
+choice for direct and already-queued native requests, retaining selection ordering
+through start. That is the host integration point for #246 preparation/protection;
+this ticket does not load Studio local models or reserve them. Configure errors
+leave active work and selection unchanged; there is no compatibility admission
+check or fallback. SDK session-control@11 adds native defaults/API mapping and the
+separate running configuration; generated bindings, carrier fixtures and packaged
+consumers are updated together rather than a competing old catalog projection.
+
+The Studio-styled popover supports configuration/list/Back, search, provider
+navigation, identity-pair favorites, and a discrete slider over native offered
+values. Model-switch patches omit reasoning so Mimir chooses the new default.
+Uncertain configuration delivery is not replayed: a view opened before that
+operation's outcome cannot clear its uncertainty. A later reconstruction is
+required before further selection or input; native Stop stays available.
+
+Run the existing browser driver with `--workload picker` for deterministic HTTP
+provider selection, real native tool continuation, rendered desktop/narrow
+interactions and running-versus-next assertions. Task reports distinguish that
+fixture workload from live provider/local inference and human PoC acceptance.
+Fresh catalog/live selectability (#245), local-model protection (#246), and final
+live/human acceptance (#255–256) remain separate slices.
+
 ## Historical #234 boundary and source audit
 
 The historical #234 attempt revalidated Studio
@@ -494,7 +527,7 @@ claim tied to a mutable local HEAD or absent screenshots.
 | A1 | Native opening/SDK contracts; single supervised product plugin; authenticated HTTP/SSE; exact submission/request/tool identities; atomic ordered public view, checkpoints/reset/recovery, bounded cut reads and durable reconnect reconciliation (#236) | Cross-feature integration and packaged-consumer regression (#254) |
 | A2 | Native prompt/Stop controls; compact inspectable public tool results/failures and clipping disclosure; exact child-attempt inspector with non-consuming outcomes, public historical completion records, bounded child views and real native-delegation route driver (#241) | Questions, modes, plans/goals and diagnostics (respective tickets); cross-feature/live-model acceptance (#254/#255) |
 | A3 | Shared typed live/historical reported changes; collapsed inspection-only rows, bounded unified hunks, optional counts and incomplete/binary labels (#238) | See task-local file-change browser and SDK reports; cross-feature/live acceptance (#254/#255) |
-| A4 | No model picker | Model/reasoning interactions (#244) |
+| A4 | #244 next-request picker: native catalog/identity, stepped reasoning/default reset, provider search/navigation/favorites, separate running/next state, configuration/dequeue races | Live catalog refresh (#245) and cross-feature integration (#254) |
 | A5 | Externally configured provider admission; no Studio local-model serving | Local-model requests and whole-request protection (#246/#255) |
 | A6 | Canonical/native validated opening, non-persisting effective trust, saved-policy tests, child inheritance, mismatch/lease refusals, authenticated run/Stop/history access; independent concurrent native workloads and canonical-folder warning/admission (#247); same-identity trusted history reopening after idle retirement (#248) | Process-loss recovery (#249) and cross-feature acceptance (#254–255) |
 | A7 | Exact request cancellation; Stop acknowledgment distinct from cleanup; disconnect never stops owners; typed native failures; durable submission identity across reload/native restart, automatic authoritative reconnect and non-prompt reconciliation (#236); no automatic work replay; awaited EOF shutdown; continuous unviewed/native-quiescent retention, controlled clocks, atomic native retirement and failure-safe cleanup retry (#248) | Full process-interruption/maintenance scenarios (#249) and cross-feature live-model acceptance (#254–255) |

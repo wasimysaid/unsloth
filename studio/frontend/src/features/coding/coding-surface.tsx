@@ -21,6 +21,7 @@ import { codingRunApi } from "./api";
 import { ChildActivityRows, ChildInspector } from "./child-inspector";
 import { CodingComposer } from "./coding-composer";
 import { createInputDraft } from "./input";
+import { CodingModelPicker } from "./model-configuration-popover";
 import { nativeMessageRow } from "./presentation";
 import { ProjectOverlapDialog } from "./project-overlap-dialog";
 import { codingRunAdapter } from "./run-runtime";
@@ -155,6 +156,8 @@ export function CodingSurface({
       !state.recovering &&
       !state.stopping &&
       !state.submitting &&
+      !state.configuring &&
+      !state.configurationUncertain &&
       !state.uncertainSubmission &&
       !state.storageError &&
       !state.reconcilingAction &&
@@ -169,6 +172,8 @@ export function CodingSurface({
             state.connection !== "connected" ||
             state.recovering ||
             state.submitting ||
+            state.configuring ||
+            state.configurationUncertain ||
             state.stopping ||
             state.reconcilingAction ||
             state.storageError,
@@ -215,10 +220,26 @@ export function CodingSurface({
                 {state.stopping || active || completion?.request_id}
               </p>
             )}
+            {active && (
+              <p
+                className="break-all text-muted-foreground"
+                data-testid="coding-running-model"
+              >
+                Running coding model:{" "}
+                {state.native?.running_configuration
+                  ? `${state.native.running_configuration.provider}/${state.native.running_configuration.model}${state.native.running_configuration.reasoning ? ` · ${state.native.running_configuration.reasoning}` : ""}`
+                  : "Awaiting native execution configuration"}
+              </p>
+            )}
             {state.native?.configuration.provider && (
-              <p className="break-all text-muted-foreground">
-                Configured model: {state.native.configuration.provider}/
+              <p
+                className="break-all text-muted-foreground"
+                data-testid="coding-next-model"
+              >
+                Next request: {state.native.configuration.provider}/
                 {state.native.configuration.model}
+                {state.native.configuration.reasoning &&
+                  ` · ${state.native.configuration.reasoning}`}
               </p>
             )}
             {completion?.error && (
@@ -272,15 +293,16 @@ export function CodingSurface({
                 start a new continuation.
               </output>
             )}
-            {state.disconnected && !state.reopenRequired && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => run?.connect()}
-              >
-                Reconnect native events
-              </Button>
-            )}
+            {!state.reopenRequired &&
+              (state.disconnected || state.configurationUncertain) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => run?.connect()}
+                >
+                  Reconnect native events
+                </Button>
+              )}
             {state.uncertainSubmission && (
               <div
                 data-testid="coding-delivery-recovery"
@@ -299,6 +321,8 @@ export function CodingSurface({
                     state.connection !== "connected" ||
                     state.recovering ||
                     state.submitting ||
+                    state.configuring ||
+                    state.configurationUncertain ||
                     Boolean(
                       state.stopping ||
                         state.storageError ||
@@ -389,7 +413,22 @@ export function CodingSurface({
             draft={draft}
             canSend={canSend}
             inputRef={promptInput}
-          />
+          >
+            <CodingModelPicker
+              cwd={state?.native?.info.cwd ?? null}
+              configuration={state?.native?.configuration ?? null}
+              disabled={
+                state?.connection !== "connected" ||
+                Boolean(state?.recovering || state?.configurationUncertain)
+              }
+              configuring={Boolean(state?.configuring)}
+              configure={(change) =>
+                run
+                  ? run.configure(change)
+                  : Promise.reject(new Error("Choose a project first."))
+              }
+            />
+          </CodingComposer>
           {children}
           <p
             id="coding-send-explanation"

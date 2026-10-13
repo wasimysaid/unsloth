@@ -11,6 +11,7 @@ import type {
   PluginReloadStatus,
   RuntimeDiagnostics,
 } from "./maintenance";
+import type { CodingModelApi } from "./model-selection";
 import type { EntryPage, RunApi } from "./run-types";
 import type {
   CodingApi,
@@ -122,6 +123,16 @@ export const codingApi: CodingApi = {
   },
 };
 
+export const codingModelApi: CodingModelApi = {
+  async catalog(cwd, signal) {
+    const response = await codingRequest(
+      `/catalog?${new URLSearchParams({ cwd })}`,
+      { signal },
+    );
+    return await response.json();
+  },
+};
+
 export async function readCodingDiagnostics(): Promise<RuntimeDiagnostics> {
   return (await (
     await codingRequest("/diagnostics")
@@ -162,6 +173,17 @@ export async function discoverCodingSkills(id: string, signal?: AbortSignal) {
 }
 
 export const codingRunApi: RunApi = {
+  async configure(id, change) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/configuration`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(change),
+      },
+    );
+    return await response.json();
+  },
   async checkOverlap(id) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/overlap`,

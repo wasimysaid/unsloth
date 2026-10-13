@@ -204,6 +204,9 @@ async function harness(storage = memorySubmissionStorage()) {
   let deliver!: (value: unknown) => Promise<void>;
   let failure: Error | null = null;
   const api: RunApi = {
+    async configure() {
+      throw new Error("Unexpected configuration change in rich-input test");
+    },
     async checkOverlap() {
       return { cwd: "/project", conversations: [] };
     },
@@ -281,7 +284,9 @@ test("reopening preserves the full rich-input payload and retries its original i
   const first = await harness(storage);
   first.fail(new Error("Lost response"));
   const extras = {
-    skill_mentions: [{ name: "review", path: "/project/skill.md", start: 0, end: 7 }],
+    skill_mentions: [
+      { name: "review", path: "/project/skill.md", start: 0, end: 7 },
+    ],
     images: [{ mime_type: "image/png", data: "original-image-bytes" }],
   };
   await first.run.send("@review inspect", extras);
@@ -289,8 +294,15 @@ test("reopening preserves the full rich-input payload and retries its original i
   first.run.detach();
   extras.images[0].data = "changed after send";
   const reopened = await harness(storage);
-  assert.equal(reopened.calls.length, 0, "reopen must not replay automatically");
-  assert.equal(reopened.run.getSnapshot().uncertainSubmission?.images?.[0].data, "original-image-bytes");
+  assert.equal(
+    reopened.calls.length,
+    0,
+    "reopen must not replay automatically",
+  );
+  assert.equal(
+    reopened.run.getSnapshot().uncertainSubmission?.images?.[0].data,
+    "original-image-bytes",
+  );
   assert.equal(await reopened.run.retrySubmission(), true);
   assert.deepEqual(reopened.calls, [expected]);
   assert.equal(reopened.run.getSnapshot().uncertainSubmission, null);

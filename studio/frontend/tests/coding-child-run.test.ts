@@ -15,6 +15,7 @@ const native: NativeState = {
     reasoning: null,
     mode: "build",
   },
+  running_configuration: null,
   active_request: "parent-request",
   requests: [
     { id: "parent-request", status: "running", submission_key: "key" },
@@ -34,6 +35,9 @@ function harness() {
   let position = 0;
   const cancellations: unknown[] = [];
   const api: RunApi = {
+    async configure() {
+      throw new Error("Child inspection must not configure the parent");
+    },
     async checkOverlap() {
       throw new Error("Child inspection must not submit work");
     },
