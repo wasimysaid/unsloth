@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import type {
+  CodingConfiguration,
+  CodingConfigurationChange,
+} from "./model-selection.ts";
 import type { CodingConversation } from "./types.ts";
 
 export type RequestStatus =
@@ -17,12 +21,9 @@ export interface NativeRequest {
 }
 export interface NativeState {
   info: CodingConversation;
-  configuration: {
-    provider: string | null;
-    model: string | null;
-    reasoning: string | null;
-    mode: string;
-  };
+  /** Authoritative choice for the next request, even while another is running. */
+  configuration: CodingConfiguration;
+  running_configuration: CodingConfiguration | null;
   active_request: string | null;
   requests: NativeRequest[];
   pending_user_request: boolean;
@@ -64,6 +65,10 @@ export interface EntryPage {
   last_id: string | null;
 }
 export interface RunApi {
+  configure(
+    id: string,
+    change: CodingConfigurationChange,
+  ): Promise<CodingConfiguration>;
   submit(
     id: string,
     submissionKey: string,

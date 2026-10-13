@@ -5,6 +5,7 @@ import { authFetch } from "@/features/auth/api";
 import { readFastApiError } from "@/lib/format-fastapi-error";
 import { CodingHttpError } from "./errors";
 import { consumeCodingEvents } from "./events";
+import type { CodingModelApi } from "./model-selection";
 import type { EntryPage, RunApi } from "./run-types";
 import type {
   CodingApi,
@@ -87,7 +88,28 @@ export const codingApi: CodingApi = {
   },
 };
 
+export const codingModelApi: CodingModelApi = {
+  async catalog(cwd, signal) {
+    const response = await codingRequest(
+      `/catalog?${new URLSearchParams({ cwd })}`,
+      { signal },
+    );
+    return await response.json();
+  },
+};
+
 export const codingRunApi: RunApi = {
+  async configure(id, change) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/configuration`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(change),
+      },
+    );
+    return await response.json();
+  },
   async submit(id, submissionKey, text) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/prompts`,

@@ -19,6 +19,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { codingRunApi } from "./api";
+import { CodingModelPicker } from "./model-configuration-popover";
 import { nativeMessageRow } from "./presentation";
 import { codingRunAdapter } from "./run-runtime";
 import {
@@ -140,6 +141,8 @@ export function CodingSurface({
       !state.recovering &&
       !state.stopping &&
       !state.submitting &&
+      !state.configuring &&
+      !state.configurationUncertain &&
       !state.uncertainSubmission,
   );
   return (
@@ -172,10 +175,26 @@ export function CodingSurface({
                 {state.stopping || active || completion?.request_id}
               </p>
             )}
+            {active && (
+              <p
+                className="break-all text-muted-foreground"
+                data-testid="coding-running-model"
+              >
+                Running coding model:{" "}
+                {state.native?.running_configuration
+                  ? `${state.native.running_configuration.provider}/${state.native.running_configuration.model}${state.native.running_configuration.reasoning ? ` · ${state.native.running_configuration.reasoning}` : ""}`
+                  : "Awaiting native execution configuration"}
+              </p>
+            )}
             {state.native?.configuration.provider && (
-              <p className="break-all text-muted-foreground">
-                Configured model: {state.native.configuration.provider}/
+              <p
+                className="break-all text-muted-foreground"
+                data-testid="coding-next-model"
+              >
+                Next request: {state.native.configuration.provider}/
                 {state.native.configuration.model}
+                {state.native.configuration.reasoning &&
+                  ` · ${state.native.configuration.reasoning}`}
               </p>
             )}
             {completion?.error && (
@@ -188,7 +207,8 @@ export function CodingSurface({
                 {state.error}
               </p>
             )}
-            {state.connection === "disconnected" && (
+            {(state.connection === "disconnected" ||
+              state.configurationUncertain) && (
               <Button
                 variant="outline"
                 size="sm"
@@ -297,6 +317,25 @@ export function CodingSurface({
                   unstable_focusOnThreadSwitched={false}
                   unstable_focusOnRunStart={false}
                   unstable_focusOnScrollToBottom={false}
+                />
+              </div>
+              <div
+                className="mt-2 flex min-w-0 items-center justify-end gap-1"
+                data-testid="coding-composer-controls"
+              >
+                <CodingModelPicker
+                  cwd={state?.native?.info.cwd ?? null}
+                  configuration={state?.native?.configuration ?? null}
+                  disabled={
+                    state?.connection !== "connected" ||
+                    Boolean(state?.recovering || state?.configurationUncertain)
+                  }
+                  configuring={Boolean(state?.configuring)}
+                  configure={(change) =>
+                    run
+                      ? run.configure(change)
+                      : Promise.reject(new Error("Choose a project first."))
+                  }
                 />
                 {active || state?.stopping ? (
                   <Button

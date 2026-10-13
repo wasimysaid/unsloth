@@ -232,3 +232,38 @@ test("event stream uses authenticated fetch, exposes a disconnect event and is c
   });
   assert.deepEqual(c.requests[0].options, { retryNetworkErrors: false });
 });
+
+test("picker reads only authenticated native catalog and sends identity patches separately from prompts", async () => {
+  const c = client(() => Response.json([]));
+  const controller = new AbortController();
+  await c.api.codingModelApi.catalog("/project/a & b", controller.signal);
+  await c.api.codingRunApi.configure("conversation/id", {
+    provider: "provider-id",
+    model: "provider-local-id",
+  });
+  await c.api.codingRunApi.configure("conversation/id", {
+    reasoning: "medium",
+  });
+  assert.equal(
+    c.requests[0].path,
+    "/api/coding/catalog?cwd=%2Fproject%2Fa+%26+b",
+  );
+  assert.equal(c.requests[0].init?.signal, controller.signal);
+  assert.equal(
+    c.requests[1].path,
+    "/api/coding/conversations/conversation%2Fid/configuration",
+  );
+  assert.deepEqual(JSON.parse(String(c.requests[1].init?.body)), {
+    provider: "provider-id",
+    model: "provider-local-id",
+  });
+  assert.deepEqual(JSON.parse(String(c.requests[2].init?.body)), {
+    reasoning: "medium",
+  });
+  assert.ok(
+    c.requests.every(
+      (request) =>
+        JSON.stringify(request.options) === '{"retryNetworkErrors":false}',
+    ),
+  );
+});

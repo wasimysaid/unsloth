@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import type { CodingConfigurationChange } from "./model-selection.ts";
 import type {
   CodingRow,
   EntryPage,
@@ -18,6 +19,8 @@ export interface CodingRunState {
   viewingEarlier: boolean;
   loadingEarlier: boolean;
   submitting: boolean;
+  configuring: boolean;
+  configurationUncertain: boolean;
   stopping: string | null;
   error: string | null;
   completion: {
@@ -49,6 +52,8 @@ export function createCodingRun(
     viewingEarlier: false,
     loadingEarlier: false,
     submitting: false,
+    configuring: false,
+    configurationUncertain: false,
     stopping: null,
     error: null,
     completion: null,
@@ -63,6 +68,9 @@ export function createCodingRun(
   let position: number | null = null;
   let subscription: string | null = null;
   let incarnation = 0;
+  // Configuration delivery outlives any one stream incarnation. A view opened
+  // before an operation's outcome cannot reconcile that operation's uncertainty.
+  let configurationEpoch = 0;
   let abort: AbortController | null = null;
   const listeners = new Set<() => void>();
   const update = (patch: Partial<CodingRunState>) => {
@@ -202,7 +210,11 @@ export function createCodingRun(
     update({ recovering: false });
     publishRows();
   }
-  async function consume(value: unknown, signal: AbortSignal) {
+  async function consume(
+    value: unknown,
+    signal: AbortSignal,
+    configurationCut: number,
+  ) {
     if (signal.aborted) return;
     const view = value as {
       subscription: string;
@@ -253,6 +265,10 @@ export function createCodingRun(
           );
         update({
           connection: "connected",
+          configurationUncertain:
+            !state.configuring && configurationCut === configurationEpoch
+              ? false
+              : state.configurationUncertain,
           stopping: stopped ? null : state.stopping,
         });
       }
@@ -292,6 +308,7 @@ export function createCodingRun(
   function connect() {
     abort?.abort();
     const current = ++incarnation;
+    const configurationCut = configurationEpoch;
     const controller = new AbortController();
     abort = controller;
     position = null;
@@ -302,7 +319,7 @@ export function createCodingRun(
         id,
         controller.signal,
         () => {},
-        (view) => consume(view, controller.signal),
+        (view) => consume(view, controller.signal, configurationCut),
       )
       .catch((reason: unknown) => {
         if (controller.signal.aborted || current !== incarnation) return;
@@ -314,6 +331,8 @@ export function createCodingRun(
       state.connection !== "connected" ||
       state.recovering ||
       state.submitting ||
+      state.configuring ||
+      state.configurationUncertain ||
       state.stopping
     )
       throw new Error(
@@ -361,6 +380,39 @@ export function createCodingRun(
       };
     },
     connect,
+    async configure(change: CodingConfigurationChange) {
+      if (
+        state.connection !== "connected" ||
+        state.recovering ||
+        state.configuring ||
+        state.configurationUncertain
+      )
+        throw new Error(
+          "Wait for a connected, reconstructed native view before changing configuration.",
+        );
+      ++configurationEpoch;
+      update({ configuring: true, error: null });
+      try {
+        await api.configure(id, change);
+        // Never install the HTTP response as a newer view state: a later ordered
+        // native item may already have arrived. No active or queued prompt is edited.
+      } catch (reason) {
+        const rejected =
+          reason instanceof Error &&
+          "admissionRejected" in reason &&
+          reason.admissionRejected === true;
+        update({
+          configurationUncertain: !rejected,
+          error: rejected
+            ? errorText(reason)
+            : `${errorText(reason)} Configuration is unconfirmed; reconnect to reconstruct before changing it again. It was not retried.`,
+        });
+        throw reason;
+      } finally {
+        ++configurationEpoch;
+        update({ configuring: false });
+      }
+    },
     detach() {
       ++incarnation;
       abort?.abort();

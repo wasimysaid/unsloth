@@ -23,6 +23,9 @@ const native = (active: string | null = null): NativeState => ({
     reasoning: null,
     mode: "build",
   },
+  running_configuration: active
+    ? { provider: "external", model: "model", reasoning: null, mode: "build" }
+    : null,
   active_request: active,
   requests: active
     ? [{ id: active, status: "running", submission_key: "key" }]
@@ -40,6 +43,9 @@ function harness() {
   let rows: CodingRow[] = [];
   let submitError: Error | null = null;
   const api: RunApi = {
+    async configure() {
+      return native().configuration;
+    },
     async submit(id, key, text) {
       submissions.push({ id, key, text });
       if (submitError) throw submitError;
@@ -457,4 +463,150 @@ test("bounded history navigation anchors the retained entry and shows an earlier
   assert.equal(h.run.getSnapshot().rows[0].text, "Previously evicted");
   assert.equal(h.run.getSnapshot().older, true);
   h.run.detach();
+});
+
+test("next-request configuration never mutates active work or snapshots choice in prompt payloads", async () => {
+  const h = harness();
+  await h.start(native("request"));
+  const running = h.run.getSnapshot().native?.running_configuration;
+  const changes: unknown[] = [];
+  h.api.configure = async (id, change) => {
+    changes.push({ id, change });
+    await h.event({
+      type: "state",
+      state: {
+        ...native("request"),
+        configuration: {
+          provider: "other",
+          model: "new-model",
+          reasoning: "medium",
+          mode: "build",
+        },
+      },
+    });
+    // A late HTTP reply must not overwrite an ordered native configuration.
+    return native().configuration;
+  };
+  await h.run.configure({ provider: "other", model: "new-model" });
+  assert.deepEqual(changes, [
+    { id: "conversation", change: { provider: "other", model: "new-model" } },
+  ]);
+  assert.equal(h.run.getSnapshot().native?.configuration.model, "new-model");
+  assert.deepEqual(h.run.getSnapshot().native?.running_configuration, running);
+  await h.run.send("Queued input without model options");
+  assert.deepEqual(h.submissions, [
+    {
+      id: "conversation",
+      key: "key",
+      text: "Queued input without model options",
+    },
+  ]);
+  h.run.detach();
+});
+
+test("native configuration refusals retain selection, and uncertain errors require reconstruction without replay", async () => {
+  const h = harness();
+  await h.start(native("request"));
+  const before = structuredClone(h.run.getSnapshot().native);
+  let calls = 0;
+  h.api.configure = async () => {
+    calls++;
+    throw Object.assign(new Error("Native model unavailable"), {
+      admissionRejected: true,
+    });
+  };
+  await assert.rejects(
+    h.run.configure({ provider: "missing", model: "missing" }),
+    /unavailable/,
+  );
+  assert.deepEqual(h.run.getSnapshot().native, before);
+  assert.equal(h.run.getSnapshot().configurationUncertain, false);
+  h.api.configure = async () => {
+    calls++;
+    throw new Error("Transport response lost");
+  };
+  await assert.rejects(h.run.configure({ reasoning: "high" }), /response lost/);
+  assert.equal(h.run.getSnapshot().configurationUncertain, true);
+  assert.deepEqual(h.run.getSnapshot().native, before);
+  await assert.rejects(h.run.configure({ reasoning: "low" }), /reconstructed/);
+  await assert.rejects(
+    h.run.send("Do not run with unconfirmed configuration"),
+    /reconstructed/,
+  );
+  assert.equal(calls, 2);
+  h.run.connect();
+  await h.start(native("request"));
+  assert.equal(h.run.getSnapshot().configurationUncertain, false);
+  assert.equal(calls, 2, "reconnect must not replay configure");
+  h.run.detach();
+});
+
+test("configuration submissions are serialized while active native work remains usable", async () => {
+  const h = harness();
+  await h.start(native("request"));
+  let settle!: () => void;
+  h.api.configure = async () => {
+    await new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    return native().configuration;
+  };
+  const pending = h.run.configure({ reasoning: "medium" });
+  assert.equal(h.run.getSnapshot().configuring, true);
+  await assert.rejects(h.run.configure({ reasoning: "high" }), /reconstructed/);
+  await h.run.stop();
+  assert.equal(
+    h.cancellations.length,
+    1,
+    "selection must never block exact cancellation",
+  );
+  settle();
+  await pending;
+  assert.equal(h.run.getSnapshot().configuring, false);
+  assert.equal(h.run.getSnapshot().native?.active_request, "request");
+  h.run.detach();
+});
+
+test("a reconnect overlapping configure cannot erase a later uncertain outcome", async () => {
+  for (const failureBeforeCapture of [false, true]) {
+    const h = harness();
+    await h.start(native("request"));
+    let rejectConfiguration!: (reason: Error) => void;
+    let calls = 0;
+    h.api.configure = async () => {
+      calls++;
+      await new Promise<void>((_resolve, reject) => {
+        rejectConfiguration = reject;
+      });
+      return native().configuration;
+    };
+    const pending = h.run.configure({ provider: "other", model: "next" });
+    const rejected = assert.rejects(pending, /Lost configuration response/);
+    h.run.connect();
+    if (!failureBeforeCapture) await h.start(native("request"));
+    rejectConfiguration(new Error("Lost configuration response"));
+    await rejected;
+    if (failureBeforeCapture) await h.start(native("request"));
+    assert.equal(h.run.getSnapshot().connection, "connected");
+    assert.equal(
+      h.run.getSnapshot().configurationUncertain,
+      true,
+      "a capture begun before the configure outcome cannot reconcile it",
+    );
+    await assert.rejects(
+      h.run.send("Do not use an uncertain selection"),
+      /reconstructed/,
+    );
+    await assert.rejects(
+      h.run.configure({ reasoning: "low" }),
+      /reconstructed/,
+    );
+    assert.equal(calls, 1);
+    // Only a reconstruction started after that outcome permits further input.
+    h.run.connect();
+    await h.start(native("request"));
+    assert.equal(h.run.getSnapshot().configurationUncertain, false);
+    assert.equal(calls, 1);
+    h.run.detach();
+  }
 });

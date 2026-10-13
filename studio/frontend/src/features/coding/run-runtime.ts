@@ -19,6 +19,8 @@ export function codingRunAdapter(
       state.connection !== "connected" ||
       state.recovering ||
       state.submitting ||
+      state.configuring ||
+      state.configurationUncertain ||
       Boolean(state.stopping || state.uncertainSubmission),
     isLoading: state?.connection === "loading",
     isRunning: Boolean(state?.native?.active_request || state?.stopping),

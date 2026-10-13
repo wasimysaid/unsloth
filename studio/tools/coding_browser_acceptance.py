@@ -15,6 +15,8 @@ fixture and real native tools, not a live model. --workload live uses the existi
 native provider/credential profile directly; history remains Mimir-owned there.
 Disposable projects, Studio auth and evidence stay in evidence-dir. Use a distinct
 evidence directory for each run. --workload opening runs the previous opening suite.
+--workload picker adds ticket-244 rendered model/reasoning/favorites/layout checks
+and a held real native provider call to distinguish running from next selection.
 """
 from __future__ import annotations
 
@@ -35,6 +37,7 @@ import urllib.request
 
 from coding_provider_fixture import ProviderFixture
 from coding_run_scenarios import run_scenarios
+from coding_picker_scenarios import run_picker_scenarios
 
 
 def shared_trust_path() -> Path:
@@ -50,7 +53,7 @@ def main() -> None:
     runtime_input.add_argument("--mimir-source", type = Path, help = "Build the current paired source and product package before acceptance")
     parser.add_argument("--plugin-package", type = Path)
     parser.add_argument("--evidence-dir", type = Path, required = True)
-    parser.add_argument("--workload", choices = ("opening", "deterministic", "live"), default = "deterministic",
+    parser.add_argument("--workload", choices = ("opening", "deterministic", "picker", "live"), default = "deterministic",
                         help = "Live uses the existing native provider/credential profile; never copies credentials")
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
     parser.add_argument("--chrome", default = "/usr/bin/google-chrome", help = "Chromium executable; ignored for Firefox")
@@ -78,9 +81,9 @@ def main() -> None:
     live = args.workload == "live"
     native = shared_trust_path().parent if live else state_root / "mimir-home"
     native.mkdir(exist_ok = True)
-    provider = ProviderFixture() if args.workload == "deterministic" else None
+    provider = ProviderFixture() if args.workload in ("deterministic", "picker") else None
     if provider:
-        provider.configure(native)
+        provider.configure(native, picker = args.workload == "picker")
     projects = state_root / "projects"
     projects.mkdir(exist_ok = True)
     first, second, denied = [projects / name for name in ("first-project", "second-project", "os-denied")]
@@ -270,8 +273,12 @@ def main() -> None:
             scenario("A6-change-reopen", "Different project creates a different native identity; deliberate reopen preserves first ID and cwd")
             if args.workload != "opening":
                 try:
-                    run_scenarios(page, context, base, provider, first, second_id,
-                                  report, scenario, snapshot, live = live)
+                    if args.workload == "picker":
+                        run_picker_scenarios(page, context, base, provider, first,
+                                             report, scenario, snapshot)
+                    else:
+                        run_scenarios(page, context, base, provider, first, second_id,
+                                      report, scenario, snapshot, live = live)
                 except Exception:
                     show_error = page.get_by_role("button", name = "Show Error", exact = True)
                     if show_error.count():

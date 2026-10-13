@@ -36,6 +36,7 @@ def coding_app(monkeypatch, tmp_path):
     ("POST", "/conversations/known-id/open", None),
     ("GET", "/conversations/known-id/events", None),
     ("POST", "/conversations/known-id/prompts", {"submission_key": "exact-key", "text": "work"}),
+    ("POST", "/conversations/known-id/configuration", {"provider": "native-provider", "model": "native-model"}),
     ("POST", "/conversations/known-id/requests/exact-request/cancel", None),
     ("POST", "/conversations/known-id/entries", {"cut": {"journal": "root", "leaf": None}}),
 ])
@@ -338,3 +339,40 @@ async def test_fatal_framing_closes_stdin_and_reaps_actual_child(tmp_path):
     await asyncio.wait_for(runtime._shutdown_task, timeout = 5)
     assert process.returncode == 0
     assert reaped.read_text() == "EOF"
+
+
+@pytest.mark.asyncio
+async def test_model_configuration_is_native_and_never_part_of_queued_prompt(coding_app):
+    app, headers = coding_app
+    calls = []
+    class RecordingRuntime:
+        async def command(self, method, params):
+            calls.append((method, params))
+            if method == "configure":
+                if params["configuration"].get("model") == "unavailable":
+                    raise CodingRuntimeError("invalid", "Native model is unavailable; selection was not changed.")
+                return {"provider": "native-id", "model": "local-id", "reasoning": "medium", "mode": "build"}
+            return {"conversation_id": params["conversation_id"], "request_id": "queued", "submission_key": params["submission_key"]}
+    app.state.coding_runtime = RecordingRuntime()
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        selected = await client.post("/api/coding/conversations/exact-id/configuration", json = {"provider": "native-id", "model": "local-id"})
+        assert selected.status_code == 200
+        assert selected.json()["reasoning"] == "medium", "the host returns Mimir's model-switch default"
+        effort = await client.post("/api/coding/conversations/exact-id/configuration", json = {"reasoning": "high"})
+        assert effort.status_code == 200
+        bad = await client.post("/api/coding/conversations/exact-id/configuration", json = {"provider": "native-id", "model": "unavailable"})
+        assert bad.status_code == 400
+        assert "not changed" in bad.json()["detail"]
+        for extra in ({"api_key": "forbidden"}, {"api_model": "not-an-identity"}, {"mode": "plan"}, {"fast": True}):
+            response = await client.post("/api/coding/conversations/exact-id/configuration", json = extra)
+            assert response.status_code == 422
+        queued = await client.post("/api/coding/conversations/exact-id/prompts", json = {"submission_key": "same", "text": "Queued work"})
+        assert queued.status_code == 202
+        response = await client.post("/api/coding/conversations/exact-id/prompts", json = {"submission_key": "different", "text": "Work", "model": "local-id"})
+        assert response.status_code == 422
+    assert calls == [
+        ("configure", {"conversation_id": "exact-id", "configuration": {"provider": "native-id", "model": "local-id"}}),
+        ("configure", {"conversation_id": "exact-id", "configuration": {"reasoning": "high"}}),
+        ("configure", {"conversation_id": "exact-id", "configuration": {"provider": "native-id", "model": "unavailable"}}),
+        ("prompt", {"conversation_id": "exact-id", "submission_key": "same", "text": "Queued work"}),
+    ]
