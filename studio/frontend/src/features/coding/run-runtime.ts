@@ -21,6 +21,8 @@ export function codingRunAdapter(
       state.connection !== "connected" ||
       state.recovering ||
       state.submitting ||
+      state.configuring ||
+      state.configurationUncertain ||
       Boolean(
         state.stopping ||
           state.uncertainSubmission ||

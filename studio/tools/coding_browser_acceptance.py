@@ -15,6 +15,8 @@ fixture and real native tools, not a live model. --workload live uses the existi
 native provider/credential profile directly; history remains Mimir-owned there.
 Disposable projects, Studio auth and evidence stay in evidence-dir. Use a distinct
 evidence directory for each run. --workload opening runs the previous opening suite.
+--workload picker adds ticket-244 rendered model/reasoning/favorites/layout checks
+and a held real native provider call to distinguish running from next selection.
 --extensions adds focused ticket-252 Settings scenarios before the execution suite;
 use only deterministic isolated setup, never the shared live profile. It installs
 real disabled/TUI-only packages and native HOME skills. POST response loss and
@@ -43,6 +45,7 @@ import urllib.request
 
 from coding_provider_fixture import ProviderFixture
 from coding_run_scenarios import run_scenarios
+from coding_picker_scenarios import run_picker_scenarios
 from coding_extension_scenarios import prepare_extension_fixtures, run_extension_scenarios
 from coding_input_scenarios import prepare_input_project, input_scenarios, live_input_scenario
 from coding_recovery_scenarios import run_recovery_scenarios
@@ -67,7 +70,7 @@ def main() -> None:
     parser.add_argument("--plugin-package", type = Path)
     parser.add_argument("--commands-package", type = Path, help = "Current packaged SDK test.commands contribution fixture (commands workload only)")
     parser.add_argument("--evidence-dir", type = Path, required = True)
-    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live"), default = "deterministic",
+    parser.add_argument("--workload", choices = ("opening", "deterministic", "picker", "recovery", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live"), default = "deterministic",
                         help = "Live uses the existing native provider/credential profile; never copies credentials")
     parser.add_argument("--extensions", action = "store_true", help = "Run ticket-252 Settings inventory and scoped reload scenarios (requires deterministic workload)")
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
@@ -101,9 +104,9 @@ def main() -> None:
     live = args.workload in ("live", "inputs-live", "file-changes-live")
     native = shared_trust_path().parent if live else state_root / "mimir-home"
     native.mkdir(exist_ok = True)
-    provider = ProviderFixture() if args.workload in ("deterministic", "recovery", "commands", "retirement", "concurrency", "children", "inputs", "file-changes") else None
+    provider = ProviderFixture() if args.workload in ("deterministic", "picker", "recovery", "commands", "retirement", "concurrency", "children", "inputs", "file-changes") else None
     if provider:
-        provider.configure(native, images = args.workload == "inputs")
+        provider.configure(native, picker = args.workload == "picker", images = args.workload == "inputs")
     extension_packages = prepare_extension_fixtures(state_root, native, args.plugin_package.resolve()) if args.extensions else []
     projects = state_root / "projects"
     projects.mkdir(exist_ok = True)
@@ -368,7 +371,10 @@ def main() -> None:
                 scenario("A6-saved-folder-reopen-errors", "Missing and OS-denied saved folders were refused on deliberate reopen even with retained native ownership; current conversation identity stayed unchanged, no replacement folder or fork")
             if args.workload != "opening":
                 try:
-                    if args.workload == "inputs":
+                    if args.workload == "picker":
+                        run_picker_scenarios(page, context, base, provider, first,
+                                             report, scenario, snapshot)
+                    elif args.workload == "inputs":
                         input_scenarios(page, context, base, provider, first, report, scenario, snapshot)
                     elif args.workload == "inputs-live":
                         live_input_scenario(page, context, base, first, report, scenario, snapshot)

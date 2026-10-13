@@ -50,6 +50,14 @@ test("installed external runtime projects native state and forwards exact submis
   const calls: unknown[] = [];
   let deliver!: (view: unknown) => Promise<void>;
   const api: RunApi = {
+    async configure() {
+      return {
+        provider: "provider",
+        model: "model",
+        reasoning: null,
+        mode: "build",
+      };
+    },
     async checkOverlap() {
       return { cwd: "/project", conversations: [] };
     },
@@ -134,6 +142,8 @@ test("installed runtime upcoming assistant placeholder is not a native transcrip
     viewingEarlier: false,
     loadingEarlier: false,
     submitting: false,
+    configuring: false,
+    configurationUncertain: false,
     stopping: null,
     error: null,
     completion: null,
@@ -158,6 +168,12 @@ test("installed runtime upcoming assistant placeholder is not a native transcrip
     native: {
       info: { id: "conversation", cwd: "/project", title: null },
       configuration: {
+        provider: "external",
+        model: "model",
+        reasoning: null,
+        mode: "build",
+      },
+      running_configuration: {
         provider: "external",
         model: "model",
         reasoning: null,
@@ -212,6 +228,7 @@ test("coding route stays authenticated and excludes general-chat execution and t
     "run-session.ts",
     "run-runtime.ts",
     "project-folder-dialog.tsx",
+    "model-selection.ts",
     "events.ts",
   ]) {
     const contents = source(`../src/features/coding/${name}`);
@@ -252,6 +269,9 @@ test("installed composer.send retains a recoverable unsent draft when submission
     throw new Error("Storage quota exceeded");
   };
   const api: RunApi = {
+    async configure() {
+      throw new Error("Unexpected configuration change in composer test");
+    },
     async checkOverlap() {
       return { cwd: "/project", conversations: [] };
     },

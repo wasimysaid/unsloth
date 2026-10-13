@@ -33,6 +33,8 @@ export function CodingCommandControls({
   const changing =
     state.commandBusy ||
     state.submitting ||
+    state.configuring ||
+    state.configurationUncertain ||
     Boolean(
       state.stopping ||
         state.reconcilingAction ||

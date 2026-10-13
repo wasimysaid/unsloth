@@ -29,6 +29,14 @@ function harness(storage = memorySubmissionStorage()) {
   let failure: Error | null = null;
   let largeDiagnostic = false;
   const api: RunApi = {
+    async configure() {
+      return {
+        provider: "fixture",
+        model: "fixture",
+        reasoning: null,
+        mode: "build",
+      };
+    },
     async checkOverlap() {
       return { cwd: "/project", conversations: [] };
     },
@@ -104,6 +112,7 @@ function harness(storage = memorySubmissionStorage()) {
         reasoning: null,
         mode: "build",
       },
+      running_configuration: null,
       active_request: active,
       requests: active
         ? [{ id: active, status: "running", submission_key: null }]
@@ -226,6 +235,91 @@ test("unknown/terminal-only and busy errors are authoritative native refusals wi
   assert.deepEqual(h.prompts, []);
   assert.equal(h.run.getSnapshot().native?.active_request, "active");
   h.run.detach();
+});
+
+test("model selection guards slash commands without disabling read-only diagnostics", async () => {
+  const h = harness();
+  await h.start();
+  let rejectConfiguration!: (reason: Error) => void;
+  h.api.configure = async () =>
+    await new Promise((_resolve, reject) => {
+      rejectConfiguration = reject;
+    });
+  const configuration = h.run.configure({ reasoning: "high" });
+  const failedConfiguration = assert.rejects(
+    configuration,
+    /Configuration reply lost/,
+  );
+  try {
+    await assert.rejects(h.run.send("/inspect pending"), /reconstructed/);
+    await h.run.inspectDiagnostic("tokens");
+    assert.deepEqual(h.diagnosticRequests, ["tokens"]);
+    rejectConfiguration(new Error("Configuration reply lost"));
+    await failedConfiguration;
+    assert.equal(h.run.getSnapshot().configurationUncertain, true);
+    await assert.rejects(h.run.send("/inspect uncertain"), /reconstructed/);
+    assert.deepEqual(h.invocations, []);
+    h.run.connect();
+    await h.start();
+    await h.run.send("/inspect reconciled");
+    assert.deepEqual(h.invocations, [{ name: "inspect", tail: "reconciled" }]);
+    assert.deepEqual(h.prompts, []);
+  } finally {
+    rejectConfiguration(new Error("Configuration reply lost"));
+    await failedConfiguration;
+    h.run.detach();
+  }
+});
+
+test("pending and uncertain commands block model changes until their exact receipt settles", async () => {
+  const h = harness();
+  await h.start();
+  const changes: unknown[] = [];
+  const configure = h.api.configure;
+  h.api.configure = async (id, change) => {
+    changes.push({ id, change });
+    return await configure(id, change);
+  };
+  let rejectCommand!: (reason: Error) => void;
+  h.api.command = async () =>
+    await new Promise((_resolve, reject) => {
+      rejectCommand = reject;
+    });
+  const command = h.run.executeCommand("inspect");
+  try {
+    await assert.rejects(
+      h.run.configure({ reasoning: "high" }),
+      /reconstructed/,
+    );
+    rejectCommand(new Error("Command reply lost"));
+    await command;
+    await h.start();
+    assert.ok(h.run.getSnapshot().uncertainCommand);
+    await assert.rejects(
+      h.run.configure({ reasoning: "high" }),
+      /reconstructed/,
+    );
+    assert.deepEqual(changes, []);
+    h.api.commandReceipt = async () => ({
+      conversation_id: "session",
+      operation_id: "key",
+      status: "completed",
+      result: {
+        conversation_id: "session",
+        operation_id: "key",
+        outcome: "handled",
+      },
+    });
+    await h.run.reconcileCommand();
+    await h.run.configure({ reasoning: "high" });
+    assert.deepEqual(changes, [
+      { id: "session", change: { reasoning: "high" } },
+    ]);
+  } finally {
+    rejectCommand(new Error("Command reply lost"));
+    await command;
+    h.run.detach();
+  }
 });
 
 test("overlap continuation retains rich input while a command is pending or uncertain", async () => {

@@ -16,6 +16,10 @@ import type {
 } from "./command-types.ts";
 import type { ToolOutputProfile } from "./file-changes.ts";
 import type { CodingInputExtras } from "./input.ts";
+import type {
+  CodingConfiguration,
+  CodingConfigurationChange,
+} from "./model-selection.ts";
 import type { CodingConversation } from "./types.ts";
 
 export type RequestStatus =
@@ -32,12 +36,9 @@ export interface NativeRequest {
 }
 export interface NativeState {
   info: CodingConversation;
-  configuration: {
-    provider: string | null;
-    model: string | null;
-    reasoning: string | null;
-    mode: string;
-  };
+  /** Authoritative choice for the next request, even while another is running. */
+  configuration: CodingConfiguration;
+  running_configuration: CodingConfiguration | null;
   active_request: string | null;
   requests: NativeRequest[];
   pending_user_request: boolean;
@@ -106,6 +107,10 @@ export interface RunApi {
   ): Promise<CommandOutcome>;
   commandReceipt?(id: string, operationId: string): Promise<CommandReceipt>;
   diagnostics?(id: string, kind: DiagnosticKind): Promise<CodingDiagnostic>;
+  configure(
+    id: string,
+    change: CodingConfigurationChange,
+  ): Promise<CodingConfiguration>;
   checkOverlap(id: string): Promise<ProjectOverlap>;
   readChild(
     id: string,
