@@ -356,6 +356,37 @@ test("picker reads only authenticated native catalog and sends identity patches 
   );
 });
 
+test("Settings maintenance encodes exact targets and reconciliation IDs without replay", async () => {
+  const c = client(() =>
+    Response.json({ operation_id: "one-op", status: "deferred" }),
+  );
+  await c.api.codingMaintenanceApi.inspect("native/id?", "one-op");
+  const result = await c.api.codingMaintenanceApi.reload(
+    "native/id?",
+    "one-op",
+  );
+  assert.equal(result.status, "deferred");
+  await c.api.readCodingDiagnostics();
+  assert.deepEqual(
+    c.requests.map((request) => request.path),
+    [
+      "/api/coding/conversations/native%2Fid%3F/extensions?operation_id=one-op",
+      "/api/coding/conversations/native%2Fid%3F/plugins/reload",
+      "/api/coding/diagnostics",
+    ],
+  );
+  assert.deepEqual(JSON.parse(c.requests[1].init!.body as string), {
+    operation_id: "one-op",
+  });
+  assert.ok(
+    c.requests.every(
+      (request) =>
+        JSON.stringify(request.options) ===
+        JSON.stringify({ retryNetworkErrors: false }),
+    ),
+  );
+});
+
 test("coding transport failure stays unconfirmed without claiming native work died or suggesting relaunch", async () => {
   const transport = Object.assign(
     new Error("Unsloth isn't running -- please relaunch it."),
@@ -416,7 +447,13 @@ test("overlap preflight authenticates exact identity and confirmation is explici
     c.requests[0].path,
     "/api/coding/conversations/native%2Fid/overlap",
   );
-  await c.api.codingRunApi.submit("native/id", "key", "warned draft", undefined, true);
+  await c.api.codingRunApi.submit(
+    "native/id",
+    "key",
+    "warned draft",
+    undefined,
+    true,
+  );
   assert.deepEqual(JSON.parse(String(c.requests[1].init?.body)), {
     submission_key: "key",
     text: "warned draft",

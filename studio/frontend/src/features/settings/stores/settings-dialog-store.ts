@@ -22,6 +22,7 @@ export const SETTINGS_TABS = [
   "api-keys",
   "remote-lan",
   "agents",
+  "mimir",
   "keyboard-shortcuts",
   "browser",
   "debugging",
@@ -74,6 +75,8 @@ interface SettingsDialogState {
   // ConnectionsTab hands it to the form, then clears it. Same lifetime as archivedRequested.
   connectionRequested: string | null;
   decisionTryRequested: string | null;
+  /** View context only; native Session Control still owns execution. */
+  mimirConversationRequested: string | null;
   openDialog: (tab?: SettingsTab, options?: OpenDialogOptions) => void;
   openArchivedChats: () => void;
   openArchivedMedia: (shelf: Exclude<ArchivedShelf, "chats">) => void;
@@ -185,6 +188,8 @@ function requestsFor(state: SettingsDialogState, tab: SettingsTab) {
       tab === "debugging" ? state.logSourcePathRequested : null,
     connectionRequested:
       tab === "connections" ? state.connectionRequested : null,
+    mimirConversationRequested:
+      tab === "mimir" ? state.mimirConversationRequested : null,
   };
 }
 
@@ -213,6 +218,7 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
   logRequestSeq: 0,
   connectionRequested: null,
   decisionTryRequested: null,
+  mimirConversationRequested: null,
   openDialog: (requestedTab, options) =>
     set((state) => {
       const { tab, target } = resolveScrollRequest(requestedTab, options?.scrollTarget);
@@ -227,6 +233,7 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
         logFamilyRequested: pending.logFamilyRequested,
         logSourcePathRequested: pending.logSourcePathRequested,
         connectionRequested: pending.connectionRequested,
+        mimirConversationRequested: pending.mimirConversationRequested,
         ...focusForOpen(state, options?.focusFallback, options?.opener),
       };
     }),
@@ -239,6 +246,7 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
       logFamilyRequested: null,
       logSourcePathRequested: null,
       connectionRequested: null,
+      mimirConversationRequested: null,
       ...focusForOpen(state),
     })),
   openArchivedMedia: (shelf) =>
@@ -250,6 +258,7 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
       logFamilyRequested: null,
       logSourcePathRequested: null,
       connectionRequested: null,
+      mimirConversationRequested: null,
       ...focusForOpen(state),
     })),
   openConnectionSettings: (providerId) =>
@@ -261,6 +270,7 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
       logFamilyRequested: null,
       logSourcePathRequested: null,
       connectionRequested: providerId,
+      mimirConversationRequested: null,
       ...focusForOpen(state),
     })),
   consumeArchivedChatsRequest: () => set({ archivedRequested: null }),
@@ -274,6 +284,7 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
       logSourcePathRequested: sourcePath ?? null,
       logRequestSeq: state.logRequestSeq + 1,
       connectionRequested: null,
+      mimirConversationRequested: null,
       ...focusForOpen(state),
     })),
   consumeLogFamilyRequest: () =>
@@ -289,6 +300,7 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
       logSourcePathRequested: null,
       connectionRequested: null,
       decisionTryRequested: model,
+      mimirConversationRequested: null,
       ...focusForOpen(state),
     })),
   consumeDecisionTryRequest: () => set({ decisionTryRequested: null }),
@@ -308,6 +320,7 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
       logSourcePathRequested: null,
       connectionRequested: null,
       decisionTryRequested: null,
+      mimirConversationRequested: null,
     }),
   setActiveTab: (tab) => {
     try {

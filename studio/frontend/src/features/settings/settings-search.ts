@@ -11,6 +11,7 @@ import type { SettingsTab } from "./stores/settings-dialog-store";
  * (profile, connections) are still reachable from search.
  */
 export const SETTINGS_SEARCH_INDEX: Record<SettingsTab, TranslationKey[]> = {
+  mimir: ["mimirSettings.plugins", "mimirSettings.skills", "mimirSettings.diagnostics"],
   accounts: [
     "settings.accounts.title",
     "settings.accounts.create",
