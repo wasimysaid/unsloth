@@ -51,6 +51,7 @@ from coding_picker_scenarios import run_picker_scenarios
 from coding_extension_scenarios import prepare_extension_fixtures, run_extension_scenarios
 from coding_input_scenarios import prepare_input_project, input_scenarios, live_input_scenario
 from coding_recovery_scenarios import run_recovery_scenarios
+from coding_goal_scenarios import run_goal_scenarios
 from coding_question_scenarios import run_question_scenarios
 from coding_command_scenarios import run_command_scenarios
 from coding_retirement_scenarios import run_retirement_scenarios
@@ -73,7 +74,7 @@ def main() -> None:
     parser.add_argument("--plugin-package", type = Path)
     parser.add_argument("--commands-package", type = Path, help = "Current packaged SDK test.commands contribution fixture (commands workload only)")
     parser.add_argument("--evidence-dir", type = Path, required = True)
-    parser.add_argument("--workload", choices = ("opening", "deterministic", "picker", "recovery", "questions", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live"), default = "deterministic",
+    parser.add_argument("--workload", choices = ("opening", "deterministic", "picker", "recovery", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live"), default = "deterministic",
                         help = "Live uses the existing native provider/credential profile; never copies credentials")
     parser.add_argument("--extensions", action = "store_true", help = "Run ticket-252 Settings inventory and scoped reload scenarios (requires deterministic workload)")
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
@@ -107,7 +108,7 @@ def main() -> None:
     live = args.workload in ("live", "inputs-live", "file-changes-live")
     native = shared_trust_path().parent if live else state_root / "mimir-home"
     native.mkdir(exist_ok = True)
-    provider = ProviderFixture() if args.workload in ("deterministic", "picker", "recovery", "questions", "commands", "retirement", "concurrency", "children", "inputs", "file-changes") else None
+    provider = ProviderFixture() if args.workload in ("deterministic", "picker", "recovery", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "file-changes") else None
     if provider:
         provider.configure(native, picker = args.workload == "picker", images = args.workload == "inputs")
     extension_packages = prepare_extension_fixtures(state_root, native, args.plugin_package.resolve()) if args.extensions else []
@@ -190,17 +191,24 @@ def main() -> None:
     server = subprocess.Popen(server_args, cwd = root / "studio" / "backend", env = env,
                               stdout = output, stderr = subprocess.STDOUT)
 
-    def restart_server():
+    def restart_server(*, native_crash = False):
         nonlocal server
         import psutil
         children = [child for child in psutil.Process(server.pid).children()
                     if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
         assert len(children) == 1
         before = children[0].pid
+        if native_crash:
+            # Fault-inject owner loss only into this acceptance server's verified
+            # product child. A normal clean quit instead records a manual pause.
+            children[0].kill()
+            children[0].wait(timeout = 45)
         server.terminate()
         assert server.wait(timeout = 45) in (0, -15)
-        assert not children[0].is_running(), "Clean acceptance restart did not await native cleanup"
-        report.setdefault("runtime_generations", []).append({"pid": before, "native_settled": True})
+        assert not children[0].is_running(), "Acceptance restart left its native owner running"
+        report.setdefault("runtime_generations", []).append({"pid": before, "native_settled": True,
+            "mode": "abrupt-native-owner-loss" if native_crash else "awaited-clean-shutdown",
+            "request_cleanup_awaited": not native_crash})
         server = subprocess.Popen(server_args, cwd = root / "studio" / "backend", env = env,
                                   stdout = output, stderr = subprocess.STDOUT)
         startup_deadline = time.monotonic() + 60
@@ -379,7 +387,14 @@ def main() -> None:
                 scenario("A6-saved-folder-reopen-errors", "Missing and OS-denied saved folders were refused on deliberate reopen even with retained native ownership; current conversation identity stayed unchanged, no replacement folder or fork")
             if args.workload != "opening":
                 try:
-                    if args.workload == "picker":
+                    if args.workload == "goals":
+                        run_goal_scenarios(page, context, base, provider, first, report,
+                                           scenario, snapshot, restart_server)
+                        product = [child for child in psutil.Process(server.pid).children()
+                                   if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
+                        assert len(product) == 1
+                        report["supervised_pid"] = product[0].pid
+                    elif args.workload == "picker":
                         run_picker_scenarios(page, context, base, provider, first,
                                              report, scenario, snapshot)
                     elif args.workload == "inputs":
@@ -515,6 +530,7 @@ def main() -> None:
                 ("post", f"/api/coding/conversations/{first_id}/prompts", {"data": {"submission_key": "unauthenticated-valid-key", "text": "Must not execute"}}),
                 ("post", f"/api/coding/conversations/{first_id}/requests/{report.get('workload', report.get('recovery', report.get('children', report.get('file_changes', {})))).get('requests', [{}])[0].get('request_id', 'known-request')}/cancel", {}),
                 ("post", f"/api/coding/conversations/{first_id}/entries", {"data": {"cut": {}, "anchor": "latest", "max_entries": 10, "max_bytes": 1024}}),
+                ("post", f"/api/coding/conversations/{first_id}/goal", {"data": {"revision": "unauthenticated-native-revision", "action": "pause"}}),
             ):
                 response = getattr(unauth, method)(path, **kwargs)
                 assert response.status in (401, 403), (method, path, response.status)
@@ -529,7 +545,7 @@ def main() -> None:
             if provider:
                 provider.assert_no_request()
             report["unauthenticated_requests"] = denied_requests
-            scenario("A6-known-id-auth", "All fourteen coding surfaces (browse/catalog/history/create/open/SSE/diagnostics/inventory/reload/overlap/skills/prompt/cancel/bounded entries), including real conversation/request IDs, refused unauthenticated requests")
+            scenario("A6-known-id-auth", "All fifteen coding surfaces (browse/catalog/history/create/open/SSE/diagnostics/inventory/reload/overlap/skills/prompt/cancel/bounded entries/goal), including real conversation/request IDs, refused unauthenticated requests")
             # Measure over more than two ordinary indicator polling intervals.
             # No ordinary-model status response is mocked and no model is loaded.
             page.wait_for_timeout(11000)

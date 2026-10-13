@@ -232,6 +232,17 @@ export async function discoverCodingSkills(id: string, signal?: AbortSignal) {
 }
 
 export const codingRunApi: RunApi = {
+  async changeGoal(id, change) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/goal`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(change),
+      },
+    );
+    return await response.json();
+  },
   async answer(id, target, answers) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/requests/${encodeURIComponent(target.request_id)}/questions/${encodeURIComponent(target.user_request_id)}/answers`,

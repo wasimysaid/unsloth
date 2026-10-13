@@ -29,6 +29,8 @@ export function codingRunAdapter(
           state.uncertainSubmission ||
           state.storageError ||
           state.reconcilingAction ||
+          state.goalChanging ||
+          state.reconcilingGoal ||
           state.commandBusy ||
           state.uncertainCommand ||
           state.overlapWarning,
