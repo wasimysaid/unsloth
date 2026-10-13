@@ -198,6 +198,51 @@ test("run and Stop carry exact native identities without implicit transport retr
     assert.deepEqual(request.options, { retryNetworkErrors: false });
 });
 
+test("child inspection carries exact attempt and immutable child journal through authenticated read-only APIs", async () => {
+  const detail = {
+    child: null,
+    outcome: {
+      handle: "agent-native",
+      attempt: 7,
+      status: "failed",
+      result: null,
+      error: "Retained failure",
+    },
+  };
+  const c = client(() => Response.json(detail));
+  const abort = new AbortController();
+  assert.deepEqual(
+    await c.api.codingRunApi.readChild(
+      "conversation/id?",
+      "agent-native",
+      7,
+      abort.signal,
+    ),
+    detail,
+  );
+  assert.equal(
+    c.requests[0].path,
+    "/api/coding/conversations/conversation%2Fid%3F/children/agent-native/attempts/7",
+  );
+  assert.equal(c.requests[0].init?.signal, abort.signal);
+  assert.equal(c.requests[0].init?.body, undefined);
+  const cut = { journal: { child: "agent-native" }, leaf: "child-cut" };
+  await c.api.codingRunApi.readEntries(
+    "conversation/id?",
+    cut,
+    "latest",
+    abort.signal,
+  );
+  assert.deepEqual(JSON.parse(String(c.requests[1].init?.body)), {
+    cut,
+    anchor: "latest",
+    max_entries: 100,
+    max_bytes: 262144,
+  });
+  for (const request of c.requests)
+    assert.deepEqual(request.options, { retryNetworkErrors: false });
+});
+
 test("event stream uses authenticated fetch, exposes a disconnect event and is cancellable", async () => {
   const text = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({

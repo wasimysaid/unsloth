@@ -34,8 +34,11 @@ All `/api/coding` routes use established Studio auth, including IDs and fetch SS
   native conversation/submission/request identities. Transport retries are disabled.
 - `POST /conversations/{id}/requests/{request_id}/cancel` targets exactly that native
   request. Acknowledgment is not terminal cleanup. It never closes the owner.
-- `POST /conversations/{id}/entries` reads only the native immutable root `cut`, with
+- `POST /conversations/{id}/entries` reads a native immutable root or child `cut`, with
   an exact `latest`, `before` or `after` anchor and bounded entry/byte selection.
+- `GET /conversations/{id}/children/{handle}/attempts/{attempt}` reads bounded
+  descriptive details and exactly that attempt’s retained outcome without claiming
+  the completion owed to Mimir. A newer attempt is never returned as the requested one.
 - `GET /conversations/{id}/events` consumes the native atomic start capture, then
   ordered activity, checkpoints, whole state, completion and reset items. Position
   gaps are allowed; backward positions and wrong conversation IDs are errors.
@@ -57,6 +60,38 @@ content is authoritative, not model-only output. Starts/results of one invocatio
 share a compact chronological slot; repeated invocations remain separate. Historical
 reports are labeled and are not claims about the current filesystem. There are no
 Apply/Revert controls or tool-selection pills.
+
+## Child-attempt inspection (#241)
+
+Native agent-icon rows open a right-hand, inspection-only panel; no launch,
+continue, steer, or individual Stop is exposed. On narrow screens the dismissible
+panel fills the transcript width, leaving connection feedback and the **main-session
+Stop** available below. Enter/Space activate native buttons, Escape dismisses from
+inside the inspector, and focus returns to the activating row (or its replacement
+or composer if that row is no longer available). Hidden narrow-screen transcript
+content is inert, while the inspector remains non-modal.
+
+`child-view.ts` consumes children from the same atomic parent start/reset and ordered
+child/activity/checkpoint items. Exact `(handle, attempt)` keys isolate continuation
+outcomes. History-only observations cannot make old work live. Descriptive reads
+cannot advance the ordered cut or lifecycle; terminal outcomes come only from the
+non-consuming native outcome read. Inspector navigation cancels obsolete reads,
+not native work. Disconnect/reconstruction leaves status unconfirmed until recapture.
+
+Child journals are loaded lazily at captured cuts, with native bounded paging and
+explicit clipping/unavailable labels. A journal through an attempt’s cut may include
+earlier retained context; it is not mislabeled as an attempt-only transcript. When
+an old attempt has no available exact cut, the current child journal is **not**
+substituted. The inspector retains at most 200 rows / 512 KiB of text and 512 compact
+attempt rows, and discloses omitted content. Results/errors use the bridge’s bounded
+public prefix with explicit clipping labels, never raw model context/private history.
+Reconnect uses a new atomic capture and preserves the selected exact historical
+attempt without relabeling it as current. Inspection never consumes parent delivery.
+
+Stable selectors: `coding-child-row` and `coding-child-inspector` carry
+`data-child-handle` / `data-child-attempt`; the panel is the `Subagent inspector`
+dialog. `--workload children` in the coding-route driver exercises actual native
+delegation with a deterministic protocol provider, not real-model acceptance.
 
 ## Delivery and lifetime
 

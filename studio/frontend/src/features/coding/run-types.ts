@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import type {
+  ChildAttempt,
+  ChildDetail,
+  ChildPresentation,
+} from "./child-types.ts";
 import type { CodingConversation } from "./types.ts";
 
 export type RequestStatus =
@@ -28,13 +33,14 @@ export interface NativeState {
   pending_user_request: boolean;
 }
 export interface JournalCut {
-  journal: "root";
+  journal: "root" | { child: string };
   leaf: string | null;
 }
 export type EntryAnchor = "latest" | { before: string } | { after: string };
 export interface CodingRow {
   id: string;
-  kind: "user" | "assistant" | "tool" | "notice";
+  kind: "user" | "assistant" | "tool" | "notice" | "child";
+  child?: ChildAttempt;
   text?: string;
   entry_id?: string | null;
   request_id?: string | null;
@@ -53,6 +59,7 @@ export interface CodingRow {
     row_group: { key: string; label: string; item: string } | null;
     semantic_content?: unknown;
     display_kind?: string | null;
+    subagent?: ChildPresentation | null;
   };
 }
 export interface EntryPage {
@@ -64,6 +71,12 @@ export interface EntryPage {
   last_id: string | null;
 }
 export interface RunApi {
+  readChild(
+    id: string,
+    handle: string,
+    attempt: number,
+    signal?: AbortSignal,
+  ): Promise<ChildDetail>;
   submit(
     id: string,
     submissionKey: string,

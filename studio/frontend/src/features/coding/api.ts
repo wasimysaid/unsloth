@@ -103,6 +103,13 @@ export const codingApi: CodingApi = {
 };
 
 export const codingRunApi: RunApi = {
+  async readChild(id, handle, attempt, signal) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/children/${encodeURIComponent(handle)}/attempts/${attempt}`,
+      { signal },
+    );
+    return await response.json();
+  },
   async submit(id, submissionKey, text) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/prompts`,

@@ -24,6 +24,8 @@ export function groupCodingRows(rows: readonly CodingRow[]): PresentationRow[] {
       group &&
       !row.tool?.semantic_content &&
       !prior?.tool?.semantic_content &&
+      !row.tool?.subagent &&
+      !prior?.tool?.subagent &&
       prior?.tool?.row_group?.key === group.key &&
       prior.request_id === row.request_id
     ) {

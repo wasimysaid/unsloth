@@ -16,8 +16,8 @@ import type {
 } from "../src/features/coding/run-types.ts";
 
 import {
-  pendingSubmissionStorageKey,
   type SubmissionStorage,
+  pendingSubmissionStorageKey,
 } from "../src/features/coding/pending-submission.ts";
 import { memorySubmissionStorage } from "./coding-storage-fixture.ts";
 
@@ -49,6 +49,9 @@ function harness(
   let rows: CodingRow[] = [];
   let submitError: Error | null = null;
   const api: RunApi = {
+    async readChild() {
+      return { child: null, outcome: null };
+    },
     async submit(id, key, text) {
       submissions.push({ id, key, text });
       if (submitError) throw submitError;
@@ -479,7 +482,9 @@ test("delivery identity is durable before HTTP and survives reload without autom
   const h = harness();
   await h.start();
   h.api.submit = async (_id, key, text) => {
-    assert.deepEqual(JSON.parse(h.storage.getItem(storageName)!), {
+    const record = h.storage.getItem(storageName);
+    assert.ok(record);
+    assert.deepEqual(JSON.parse(record), {
       version: 1,
       conversation_id: "conversation",
       key,

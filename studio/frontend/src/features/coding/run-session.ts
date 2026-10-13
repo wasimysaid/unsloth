@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import type { ChildAttempt, ChildIdentity } from "./child-types.ts";
+import { createChildView } from "./child-view.ts";
 import {
-  pendingSubmissionStore,
   type SubmissionStorage,
+  pendingSubmissionStore,
 } from "./pending-submission.ts";
 import type {
   CodingRow,
@@ -56,6 +58,7 @@ export function createCodingRun(
   } = {},
 ) {
   const pendingStore = pendingSubmissionStore(id, options.storage);
+  const childView = createChildView(id, api);
   let state: CodingRunState = {
     connection: "loading",
     native: null,
@@ -195,6 +198,7 @@ export function createCodingRun(
       latestOlder = true;
       firstEntry = saved.find((row) => row.entry_id)?.entry_id ?? firstEntry;
     }
+    childView.history(historyWindow ? historyWindow.rows : rows);
     update({
       rows: historyWindow ? mergeRows(historyWindow.rows) : rows,
       older: historyWindow ? historyWindow.older : latestOlder,
@@ -308,6 +312,7 @@ export function createCodingRun(
       const native = event.state as NativeState;
       if (native.info.id !== id)
         throw new Error("Native view belongs to another conversation.");
+      childView.setConnected(false);
       saved = [];
       provisional = [];
       historyWindow = null;
@@ -327,6 +332,12 @@ export function createCodingRun(
         signal,
       );
       if (signal.aborted) return;
+      // Child metadata/cuts apply synchronously. Optional inspection reads are
+      // cancellable and revision-guarded, never a dependency of main-session Stop.
+      void childView.capture((event.children ?? []) as ChildAttempt[], saved);
+      // A recovering capture still owns a fresh inspection read generation.
+      // Leave it offline until the root checkpoint; do not abort it a second time.
+      if (!event.recovering) childView.setConnected(true);
       // Native active_request remains held through cleanup; journal terminal
       // status alone is insufficient, but this atomic capture can settle Stop.
       const stopped =
@@ -357,18 +368,36 @@ export function createCodingRun(
             ? state.retryStop
             : null,
       });
+    } else if (event.type === "child") {
+      void childView.child(event.child as ChildAttempt);
     } else if (event.type === "checkpoint") {
-      await checkpoint(
-        event as unknown as { cut: JournalCut; live_invocations: string[] },
-        signal,
-      );
-    } else if (event.type === "activity") {
-      for (const row of event.rows as CodingRow[]) {
-        const index = provisional.findIndex((item) => item.id === row.id);
-        if (index < 0) provisional.push(row);
-        else provisional[index] = row;
+      if (event.child) {
+        void childView.checkpoint(
+          event.child as ChildIdentity,
+          event.cut as JournalCut,
+          event.live_invocations as string[],
+        );
+      } else {
+        await checkpoint(
+          event as unknown as { cut: JournalCut; live_invocations: string[] },
+          signal,
+        );
+        childView.setConnected(true);
       }
-      publishRows();
+    } else if (event.type === "activity") {
+      if (event.child) {
+        childView.activity(
+          event.child as ChildIdentity,
+          event.rows as CodingRow[],
+        );
+      } else {
+        for (const row of event.rows as CodingRow[]) {
+          const index = provisional.findIndex((item) => item.id === row.id);
+          if (index < 0) provisional.push(row);
+          else provisional[index] = row;
+        }
+        publishRows();
+      }
     } else if (event.type === "completed") {
       const completion = event as unknown as CodingRunState["completion"];
       if (!completion) throw new Error("Invalid native completion.");
@@ -393,7 +422,7 @@ export function createCodingRun(
     if (
       (event.type === "start" ||
         event.type === "reset" ||
-        event.type === "checkpoint") &&
+        (event.type === "checkpoint" && !event.child)) &&
       state.connection === "connected" &&
       !state.recovering
     ) {
@@ -406,6 +435,7 @@ export function createCodingRun(
     if (reconnectTimer !== null) clearTimeout(reconnectTimer);
     reconnectTimer = null;
     abort?.abort();
+    childView.setConnected(false);
     const current = ++incarnation;
     const controller = new AbortController();
     abort = controller;
@@ -430,6 +460,7 @@ export function createCodingRun(
       .catch((reason: unknown) => {
         if (controller.signal.aborted || current !== incarnation) return;
         controller.abort();
+        childView.setConnected(false);
         update({
           connection: "disconnected",
           disconnected: true,
@@ -511,6 +542,7 @@ export function createCodingRun(
     }
   }
   return {
+    childView,
     getSnapshot: () => state,
     subscribe(listener: () => void) {
       listeners.add(listener);
@@ -525,6 +557,7 @@ export function createCodingRun(
       reconnectTimer = null;
       abort?.abort();
       abort = null;
+      childView.detach();
     },
     async send(text: string) {
       if (!text.trim()) return;
