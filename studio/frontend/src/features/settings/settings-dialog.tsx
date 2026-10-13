@@ -101,6 +101,8 @@ const TAB_LOADERS = {
     import("./tabs/remote-lan-tab").then((m) => ({ default: m.RemoteLanTab })),
   agents: () =>
     import("./tabs/agents-tab").then((m) => ({ default: m.AgentsTab })),
+  mimir: () =>
+    import("./tabs/mimir-tab").then((m) => ({ default: m.MimirTab })),
   debugging: () =>
     import("./tabs/debugging-tab").then((m) => ({ default: m.DebuggingTab })),
   about: () =>
@@ -241,6 +243,11 @@ const TABS: TabDef[] = [
     id: "agents",
     labelKey: "settings.tabs.agents",
     icon: BotIcon,
+  },
+  {
+    id: "mimir",
+    labelKey: "mimirSettings.title",
+    icon: ComputerTerminal01Icon,
   },
   {
     id: "voice",
@@ -449,6 +456,7 @@ export function SettingsDialog() {
     "api-keys": null,
     "remote-lan": null,
     agents: null,
+    mimir: null,
     debugging: null,
     about: null,
   });

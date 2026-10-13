@@ -11,6 +11,11 @@ import urllib.request
 
 from coding_browser_acceptance import shared_trust_path
 from coding_provider_fixture import ProviderFixture, ProviderRequest, text_completion, tool_completion
+from coding_extension_scenarios import (DISABLED_PLUGIN, NONLIVE_PLUGIN, EFFECTIVE_SKILL,
+                                        DISABLED_SKILL, prepare_extension_fixtures,
+                                        advance_disabled_fixture_version,
+                                        assert_inventory, assert_same_activation, plugin_by_id)
+
 from coding_child_scenarios import admitted_identity, assert_outcome, validate_child_events
 
 
@@ -87,6 +92,93 @@ class DeterministicProviderTests(unittest.TestCase):
             fixture.close()
             client.join(timeout=10)
 
+
+class ExtensionDriverTests(unittest.TestCase):
+    def inventory(self):
+        return {"conversation_id": "target", "inventory": {
+            "session_id": "target", "session_live_available": True, "runtime_live_available": True,
+            "plugins": [
+                {"id": DISABLED_PLUGIN, "installed": True, "enabled": False, "live": False},
+                {"id": NONLIVE_PLUGIN, "installed": True, "enabled": True, "selected": False, "live": False},
+                {"id": "studio.frontend", "selected_frontend": True, "live": True, "mount_id": "real-mount-1"}],
+            "reload": None}, "skills": [{"name": EFFECTIVE_SKILL}]}
+
+    def test_fixture_setup_preserves_provider_and_uses_isolated_native_home_skills(self):
+        import tomllib
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            native = root / "agent"
+            native.mkdir()
+            (native / "settings.json").write_text(json.dumps({"defaultProvider": "external-fixture", "model": {"thinkingEffort": "high"}}))
+            product = root / "product"
+            product.mkdir()
+            (product / "plugin.wasm").write_bytes(b"fixture-bytes-for-copy-test-only")
+            packages = prepare_extension_fixtures(root, native, product)
+            settings = json.loads((native / "settings.json").read_text())
+            self.assertEqual(settings["defaultProvider"], "external-fixture")
+            self.assertEqual(settings["model"], {"thinkingEffort": "high"})
+            self.assertEqual(settings["plugins"][DISABLED_PLUGIN], {"enabled": False})
+            self.assertEqual(settings["skills"][DISABLED_SKILL], {"enabled": False})
+            for name in (EFFECTIVE_SKILL, DISABLED_SKILL):
+                skill = root / ".mimir" / "skills" / name / "SKILL.md"
+                self.assertTrue(skill.is_file())
+                self.assertIn("name: " + name, skill.read_text())
+            self.assertFalse((native / "skills").exists(), "Agent-dir is not the native global skills root")
+            manifests = [tomllib.loads((package / "mimir-plugin.toml").read_text()) for package in packages]
+            self.assertEqual([manifest["id"] for manifest in manifests], [DISABLED_PLUGIN, NONLIVE_PLUGIN])
+            self.assertEqual(manifests[1]["frontends"], ["tui"])
+            for package in packages:
+                self.assertEqual((package / "plugin.wasm").read_bytes(), (product / "plugin.wasm").read_bytes())
+            manifest = packages[0] / "mimir-plugin.toml"
+            advance_disabled_fixture_version(manifest)
+            changed = tomllib.loads(manifest.read_text())
+            self.assertEqual(changed["version"], "0.2.0")
+            self.assertEqual({key: value for key, value in changed.items() if key != "version"},
+                             {key: value for key, value in manifests[0].items() if key != "version"})
+            with self.assertRaises(AssertionError):
+                advance_disabled_fixture_version(manifest)
+            other = packages[1] / "mimir-plugin.toml"
+            other_before = other.read_bytes()
+            with self.assertRaises(AssertionError):
+                advance_disabled_fixture_version(other)
+            self.assertEqual(other.read_bytes(), other_before)
+
+    def test_inventory_assertions_reject_installed_as_live_or_enabled(self):
+        inventory = self.inventory()
+        assert_inventory(inventory, "target")
+        plugin_by_id(inventory, DISABLED_PLUGIN)["live"] = True
+        with self.assertRaises(AssertionError):
+            assert_inventory(inventory, "target")
+        inventory = self.inventory()
+        plugin_by_id(inventory, NONLIVE_PLUGIN)["selected"] = True
+        with self.assertRaises(AssertionError):
+            assert_inventory(inventory, "target")
+
+    def test_inventory_rejects_wrong_owner_or_disabled_skills_or_instruction_leak(self):
+        with self.assertRaises(AssertionError):
+            assert_inventory(self.inventory(), "different-session")
+        inventory = self.inventory()
+        inventory["skills"].append({"name": DISABLED_SKILL})
+        with self.assertRaises(AssertionError):
+            assert_inventory(inventory, "target")
+        inventory = self.inventory()
+        inventory["skills"][0]["instructions"] = "TICKET252_SKILL_BODY_NOT_PUBLIC"
+        with self.assertRaises(AssertionError):
+            assert_inventory(inventory, "target")
+
+    def test_scope_requires_native_activation_identity_not_just_live_flag(self):
+        assert_same_activation({"live": True, "mount_id": "a"}, {"live": True, "mount_id": "a"})
+        for after in ({"live": True, "mount_id": "b"}, {"live": False, "mount_id": "a"}, {"live": True}):
+            with self.assertRaises(AssertionError):
+                assert_same_activation({"live": True, "mount_id": "a"}, after)
+        with self.assertRaises(AssertionError):
+            assert_same_activation({"live": True}, {"live": True})
+
+    def test_duplicate_inventory_identity_is_not_accepted(self):
+        inventory = self.inventory()
+        inventory["inventory"]["plugins"].append(dict(inventory["inventory"]["plugins"][0]))
+        with self.assertRaises(AssertionError):
+            plugin_by_id(inventory, DISABLED_PLUGIN)
 
 class ChildWorkloadTests(unittest.TestCase):
     def test_child_routing_uses_current_delegated_brief_not_parent_or_history(self):

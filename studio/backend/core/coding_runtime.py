@@ -49,6 +49,32 @@ class CodingRuntime:
         self._failure: CodingRuntimeError | None = None
         self._closing = False
 
+    def diagnostics(self) -> dict[str, Any]:
+        """Bounded supervisor facts only; inspecting must not start/restart Mimir.
+
+        Never expose executable/package paths, environment, stderr, pending command
+        bodies, raw exceptions or credentials. Session execution remains native.
+        """
+        if self._closing:
+            connection = "closing"
+        elif self._failure:
+            connection = "disconnected"
+        elif self.process is None:
+            connection = "not_started"
+        elif self.process.returncode is not None:
+            connection = "exited"
+        else:
+            connection = "connected"
+        return {
+            "connection": connection,
+            "frontend_plugin": PLUGIN_ID,
+            "protocol": 1,
+            "pending_commands": len(self._pending),
+            "open_views": len(self._subscriptions),
+            "command_timeout_seconds": COMMAND_TIMEOUT,
+            "max_frame_bytes": MAX_FRAME,
+        }
+
     async def start(self) -> None:
         async with self._start_lock:
             if self._closing:
