@@ -22,6 +22,7 @@ import {
 import { restoreAnswerFocus, watchAnswerFocus } from "./answer-focus";
 import { codingRunApi } from "./api";
 import { CodingModeControl, PlanCard } from "./plan-card";
+import { GoalSummary } from "./goal-summary";
 import { ChildActivityRows, ChildInspector } from "./child-inspector";
 import { CodingComposer } from "./coding-composer";
 import { CodingCommandControls } from "./command-controls";
@@ -212,6 +213,8 @@ export function CodingSurface({
       !state.storageError &&
       !state.reconcilingAction &&
       !state.planControl &&
+      !state.goalChanging &&
+      !state.reconcilingGoal &&
       !state.native?.pending_user_request &&
       !state.commandBusy &&
       !state.uncertainCommand &&
@@ -231,6 +234,8 @@ export function CodingSurface({
             state.stopping ||
             state.reconcilingAction ||
             state.planControl ||
+            state.goalChanging ||
+            state.reconcilingGoal ||
             state.commandBusy ||
             state.uncertainCommand ||
             state.storageError,
@@ -402,6 +407,7 @@ export function CodingSurface({
             run={run}
           />
         )}
+        {state && run && <GoalSummary state={state} run={run} />}
         {/* Retain scrollable history beside the lazy child inspector when a plan expands. */}
         <div
           className={`relative flex min-w-0 flex-1 gap-3 ${state?.native?.plan ? "min-h-32" : "min-h-0"}`}
@@ -538,6 +544,8 @@ export function CodingSurface({
                   state?.recovering ||
                     state?.configurationUncertain ||
                     state?.planControl ||
+                    state?.goalChanging ||
+                    state?.reconcilingGoal ||
                     state?.commandBusy ||
                     state?.uncertainCommand,
                 )

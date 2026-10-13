@@ -53,6 +53,7 @@ from coding_extension_scenarios import prepare_extension_fixtures, run_extension
 from coding_input_scenarios import prepare_input_project, input_scenarios, live_input_scenario
 from coding_recovery_scenarios import run_recovery_scenarios
 from coding_plan_scenarios import run_plan_scenarios
+from coding_goal_scenarios import run_goal_scenarios
 from coding_question_scenarios import run_question_scenarios
 from coding_command_scenarios import run_command_scenarios
 from coding_retirement_scenarios import run_retirement_scenarios
@@ -61,8 +62,8 @@ from coding_child_scenarios import CHILD_EVENT_CAPTURE, run_child_scenarios
 from coding_file_change_scenarios import LIVE_PROFILE_OBSERVER, run_file_change_scenarios
 
 
-WORKLOADS = ("opening", "deterministic", "picker", "recovery", "plan", "questions", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live")
-FIXTURE_WORKLOADS = ("deterministic", "picker", "recovery", "plan", "questions", "commands", "retirement", "concurrency", "children", "inputs", "file-changes")
+WORKLOADS = ("opening", "deterministic", "picker", "recovery", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live")
+FIXTURE_WORKLOADS = ("deterministic", "picker", "recovery", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "file-changes")
 
 
 def shared_trust_path() -> Path:
@@ -196,17 +197,24 @@ def main() -> None:
     server = subprocess.Popen(server_args, cwd = root / "studio" / "backend", env = env,
                               stdout = output, stderr = subprocess.STDOUT)
 
-    def restart_server():
+    def restart_server(*, native_crash = False):
         nonlocal server
         import psutil
         children = [child for child in psutil.Process(server.pid).children()
                     if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
         assert len(children) == 1
         before = children[0].pid
+        if native_crash:
+            # Fault-inject owner loss only into this acceptance server's verified
+            # product child. A normal clean quit instead records a manual pause.
+            children[0].kill()
+            children[0].wait(timeout = 45)
         server.terminate()
         assert server.wait(timeout = 45) in (0, -15)
-        assert not children[0].is_running(), "Clean acceptance restart did not await native cleanup"
-        report.setdefault("runtime_generations", []).append({"pid": before, "native_settled": True})
+        assert not children[0].is_running(), "Acceptance restart left its native owner running"
+        report.setdefault("runtime_generations", []).append({"pid": before, "native_settled": True,
+            "mode": "abrupt-native-owner-loss" if native_crash else "awaited-clean-shutdown",
+            "request_cleanup_awaited": not native_crash})
         server = subprocess.Popen(server_args, cwd = root / "studio" / "backend", env = env,
                                   stdout = output, stderr = subprocess.STDOUT)
         startup_deadline = time.monotonic() + 60
@@ -385,7 +393,14 @@ def main() -> None:
                 scenario("A6-saved-folder-reopen-errors", "Missing and OS-denied saved folders were refused on deliberate reopen even with retained native ownership; current conversation identity stayed unchanged, no replacement folder or fork")
             if args.workload != "opening":
                 try:
-                    if args.workload == "picker":
+                    if args.workload == "goals":
+                        run_goal_scenarios(page, context, base, provider, first, report,
+                                           scenario, snapshot, restart_server)
+                        product = [child for child in psutil.Process(server.pid).children()
+                                   if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
+                        assert len(product) == 1
+                        report["supervised_pid"] = product[0].pid
+                    elif args.workload == "picker":
                         run_picker_scenarios(page, context, base, provider, first,
                                              report, scenario, snapshot)
                     elif args.workload == "inputs":
@@ -535,6 +550,7 @@ def main() -> None:
                         "plan_id": report["plan"]["plans"][-1]["id"],
                         "revision": report["plan"]["plans"][-1]["revision"], "decision": "implement"}}),
                 ) if args.workload == "plan" else ()),
+                ("post", f"/api/coding/conversations/{first_id}/goal", {"data": {"revision": "unauthenticated-native-revision", "action": "pause"}}),
             ):
                 response = getattr(unauth, method)(path, **kwargs)
                 assert response.status in (401, 403), (method, path, response.status)

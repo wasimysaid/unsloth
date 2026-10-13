@@ -2,6 +2,7 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 import assert from "node:assert/strict";
 import test from "node:test";
+import { goalActionDisabledReason } from "../src/features/coding/goal.ts";
 import type {
   NativePlan,
   PlanDecision,
@@ -386,6 +387,100 @@ test("plan reconstruction guards model selection and slash dispatch", async () =
   await changing;
   await h.start();
   await h.run.configure({ model: "other" });
+  h.run.detach();
+});
+
+test("plan admission and reconstruction block goal actions without replay", async () => {
+  const h = harness();
+  const current = native();
+  current.goal_controls = {
+    revision: "goal-revision",
+    actions: [{ action: "pause", admitted: true, reason: null }],
+  };
+  await h.start(current);
+  let finish!: () => void;
+  h.api.setMode = async (id, mode) => {
+    h.calls.push({ id, mode });
+    await new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    return { conversation_id: id, mode };
+  };
+  h.api.changeGoal = async (id, change) => {
+    h.calls.push(change);
+    return { conversation_id: id, request_id: null };
+  };
+  const changing = h.run.setMode("build");
+  const goalChange = { revision: "goal-revision", action: "pause" as const };
+  assert.ok(goalActionDisabledReason(h.run.getSnapshot(), "pause"));
+  let preflightCalls = 0;
+  h.api.checkOverlap = async () => {
+    ++preflightCalls;
+    return { cwd: "/project", conversations: [{ id: "other-owner" }] };
+  };
+  await assert.rejects(
+    h.run.send("No new draft during mode admission"),
+    /reconstructed/,
+  );
+  assert.equal(
+    preflightCalls,
+    0,
+    "pending plan/mode admission must block preflight",
+  );
+  assert.equal(await h.run.changeGoal(goalChange), false);
+  finish();
+  await changing;
+  assert.ok(h.run.getSnapshot().planControlReconciling);
+  assert.equal(await h.run.changeGoal(goalChange), false);
+  assert.deepEqual(h.calls, [{ id: "conversation", mode: "build" }]);
+  current.configuration.mode = "build";
+  await h.start(current);
+  assert.equal(await h.run.changeGoal(goalChange), true);
+  assert.deepEqual(h.calls, [
+    { id: "conversation", mode: "build" },
+    goalChange,
+  ]);
+  h.run.detach();
+});
+
+test("goal admission blocks mode and plan decisions until native reconstruction", async () => {
+  const h = harness();
+  const current = native();
+  current.goal_controls = {
+    revision: "goal-revision",
+    actions: [{ action: "pause", admitted: true, reason: null }],
+  };
+  await h.start(current);
+  let finish!: () => void;
+  h.api.changeGoal = async (id, change) => {
+    h.calls.push(change);
+    await new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    return { conversation_id: id, request_id: null };
+  };
+  const goalChange = { revision: "goal-revision", action: "pause" as const };
+  const changing = h.run.changeGoal(goalChange);
+  assert.ok(codingPlanControlReason(h.run.getSnapshot()));
+  await h.run.setMode("build");
+  await h.run.decidePlan(plan, "implement");
+  assert.deepEqual(h.calls, [goalChange]);
+  finish();
+  await changing;
+  await h.run.setMode("build");
+  await h.run.decidePlan(plan, "implement");
+  assert.deepEqual(h.calls, [goalChange]);
+  await h.start(current);
+  await h.run.decidePlan(plan, "implement");
+  assert.deepEqual(h.calls, [
+    goalChange,
+    {
+      id: "conversation",
+      plan_id: plan.id,
+      revision: plan.revision,
+      decision: "implement",
+    },
+  ]);
   h.run.detach();
 });
 

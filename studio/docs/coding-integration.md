@@ -1,4 +1,4 @@
-# Coding: trusted projects, native execution, plans, questions, models, reported changes and focused Settings
+# Coding: trusted projects, native execution, recovery, plans, questions, goals, models, reported changes, rich inputs, concurrency, idle retirement and focused Settings
 
 ## Native plans and explicit implementation (#239)
 
@@ -35,6 +35,52 @@ Run the plan workload after rebuilding the paired runtime/product plugin and fro
 This uses the built UI, authenticated coding routes, installed product plugin and
 native Mimir with a deterministic HTTP provider. It is not live-model acceptance
 or implemented-UI human review; those remain the separate #255–256 gates.
+
+## Autonomous-goal slice (#240)
+
+Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`
+and private Mimir `91b975adae2df627d7c67c6bcede6d910a592a7d`.
+The compact goal disclosure above the transcript shows native objective,
+phase/cause/reason, independent review gap and accepted completion checklist.
+Latest visible native `update_status` public output is also inspectable as a
+conversation-level progress report, explicitly not goal-specific verification;
+historical and clipped reports remain labeled. No private result JSON is decoded
+and no second checklist/history store is introduced.
+
+The authenticated goal endpoint passes native admission identity and action to the
+same production frontend plugin. Native controls provide admitted actions and
+busy/disabled reasons; Mimir owns scheduling and lifecycle. Start/edit drafts retain
+their captured identity and become non-submittable when stale. Reconnect and
+uncertain responses reconstruct native state before another action, never replay
+commands. Main-session Stop remains available while goal admission is pending;
+its exact cancellation attempt survives goal-triggered watcher reconstruction,
+while detach and terminal settlement still supersede late replies.
+
+Only native independently reviewed completion evidence establishes verified goal
+completion. Model claims, command acknowledgment and ordinary request completion
+cannot do so. Pause/clear cancel only the matching goal-owned root and children,
+never unrelated activity; admission acknowledgment is not cleanup. Main-session Stop
+remains the separate awaited-cleanup control. Reopened interrupted goals require
+explicit resume. Native start/resume require idle admission and a model; edit/pause/
+clear retain their native phase guards during busy activity. This revalidates and
+corrects the former blanket busy-refusal documentation without relaxing guards.
+Goal strings/evidence are clipped at native public display bounds (16 KiB/string,
+64 KiB aggregate, 128 checklist entries), with explicit partial-evidence notices.
+Clipped objective text is not silently reused as the full replacement in an edit.
+
+Run the real coding-route goal driver after building the paired CLI/plugin and UI:
+
+```sh
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir /path/to/current/mimir --plugin-package /path/to/current/package \
+  --workload goals --evidence-dir /path/to/worker/goals
+```
+
+A2/A7/A10 evidence is recorded through authenticated production coding routes,
+installed product plugin, native tools/goals and the built rendered UI at
+1440×1000 and 390×844. Deterministic provider and independent-review replies remain
+fixture evidence, not real-model acceptance. Completed external-provider/local-model
+workloads and implemented-UI human review remain the separate #255–256 gates.
 
 ## Safe questions slice (#237)
 

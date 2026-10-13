@@ -30,6 +30,8 @@ export function codingRunAdapter(
           state.storageError ||
           state.reconcilingAction ||
           state.planControl ||
+          state.goalChanging ||
+          state.reconcilingGoal ||
           state.commandBusy ||
           state.uncertainCommand ||
           state.overlapWarning,
