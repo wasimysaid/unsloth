@@ -14,9 +14,9 @@ import {
 import type { RunApi } from "../src/features/coding/run-types.ts";
 import { memorySubmissionStorage } from "./coding-storage-fixture.ts";
 import {
+  type StubElement,
   loadWithStubs,
   stubJsxRuntime,
-  type StubElement,
 } from "./helpers/module-stubs.ts";
 
 const source = (path: string) =>
@@ -50,6 +50,9 @@ test("installed external runtime projects native state and forwards exact submis
   const calls: unknown[] = [];
   let deliver!: (view: unknown) => Promise<void>;
   const api: RunApi = {
+    async answer(id, target) {
+      return { conversation_id: id, ...target, accepted: true };
+    },
     async submit(id, submissionKey, text) {
       calls.push({ id, submission_key: submissionKey, text });
       return {
@@ -97,6 +100,7 @@ test("installed external runtime projects native state and forwards exact submis
         active_request: null,
         requests: [],
         pending_user_request: false,
+        user_request: null,
       },
       root: { cut: { journal: "root", leaf: "leaf" }, live_invocations: [] },
     },
@@ -139,6 +143,8 @@ test("installed runtime upcoming assistant placeholder is not a native transcrip
     reopenRequired: false,
     reconcilingAction: null,
     retryStop: null,
+    answerTarget: null,
+    answerForms: [],
     native: {
       info: { id: "conversation", cwd: "/project", title: null },
       configuration: {
@@ -149,6 +155,7 @@ test("installed runtime upcoming assistant placeholder is not a native transcrip
       },
       active_request: "request",
       pending_user_request: false,
+      user_request: null,
       requests: [
         { id: "request", status: "running", submission_key: "submission" },
       ],
@@ -236,6 +243,9 @@ test("installed composer.send retains a recoverable unsent draft when submission
     throw new Error("Storage quota exceeded");
   };
   const api: RunApi = {
+    async answer(id, target) {
+      return { conversation_id: id, ...target, accepted: true };
+    },
     async submit(id, key, text) {
       calls.push({ id, key, text });
       return {
@@ -287,6 +297,7 @@ test("installed composer.send retains a recoverable unsent draft when submission
           active_request: null,
           requests: [],
           pending_user_request: false,
+          user_request: null,
         },
         root: { cut: { journal: "root", leaf: null }, live_invocations: [] },
       },

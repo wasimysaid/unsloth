@@ -12,14 +12,18 @@ import {
 } from "@assistant-ui/react";
 import { ArrowDown, ArrowUp, Square } from "lucide-react";
 import {
+  createContext,
+  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
+import { restoreAnswerFocus, watchAnswerFocus } from "./answer-focus";
 import { codingRunApi } from "./api";
 import { nativeMessageRow } from "./presentation";
+import { QuestionCard } from "./question-card";
 import { codingRunAdapter } from "./run-runtime";
 import {
   codingRunCompletion,
@@ -29,9 +33,37 @@ import {
 import { ToolReport } from "./tool-report";
 import { CodingUnsentDraft } from "./unsent-draft";
 
+// Focus intent only, not another answer/history store. assistant-ui may project
+// a native row one render after its question controls have disappeared.
+const AnswerFocus = createContext<{ current: string | null } | null>(null);
+
 function NativeMessage() {
   const message = useMessage();
   const row = nativeMessageRow(message);
+  const root = useRef<HTMLDivElement>(null);
+  const questionId = row?.answer?.user_request_id;
+  const answerFocus = useContext(AnswerFocus);
+  useLayoutEffect(() => {
+    const element = root.current;
+    if (questionId && answerFocus)
+      restoreAnswerFocus(
+        answerFocus,
+        questionId,
+        element,
+        document.activeElement,
+        document.body,
+      );
+    return () => {
+      // A checkpoint replaces a provisional answer with its saved identity.
+      // Carry only focus owned by that row across the native replacement.
+      if (
+        questionId &&
+        answerFocus &&
+        element?.contains(document.activeElement)
+      )
+        answerFocus.current = questionId;
+    };
+  }, [questionId, answerFocus]);
   if (!row) return null;
   const tool = row.tool;
   const tools = row.grouped ?? [row];
@@ -64,8 +96,11 @@ function NativeMessage() {
   );
   return (
     <MessagePrimitive.Root
+      ref={root}
       className={`min-w-0 break-words ${row.kind === "user" ? "ml-auto max-w-[90%] rounded-2xl bg-muted px-4 py-3" : "w-full py-2"}`}
       data-native-entry={row.id}
+      data-native-answer={row.answer?.user_request_id}
+      tabIndex={row.answer ? -1 : undefined}
     >
       {tool ? (
         row.grouped ? (
@@ -85,11 +120,13 @@ function NativeMessage() {
       ) : (
         <>
           <p className="mb-1 text-[11px] font-medium text-muted-foreground">
-            {row.kind === "user"
-              ? "You"
-              : row.kind === "notice"
-                ? "Native activity"
-                : "Mimir"}
+            {row.answer
+              ? "You · accepted answer"
+              : row.kind === "user"
+                ? "You"
+                : row.kind === "notice"
+                  ? "Native activity"
+                  : "Mimir"}
           </p>
           <div className="whitespace-pre-wrap text-sm leading-relaxed">
             {row.text}
@@ -123,17 +160,26 @@ export function CodingSurface({
   );
   const runtime = useExternalStoreRuntime(codingRunAdapter(state, run));
   const viewport = useRef<HTMLDivElement>(null);
+  const answerFocus = useRef<string | null>(null);
   const follow = useRef(true);
   const [away, setAway] = useState(false);
   useEffect(() => {
+    const releaseFocus = watchAnswerFocus(answerFocus, document, window);
     run?.connect();
-    return () => run?.detach();
+    return () => {
+      releaseFocus();
+      run?.detach();
+    };
   }, [run]);
   useLayoutEffect(() => {
-    if (state?.rows.length && follow.current && viewport.current) {
+    if (
+      (state?.rows.length || state?.native?.user_request) &&
+      follow.current &&
+      viewport.current
+    ) {
       viewport.current.scrollTop = viewport.current.scrollHeight;
     }
-  }, [state?.rows]);
+  }, [state?.rows, state?.native?.user_request]);
   const active = state?.native?.active_request;
   const completion = codingRunCompletion(state);
   const canSend = Boolean(
@@ -143,7 +189,8 @@ export function CodingSurface({
       !state.submitting &&
       !state.uncertainSubmission &&
       !state.storageError &&
-      !state.reconcilingAction,
+      !state.reconcilingAction &&
+      !state.native?.pending_user_request,
   );
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -169,14 +216,16 @@ export function CodingSurface({
             </p>
             {(active || state.stopping || completion?.request_id) && (
               <p
-                className="break-all font-mono text-[11px] text-muted-foreground"
+                className={`break-all font-mono text-[11px] text-muted-foreground ${state.native?.pending_user_request ? "max-sm:hidden" : ""}`}
                 data-testid="coding-request-id"
               >
                 {state.stopping || active || completion?.request_id}
               </p>
             )}
             {state.native?.configuration.provider && (
-              <p className="break-all text-muted-foreground">
+              <p
+                className={`break-all text-muted-foreground ${state.native?.pending_user_request ? "max-sm:hidden" : ""}`}
+              >
                 Configured model: {state.native.configuration.provider}/
                 {state.native.configuration.model}
               </p>
@@ -221,7 +270,7 @@ export function CodingSurface({
                   : "Fresh native view inspected. Explicit retry targets only the same active request; cancellation is not exactly-once."}
               </p>
             )}
-            {state.deliveryRecovered && (
+            {state.deliveryRecovered && !state.native?.pending_user_request && (
               <p role="status" data-testid="coding-submission-recovered">
                 Native prompt acceptance confirmed. Delivery recovery does not
                 start a new continuation.
@@ -304,11 +353,56 @@ export function CodingSurface({
           )}
           {state?.viewingEarlier && (
             <p className="text-center text-xs text-muted-foreground">
-              Historical page · newer messages and live activity are not shown.
-              Native work may still be running.
+              Historical page · newer transcript messages are not shown.
+              {state.native?.pending_user_request
+                ? " Question controls below still reflect current native state."
+                : " Native work may still be running."}
             </p>
           )}
-          <ThreadPrimitive.Messages components={messageComponents} />
+          <AnswerFocus.Provider value={answerFocus}>
+            <ThreadPrimitive.Messages components={messageComponents} />
+            {run &&
+              state?.answerForms
+                .filter(
+                  (form) =>
+                    !(state.viewingEarlier && form.status === "accepted") &&
+                    !state.rows.some(
+                      (row) =>
+                        row.answer?.request_id === form.target.request_id &&
+                        row.answer.user_request_id ===
+                          form.target.user_request_id,
+                    ),
+                )
+                .map((form) => (
+                  <QuestionCard
+                    key={`${form.target.request_id}:${form.target.user_request_id}`}
+                    form={form}
+                    run={run}
+                    live={Boolean(
+                      state.answerTarget &&
+                        state.answerTarget.subscription ===
+                          form.target.subscription &&
+                        state.answerTarget.request_id ===
+                          form.target.request_id &&
+                        state.answerTarget.user_request_id ===
+                          form.target.user_request_id,
+                    )}
+                    focus={follow.current && !state.viewingEarlier}
+                    onReleaseFocus={(questionId) => {
+                      if (document.activeElement !== document.body) return;
+                      answerFocus.current = questionId;
+                      const answer =
+                        viewport.current?.querySelector<HTMLElement>(
+                          `[data-native-answer="${CSS.escape(questionId)}"]`,
+                        );
+                      if (answer?.isConnected) {
+                        answer.focus();
+                        answerFocus.current = null;
+                      }
+                    }}
+                  />
+                ))}
+          </AnswerFocus.Provider>
         </div>
         {(away || state?.viewingEarlier) && (
           <Button

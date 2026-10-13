@@ -2,17 +2,33 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 import {
-  pendingSubmissionStore,
   type SubmissionStorage,
+  pendingSubmissionStore,
 } from "./pending-submission.ts";
 import type {
+  AnswerTarget,
   CodingRow,
   EntryPage,
   JournalCut,
+  NativeAnswer,
   NativeState,
+  NativeUserRequest,
   RunApi,
 } from "./run-types.ts";
 
+export interface QuestionAnswerForm {
+  target: AnswerTarget;
+  question: NativeUserRequest;
+  answers: NativeAnswer[];
+  status:
+    | "waiting"
+    | "submitting"
+    | "accepted"
+    | "uncertain"
+    | "error"
+    | "inactive";
+  error: string | null;
+}
 export interface CodingRunState {
   connection: "loading" | "connected" | "disconnected";
   native: NativeState | null;
@@ -37,6 +53,8 @@ export interface CodingRunState {
   reopenRequired: boolean;
   reconcilingAction: string | null;
   retryStop: string | null;
+  answerTarget: AnswerTarget | null;
+  answerForms: QuestionAnswerForm[];
 }
 const MAX_ROWS = 1000;
 const MAX_TEXT = 2 * 1024 * 1024;
@@ -76,6 +94,8 @@ export function createCodingRun(
     reopenRequired: false,
     reconcilingAction: null,
     retryStop: null,
+    answerTarget: null,
+    answerForms: [],
   };
   try {
     state.uncertainSubmission = pendingStore.load();
@@ -93,11 +113,118 @@ export function createCodingRun(
   let position: number | null = null;
   let subscription: string | null = null;
   let incarnation = 0;
+  let answersAwaitCapture = false;
   let abort: AbortController | null = null;
   const listeners = new Set<() => void>();
   const update = (patch: Partial<CodingRunState>) => {
     state = { ...state, ...patch };
     for (const listener of listeners) listener();
+  };
+  const sameQuestion = (left: AnswerTarget, right: AnswerTarget) =>
+    left.request_id === right.request_id &&
+    left.user_request_id === right.user_request_id;
+  const sameTarget = (left: AnswerTarget, right: AnswerTarget) =>
+    sameQuestion(left, right) && left.subscription === right.subscription;
+  const updateAnswer = (
+    target: AnswerTarget,
+    patch: Partial<QuestionAnswerForm>,
+  ) =>
+    update({
+      answerForms: state.answerForms.map((form) =>
+        sameQuestion(form.target, target) ? { ...form, ...patch } : form,
+      ),
+    });
+  const reconcileAnswers = (freshCapture = false) => {
+    if (state.connection !== "connected" || state.recovering || !subscription)
+      return;
+    const pending = state.native?.user_request;
+    const request = state.native?.active_request;
+    const terminal =
+      request &&
+      (state.completion?.request_id === request ||
+        state.native?.requests.some(
+          (item) =>
+            item.id === request &&
+            ["completed", "cancelled", "failed", "interrupted"].includes(
+              item.status,
+            ),
+        ));
+    const target =
+      pending && request && !terminal && !state.stopping
+        ? { subscription, request_id: request, user_request_id: pending.id }
+        : null;
+    let forms = state.answerForms.map((form): QuestionAnswerForm => {
+      const accepted = saved.find(
+        (row) =>
+          row.answer?.request_id === form.target.request_id &&
+          row.answer.user_request_id === form.target.user_request_id,
+      );
+      if (accepted?.answer)
+        return {
+          ...form,
+          answers: accepted.answer.answers,
+          status: "accepted",
+          error: null,
+        };
+      if (target && sameQuestion(form.target, target)) {
+        if (freshCapture && ["uncertain", "submitting"].includes(form.status))
+          return {
+            ...form,
+            target,
+            status: "error",
+            error:
+              "Fresh native state confirms this question is still waiting. Delivery was not confirmed and was not replayed. Review your retained draft and explicitly submit again.",
+          };
+        if (form.status === "inactive")
+          return {
+            ...form,
+            target,
+            status: "error",
+            error:
+              "Native state confirms this exact question is still waiting. Review the retained draft before answering.",
+          };
+        return { ...form, target };
+      }
+      // Stop disables controls provisionally; it is not question cancellation.
+      if (
+        state.stopping === form.target.request_id &&
+        pending?.id === form.target.user_request_id &&
+        !terminal
+      )
+        return form;
+      if (form.status === "accepted") return form;
+      if (["submitting", "uncertain"].includes(form.status) && !freshCapture)
+        return form;
+      return {
+        ...form,
+        status: "inactive",
+        error:
+          "This question is no longer live. Its answer was not confirmed in the available native history. This draft cannot answer another question.",
+      };
+    });
+    if (
+      target &&
+      pending &&
+      !forms.some((form) => sameQuestion(form.target, target))
+    ) {
+      forms = [
+        ...forms,
+        {
+          target,
+          question: pending,
+          answers: pending.questions.map((question) => ({
+            question_id: question.id,
+            selected_options: [],
+            freeform_text: null,
+          })),
+          status: "waiting",
+          error: null,
+        },
+      ];
+    }
+    // These are bounded, ephemeral form drafts, not a transcript/history store.
+    update({ answerTarget: target, answerForms: forms.slice(-8) });
+    answersAwaitCapture = false;
   };
   const clearPending = (key: string, recovered: boolean) => {
     try {
@@ -305,6 +432,7 @@ export function createCodingRun(
     position = view.position;
     subscription = view.subscription;
     if (event.type === "start" || event.type === "reset") {
+      answersAwaitCapture = true;
       const native = event.state as NativeState;
       if (native.info.id !== id)
         throw new Error("Native view belongs to another conversation.");
@@ -401,6 +529,7 @@ export function createCodingRun(
       update({ disconnected: false, reopenRequired: false });
       reconcileAction();
     }
+    reconcileAnswers(answersAwaitCapture);
   }
   function connect() {
     if (reconnectTimer !== null) clearTimeout(reconnectTimer);
@@ -413,6 +542,7 @@ export function createCodingRun(
     subscription = null;
     update({
       connection: "loading",
+      answerTarget: null,
       error: state.reconcilingAction ? state.error : null,
       loadingEarlier: false,
     });
@@ -432,6 +562,7 @@ export function createCodingRun(
         controller.abort();
         update({
           connection: "disconnected",
+          answerTarget: null,
           disconnected: true,
           reopenRequired: reason instanceof Error && "requiresReopen" in reason,
           error: errorText(reason),
@@ -451,6 +582,7 @@ export function createCodingRun(
       state.connection !== "connected" ||
       state.recovering ||
       state.submitting ||
+      state.native?.pending_user_request ||
       state.stopping ||
       state.reconcilingAction ||
       state.storageError
@@ -519,12 +651,75 @@ export function createCodingRun(
       };
     },
     connect,
+    editAnswer(target: AnswerTarget, answers: NativeAnswer[]) {
+      const form = state.answerForms.find((item) =>
+        sameTarget(item.target, target),
+      );
+      if (
+        !state.answerTarget ||
+        !sameTarget(state.answerTarget, target) ||
+        !form ||
+        !["waiting", "error"].includes(form.status)
+      )
+        return;
+      updateAnswer(target, { answers, error: null });
+    },
+    async answer(target: AnswerTarget) {
+      const form = state.answerForms.find((item) =>
+        sameTarget(item.target, target),
+      );
+      if (
+        !form ||
+        !state.answerTarget ||
+        !sameTarget(state.answerTarget, target) ||
+        state.connection !== "connected" ||
+        state.recovering ||
+        state.stopping ||
+        !["waiting", "error"].includes(form.status)
+      )
+        return;
+      const current = incarnation;
+      updateAnswer(target, { status: "submitting", error: null });
+      try {
+        const result = await api.answer(id, target, form.answers);
+        if (current !== incarnation) return;
+        if (
+          result.conversation_id !== id ||
+          !sameTarget(result, target) ||
+          result.accepted !== true
+        )
+          throw new Error(
+            "Native answer acceptance identity could not be confirmed.",
+          );
+        updateAnswer(target, { status: "accepted", error: null });
+      } catch (reason) {
+        if (current !== incarnation) return;
+        const latest = state.answerForms.find((item) =>
+          sameQuestion(item.target, target),
+        );
+        if (latest?.status === "accepted") return; // Public native evidence supersedes a lost ACK.
+        const rejected =
+          reason instanceof Error &&
+          "admissionRejected" in reason &&
+          reason.admissionRejected === true;
+        updateAnswer(target, {
+          status: rejected ? "error" : "uncertain",
+          error: rejected
+            ? errorText(reason)
+            : `${errorText(reason)} Answer delivery is unconfirmed. Inspecting native state and history; no answer was replayed.`,
+        });
+        // Even a rejection can race cancellation/replacement. Rebuild authority
+        // before admitting a new action, retaining the exact question's draft.
+        connect();
+      }
+    },
     detach() {
       ++incarnation;
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       reconnectTimer = null;
       abort?.abort();
       abort = null;
+      update({ answerTarget: null });
     },
     async send(text: string) {
       if (!text.trim()) return;
@@ -549,7 +744,12 @@ export function createCodingRun(
       )
         return;
       const current = incarnation;
-      update({ stopping: request, retryStop: null, error: null });
+      update({
+        stopping: request,
+        retryStop: null,
+        error: null,
+        answerTarget: null,
+      });
       try {
         const result = await api.cancel(id, request);
         // Detach/reconnect and terminal native evidence supersede late replies.

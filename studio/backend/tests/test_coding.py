@@ -37,6 +37,8 @@ def coding_app(monkeypatch, tmp_path):
     ("GET", "/conversations/known-id/events", None),
     ("POST", "/conversations/known-id/prompts", {"submission_key": "exact-key", "text": "work"}),
     ("POST", "/conversations/known-id/requests/exact-request/cancel", None),
+    ("POST", "/conversations/known-id/requests/exact-request/questions/exact-question/answers", {
+        "subscription": "live-view", "answers": [{"question_id": "choice", "selected_options": ["One"], "freeform_text": None}]}),
     ("POST", "/conversations/known-id/entries", {"cut": {"journal": "root", "leaf": None}}),
 ])
 async def test_every_surface_requires_existing_studio_auth(coding_app, method, path, body):
@@ -201,6 +203,7 @@ async def test_view_start_in_same_pipe_read_is_not_lost():
     runtime.process = SimpleNamespace(stdout = stream, returncode = 0)
     future = asyncio.get_running_loop().create_future()
     runtime._pending[1] = future
+    runtime._opening_views.add(1)
     start = {"subscription": "view-1", "position": 7, "event": {"type": "start", "recovering": False}}
     for payload in ({"id": 1, "result": {"subscription": "view-1"}}, start):
         data = json.dumps(payload).encode()

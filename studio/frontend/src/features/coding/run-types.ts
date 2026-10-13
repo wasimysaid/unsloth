@@ -15,6 +15,26 @@ export interface NativeRequest {
   status: RequestStatus;
   submission_key: string | null;
 }
+export interface NativeQuestion {
+  id: string;
+  prompt: string;
+  allow_multiple: boolean;
+  options: { label: string; description: string }[];
+}
+export interface NativeUserRequest {
+  id: string;
+  questions: NativeQuestion[];
+}
+export interface NativeAnswer {
+  question_id: string;
+  selected_options: string[];
+  freeform_text: string | null;
+}
+export interface AnswerTarget {
+  subscription: string;
+  request_id: string;
+  user_request_id: string;
+}
 export interface NativeState {
   info: CodingConversation;
   configuration: {
@@ -26,6 +46,7 @@ export interface NativeState {
   active_request: string | null;
   requests: NativeRequest[];
   pending_user_request: boolean;
+  user_request: NativeUserRequest | null;
 }
 export interface JournalCut {
   journal: "root";
@@ -40,6 +61,11 @@ export interface CodingRow {
   request_id?: string | null;
   clipped?: boolean;
   historical?: boolean;
+  answer?: {
+    request_id: string;
+    user_request_id: string;
+    answers: NativeAnswer[];
+  };
   tool?: {
     invocation_id: string | null;
     call_id: string;
@@ -64,6 +90,11 @@ export interface EntryPage {
   last_id: string | null;
 }
 export interface RunApi {
+  answer(
+    id: string,
+    target: AnswerTarget,
+    answers: NativeAnswer[],
+  ): Promise<AnswerTarget & { conversation_id: string; accepted: boolean }>;
   submit(
     id: string,
     submissionKey: string,

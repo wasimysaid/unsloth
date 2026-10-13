@@ -1,4 +1,46 @@
-# Coding: trusted projects, native run/stop, reopen and reconnect (#234–236)
+# Coding: trusted projects, run/stop, recovery and questions (#234–237)
+
+## Safe questions slice (#237)
+
+Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`
+and private Mimir `91b975adae2df627d7c67c6bcede6d910a592a7d`.
+The native public state now supplies the actual pending question and controls.
+Expanded inline cards stay separate from ordinary prompt input, with keyboard-native
+single/multiple selection, custom answers, non-color status and wrapping layout.
+Focus follows the exact accepted question when its controls disappear, including
+checkpoint row replacement; outside interaction revokes a deferred focus handoff.
+
+Answers target the exact conversation, live view, active coding request and pending
+user request. Native admission validates current authority; stale actions must not
+answer another question. The authenticated endpoint and private framing carry the
+same identities. Public accepted answers are restored from Mimir history, never
+synthesized from a sent browser command. Waiting, submitting, accepted, errors and
+unconfirmed delivery remain distinct. Stop still awaits terminal native cleanup.
+The bridge acquires an event queue only for a `view` command: answer acknowledgments
+merely echo their target subscription and must not replace the queue held by SSE.
+
+On answer transport uncertainty the frontend retains its in-memory draft, opens a
+fresh captured view/history cut, and reconciles the exact question. It never blindly
+resubmits. Confirmed still-waiting state permits only an explicit action with the new
+view identity; an absent question without accepted evidence remains unconfirmed and
+non-actionable, not cancelled. Native validation errors preserve the draft. Full
+browser reload drops unsent form drafts, but accepted native transcript answers
+remain readable and no answer is replayed. These drafts are not a second history.
+
+Reproduce the deterministic native coding-route scenarios with:
+
+```sh
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir /path/to/paired/mimir --plugin-package /path/to/current/package \
+  --workload questions --browser firefox --evidence-dir /path/to/worker/questions
+```
+
+Focused contract suites and the route driver cover accepted/history-restored answers,
+invalid and stale identities, replacement, lost acknowledgements, reconnect and
+Stop while waiting. Browser evidence records exact view/conversation/request/question
+identities, desktop 1440×1000 and narrow 390×844 viewports, screenshots and confirmed
+terminal cleanup. This is deterministic provider/fault-injected native execution,
+not external-provider/local-model full-PoC or human-review acceptance (#255–256).
 
 ## Reopen/reconnect slice (#236)
 
@@ -228,18 +270,31 @@ The task-local `worker/ticket-result.json` and browser `report.json` identify ac
 commands/artifacts/results; this tracked matrix intentionally contains no stale
 claim tied to a mutable local HEAD or absent screenshots.
 
-| ID | Implemented #234–236 coverage (see attempt reports for verification) | Remaining capability evidence |
+| ID | Implemented #234–237 coverage (see attempt reports for verification) | Remaining capability evidence |
 |---|---|---|
 | A1 | Native opening/SDK contracts; single supervised product plugin; authenticated HTTP/SSE; exact submission/request/tool identities; atomic ordered public view, checkpoints/reset/recovery, bounded cut reads and durable reconnect reconciliation (#236) | Cross-feature integration and packaged-consumer regression (#254) |
-| A2 | Native prompt/Stop controls; compact inspectable public tool results/failures and clipping disclosure | Questions, modes, plans/goals, children and diagnostics (#237 onward) |
+| A2 | Native prompt/Stop controls; compact inspectable public tool results/failures and clipping disclosure; native inline questions and retained accepted answers (#237) | Modes, plans/goals, children and diagnostics (#239 onward) |
 | A3 | No diff implementation or fabricated effects | Typed live/historical reported changes (#238) |
 | A4 | No model picker | Model/reasoning interactions (#244) |
 | A5 | Externally configured provider admission; no Studio local-model serving | Local-model requests and whole-request protection (#246/#255) |
 | A6 | Canonical/native validated opening, non-persisting effective trust, saved-policy tests, child inheritance, mismatch/lease refusals, authenticated run/Stop/history access | Concurrent execution/same-folder warning and retirement/recovery (#247–249) |
-| A7 | Exact request cancellation; Stop acknowledgment distinct from cleanup; disconnect never stops owners; typed native failures; durable submission identity across reload/native restart, automatic authoritative reconnect and non-prompt reconciliation (#236); no automatic work replay; awaited EOF shutdown | Controlled idle clocks and full process-interruption/maintenance scenarios (#248/#249) |
+| A7 | Exact request cancellation; Stop acknowledgment distinct from cleanup; disconnect never stops owners; typed native failures; durable submission identity across reload/native restart, automatic authoritative reconnect and non-prompt reconciliation (#236); exact live-view/request/question answer validation and uncertain-answer reconciliation (#237); no automatic work replay; awaited EOF shutdown | Controlled idle clocks and full process-interruption/maintenance scenarios (#248/#249) |
 | A8 | No Settings management surface | Native MCP and headless inventory/settings (#250–252) |
 | A9 | Ordinary-chat store/engine untouched; affected shared/ordinary-chat tests; coding route excludes ordinary model observers and chat execution imports | Real ordinary-chat smoke and cross-feature regression (#254/#255) |
 | A10 | Rendered opening, deterministic provider/native-tool, cancellation/failure, keyboard/narrow, and separate live-provider driver | Full cross-feature execution UI checks and user's implemented-UI review (#255/#256) |
+
+## Question-contract replacement inventory (#237)
+
+Session Control 11 replaces the former pending-ID-only answer call with an exact
+active-request plus pending-user-request call. Tool Invocation 9 follows its public
+dependency. Native controller/carrier callers, generated SDK imports, TUI responder,
+registry expectations, fixtures and SDK documentation are updated together; the old
+answer admission form is not kept as a competing fallback. Display entries and view
+observations add typed accepted-answer metadata, projected natively from the existing
+question-result journal with exact correlation IDs. No private schema is decoded by
+Studio, no second receipt/history store is added, and generic tool results remain
+available independently of accepted answers. SDK fixtures must be rebuilt against
+these contracts, not reused from an older Wasm artifact.
 
 ## Source-sensitive command-admission follow-ups
 
@@ -258,5 +313,5 @@ Start/Resume, while Edit/Pause/Clear use the existing running-goal path and capt
 cancellation for Pause/Clear. Thus the historical blanket-busy discrepancy must
 be tested at the exact delivered source in #240; do not bypass guards or claim
 support solely from the enum. #235 must await exact cancellation settlement;
-#237 must address pending questions by native identity; #242 must use native
-image/skill admission. These capabilities are deliberately not wired here.
+#237 addresses pending questions by exact native and live-view identity; #242 must
+use native image/skill admission. Remaining capabilities are not wired here.
