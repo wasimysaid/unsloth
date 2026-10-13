@@ -223,7 +223,8 @@ class CodingRuntime:
         except TimeoutError as exc:
             raise CodingRuntimeError(
                 "uncertain", "Mimir has not confirmed this operation. It was not retried; "
-                "refresh saved conversations before trying again.",
+                "reconnect the native view to reconcile its state. Prompt retries must reuse "
+                "the original submission identity; do not blindly retry other commands.",
             ) from exc
         except (BrokenPipeError, ConnectionResetError) as exc:
             raise CodingRuntimeError("disconnected", "The coding runtime disconnected; nothing was replayed.") from exc

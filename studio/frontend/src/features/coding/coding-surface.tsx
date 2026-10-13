@@ -1,0 +1,350 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
+
+import { Button } from "@/components/ui/button";
+import {
+  AssistantRuntimeProvider,
+  ComposerPrimitive,
+  MessagePrimitive,
+  ThreadPrimitive,
+  useExternalStoreRuntime,
+  useMessage,
+} from "@assistant-ui/react";
+import { ArrowDown, ArrowUp, Square } from "lucide-react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { codingRunApi } from "./api";
+import { nativeMessageRow } from "./presentation";
+import { codingRunAdapter } from "./run-runtime";
+import {
+  codingRunCompletion,
+  codingRunLabel,
+  createCodingRun,
+} from "./run-session";
+import { ToolReport } from "./tool-report";
+
+function NativeMessage() {
+  const message = useMessage();
+  const row = nativeMessageRow(message);
+  if (!row) return null;
+  const tool = row.tool;
+  const tools = row.grouped ?? [row];
+  const visible = tools.filter(
+    (item) =>
+      !item.tool?.quiet ||
+      item.tool?.status === "failed" ||
+      item.tool?.semantic_content,
+  );
+  const quiet = tools.filter((item) => !visible.includes(item));
+  const reports = (
+    <>
+      {visible.map((item) => (
+        <ToolReport key={item.id} row={item} />
+      ))}
+      {quiet.length > 0 && (
+        <details className="rounded-xl border border-border/50 text-xs">
+          <summary className="cursor-pointer rounded-xl px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            {quiet.length} quiet tool{" "}
+            {quiet.length === 1 ? "activity" : "activities"} · expand details
+          </summary>
+          <div className="space-y-2 p-3">
+            {quiet.map((item) => (
+              <ToolReport key={item.id} row={item} />
+            ))}
+          </div>
+        </details>
+      )}
+    </>
+  );
+  return (
+    <MessagePrimitive.Root
+      className={`min-w-0 break-words ${row.kind === "user" ? "ml-auto max-w-[90%] rounded-2xl bg-muted px-4 py-3" : "w-full py-2"}`}
+      data-native-entry={row.id}
+    >
+      {tool ? (
+        row.grouped ? (
+          <details className="rounded-xl border border-border/60 text-sm">
+            <summary className="cursor-pointer rounded-xl px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              {tool.row_group?.label} ·{" "}
+              {visible
+                .map((item) => item.tool?.row_group?.item)
+                .filter(Boolean)
+                .join(", ") || "expand activity details"}
+            </summary>
+            <div className="space-y-2 p-3">{reports}</div>
+          </details>
+        ) : (
+          <div className="space-y-2">{reports}</div>
+        )
+      ) : (
+        <>
+          <p className="mb-1 text-[11px] font-medium text-muted-foreground">
+            {row.kind === "user"
+              ? "You"
+              : row.kind === "notice"
+                ? "Native activity"
+                : "Mimir"}
+          </p>
+          <div className="whitespace-pre-wrap text-sm leading-relaxed">
+            {row.text}
+          </div>
+          {row.clipped && (
+            <p className="mt-2 text-xs font-medium">
+              Content clipped to the presentation bound.
+            </p>
+          )}
+        </>
+      )}
+    </MessagePrimitive.Root>
+  );
+}
+const messageComponents = {
+  UserMessage: NativeMessage,
+  AssistantMessage: NativeMessage,
+  SystemMessage: NativeMessage,
+};
+
+export function CodingSurface({
+  conversationId,
+  children,
+}: { conversationId: string | null; children: React.ReactNode }) {
+  const [run] = useState(() =>
+    conversationId ? createCodingRun(conversationId, codingRunApi) : null,
+  );
+  const state = useSyncExternalStore(
+    run?.subscribe ?? (() => () => {}),
+    run?.getSnapshot ?? (() => null),
+  );
+  const runtime = useExternalStoreRuntime(codingRunAdapter(state, run));
+  const viewport = useRef<HTMLDivElement>(null);
+  const follow = useRef(true);
+  const [away, setAway] = useState(false);
+  useEffect(() => {
+    run?.connect();
+    return () => run?.detach();
+  }, [run]);
+  useLayoutEffect(() => {
+    if (state?.rows.length && follow.current && viewport.current) {
+      viewport.current.scrollTop = viewport.current.scrollHeight;
+    }
+  }, [state?.rows]);
+  const active = state?.native?.active_request;
+  const completion = codingRunCompletion(state);
+  const canSend = Boolean(
+    state?.connection === "connected" &&
+      !state.recovering &&
+      !state.stopping &&
+      !state.submitting &&
+      !state.uncertainSubmission,
+  );
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      <ThreadPrimitive.Root className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+        {state && (
+          <div
+            className="space-y-2 rounded-xl border border-border/60 px-3 py-2 text-xs"
+            data-testid="coding-event-status"
+          >
+            <output
+              data-testid="coding-run-status"
+              className="block font-medium"
+              aria-live="polite"
+            >
+              {codingRunLabel(state)}
+            </output>
+            <p className="text-muted-foreground">
+              {state.connection === "connected"
+                ? "Native event stream connected"
+                : state.connection === "loading"
+                  ? "Connecting to native events…"
+                  : "Native event stream unavailable · lost connection does not mean work stopped"}
+            </p>
+            {(active || state.stopping || completion?.request_id) && (
+              <p
+                className="break-all font-mono text-[11px] text-muted-foreground"
+                data-testid="coding-request-id"
+              >
+                {state.stopping || active || completion?.request_id}
+              </p>
+            )}
+            {state.native?.configuration.provider && (
+              <p className="break-all text-muted-foreground">
+                Configured model: {state.native.configuration.provider}/
+                {state.native.configuration.model}
+              </p>
+            )}
+            {completion?.error && (
+              <p role="alert" className="break-words text-destructive">
+                {completion.error}
+              </p>
+            )}
+            {state.error && (
+              <p role="alert" className="break-words text-destructive">
+                {state.error}
+              </p>
+            )}
+            {state.connection === "disconnected" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => run?.connect()}
+              >
+                Reconnect native events
+              </Button>
+            )}
+            {state.uncertainSubmission && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={
+                  state.connection !== "connected" ||
+                  state.recovering ||
+                  state.submitting ||
+                  Boolean(state.stopping)
+                }
+                onClick={() => void run?.retrySubmission()}
+              >
+                Retry same submission
+              </Button>
+            )}
+          </div>
+        )}
+        <div
+          ref={viewport}
+          className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto"
+          data-testid="coding-transcript"
+          aria-label="Coding transcript"
+          aria-busy={state?.connection === "loading" || state?.recovering}
+          onScroll={() => {
+            const node = viewport.current;
+            if (!node) return;
+            follow.current =
+              node.scrollHeight - node.scrollTop - node.clientHeight < 48;
+            setAway(!follow.current);
+          }}
+        >
+          {state?.older && (
+            <div className="text-center text-xs text-muted-foreground">
+              <p>Earlier history is not shown in this bounded view.</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={state.loadingEarlier}
+                onClick={() => {
+                  follow.current = false;
+                  void run
+                    ?.loadEarlier()
+                    .then(() => viewport.current?.scrollTo({ top: 0 }));
+                }}
+              >
+                {state.loadingEarlier
+                  ? "Loading earlier history…"
+                  : "Load earlier history"}
+              </Button>
+            </div>
+          )}
+          {state?.viewingEarlier && (
+            <p className="text-center text-xs text-muted-foreground">
+              Historical page · newer messages and live activity are not shown.
+              Native work may still be running.
+            </p>
+          )}
+          <ThreadPrimitive.Messages components={messageComponents} />
+        </div>
+        {(away || state?.viewingEarlier) && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="self-center"
+            onClick={() => {
+              follow.current = true;
+              run?.showLatest();
+              setAway(false);
+              viewport.current?.scrollTo({
+                top: viewport.current.scrollHeight,
+              });
+            }}
+          >
+            <ArrowDown className="size-3" aria-hidden="true" />
+            Jump to latest
+          </Button>
+        )}
+        <section
+          className="shrink-0 space-y-3"
+          aria-label="Coding project and prompt"
+        >
+          <ComposerPrimitive.Root
+            className="aui-composer-root relative w-full"
+            aria-label="Coding composer"
+          >
+            <div className="unsloth-composer-surface">
+              <div className="flex min-w-0 items-end gap-2">
+                <ComposerPrimitive.Input
+                  className="unsloth-composer-input disabled:cursor-not-allowed"
+                  aria-label="Coding prompt"
+                  aria-describedby="coding-send-explanation"
+                  placeholder="What would you like to build?"
+                  submitMode="enter"
+                  disabled={!canSend}
+                  minRows={2}
+                  maxRows={5}
+                  addAttachmentOnPaste={false}
+                  unstable_focusOnThreadSwitched={false}
+                  unstable_focusOnRunStart={false}
+                  unstable_focusOnScrollToBottom={false}
+                />
+                {active || state?.stopping ? (
+                  <Button
+                    type="button"
+                    size="icon"
+                    aria-label={state?.stopping ? "Stopping…" : "Stop"}
+                    title={
+                      state?.stopping
+                        ? "Waiting for native terminal cleanup"
+                        : "Cancel this exact native request"
+                    }
+                    disabled={
+                      Boolean(state?.stopping) ||
+                      state?.connection !== "connected"
+                    }
+                    className="mb-1 shrink-0 rounded-full"
+                    onClick={() => void run?.stop()}
+                  >
+                    <Square className="size-4" aria-hidden="true" />
+                  </Button>
+                ) : (
+                  <ComposerPrimitive.Send asChild={true}>
+                    <Button
+                      type="submit"
+                      size="icon"
+                      aria-label="Send"
+                      disabled={!canSend}
+                      aria-describedby="coding-send-explanation"
+                      className="mb-1 shrink-0 rounded-full"
+                    >
+                      <ArrowUp className="size-5" aria-hidden="true" />
+                    </Button>
+                  </ComposerPrimitive.Send>
+                )}
+              </div>
+            </div>
+          </ComposerPrimitive.Root>
+          {children}
+          <p
+            id="coding-send-explanation"
+            className="text-xs leading-relaxed text-muted-foreground"
+          >
+            {conversationId
+              ? "Mimir owns execution, tools and saved history. Stop cancels the running native request; leaving this view does not stop work."
+              : "Choose a host project folder before sending a coding prompt."}
+          </p>
+        </section>
+      </ThreadPrimitive.Root>
+    </AssistantRuntimeProvider>
+  );
+}

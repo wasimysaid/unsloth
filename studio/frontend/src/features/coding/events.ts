@@ -6,7 +6,10 @@ import { takeSseFrame } from "../../lib/sse-framing.ts";
 const DISCONNECTED =
   "The native event stream disconnected. Reconnect to continue watching.";
 
-function checkFrame(frame: string): void {
+async function checkFrame(
+  frame: string,
+  onView?: (view: unknown) => Promise<void> | void,
+): Promise<void> {
   const lines = frame.split(/\r?\n/);
   const event = lines
     .find((line) => line.startsWith("event:"))
@@ -22,6 +25,7 @@ function checkFrame(frame: string): void {
       throw new Error(
         "The native conversation view closed. Reopen the saved conversation to continue.",
       );
+    await onView?.(view);
     return;
   }
   if (event !== "disconnected" && event !== "error") return;
@@ -36,10 +40,11 @@ function checkFrame(frame: string): void {
   throw new Error(reason);
 }
 
-/** Observe connection lifecycle; native view payloads are not a second history. */
+/** Await each ordered native item, including immutable-cut reads, before the next. */
 export async function consumeCodingEvents(
   body: ReadableStream<Uint8Array>,
   signal: AbortSignal,
+  onView?: (view: unknown) => Promise<void> | void,
 ): Promise<void> {
   const reader = body.getReader();
   const cancel = () => {
@@ -55,11 +60,19 @@ export async function consumeCodingEvents(
       if (chunk.done) throw new Error(DISCONNECTED);
       buffer += decoder.decode(chunk.value, { stream: true });
       let frame = takeSseFrame(buffer);
-      while (frame) {
-        checkFrame(frame.event);
+      while (frame && !signal.aborted) {
+        if (frame.event.length > 2 * 1024 * 1024)
+          throw new Error(
+            "The native event exceeded the delivery bound. Reconnect for a fresh view.",
+          );
+        await checkFrame(frame.event, onView);
         buffer = frame.remainder;
         frame = takeSseFrame(buffer);
       }
+      if (buffer.length > 2 * 1024 * 1024)
+        throw new Error(
+          "The native event exceeded the delivery bound. Reconnect for a fresh view.",
+        );
     }
   } finally {
     signal.removeEventListener("abort", cancel);

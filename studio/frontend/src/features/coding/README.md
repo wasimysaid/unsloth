@@ -1,92 +1,89 @@
-# Coding opening preview
+# Coding native run/stop projection (#234–235)
 
-`/coding` uses the existing `requireAuth` route gate and `authFetch` API client.
-It renders a separate coding sidebar and composer, not `AppSidebar`, `ChatPage`,
-`Thread`, the general-chat runtime/store, model picker, sandbox, or tool controls.
-The shared `AppProvider` still owns host startup, desktop auth and appearance.
-An already-visited Studio workspace is retained hidden/inert so unrelated running
-chat/media work is not cancelled; its sidebar, modal surfaces, route outlet and
-shortcuts are parked. Direct coding visits do not mount that workspace hydration.
-Studio does not write coding history to IndexedDB, local storage or a chat store.
-Conversation records and the canonical project directory are native API results.
+`/coding` keeps Studio’s authenticated route gate, sidebar primitives and composer
+CSS, without importing ordinary chat execution, tool orchestration, model loading
+or transcript persistence. An already-visited ordinary workspace remains parked,
+not cancelled. Direct coding visits do not mount its model observers.
 
-## Pinned assistant-ui audit
+Mimir’s production `studio.frontend` plugin owns Session Control attachments and
+saved public history. The browser keeps only an ephemeral Session View projection;
+there is no second scheduler, inference loop, provider configuration or transcript
+database. Providers and credentials remain configured on the Mimir host.
 
-Installed from the exact frontend lockfile:
+## Installed assistant-ui contract
 
-- `@assistant-ui/react` **0.12.28** exports `useExternalStoreRuntime` from
-  `@assistant-ui/core/react`; Core is pinned to **0.1.17**, Store **0.2.9**.
-- Core's `ExternalStoreAdapter` accepts `isDisabled`, `isRunning`, `messages`,
-  and requires `onNew`. Its shipped `ExternalStoreThreadRuntimeCore` enables
-  edit/reload/cancel/attachments/voice/feedback only when the corresponding
-  optional callbacks/adapters exist. The opening adapter supplies none of them.
-- `ComposerPrimitive.Input` ships `submitMode="none"` and `disabled` support.
-  `ComposerPrimitive.Root` is a submitting form, so the preview also prevents
-  form submission. `onNew` rejects with the same truthful unavailable explanation
-  if a caller invokes it directly; it never simulates prompt execution.
-- No experimental remote thread list adapter is needed for this slice. The coding
-  sidebar lists native records and explicit clicks call native reopening.
-- Reusable presentation is `components/ui/sidebar`, `button`, `input`, `dialog`
-  plus the existing `unsloth-composer-surface`/`unsloth-composer-input` styles.
-  Existing `components/app-sidebar.tsx` and `assistant-ui/thread.tsx` depend on
-  general-chat execution, persistence and tools, so they are **not** reused.
+React **0.12.28**, Core **0.1.17**, Store **0.2.9** are lockfile-pinned.
+`run-runtime.ts` uses the shipped `ExternalStoreAdapter<PresentationRow>` converter,
+`messages`, `isDisabled`, `isLoading`, `isRunning`, `onNew`, and `onCancel`.
+`ThreadPrimitive.Messages` renders those external rows; `ComposerPrimitive` forwards
+text through the authenticated API. No `setMessages`, local optimistic turns,
+attachment/tool-result executor, edit/reload adapter or remote transcript store is
+provided. The shipped runtime's transient upcoming-assistant placeholder has no
+native row and is intentionally invisible, not a fabricated transcript entry.
+Shipped-artifact tests exercise the actual runtime, including running before the
+first native reply.
 
-## HTTP boundary
+## HTTP and authoritative reconstruction
 
-All requests use `authFetch`, including SSE; there is no unauthenticated
-`EventSource` or second authentication policy. Non-idempotent openings disable
-transport retries to avoid duplicating a native creation after a lost response.
+All `/api/coding` routes use established Studio auth, including IDs and fetch SSE:
 
-- `GET /api/coding/projects/browse?path=<encoded host path>` returns
-  `{path,parent,entries:[{name,path}],truncated}`. Empty path selects the backend's
-  default browse location. `path` and `entries[].path` are host paths; selecting
-  files from a browser device is deliberately unsupported.
-- `POST /api/coding/conversations` with `{cwd}` creates and opens a **new** native
-  conversation on every deliberate folder selection, including the same folder.
-- `GET /api/coding/conversations` returns `{conversations:[...],next_cursor}`.
-  The frontend reads cursor pages (encoded `?cursor=`) until completion, with an
-  explicit failure for repeated cursors or exceeding 100 pages. It never presents
-  a truncated first page as complete native history.
-- `POST /api/coding/conversations/{id}/open` explicitly reopens a saved native
-  conversation and revalidates its folder. Folder selection never implicitly
-  reuses a saved conversation by matching `cwd`.
-- Creation/reopening returns native info `{id,cwd,title,live}`; presentation reads
-  its identity, folder and title without storing another history. Returned `cwd` is
-  authoritative; the browser never normalizes paths or changes cwd on a record.
-- `GET /api/coding/conversations/{id}/events` is an authenticated fetch SSE stream
-  (`event:view` and heartbeat), with ordered native `{subscription,position,event}`
-  view lifecycle envelopes. This preview watches connection health and recognizes
-  native `closed`, SSE `disconnected`/`error` and EOF as failures, without duplicating
-  native event history or pretending to render prompt responses.
-- FastAPI errors use `{detail: string}` and remain visible with retry controls.
+- Browse/catalog/list/create/open retain the #234 canonical-folder and effective,
+  non-persisting trust behavior. Selecting a folder always creates a new native
+  conversation; reopening preserves its saved native identity and directory.
+- `POST /conversations/{id}/prompts` accepts only `{submission_key,text}` and returns
+  native conversation/submission/request identities. Transport retries are disabled.
+- `POST /conversations/{id}/requests/{request_id}/cancel` targets exactly that native
+  request. Acknowledgment is not terminal cleanup. It never closes the owner.
+- `POST /conversations/{id}/entries` reads only the native immutable root `cut`, with
+  an exact `latest`, `before` or `after` anchor and bounded entry/byte selection.
+- `GET /conversations/{id}/events` consumes the native atomic start capture, then
+  ordered activity, checkpoints, whole state, completion and reset items. Position
+  gaps are allowed; backward positions and wrong conversation IDs are errors.
 
-The controlled folder picker explicitly restores its invoking button on close
-(Cancel, Escape, close button or successful opening). If its mobile sidebar invoker
-has disappeared, focus returns to the visible project chooser below the composer.
-Typing into the path field invalidates outstanding directory reads as well as the
-previous selection, so a late response cannot replace the newer draft. A successful
-same-ID reopening advances the view incarnation and reconnects its native stream;
-a failed opening preserves the current view and identity.
-Working-directory/trust disclosure remains visible for saved-conversation reopening
-as well as new-folder opening; no browser trust override is sent.
+Initial/reset history is read at the captured root cut before the view is Ready.
+Checkpoint reads reconcile saved rows after the previous cut and replace provisional
+activity, except exact still-live tool invocations. A reset discards the old branch;
+recovery remains visible until a root checkpoint. There is no snapshot-then-subscribe
+race or history polling for lifecycle state. Earlier history outside the current
+bounded page is explicitly disclosed and can be requested at that same cut. The
+projection retains at most 1000 displayed rows / 2 MiB of text; omitted earlier
+content is disclosed. Native reads and public text/output have their own smaller,
+disclosed bounds; oversized entries are typed public SDK reads, never private
+saved-result decoding.
 
-Send, prompt input and keyboard submission are unavailable in this preview.
-Opening a conversation is not evidence that a prompt executed. There is no send
-endpoint, runner/model/tool configuration or cancellation API in the frontend.
+Tool activity uses exact invocation/call identities and native titles/status. Public
+output is expandable and keyboard-operable; clipping is labeled. Public presentation
+content is authoritative, not model-only output. Starts/results of one invocation
+share a compact chronological slot; repeated invocations remain separate. Historical
+reports are labeled and are not claims about the current filesystem. There are no
+Apply/Revert controls or tool-selection pills.
+
+## Delivery and lifetime
+
+Before project selection or complete capture, the composer is disabled. Enter and
+Send forward text; queued requests remain native. An unconfirmed prompt retains its
+original key for explicit same-submission retry and is reconciled against native
+request state. Durable retry across reload/restart is #236, not promised here.
+
+Stop captures the active native request, remains **Stopping…** through its matching
+terminal completion/cleanup, and exposes native cleanup failure as failure. A
+reconnected atomic capture may settle that request only when its native terminal
+status and released active-request admission agree. Other queued or conversation
+requests are never substituted. Disconnect stays visible and never means stopped;
+detach closes only the view, not the conversation owner. No automatic process restart
+or command replay is added. Full recovery/retirement is handled by later tickets.
 
 ## Verification
-
-From the Studio repository root:
 
 ```sh
 npm --prefix studio/frontend ci --no-audit --no-fund
 npm --prefix studio/frontend run typecheck
 (cd studio/frontend && node --experimental-strip-types --test tests/coding-*.test.ts)
-npm --prefix studio/frontend test
 npm --prefix studio/frontend run build
 ```
 
-Behavior tests exercise native-record identity, canonical cwd, distinct creation,
-explicit reopening, failed validations, in-flight guards, stale directory reads,
-authenticated HTTP/SSE and the installed external runtime's capabilities. Browser
-verification must use the real Studio/plugin/native bridge, not these mocks.
+The route browser driver is `studio/tools/coding_browser_acceptance.py`. It exercises
+built UI → authenticated production routes → installed plugin → native Mimir.
+Deterministic provider scenarios exercise actual native tools but are not live model
+acceptance. See `studio/docs/coding-integration.md` and task-local reports for the
+shared acceptance mapping, observed results, browser dimensions and external blockers.

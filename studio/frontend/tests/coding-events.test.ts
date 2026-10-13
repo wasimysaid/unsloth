@@ -72,6 +72,43 @@ test("normal EOF is a disconnection; error events remain failures", async () => 
   );
 });
 
+test("ordered native items await cut reconstruction before applying the next item", async () => {
+  const source = stream([
+    'event:view\ndata:{"position":10,"event":{"type":"start"}}\n\nevent:view\ndata:{"position":12,"event":{"type":"checkpoint"}}\n\n',
+  ]);
+  const abort = new AbortController();
+  const observed: number[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const pending = consumeCodingEvents(
+    source.body,
+    abort.signal,
+    async (value) => {
+      const item = value as { position: number };
+      observed.push(item.position);
+      if (item.position === 10) await gate;
+      else abort.abort();
+    },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(observed, [10]);
+  release();
+  await pending;
+  assert.deepEqual(observed, [10, 12]);
+  assert.equal(source.cancelled(), true);
+});
+
+test("unbounded event fragments fail explicitly", async () => {
+  const source = stream([`data:${"x".repeat(2 * 1024 * 1024)}`]);
+  await assert.rejects(
+    consumeCodingEvents(source.body, new AbortController().signal),
+    /delivery bound/,
+  );
+  assert.equal(source.cancelled(), true);
+});
+
 test("abort cancels an idle stream and releases its reader without reporting an error", async () => {
   const source = stream(["event:view\ndata:{}\n\n: heartbeat\n\n"]);
   const abort = new AbortController();
