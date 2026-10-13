@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
-export interface PendingSubmission {
+import type { CodingInput } from "./input.ts";
+
+export interface PendingSubmission extends CodingInput {
   key: string;
-  text: string;
 }
 export type SubmissionStorage = Pick<
   Storage,
@@ -29,12 +30,19 @@ export function pendingSubmissionStore(
         typeof value.key !== "string" ||
         !value.key ||
         typeof value.text !== "string" ||
-        !value.text.trim()
+        !value.text.trim() ||
+        (value.skill_mentions !== undefined && !Array.isArray(value.skill_mentions)) ||
+        (value.images !== undefined && !Array.isArray(value.images))
       )
         throw new Error(
           "Invalid saved submission identity; delivery cannot be safely retried.",
         );
-      return { key: value.key, text: value.text };
+      return {
+        key: value.key,
+        text: value.text,
+        ...(value.skill_mentions !== undefined ? { skill_mentions: value.skill_mentions } : {}),
+        ...(value.images !== undefined ? { images: value.images } : {}),
+      };
     },
     save(pending: PendingSubmission) {
       const target = storage();

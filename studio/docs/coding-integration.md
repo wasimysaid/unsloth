@@ -1,4 +1,4 @@
-# Coding: trusted projects, native run/stop, recovery and idle retirement
+# Coding: trusted projects, run/stop, recovery, reported file changes, rich inputs and idle retirement
 
 ## Continuous idle retirement (#248)
 
@@ -49,6 +49,82 @@ python3 plugins/studio-frontend/build.py --retirement-fixtures \
 
 Never install the acceptance-only component into normal shared Mimir state.
 Full external-provider/local-model and human PoC acceptance remain #255–256.
+
+## Reported file changes slice (#238)
+
+Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`
+and private Mimir `91b975adae2df627d7c67c6bcede6d910a592a7d`.
+Live tool observations and saved public tool results share a native typed output
+profile. The product plugin projects bounded reported effects; Studio does not
+decode private saved-result JSON or query current files to build a patch.
+
+File rows appear collapsed beneath each originating tool result, with the exact
+supplied path and only available added/removed counts. Keyboard expansion reveals
+reported unified hunks in a bounded scrollable region. Repeated edits are separate
+chronological records, never a cumulative patch. Reopened and entry-backed profiles
+say **Historical** and **not current filesystem state**. Binary, partial, truncated
+and unavailable cases have textual labels. No Apply/Revert, approval semantics or
+claim that generic/no-profile tools changed no files is introduced; their real
+public output remains inspectable.
+
+The native replacement moves live profile types to the shared presentation owner
+and adds the historical projection at the existing persisted-message boundary.
+Generic result details and distinct TUI behavior remain available. Generated
+bindings, affected consumers, packaged fixtures and SDK/native documentation change
+together; stale Wasm guests are not compatibility evidence.
+
+The shared browser driver supports `--workload file-changes` (deterministic HTTP
+provider, real native tools) and `--workload file-changes-live` (existing configured
+provider). It compares disposable file effects, live reported hunks and reopened
+historical identities/content, including an external file mutation before reopen.
+Additional edge-case renderer fixtures are explicitly identified separately from
+native execution and live-model acceptance. Desktop/narrow screenshot paths,
+request/tool IDs, terminal cleanup and commands belong in the task-local report.
+The scoped implementation is not full A1–A10 PoC acceptance or human UI review.
+
+## Skill/image slice (#242)
+
+Implementation baselines: Studio `a784d9193d38c640562b5464d5e9c10def6ac82d`,
+private Mimir `7ddec52c566497dd6e0cf572a18272a88d8fa10a`.
+The product plugin reuses native `session.skills()` and supported `Input.skills` /
+`Input.images` without a new SDK registry, scheduler, upload store or provider gate.
+Authenticated conversation-scoped discovery returns only effective metadata; a disk
+skill's exact descriptor path and a plugin skill's full qualified name survive Send.
+The composer converts edited UTF-16 ranges to native UTF-8 byte ranges and snapshots
+all associations and original image bytes under the existing keyed submission.
+Browser edit ranges distinguish selected occurrences from identical literal text;
+ambiguous/unavailable edits discard associations instead of guessing native intent.
+Escape dismisses mention suggestions without cancelling work; Stop remains explicit.
+
+PNG/JPEG/WebP/GIF images support inspect/remove/paste with explicit type, decode,
+dimension, aggregate-size and native provider failures. Four images / 512 KiB aggregate
+bytes / 4096×4096 dimensions keep the existing 1 MiB private transport bound useful;
+larger content fails explicitly rather than being dropped. A preview is not native
+acceptance. Definite pre-admission refusal retains Restore rejected input; uncertain
+retry uses the exact saved text/skills/images and key. Reload persistence remains #236.
+The native input surface and public history remain authoritative; ordinary-chat
+execution/tool pills are not imported.
+
+Run the rich-input actual-browser contract scenarios after building current artifacts:
+
+```sh
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir /path/to/current/mimir --plugin-package /path/to/current/package \
+  --workload inputs --browser firefox --evidence-dir /path/to/worker/browser-inputs
+```
+
+This exercises rendered desktop/narrow composer controls and the authenticated coding
+route into a real native request consuming both skill body and image content. The HTTP
+provider is a deterministic protocol fixture, **not real-model multimodal acceptance**.
+Transport refusal/response-loss scenarios are separately labeled fault injection. Native
+contract tests cover qualified-name collisions, path identity and decoder/provider
+rejections. `--workload inputs-live` separately uses the existing native provider profile
+(no credential copies), a 128×128 visual fixture and skill instructions prepared before
+native opening. It requires image recognition, a skill-only JSON marker, actual native
+write/read effects and terminal completion; fixture success cannot satisfy that check.
+Completed full-feature provider and Studio-local-model workloads,
+full ordinary-chat smoke and human implemented-UI review remain separate acceptance
+responsibilities (#255–256), not claims implied by these deterministic checks.
 
 ## Reopen/reconnect slice (#236)
 
@@ -221,8 +297,8 @@ opening trust: do not replace shared saved policy or TUI trust behavior. Existin
 native child configuration already carries the parent's resolved trust; focused
 tests verify inheritance. No history schema, generic tool result, model-folder
 safeguard, provider inventory, or TUI capability is superseded by this ticket.
-Historical profiles, MCP management and headless inventories belong to their
-respective later capability tickets, not this patch.
+Historical profiles are implemented by the #238 slice above. MCP management and
+headless inventories remain their respective later capability tickets.
 
 ## Reproducible actual-browser driver
 
@@ -283,7 +359,7 @@ claim tied to a mutable local HEAD or absent screenshots.
 |---|---|---|
 | A1 | Native opening/SDK contracts; single supervised product plugin; authenticated HTTP/SSE; exact submission/request/tool identities; atomic ordered public view, checkpoints/reset/recovery, bounded cut reads and durable reconnect reconciliation (#236) | Cross-feature integration and packaged-consumer regression (#254) |
 | A2 | Native prompt/Stop controls; compact inspectable public tool results/failures and clipping disclosure | Questions, modes, plans/goals, children and diagnostics (#237 onward) |
-| A3 | No diff implementation or fabricated effects | Typed live/historical reported changes (#238) |
+| A3 | Shared typed live/historical reported changes; collapsed inspection-only rows, bounded unified hunks, optional counts and incomplete/binary labels (#238) | See task-local file-change browser and SDK reports; cross-feature/live acceptance (#254/#255) |
 | A4 | No model picker | Model/reasoning interactions (#244) |
 | A5 | Externally configured provider admission; no Studio local-model serving | Local-model requests and whole-request protection (#246/#255) |
 | A6 | Canonical/native validated opening, non-persisting effective trust, saved-policy tests, child inheritance, mismatch/lease refusals, authenticated run/Stop/history access; same-identity trusted history reopening after idle retirement (#248) | Concurrent execution/same-folder warning and process-loss recovery (#247/#249) |
