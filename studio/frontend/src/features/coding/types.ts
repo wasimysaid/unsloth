@@ -6,6 +6,8 @@ export interface CodingConversation {
   id: string;
   cwd: string;
   title?: string | null;
+  /** Native live-owner presence, not proof this frontend owns it or it is busy. */
+  live?: boolean;
 }
 
 export interface CodingProjectDirectory {

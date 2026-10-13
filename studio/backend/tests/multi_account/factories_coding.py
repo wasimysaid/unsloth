@@ -42,11 +42,20 @@ class NativeCodingBoundary:
         self.released = []
 
     async def command(self, method, params):
-        assert method == "open"
-        assert params == {"conversation_id": CONVERSATION_ID}
+        assert params["conversation_id"] == CONVERSATION_ID
         self.subjects.append(current_account().username)
-        self.operations.append("open")
-        return {"info": {"conversation_id": CONVERSATION_ID, "title": SENTINEL}}
+        self.operations.append(method)
+        if method == "open":
+            assert params == {"conversation_id": CONVERSATION_ID}
+            return {"info": {"conversation_id": CONVERSATION_ID, "title": SENTINEL}}
+        assert method in ("mcp_inventory", "mcp_edit", "mcp_save", "mcp_release_edit")
+        if method == "mcp_release_edit":
+            return {"released": True}
+        if method == "mcp_inventory":
+            return {"documents": [{"label": SENTINEL}], "entries": [], "effective": [], "live": [], "diagnostics": []}
+        draft = {"edit_id": "matrix-edit", "source": "matrix-source", "name": SENTINEL,
+                 "revision": "matrix-revision", "json": "{}"}
+        return draft if method == "mcp_edit" else {"draft": draft, "inventory": {"documents": []}}
 
     async def subscribe(self, conversation_id):
         assert conversation_id == CONVERSATION_ID
@@ -69,6 +78,22 @@ FACTORIES = {
     "routes.coding:GET:/conversations/{conversation_id}/events": Factory(
         # SSE carries raw JSON text, unlike FastAPI's decoded Unicode JSON body.
         "coding-conversation", fragment = json.dumps(SENTINEL)[1:-1],
+        owner = (200,), wrong = (200,), reason = _SHARED_HISTORY_REASON,
+    ),
+    "routes.coding:GET:/conversations/{conversation_id}/mcp/inventory": Factory(
+        "coding-conversation", fragment = SENTINEL,
+        owner = (200,), wrong = (200,), reason = _SHARED_HISTORY_REASON,
+    ),
+    "routes.coding:POST:/conversations/{conversation_id}/mcp/edit": Factory(
+        "coding-conversation", {"source": "matrix-source", "name": "server"}, fragment = SENTINEL,
+        owner = (200,), wrong = (200,), reason = _SHARED_HISTORY_REASON,
+    ),
+    "routes.coding:POST:/conversations/{conversation_id}/mcp/save": Factory(
+        "coding-conversation", {"edit_id": "matrix-edit", "revision": "matrix-revision", "json": "{}"}, fragment = SENTINEL,
+        owner = (200,), wrong = (200,), reason = _SHARED_HISTORY_REASON,
+    ),
+    "routes.coding:POST:/conversations/{conversation_id}/mcp/release": Factory(
+        "coding-conversation", {"edit_id": "matrix-edit"},
         owner = (200,), wrong = (200,), reason = _SHARED_HISTORY_REASON,
     ),
 }

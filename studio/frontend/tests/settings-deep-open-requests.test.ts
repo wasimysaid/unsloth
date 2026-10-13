@@ -24,6 +24,21 @@ function reset(): void {
   });
 }
 
+test("Mimir Settings context survives only its own tab and never persists execution state", () => {
+  reset();
+  store.setState({ mimirConversationRequested: "exact-native-conversation" });
+  store.getState().openDialog("mimir");
+  assert.equal(store.getState().mimirConversationRequested, "exact-native-conversation");
+  store.getState().setActiveTab("mimir");
+  assert.equal(store.getState().mimirConversationRequested, "exact-native-conversation");
+  store.getState().setActiveTab("general");
+  assert.equal(store.getState().mimirConversationRequested, null);
+  store.setState({ mimirConversationRequested: "another-native-conversation" });
+  store.getState().openDialog("mimir");
+  store.getState().closeDialog();
+  assert.equal(store.getState().mimirConversationRequested, null);
+});
+
 test("an archive deep-open survives until the panel it targets can read it", () => {
   reset();
   store.getState().openArchivedChats();

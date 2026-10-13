@@ -45,6 +45,12 @@ export function goalActionDisabledReason(
     return "Wait for main-session Stop and terminal cleanup to be confirmed.";
   if (state.submitting || state.uncertainSubmission)
     return "Reconcile the pending prompt before changing the goal.";
+  if (state.configuring || state.configurationUncertain)
+    return "Reconcile the pending model configuration before changing the goal.";
+  if (state.commandBusy || state.uncertainCommand || state.storageError)
+    return "Resolve pending native command delivery before changing the goal.";
+  if (state.overlapWarning)
+    return "Resolve the project overlap warning before changing the goal.";
   const admission = state.native?.goal_controls?.actions.find(
     (item) => item.action === action,
   );

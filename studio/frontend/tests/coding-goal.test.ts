@@ -39,6 +39,7 @@ function native(
       reasoning: null,
       mode: "build",
     },
+    running_configuration: null,
     active_request: "request",
     requests: [{ id: "request", status: "running", submission_key: null }],
     pending_user_request: false,
@@ -71,6 +72,15 @@ function harness() {
     | (() => Promise<{ conversation_id: string; request_id: null }>)
     | null = null;
   const api: RunApi = {
+    async configure() {
+      return native().configuration;
+    },
+    async checkOverlap() {
+      return { cwd: "/project", conversations: [] };
+    },
+    async readChild() {
+      return { child: null, outcome: null };
+    },
     async changeGoal(id, change) {
       changes.push(change);
       if (fail) throw new Error("Acknowledgment lost");
@@ -377,4 +387,100 @@ test("reconnect supersedes late acknowledgments without reviving stale controls"
     "new-owner:goal:2",
   );
   h.run.detach();
+});
+
+for (const operation of ["configuration", "command"] as const) {
+  test(`pending and uncertain ${operation} delivery guards native goal admission`, async () => {
+    const h = harness();
+    await h.start();
+    let reject!: (reason: Error) => void;
+    if (operation === "configuration")
+      h.api.configure = () =>
+        new Promise((_resolve, fail) => {
+          reject = fail;
+        });
+    else
+      h.api.command = () =>
+        new Promise((_resolve, fail) => {
+          reject = fail;
+        });
+    const pending = (
+      operation === "configuration"
+        ? h.run.configure({ model: "other" })
+        : h.run.executeCommand("compress")
+    ).catch(() => false);
+    try {
+      assert.ok(goalActionDisabledReason(h.run.getSnapshot(), "pause"));
+      assert.equal(
+        await h.run.changeGoal({ action: "pause", revision: "owner:goal:1" }),
+        false,
+      );
+      assert.deepEqual(h.changes, []);
+      reject(new Error("Delivery lost"));
+      await pending;
+      assert.ok(goalActionDisabledReason(h.run.getSnapshot(), "pause"));
+      assert.equal(
+        await h.run.changeGoal({ action: "pause", revision: "owner:goal:1" }),
+        false,
+      );
+      assert.deepEqual(h.changes, []);
+    } finally {
+      reject(new Error("Delivery lost"));
+      await pending;
+      h.run.detach();
+    }
+  });
+}
+
+test("pending and reconstructed goal actions guard configuration, commands and prompt preflight", async () => {
+  const h = harness();
+  await h.start();
+  let accept!: (result: { conversation_id: string; request_id: null }) => void;
+  h.hold(
+    () =>
+      new Promise((resolve) => {
+        accept = resolve;
+      }),
+  );
+  const calls: string[] = [];
+  h.api.configure = async () => {
+    calls.push("configure");
+    return native().configuration;
+  };
+  h.api.command = async (_id, _name, _tail, operation) => {
+    calls.push("command");
+    return {
+      conversation_id: "conversation",
+      operation_id: operation,
+      outcome: "handled",
+    };
+  };
+  h.api.checkOverlap = async () => {
+    calls.push("overlap");
+    return { cwd: "/project", conversations: [] };
+  };
+  const changing = h.run.changeGoal({
+    action: "pause",
+    revision: "owner:goal:1",
+  });
+  try {
+    for (const phase of ["pending", "reconciling"] as const) {
+      await assert.rejects(
+        h.run.configure({ model: "other" }),
+        /reconstructed/,
+      );
+      await assert.rejects(h.run.executeCommand("compress"), /reconstructed/);
+      await assert.rejects(h.run.send("Keep the rich draft"), /reconstructed/);
+      assert.deepEqual(calls, [], phase);
+      if (phase === "pending") {
+        accept({ conversation_id: "conversation", request_id: null });
+        assert.equal(await changing, true);
+        assert.equal(h.run.getSnapshot().reconcilingGoal, "pause");
+      }
+    }
+  } finally {
+    accept({ conversation_id: "conversation", request_id: null });
+    await changing;
+    h.run.detach();
+  }
 });
