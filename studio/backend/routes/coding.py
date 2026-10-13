@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import anyio
+import base64
+import binascii
 import json
 import os
 from pathlib import Path
@@ -11,7 +13,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path as ApiPath, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from auth.authentication import get_current_subject
 from core.coding_runtime import CodingRuntimeError, runtime_for
@@ -40,10 +42,63 @@ class ProjectSelection(BaseModel):
     cwd: str = Field(min_length = 1, max_length = 32768)
 
 
+MAX_IMAGE_BYTES = 512 * 1024
+
+
+class SkillMention(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    name: str = Field(min_length = 1, max_length = 512)
+    path: str | None = Field(default = None, min_length = 1, max_length = 32768)
+    start: int = Field(ge = 0, strict = True)
+    end: int = Field(gt = 0, strict = True)
+
+
+class PromptImage(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    mime_type: Literal["image/png", "image/jpeg", "image/webp", "image/gif"]
+    data: str = Field(min_length = 1, max_length = ((MAX_IMAGE_BYTES + 2) // 3) * 4)
+
+
 class PromptSubmission(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     submission_key: str = Field(min_length = 1, max_length = 128)
     text: str = Field(min_length = 1, max_length = 65536)
+    skill_mentions: list[SkillMention] = Field(default_factory = list, max_length = 64)
+    images: list[PromptImage] = Field(default_factory = list, max_length = 4)
+
+    @model_validator(mode = "after")
+    def validate_input(self):
+        if not self.text.strip():
+            raise ValueError("Include a nonempty coding text prompt.")
+        encoded = self.text.encode("utf-8")
+        if len(encoded) > 65536:
+            raise ValueError("Coding prompt text must be at most 65536 UTF-8 bytes.")
+        previous_end = 0
+        for mention in self.skill_mentions:
+            if mention.start < previous_end or mention.end <= mention.start or mention.end > len(encoded):
+                raise ValueError("Skill mention ranges must be ordered, non-overlapping UTF-8 byte ranges in the exact text.")
+            if encoded[mention.start:mention.end] != ("@" + mention.name).encode("utf-8"):
+                raise ValueError("A skill mention range must match its exact qualified @name.")
+            previous_end = mention.end
+        total = 0
+        for image in self.images:
+            try:
+                raw = base64.b64decode(image.data, validate = True)
+            except (ValueError, binascii.Error) as exc:
+                raise ValueError("Image data must be valid base64, not a URL or host file path.") from exc
+            total += len(raw)
+            if not raw or total > MAX_IMAGE_BYTES:
+                raise ValueError("Coding images must be nonempty and total at most 512 KiB.")
+            signatures = {
+                "image/png": raw.startswith(b"\x89PNG\r\n\x1a\n"),
+                "image/jpeg": raw.startswith(b"\xff\xd8\xff"),
+                "image/gif": raw.startswith((b"GIF87a", b"GIF89a")),
+                "image/webp": raw.startswith(b"RIFF") and raw[8:12] == b"WEBP",
+            }
+            if not signatures[image.mime_type]:
+                raise ValueError("Image bytes do not match the declared supported MIME type.")
+        # Decode/content/provider validation is authoritative in native Mimir.
+        return self
 
 
 class ChildJournal(BaseModel):
@@ -157,10 +212,17 @@ async def open_conversation(conversation_id: str, request: Request):
     return state["info"]
 
 
+@router.get("/conversations/{conversation_id}/skills")
+async def conversation_skills(conversation_id: str, request: Request):
+    # Discover the retained native controller's effective project metadata only.
+    # This does not load skill bodies or implicitly open/grant another owner.
+    return await _command(request, "skills", {"conversation_id": conversation_id})
+
+
 @router.post("/conversations/{conversation_id}/prompts", status_code = 202)
 async def submit_prompt(conversation_id: str, body: PromptSubmission, request: Request):
     # Mimir admits/deduplicates the submission and owns scheduling and saved input.
-    return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump()})
+    return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump(exclude_unset = True)})
 
 
 @router.post("/conversations/{conversation_id}/requests/{request_id}/cancel")

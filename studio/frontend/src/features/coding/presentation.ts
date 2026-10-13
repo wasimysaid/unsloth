@@ -23,9 +23,11 @@ export function groupCodingRows(rows: readonly CodingRow[]): PresentationRow[] {
     if (
       group &&
       !row.tool?.semantic_content &&
+      row.tool?.output_profile?.kind !== "file_change" &&
       !prior?.tool?.semantic_content &&
       !row.tool?.subagent &&
       !prior?.tool?.subagent &&
+      prior?.tool?.output_profile?.kind !== "file_change" &&
       prior?.tool?.row_group?.key === group.key &&
       prior.request_id === row.request_id
     ) {

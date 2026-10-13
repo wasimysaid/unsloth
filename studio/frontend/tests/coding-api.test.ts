@@ -243,6 +243,45 @@ test("child inspection carries exact attempt and immutable child journal through
     assert.deepEqual(request.options, { retryNetworkErrors: false });
 });
 
+test("effective skills and rich prompt inputs use authenticated exact-ID transport without replay", async () => {
+  const discovered = {
+    skills: [
+      {
+        name: "review",
+        qualified_name: "plugin:alpha:review",
+        description: "Metadata only",
+      },
+    ],
+  };
+  const c = client(() => Response.json(discovered));
+  const abort = new AbortController();
+  assert.deepEqual(
+    await c.api.discoverCodingSkills("native/id", abort.signal),
+    discovered,
+  );
+  assert.equal(
+    c.requests[0].path,
+    "/api/coding/conversations/native%2Fid/skills",
+  );
+  assert.equal(c.requests[0].init?.signal, abort.signal);
+  const extras = {
+    skill_mentions: [{ name: "plugin:alpha:review", start: 0, end: 20 }],
+    images: [{ mime_type: "image/png", data: "exact-base64" }],
+  };
+  await c.api.codingRunApi.submit(
+    "native/id",
+    "same-key",
+    "@plugin:alpha:review",
+    extras,
+  );
+  assert.deepEqual(JSON.parse(String(c.requests[1].init?.body)), {
+    submission_key: "same-key",
+    text: "@plugin:alpha:review",
+    ...extras,
+  });
+  assert.deepEqual(c.requests[1].options, { retryNetworkErrors: false });
+});
+
 test("event stream uses authenticated fetch, exposes a disconnect event and is cancellable", async () => {
   const text = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({

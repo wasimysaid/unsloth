@@ -903,6 +903,70 @@ test("oversized older page remains actionable incomplete history instead of exce
   h.run.detach();
 });
 
+test("structured diffs cannot bypass the earlier-history presentation budget", async () => {
+  const h = harness();
+  const large: CodingRow = {
+    id: "large",
+    kind: "tool",
+    tool: {
+      invocation_id: "large-invocation",
+      call_id: "large-call",
+      request_id: null,
+      name: "edit_file",
+      title: "Edit",
+      status: "saved",
+      output: "Public",
+      clipped: false,
+      quiet: false,
+      row_group: null,
+      output_profile: {
+        kind: "file_change",
+        truncated: true,
+        files: [
+          {
+            path: "large.txt",
+            status: "updated",
+            additions: null,
+            deletions: null,
+            binary: false,
+            partial: true,
+            truncated: true,
+            hunks: [
+              {
+                lines: [
+                  {
+                    old_line: null,
+                    new_line: 1,
+                    kind: "added",
+                    content: "x".repeat(2 * 1024 * 1024),
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    },
+  };
+  h.api.readEntries = async (_id, cut, anchor) => ({
+    cut,
+    rows:
+      anchor === "latest"
+        ? [{ id: "saved", kind: "assistant", text: "Saved" }]
+        : [large],
+    older: true,
+    newer: anchor !== "latest",
+    first_id: "saved",
+    last_id: "saved",
+  });
+  await h.start();
+  await h.run.loadEarlier();
+  assert.equal(h.run.getSnapshot().viewingEarlier, false);
+  assert.equal(h.run.getSnapshot().rows[0].text, "Saved");
+  assert.match(h.run.getSnapshot().error ?? "", /incomplete/);
+  h.run.detach();
+});
+
 test("uncertain Stop does not offer retry while terminal request still holds cleanup admission", async () => {
   const h = harness();
   await h.start(native("exact"));
@@ -924,6 +988,93 @@ test("uncertain Stop does not offer retry while terminal request still holds cle
   });
   assert.equal(h.run.getSnapshot().stopping, null);
   assert.equal(h.run.getSnapshot().error, null);
+  h.run.detach();
+});
+
+test("typed repeated file effects preserve invocation, call and file identities across captured replay", async () => {
+  const h = harness();
+  const edits: CodingRow[] = ["first", "second"].map((id) => ({
+    id: `entry-${id}`,
+    entry_id: `entry-${id}`,
+    request_id: "exact-request",
+    kind: "tool",
+    tool: {
+      invocation_id: `invocation-${id}`,
+      call_id: `call-${id}`,
+      request_id: "exact-request",
+      name: "edit_file",
+      title: "Edit file",
+      status: "completed",
+      output: `Actual ${id} output`,
+      clipped: false,
+      quiet: false,
+      row_group: null,
+      historical: true,
+      output_profile: {
+        kind: "file_change",
+        truncated: false,
+        files: [
+          {
+            path: "same.txt",
+            status: "updated",
+            additions: null,
+            deletions: 1,
+            binary: false,
+            partial: true,
+            truncated: false,
+            unavailable: false,
+            hunks: [
+              {
+                lines: [
+                  { old_line: null, new_line: 1, kind: "added", content: id },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    },
+  }));
+  await h.start(native("exact-request"));
+  await h.event({
+    type: "activity",
+    rows: edits.map((row) => ({
+      ...row,
+      entry_id: null,
+      tool: { ...row.tool, historical: false },
+    })),
+  });
+  assert.deepEqual(
+    h.run.getSnapshot().rows.map((row) => row.tool?.call_id),
+    ["call-first", "call-second"],
+  );
+  h.setRows(edits);
+  await h.event({
+    type: "checkpoint",
+    cut: { journal: "root", leaf: "cut2" },
+    live_invocations: [],
+  });
+  assert.equal(h.run.getSnapshot().rows.length, 2);
+  const profiles = h.run
+    .getSnapshot()
+    .rows.map((row) => row.tool?.output_profile);
+  await h.event({
+    type: "reset",
+    state: native(),
+    recovering: false,
+    root: { cut: { journal: "root", leaf: "cut2" }, live_invocations: [] },
+  });
+  assert.deepEqual(
+    h.run.getSnapshot().rows.map((row) => row.tool?.output_profile),
+    profiles,
+  );
+  assert.deepEqual(
+    h.run.getSnapshot().rows.map((row) => row.tool?.invocation_id),
+    ["invocation-first", "invocation-second"],
+  );
+  assert.ok(h.run.getSnapshot().rows.every((row) => row.historical));
+  assert.equal(h.run.getSnapshot().native?.active_request, null);
+  assert.equal(codingRunLabel(h.run.getSnapshot()), "Ready");
   h.run.detach();
 });
 

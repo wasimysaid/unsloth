@@ -102,6 +102,14 @@ export const codingApi: CodingApi = {
   },
 };
 
+export async function discoverCodingSkills(id: string, signal?: AbortSignal) {
+  const response = await codingRequest(
+    `/conversations/${encodeURIComponent(id)}/skills`,
+    { signal },
+  );
+  return (await response.json()) as { skills: import("./input").CodingSkill[] };
+}
+
 export const codingRunApi: RunApi = {
   async readChild(id, handle, attempt, signal) {
     const response = await codingRequest(
@@ -110,13 +118,17 @@ export const codingRunApi: RunApi = {
     );
     return await response.json();
   },
-  async submit(id, submissionKey, text) {
+  async submit(id, submissionKey, text, extras) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/prompts`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ submission_key: submissionKey, text }),
+        body: JSON.stringify({
+          submission_key: submissionKey,
+          text,
+          ...extras,
+        }),
       },
     );
     return await response.json();
