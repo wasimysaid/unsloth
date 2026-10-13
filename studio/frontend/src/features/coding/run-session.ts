@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import { codingRowSize } from "./file-changes.ts";
 import type { CodingInput, CodingInputExtras } from "./input.ts";
 import {
-  pendingSubmissionStore,
   type SubmissionStorage,
+  pendingSubmissionStore,
 } from "./pending-submission.ts";
 import type {
   CodingRow,
@@ -166,16 +167,12 @@ export function createCodingRun(
   };
   const publishRows = () => {
     const rows = mergeRows([...saved, ...provisional]);
-    let bytes = rows.reduce(
-      (size, row) =>
-        size + (row.text?.length ?? 0) + (row.tool?.output.length ?? 0),
-      0,
-    );
+    let bytes = rows.reduce((size, row) => size + codingRowSize(row), 0);
     let omitted = false;
     while (rows.length > MAX_ROWS || (bytes > MAX_TEXT && rows.length > 1)) {
       const row = rows.shift();
       if (!row) break;
-      bytes -= (row.text?.length ?? 0) + (row.tool?.output.length ?? 0);
+      bytes -= codingRowSize(row);
       const keep = (item: CodingRow) =>
         item.id !== row.id &&
         !(row.entry_id && item.entry_id === row.entry_id) &&
@@ -188,8 +185,7 @@ export function createCodingRun(
       for (let i = rows.length - 1; i >= 0; i--) {
         if (!keep(rows[i])) {
           const removed = rows.splice(i, 1)[0];
-          bytes -=
-            (removed.text?.length ?? 0) + (removed.tool?.output.length ?? 0);
+          bytes -= codingRowSize(removed);
         }
       }
       omitted = true;
@@ -642,11 +638,8 @@ export function createCodingRun(
           );
         if (
           page.rows.length > MAX_ROWS ||
-          page.rows.reduce(
-            (size, row) =>
-              size + (row.text?.length ?? 0) + (row.tool?.output.length ?? 0),
-            0,
-          ) > MAX_TEXT
+          page.rows.reduce((size, row) => size + codingRowSize(row), 0) >
+            MAX_TEXT
         )
           throw new Error(
             "Earlier history is incomplete: the native page exceeded the presentation bound. Reconnect for a fresh bounded capture.",
