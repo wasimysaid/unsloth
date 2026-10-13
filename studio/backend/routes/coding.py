@@ -104,6 +104,18 @@ class PromptSubmission(BaseModel):
         return self
 
 
+class ModeSelection(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    mode: Literal["build", "plan"]
+
+
+class PlanSelection(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    plan_id: str = Field(min_length = 1, max_length = 128)
+    revision: str = Field(min_length = 1, max_length = 256)
+    decision: Literal["implement", "implement_fresh", "save_and_stop"]
+
+
 class GoalChange(BaseModel):
     """Native admission identity, not a Studio lifecycle or completion claim."""
     model_config = ConfigDict(extra = "forbid")
@@ -188,7 +200,8 @@ def _http_error(exc: CodingRuntimeError) -> HTTPException:
             "code": exc.code, "message": exc.message, "overlap": exc.overlap,
         })
     status = {"invalid": 400, "not_found": 404, "denied": 403,
-              "busy": 409, "conflict": 409, "trust_conflict": 409, "stale_goal": 409,
+              "busy": 409, "conflict": 409, "trust_conflict": 409,
+              "stale_plan": 409, "stale_goal": 409,
               "unavailable": 503, "disconnected": 503, "uncertain": 504,
               "limit": 429, "failed": 502}.get(exc.code, 400)
     return HTTPException(status_code = status, detail = exc.message,
@@ -330,6 +343,18 @@ async def submit_prompt(conversation_id: str, body: PromptSubmission, request: R
 async def cancel_request(conversation_id: str, request_id: str, request: Request):
     # Acceptance is not settlement. The ordered native view confirms completion.
     return await _command(request, "cancel", {"conversation_id": conversation_id, "request_id": request_id})
+
+
+@router.post("/conversations/{conversation_id}/mode")
+async def select_mode(conversation_id: str, body: ModeSelection, request: Request):
+    # Configuration selection is not plan acceptance; native execution owns admission.
+    return await _command(request, "set_mode", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+@router.post("/conversations/{conversation_id}/plan-actions")
+async def decide_plan(conversation_id: str, body: PlanSelection, request: Request):
+    # Exact current identity/revision is validated at the native operation boundary.
+    return await _command(request, "decide_plan", {"conversation_id": conversation_id, **body.model_dump()})
 
 
 @router.post("/conversations/{conversation_id}/goal")

@@ -29,6 +29,8 @@ const waiting = (id = "question"): NativeState => ({
   active_request: "request",
   requests: [{ id: "request", status: "running", submission_key: "key" }],
   pending_user_request: true,
+  plan: null,
+  action_disabled_reason: null,
   user_request: {
     id,
     questions: [
@@ -64,6 +66,12 @@ function harness() {
   const calls: { id: string; target: AnswerTarget; answers: NativeAnswer[] }[] =
     [];
   const api: RunApi = {
+    async setMode() {
+      throw new Error("Question answers must not change native mode");
+    },
+    async decidePlan() {
+      throw new Error("Question answers must not decide a native plan");
+    },
     async configure() {
       throw new Error("Question tests must not configure the conversation");
     },
@@ -142,6 +150,73 @@ function harness() {
     },
   };
 }
+
+test("mode selection preserves the current question draft without deciding its plan or replaying answers", async () => {
+  const h = harness();
+  const plan = {
+    id: "plan-exact",
+    revision: "revision-exact",
+    name: "Native proposal",
+    path: "/project/plan.md",
+    markdown: "# Native proposal",
+    status: "review_pending" as const,
+  };
+  const state = { ...waiting(), plan };
+  const modes: string[] = [];
+  const decisions: string[] = [];
+  h.api.setMode = async (id, mode) => {
+    modes.push(mode);
+    return { conversation_id: id, mode };
+  };
+  h.api.decidePlan = async (id, selected, decision) => {
+    decisions.push(decision);
+    return {
+      conversation_id: id,
+      plan_id: selected.id,
+      decision,
+      request_id: null,
+    };
+  };
+  await h.start(state);
+  const stale = currentTarget(h.run);
+  h.run.editAnswer(stale, answers);
+  await h.run.decidePlan(plan, "implement");
+  assert.deepEqual(
+    decisions,
+    [],
+    "Pending native questions block plan decisions",
+  );
+  assert.match(h.run.getSnapshot().planControlError ?? "", /question/);
+  await h.run.setMode("plan");
+  assert.deepEqual(modes, ["plan"]);
+  assert.equal(
+    h.run.getSnapshot().native?.configuration.mode,
+    "build",
+    "No optimistic mode change",
+  );
+  assert.equal(
+    h.run.getSnapshot().answerTarget,
+    null,
+    "Reconstruction invalidates old question controls",
+  );
+  assert.deepEqual(h.run.getSnapshot().answerForms[0].answers, answers);
+  state.configuration.mode = "plan";
+  await h.start(state);
+  const fresh = currentTarget(h.run);
+  assert.notEqual(fresh.subscription, stale.subscription);
+  await h.run.answer(stale);
+  assert.deepEqual(h.calls, []);
+  await h.run.answer(fresh);
+  assert.deepEqual(h.calls, [{ id: "conversation", target: fresh, answers }]);
+  assert.deepEqual(h.run.getSnapshot().native?.plan, plan);
+  assert.deepEqual(
+    h.run.getSnapshot().rows,
+    [],
+    "No optimistic answer or implementation row",
+  );
+  assert.deepEqual(decisions, []);
+  h.run.detach();
+});
 
 test("native controls and exact conversation/view/request/question answers; no optimistic transcript", async () => {
   const h = harness();

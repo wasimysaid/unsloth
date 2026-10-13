@@ -68,6 +68,30 @@ share a compact chronological slot; repeated invocations remain separate. Histor
 reports are labeled and are not claims about the current filesystem. There are no
 Apply/Revert controls or tool-selection pills.
 
+## Native mode and plan decisions (#239)
+
+Build/Plan radios show only `state.configuration.mode` from the ordered native view.
+They never optimistically change mode, accept a plan, or rewrite running work.
+`POST /conversations/{id}/mode` sends only `{mode}` to native configuration.
+`POST /conversations/{id}/plan-actions` sends `{plan_id,revision,decision}` to native
+admission; decisions are `implement`, `implement_fresh`, and `save_and_stop`, not
+prompts or mode changes. Native current identity, revision and busy admission are
+authoritative. All admitted decisions return to Build; save-and-stop starts no
+implementation request. Fresh implementation clears model context, not saved public
+history.
+
+The expandable current plan preserves native identity, status, path and Markdown.
+Saved lifecycle rows use the same renderer as inspection-only historical records,
+without actionable controls. Clipping is disclosed. Controls explain busy/refused
+states, action failures and reconnect uncertainty in text. After a mode/plan command,
+reconstruct a fresh captured view before permitting another choice. Lost responses
+never trigger command replay. Late responses to a detached surface do not reconnect
+it. A subsequent choice must address the currently captured native revision;
+native stale validation is still required for races after browser checks.
+
+Stable selectors: `coding-current-plan`, `coding-historical-plan`,
+`coding-plan-content`, `coding-plan-mode`, `coding-plan-reconciliation`.
+
 ## Native question cards (#237)
 
 The authoritative `state.user_request` supplies question IDs, prompts, native option
@@ -233,9 +257,10 @@ or arbitrary last-event replay is sent. The persistent disconnect banner survive
 HTTP connection, unfinished entry reads and recovering resets until capture/checkpoint
 is complete. A native closed view instead requires deliberate reopen, preserving
 native lease/folder/trust errors. Detach aborts only watching and reconnect timers,
-not accepted work or the conversation owner. Late Stop replies are gated by the
-captured lifecycle generation, so neither cancellation refusal nor transport failure
-can reconnect a detached or superseded view. No process restart or command replay
+not accepted work or the conversation owner. Late Stop replies are gated by command attachment lifetime and exact terminal
+evidence, so neither cancellation refusal nor transport failure can reconnect a
+detached surface. Mode-driven view reconstruction does not retire an outstanding
+Stop reply or strand its error reconciliation. No process restart or command replay
 is added. Nonprogressing/oversized older pages stay visibly incomplete and actionable.
 Coding-specific transport messages explicitly leave delivery/work unconfirmed rather
 than inferring host death or suggesting relaunch; native HTTP refusals and aborts

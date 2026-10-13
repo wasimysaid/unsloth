@@ -49,6 +49,8 @@ def coding_app(monkeypatch, tmp_path):
     ("POST", "/conversations/known-id/requests/exact-request/questions/exact-question/answers", {
         "subscription": "live-view", "answers": [{"question_id": "choice", "selected_options": ["One"], "freeform_text": None}]}),
     ("POST", "/conversations/known-id/entries", {"cut": {"journal": "root", "leaf": None}}),
+    ("POST", "/conversations/known-id/mode", {"mode": "plan"}),
+    ("POST", "/conversations/known-id/plan-actions", {"plan_id": "exact-plan", "revision": "native-revision", "decision": "implement"}),
     ("POST", "/conversations/known-id/goal", {"revision": "native-revision", "action": "pause"}),
     ("GET", "/conversations/known-id/commands", None),
     ("POST", "/conversations/known-id/commands", {"operation_id": "command-op", "name": "compress", "tail": ""}),
@@ -181,6 +183,31 @@ async def test_run_stop_and_history_preserve_exact_native_identities(coding_app)
         ("cancel", {"conversation_id": "exact-conversation", "request_id": "native-request"}),
         ("read_entries", {"conversation_id": "exact-conversation", "cut": cut, "anchor": "latest", "max_entries": 100, "max_bytes": 262144}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_mode_and_plan_actions_keep_native_revision_and_admission(coding_app):
+    app, headers = coding_app
+    calls = []
+    class RecordingRuntime:
+        async def command(self, method, params):
+            calls.append((method, params))
+            if method == "set_mode":
+                return {"conversation_id": params["conversation_id"], "mode": params["mode"]}
+            raise CodingRuntimeError("stale_plan", "The native plan revision changed; inspect the current plan.")
+    app.state.coding_runtime = RecordingRuntime()
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        mode = await client.post("/api/coding/conversations/exact-conversation/mode", json = {"mode": "plan"})
+        assert mode.status_code == 200
+        assert mode.json() == {"conversation_id": "exact-conversation", "mode": "plan"}
+        plan = {"plan_id": "exact-plan", "revision": "captured-revision", "decision": "implement_fresh"}
+        refused = await client.post("/api/coding/conversations/exact-conversation/plan-actions", json = plan)
+        assert refused.status_code == 409
+        assert "revision changed" in refused.json()["detail"]
+        for invalid in ({"plan_id": "exact-plan", "decision": "implement"}, {**plan, "decision": "unknown"}, {**plan, "mode": "build"}):
+            assert (await client.post("/api/coding/conversations/exact-conversation/plan-actions", json = invalid)).status_code == 422
+        assert (await client.post("/api/coding/conversations/exact-conversation/mode", json = {"mode": "fast"})).status_code == 422
+    assert calls == [("set_mode", {"conversation_id": "exact-conversation", "mode": "plan"}), ("decide_plan", {"conversation_id": "exact-conversation", **plan})]
 
 
 @pytest.mark.asyncio

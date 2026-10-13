@@ -36,6 +36,46 @@ function client(response: () => Response) {
   return { api, requests };
 }
 
+test("mode and plan decisions are separate authenticated non-replayed commands with exact revision", async () => {
+  const c = client(() => Response.json({ conversation_id: "conversation/id" }));
+  await c.api.codingRunApi.setMode("conversation/id", "plan");
+  await c.api.codingRunApi.decidePlan(
+    "conversation/id",
+    {
+      id: "plan-id",
+      revision: "native-revision",
+      name: "Plan",
+      path: "/plan.md",
+      markdown: "# Plan",
+      status: "review_pending",
+    },
+    "implement_fresh",
+  );
+  assert.deepEqual(
+    c.requests.map(({ path, init, options }) => ({
+      path,
+      body: JSON.parse(String(init?.body)),
+      options,
+    })),
+    [
+      {
+        path: "/api/coding/conversations/conversation%2Fid/mode",
+        body: { mode: "plan" },
+        options: { retryNetworkErrors: false },
+      },
+      {
+        path: "/api/coding/conversations/conversation%2Fid/plan-actions",
+        body: {
+          plan_id: "plan-id",
+          revision: "native-revision",
+          decision: "implement_fresh",
+        },
+        options: { retryNetworkErrors: false },
+      },
+    ],
+  );
+});
+
 test("goal changes carry exact native revision and action without transport replay or fabricated completion", async () => {
   const result = { conversation_id: "native/id?", request_id: null };
   const c = client(() => Response.json(result));

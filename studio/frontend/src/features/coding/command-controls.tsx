@@ -40,6 +40,7 @@ export function CodingCommandControls({
         state.reconcilingGoal ||
         state.stopping ||
         state.reconcilingAction ||
+        state.planControl ||
         state.uncertainSubmission ||
         state.uncertainCommand ||
         state.storageError,

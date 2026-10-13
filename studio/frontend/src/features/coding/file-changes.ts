@@ -110,10 +110,12 @@ export function reportedUnifiedDiff(file: FileChangeFile): {
 /** Include structured effects in the existing ephemeral transcript memory budget. */
 export function codingRowSize(row: {
   text?: string;
+  plan?: { markdown: string };
   tool?: { output: string; output_profile?: ToolOutputProfile | null };
 }): number {
   return (
     (row.text?.length ?? 0) +
+    (row.plan?.markdown.length ?? 0) +
     (row.tool?.output.length ?? 0) +
     (row.tool?.output_profile
       ? JSON.stringify(row.tool.output_profile).length

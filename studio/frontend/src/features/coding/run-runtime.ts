@@ -29,6 +29,7 @@ export function codingRunAdapter(
           state.uncertainSubmission ||
           state.storageError ||
           state.reconcilingAction ||
+          state.planControl ||
           state.goalChanging ||
           state.reconcilingGoal ||
           state.commandBusy ||
