@@ -1,9 +1,38 @@
-# Coding: trusted-project opening slice (#234)
+# Coding: trusted-project opening and native run/stop (#234–235)
 
-## Boundary and source audit
+## Run/stop slice (#235)
 
-This attempt revalidates Studio `1152ca6decda2a0e1a7e09ad8f806d5f76207453`
-and private Mimir `8b90a6f9b934c72813539ba99e11a8591a63cbb0`.
+Implementation baselines are Studio `1ca8b10f3f3c43fddf3e510cf90aa5c65b79d9bd`
+and paired private Mimir `1fd0ca7275f25a3bde6507a17535983e2aeec5ee`.
+The same production plugin now admits keyed native prompts, exact request
+cancellation, full ordered public views and bounded immutable-cut history reads.
+The frontend uses assistant-ui external state, with no chat execution imports,
+optimistic turns or durable transcript store. Credentials remain external.
+
+Read `studio/frontend/src/features/coding/README.md` and the paired plugin
+`PROTOCOL.md` for exact HTTP/wire shapes and reconstruction. Stop acknowledgment
+is not settlement: Stopping persists through native completion and cleanup;
+cleanup errors remain failures. Disconnect never implies work stopped, and browser
+view teardown never closes the native owner. Reconnect uses the same captured-cut
+projection; durable reopen/uncertain delivery across reload belongs to #236.
+
+The opening-only adapter and its disabled-execution assertions are superseded by
+`run-runtime.ts`, `run-session.ts` and current shipped-artifact behavior tests.
+No SDK WIT signature or historical private-profile decoder is added for #235;
+this slice reuses existing public typed history, native prompt/cancellation and
+presentation contracts. File-diff profiles remain #238.
+
+The browser driver now supports opening, deterministic HTTP-provider/native-tool
+scenarios, and a separate externally configured live-provider workload. Fixture
+success is not live-model evidence. Task-local reports record native identities,
+filesystem effects, exact desktop/narrow sizes, cleanup, and concrete external
+blockers. Human/full-PoC review and Studio-local-model acceptance remain #255–256.
+
+## Historical #234 boundary and source audit
+
+The historical #234 attempt revalidated Studio
+`1152ca6decda2a0e1a7e09ad8f806d5f76207453` and private Mimir
+`8b90a6f9b934c72813539ba99e11a8591a63cbb0`.
 The carried-forward attempt used Studio
 `1ba38a92b9c2f78e597c8ef26d0230c63171fdb9`; the intervening tracked changes
 are coordinator/runner changes, not part of this ticket's implementation.
@@ -57,10 +86,12 @@ refusals; neither Studio nor the plugin cancels or takes over an owner.
 ## Presentation audit and isolation
 
 The installed manifest pins `@assistant-ui/react` **0.12.28**, core **0.1.17**.
-The opening shell uses the shipped `useExternalStoreRuntime`,
+The coding shell uses the shipped `useExternalStoreRuntime`,
 `AssistantRuntimeProvider`, and `ComposerPrimitive` APIs; tests exercise that
-installed artifact, not assumed newer documentation. Opening has an explicitly
-disabled composer/Send: this ticket does **not** implement prompt execution.
+installed artifact, not assumed newer documentation. #234 disabled execution;
+#235 enables native submission after a connected captured view. The shipped
+runtime's transient upcoming-assistant placeholder has no native row and is
+intentionally invisible; only native public entries render in the transcript.
 
 Ordinary chat's page, runtime store, history database, model loading, and tool
 orchestration are not reused in coding. Shared button/input/dialog/sidebar
@@ -112,16 +143,22 @@ loopback only, creates isolated Studio auth/native history/disposable projects,
 installs the real product package, authenticates using the real password endpoint,
 and exercises the **built `/coding` page → production Studio coding/auth routers
 → private plugin → native Mimir**. The acceptance composition omits unrelated
-ML/training startup, not any coding or authentication implementation. It makes no
-provider calls and requires no GPU. It is not evidence of a full Studio/ordinary
-chat or model workload. It preserves screenshots, scenario facts, native IDs and
+ML/training startup, not any coding or authentication implementation. It requires
+no GPU. `--workload opening` makes no provider calls; the default deterministic
+workload uses an external HTTP protocol fixture with real native tools. The
+separately reported `--workload live` uses existing host provider configuration
+and credential resolution, never browser credentials or copied configuration.
+This composition is not a full Studio/ordinary-chat or local-model workload. It preserves screenshots, scenario facts, native IDs and
 server logs outside Git; passwords/tokens are never included in the report.
 
 Desktop is 1440×1000; narrow is 390×844. The driver asserts placement, disabled
-Send, invalid/missing/OS-denied paths, canonical symlink identity, changed-project
-identity, deliberate reopen, and unauthenticated refusal on all six coding
-surfaces (browse/catalog/history/create/open/SSE), including valid command inputs
-and known IDs. It also checks focus, dismissal and overflow. It fingerprints the native saved policy at
+Send before selection, invalid/missing/OS-denied paths, canonical symlink identity,
+changed-project identity, deliberate reopen, and unauthenticated refusal on all
+nine coding surfaces (browse/catalog/history/create/open/SSE/prompt/cancel/bounded
+entries), including valid command inputs and known IDs. Run scenarios add actual
+write/read/shell outcomes, same-key retry/busy refusal, exact cancellation and
+process cleanup, provider/tool failures, public-output bounds, disconnect/reconnect,
+and keyboard tool details/Enter submission. It also checks focus, dismissal and overflow. It fingerprints the native saved policy at
 `MIMIR_CODING_AGENT_DIR/trust.json`, or `~/.mimir/agent/trust.json` when unset,
 before and after acceptance; the separate isolated ancestor-distrust fixture is
 also checked. Run `python3 -m unittest discover -s studio/tools -p
@@ -135,18 +172,18 @@ The task-local `worker/ticket-result.json` and browser `report.json` identify ac
 commands/artifacts/results; this tracked matrix intentionally contains no stale
 claim tied to a mutable local HEAD or absent screenshots.
 
-| ID | Current #234 coverage | Remaining capability evidence |
+| ID | Implemented #234–235 coverage (see attempt reports for verification) | Remaining capability evidence |
 |---|---|---|
-| A1 | Native opening contracts/SDK consumers; single product plugin and supervised process; authenticated HTTP/SSE; separate coding shell; lifecycle start/state/reset projection | Full ordered transcript/history reconstruction and bounded reads in execution/history tickets |
-| A2 | No execution controls exposed | Real tools, questions, Stop, modes, plans/goals, children and diagnostics (#235 onward) |
+| A1 | Native opening/SDK contracts; single supervised product plugin; authenticated HTTP/SSE; exact submission/request/tool identities; atomic ordered public view, checkpoints/reset/recovery and bounded cut reads | Durable reload/reconnect delivery reconciliation (#236) |
+| A2 | Native prompt/Stop controls; compact inspectable public tool results/failures and clipping disclosure | Questions, modes, plans/goals, children and diagnostics (#237 onward) |
 | A3 | No diff implementation or fabricated effects | Typed live/historical reported changes (#238) |
-| A4 | No model picker in opening slice | Model/reasoning interactions (#244) |
-| A5 | No model request submitted | Actual provider/local-model requests and whole-request protection (#246/#255) |
-| A6 | Canonical/native validated opening, effective trust, isolated saved-policy tests, child inheritance, mismatch and lease refusals, route access | Concurrent execution/same-folder warning and retirement/recovery (#247–249) |
-| A7 | Browser disconnect releases view, not owner; no automatic command replay; EOF shutdown awaits native closes | Submission identity, execution recovery, clocks and full interruption scenarios (#236/#248/#249) |
+| A4 | No model picker | Model/reasoning interactions (#244) |
+| A5 | Externally configured provider admission; no Studio local-model serving | Local-model requests and whole-request protection (#246/#255) |
+| A6 | Canonical/native validated opening, non-persisting effective trust, saved-policy tests, child inheritance, mismatch/lease refusals, authenticated run/Stop/history access | Concurrent execution/same-folder warning and retirement/recovery (#247–249) |
+| A7 | Exact request cancellation; Stop acknowledgment distinct from cleanup; disconnect never stops owners; typed native failures; no automatic replay; awaited EOF shutdown | Durable submission identity across reload, recovery, clocks and full interruption scenarios (#236/#248/#249) |
 | A8 | No Settings management surface | Native MCP and headless inventory/settings (#250–252) |
-| A9 | Ordinary-chat store/engine untouched; existing tests included in verification | Real ordinary-chat smoke and cross-feature regression (#254/#255) |
-| A10 | Reproducible rendered opening/failure driver at exact desktop/narrow widths | Full execution UI checks and user's implemented-UI review (#255/#256) |
+| A9 | Ordinary-chat store/engine untouched; affected shared/ordinary-chat tests; coding route excludes ordinary model observers and chat execution imports | Real ordinary-chat smoke and cross-feature regression (#254/#255) |
+| A10 | Rendered opening, deterministic provider/native-tool, cancellation/failure, keyboard/narrow, and separate live-provider driver | Full cross-feature execution UI checks and user's implemented-UI review (#255/#256) |
 
 ## Source-sensitive command-admission follow-ups
 

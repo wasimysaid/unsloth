@@ -7,6 +7,7 @@ import anyio
 import json
 import os
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -37,6 +38,37 @@ class NativeViewResponse(StreamingResponse):
 class ProjectSelection(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     cwd: str = Field(min_length = 1, max_length = 32768)
+
+
+class PromptSubmission(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    submission_key: str = Field(min_length = 1, max_length = 128)
+    text: str = Field(min_length = 1, max_length = 65536)
+
+
+class RootCut(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    journal: Literal["root"]
+    leaf: str | None = Field(max_length = 128)
+
+
+class BeforeEntry(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    before: str = Field(min_length = 1, max_length = 128)
+
+
+class AfterEntry(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    after: str = Field(min_length = 1, max_length = 128)
+
+
+class HistorySelection(BaseModel):
+    """An immutable native view cut, never an independently moving snapshot."""
+    model_config = ConfigDict(extra = "forbid")
+    cut: RootCut
+    anchor: Literal["latest"] | BeforeEntry | AfterEntry = "latest"
+    max_entries: int = Field(default = 100, ge = 1, le = 128)
+    max_bytes: int = Field(default = 262144, ge = 1024, le = 262144)
 
 
 def _http_error(exc: CodingRuntimeError) -> HTTPException:
@@ -118,6 +150,23 @@ async def create_conversation(body: ProjectSelection, request: Request):
 async def open_conversation(conversation_id: str, request: Request):
     state = await _command(request, "open", {"conversation_id": conversation_id})
     return state["info"]
+
+
+@router.post("/conversations/{conversation_id}/prompts", status_code = 202)
+async def submit_prompt(conversation_id: str, body: PromptSubmission, request: Request):
+    # Mimir admits/deduplicates the submission and owns scheduling and saved input.
+    return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+@router.post("/conversations/{conversation_id}/requests/{request_id}/cancel")
+async def cancel_request(conversation_id: str, request_id: str, request: Request):
+    # Acceptance is not settlement. The ordered native view confirms completion.
+    return await _command(request, "cancel", {"conversation_id": conversation_id, "request_id": request_id})
+
+
+@router.post("/conversations/{conversation_id}/entries")
+async def read_entries(conversation_id: str, body: HistorySelection, request: Request):
+    return await _command(request, "read_entries", {"conversation_id": conversation_id, **body.model_dump()})
 
 
 @router.get("/conversations/{conversation_id}/events")

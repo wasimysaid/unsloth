@@ -3,10 +3,11 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadWithStubs } from "./helpers/module-stubs.ts";
-import * as fastApiError from "../src/lib/format-fastapi-error.ts";
-import { consumeCodingEvents } from "../src/features/coding/events.ts";
 import type * as Coding from "../src/features/coding/api.ts";
+import { CodingHttpError } from "../src/features/coding/errors.ts";
+import { consumeCodingEvents } from "../src/features/coding/events.ts";
+import * as fastApiError from "../src/lib/format-fastapi-error.ts";
+import { loadWithStubs } from "./helpers/module-stubs.ts";
 
 function client(response: () => Response) {
   const requests: { path: string; init?: RequestInit; options: unknown }[] = [];
@@ -25,6 +26,7 @@ function client(response: () => Response) {
       },
       "@/lib/format-fastapi-error": fastApiError,
       "./events": { consumeCodingEvents },
+      "./errors": { CodingHttpError },
     },
   );
   return { api, requests };
@@ -129,8 +131,10 @@ test("an endless or repeated catalog fails explicitly rather than showing incomp
 });
 
 test("missing or malformed native page cursors cannot silently mean complete history", async () => {
-  for (const next_cursor of [undefined, "", 42]) {
-    const c = client(() => Response.json({ conversations: [], next_cursor }));
+  for (const nextCursor of [undefined, "", 42]) {
+    const c = client(() =>
+      Response.json({ conversations: [], next_cursor: nextCursor }),
+    );
     await assert.rejects(
       c.api.codingApi.listConversations(),
       /invalid page cursor/,
@@ -153,6 +157,45 @@ test("native auth/validation/availability errors remain errors, not successful o
     c.api.codingApi.openConversation("saved"),
     /Coding request failed \(502\)/,
   );
+});
+
+test("run and Stop carry exact native identities without implicit transport retries", async () => {
+  const c = client(() =>
+    Response.json({
+      conversation_id: "conversation/id",
+      request_id: "request/id",
+      submission_key: "same-key",
+      cancel_requested: true,
+    }),
+  );
+  await c.api.codingRunApi.submit("conversation/id", "same-key", "Work once");
+  await c.api.codingRunApi.cancel("conversation/id", "request/id");
+  await c.api.codingRunApi.readEntries(
+    "conversation/id",
+    { journal: "root", leaf: "captured-leaf" },
+    { after: "previous-leaf" },
+  );
+  assert.deepEqual(
+    c.requests.map((request) => request.path),
+    [
+      "/api/coding/conversations/conversation%2Fid/prompts",
+      "/api/coding/conversations/conversation%2Fid/requests/request%2Fid/cancel",
+      "/api/coding/conversations/conversation%2Fid/entries",
+    ],
+  );
+  assert.deepEqual(JSON.parse(String(c.requests[0].init?.body)), {
+    submission_key: "same-key",
+    text: "Work once",
+  });
+  assert.equal(c.requests[1].init?.body, undefined);
+  assert.deepEqual(JSON.parse(String(c.requests[2].init?.body)), {
+    cut: { journal: "root", leaf: "captured-leaf" },
+    anchor: { after: "previous-leaf" },
+    max_entries: 100,
+    max_bytes: 262144,
+  });
+  for (const request of c.requests)
+    assert.deepEqual(request.options, { retryNetworkErrors: false });
 });
 
 test("event stream uses authenticated fetch, exposes a disconnect event and is cancellable", async () => {

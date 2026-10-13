@@ -1,28 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
-import { Link } from "@tanstack/react-router";
-import {
-  AssistantRuntimeProvider,
-  ComposerPrimitive,
-  useExternalStoreRuntime,
-} from "@assistant-ui/react";
-import {
-  ArrowLeft,
-  ArrowUp,
-  Code2,
-  Folder,
-  LoaderCircle,
-  Plus,
-  RefreshCw,
-} from "lucide-react";
 import { useAppShellReadySignal } from "@/components/app-readiness";
 import { Button } from "@/components/ui/button";
 import {
@@ -41,11 +19,24 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { codingApi, watchCodingConversation } from "./api";
+import { Link } from "@tanstack/react-router";
 import {
-  CODING_SEND_UNAVAILABLE,
-  codingOpeningAdapter,
-} from "./opening-runtime";
+  ArrowLeft,
+  Code2,
+  Folder,
+  LoaderCircle,
+  Plus,
+  RefreshCw,
+} from "lucide-react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { codingApi } from "./api";
+import { CodingSurface } from "./coding-surface";
 import { ProjectFolderDialog } from "./project-folder-dialog";
 import { restoreProjectPickerFocus } from "./project-picker-focus";
 import { createCodingSession } from "./session";
@@ -106,12 +97,9 @@ function CodingSidebar({
           </SidebarGroupLabel>
           <SidebarGroupContent>
             {state.loadingConversations && (
-              <p
-                role="status"
-                className="px-2 py-3 text-xs text-muted-foreground"
-              >
+              <output className="block px-2 py-3 text-xs text-muted-foreground">
                 Loading saved conversations…
-              </p>
+              </output>
             )}
             {state.historyError && (
               <p
@@ -172,108 +160,13 @@ function CodingSidebar({
         <p className="text-xs leading-relaxed text-muted-foreground">
           Conversations and project folders are owned by Mimir on this host.
         </p>
-        <Button asChild variant="ghost" className="justify-start">
+        <Button asChild={true} variant="ghost" className="justify-start">
           <Link to="/chat">
             <ArrowLeft className="size-4" aria-hidden="true" /> Back to Studio
           </Link>
         </Button>
       </SidebarFooter>
     </Sidebar>
-  );
-}
-
-function NativeEventStatus({ conversationId }: { conversationId: string }) {
-  const [attempt, setAttempt] = useState(0);
-  const [connection, setConnection] = useState<
-    "connecting" | "connected" | "error"
-  >("connecting");
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    const abort = new AbortController();
-    setConnection("connecting");
-    setError(null);
-    void watchCodingConversation(conversationId, abort.signal, () => {
-      if (!abort.signal.aborted) setConnection("connected");
-    }).catch((reason: unknown) => {
-      if (abort.signal.aborted) return;
-      setConnection("error");
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : "Could not connect to native events.",
-      );
-    });
-    return () => abort.abort();
-  }, [conversationId, attempt]);
-  return (
-    <div
-      className="space-y-2 text-xs text-muted-foreground"
-      data-testid="coding-event-status"
-    >
-      <p role="status">
-        {connection === "connected"
-          ? "Native event stream connected"
-          : connection === "connecting"
-            ? "Connecting to native events…"
-            : "Native event stream unavailable"}
-      </p>
-      {error && (
-        <>
-          <p role="alert" className="break-words text-destructive">
-            {error}
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setAttempt((value) => value + 1)}
-          >
-            Reconnect native events
-          </Button>
-        </>
-      )}
-    </div>
-  );
-}
-
-function OpeningComposer() {
-  const runtime = useExternalStoreRuntime(codingOpeningAdapter);
-  return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <ComposerPrimitive.Root
-        className="aui-composer-root relative w-full"
-        onSubmit={(event) => event.preventDefault()}
-        aria-label="Coding composer"
-      >
-        <div className="unsloth-composer-surface">
-          <div className="flex min-w-0 items-end gap-2">
-            <ComposerPrimitive.Input
-              className="unsloth-composer-input disabled:cursor-not-allowed"
-              aria-label="Coding prompt"
-              aria-describedby="coding-send-explanation"
-              placeholder="What would you like to build?"
-              submitMode="none"
-              disabled
-              minRows={2}
-              maxRows={5}
-              addAttachmentOnPaste={false}
-              unstable_focusOnThreadSwitched={false}
-              unstable_focusOnRunStart={false}
-              unstable_focusOnScrollToBottom={false}
-            />
-            <Button
-              type="button"
-              size="icon"
-              disabled
-              aria-label="Send"
-              aria-describedby="coding-send-explanation"
-              className="mb-1 rounded-full"
-            >
-              <ArrowUp className="size-5" aria-hidden="true" />
-            </Button>
-          </div>
-        </div>
-      </ComposerPrimitive.Root>
-    </AssistantRuntimeProvider>
   );
 }
 
@@ -301,7 +194,7 @@ export function CodingPage() {
 
   return (
     <SidebarProvider
-      defaultOpen
+      defaultOpen={true}
       className="!min-h-0 h-[calc(100dvh-var(--studio-titlebar-height,0px))] overflow-hidden"
       data-testid="coding-shell"
     >
@@ -312,41 +205,52 @@ export function CodingPage() {
           <Code2 className="size-4 text-muted-foreground" aria-hidden="true" />
           <span className="font-heading text-sm font-medium">Coding</span>
           <span className="ml-auto text-xs text-muted-foreground">
-            Opening preview
+            Mimir coding
           </span>
         </header>
         <main
-          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto px-4 py-8 sm:px-8"
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 py-4 sm:px-8"
           aria-busy={state.opening}
         >
-          <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-7">
+          <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col gap-4">
             <section
-              className="space-y-3 text-center"
+              className="shrink-0 space-y-2 text-center"
               aria-label="Coding conversation"
             >
-              <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-muted">
-                <Code2 className="size-6" aria-hidden="true" />
-              </div>
-              <h1 className="font-heading text-2xl font-semibold tracking-tight sm:text-3xl">
+              {!state.active && (
+                <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-muted">
+                  <Code2 className="size-6" aria-hidden="true" />
+                </div>
+              )}
+              <h1
+                className={`font-heading font-semibold tracking-tight ${state.active ? "text-base sm:text-lg" : "text-2xl sm:text-3xl"}`}
+              >
                 {state.active
                   ? "Your coding conversation is open"
                   : "Build with Mimir"}
               </h1>
-              <p className="mx-auto max-w-lg text-sm leading-relaxed text-muted-foreground">
-                {state.active
-                  ? "Mimir opened this conversation on the Studio host. Prompt execution is coming in a later slice."
-                  : "Choose a project folder to open a native coding conversation, or explicitly reopen one from the sidebar."}
-              </p>
+              {!state.active && (
+                <p className="mx-auto max-w-lg text-sm leading-relaxed text-muted-foreground">
+                  Choose a project folder to open a native coding conversation,
+                  or explicitly reopen one from the sidebar.
+                </p>
+              )}
               {state.active && (
                 <div
-                  className="space-y-2 rounded-2xl border border-border/70 p-4 text-left"
+                  className="space-y-1 rounded-xl border border-border/70 px-3 py-2 text-left"
                   data-testid="coding-opened-conversation"
                 >
-                  <p className="font-medium">
-                    {state.active.title || "Coding conversation"}
-                  </p>
+                  {state.active.title && (
+                    <p
+                      className="truncate text-sm font-medium"
+                      title={state.active.title}
+                    >
+                      {state.active.title}
+                    </p>
+                  )}
                   <p
-                    className="break-all font-mono text-xs"
+                    className="truncate font-mono text-xs"
+                    title={state.active.cwd}
                     data-testid="coding-canonical-cwd"
                   >
                     {state.active.cwd}
@@ -357,23 +261,16 @@ export function CodingPage() {
                   >
                     {state.active.id}
                   </p>
-                  <NativeEventStatus
-                    key={`${state.active.id}:${state.openingGeneration}`}
-                    conversationId={state.active.id}
-                  />
                 </div>
               )}
               {state.opening && (
-                <p
-                  role="status"
-                  className="flex items-center justify-center gap-2 text-sm text-muted-foreground"
-                >
+                <output className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
                   <LoaderCircle
                     className="size-4 animate-spin"
                     aria-hidden="true"
                   />{" "}
                   Opening native conversation…
-                </p>
+                </output>
               )}
               {!folderOpen && state.openingError && (
                 <p
@@ -384,8 +281,10 @@ export function CodingPage() {
                 </p>
               )}
             </section>
-            <section className="space-y-3" aria-label="Open a coding project">
-              <OpeningComposer key={state.active?.id ?? "unopened"} />
+            <CodingSurface
+              key={`${state.active?.id ?? "unopened"}:${state.openingGeneration}`}
+              conversationId={state.active?.id ?? null}
+            >
               {/* The host project chooser intentionally sits beneath the composer, not in its toolbar. */}
               <div
                 className="flex min-w-0 flex-wrap items-center justify-between gap-2"
@@ -419,13 +318,7 @@ export function CodingPage() {
                 configuration and extensions for this native controller only; no
                 shared trust decision is saved.
               </p>
-              <p
-                id="coding-send-explanation"
-                className="text-xs leading-relaxed text-muted-foreground"
-              >
-                {CODING_SEND_UNAVAILABLE}
-              </p>
-            </section>
+            </CodingSurface>
           </div>
         </main>
       </SidebarInset>
