@@ -19,6 +19,9 @@ from typing import Any
 log = logging.getLogger(__name__)
 MAX_FRAME = 1024 * 1024
 COMMAND_TIMEOUT = 60
+# Cold native component validation/compilation may exceed two minutes on a
+# development build. This setup bound never extends execution-command deadlines.
+INSTALL_TIMEOUT = 600
 PLUGIN_ID = "studio.frontend"
 
 
@@ -38,6 +41,7 @@ class CodingRuntime:
         self._start_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
         self._pending: dict[int, asyncio.Future] = {}
+        self._opening_views: set[int] = set()
         self._subscriptions: dict[str, asyncio.Queue] = {}
         self._overflowed: set[str] = set()
         self._abandoned_views: set[int] = set()
@@ -100,7 +104,7 @@ class CodingRuntime:
                         stderr = asyncio.subprocess.DEVNULL,
                     )
                     try:
-                        installed = await asyncio.wait_for(installer.wait(), timeout = 120)
+                        installed = await asyncio.wait_for(installer.wait(), timeout = INSTALL_TIMEOUT)
                     except BaseException as exc:
                         with anyio.CancelScope(shield = True):
                             if installer.returncode is None:
@@ -218,7 +222,9 @@ class CodingRuntime:
                     ))
                 elif "result" in payload:
                     result = payload["result"]
-                    if isinstance(result, dict) and isinstance(result.get("subscription"), str):
+                    if identifier in self._opening_views and isinstance(result, dict) and isinstance(result.get("subscription"), str):
+                        # Only view admission acquires a queue. Answer ACKs echo the
+                        # existing subscription; replacing it strands the SSE reader.
                         # Register before waking the command caller: a native start may
                         # immediately follow the response in the very same pipe read.
                         queue = asyncio.Queue(maxsize = 128)
@@ -251,6 +257,8 @@ class CodingRuntime:
             raise CodingRuntimeError("invalid", "The coding command is too large.")
         future = asyncio.get_running_loop().create_future()
         self._pending[identifier] = future
+        if method == "view":
+            self._opening_views.add(identifier)
         delivered = False
         try:
             async with self._write_lock:
@@ -265,6 +273,8 @@ class CodingRuntime:
             reconciliation = (
                 "load the saved MCP version for comparison before deliberately retrying. Your draft is retained."
                 if method == "mcp_save" else
+                "inspect the exact native MCP operation before another apply or reconnect. Saved configuration and drafts are retained."
+                if method in {"mcp_apply", "mcp_reconnect"} else
                 "reconnect the native view to reconcile its state. Prompt retries must reuse "
                 "the original submission identity; do not blindly retry other commands."
             )
@@ -275,6 +285,7 @@ class CodingRuntime:
             raise CodingRuntimeError("disconnected", "The coding runtime disconnected; nothing was replayed.") from exc
         finally:
             self._pending.pop(identifier, None)
+            self._opening_views.discard(identifier)
             if method == "view" and not delivered and not self._failure:
                 if future.done() and not future.cancelled():
                     if future.exception() is None:

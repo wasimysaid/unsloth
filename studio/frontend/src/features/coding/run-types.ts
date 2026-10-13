@@ -2,6 +2,12 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 import type {
+  CodingMode,
+  NativePlan,
+  PlanActionResult,
+  PlanDecision,
+} from "./plan-types.ts";
+import type {
   ChildAttempt,
   ChildDetail,
   ChildPresentation,
@@ -34,6 +40,54 @@ export interface NativeRequest {
   status: RequestStatus;
   submission_key: string | null;
 }
+export type GoalAction = "start" | "edit" | "pause" | "resume" | "clear";
+export interface NativeGoal {
+  id: string;
+  objective: string;
+  phase: "active" | "paused" | "blocked" | "complete" | "cleared";
+  cause: string;
+  reason: string | null;
+  review_gap: string | null;
+  work_turns: number;
+  started_at: string;
+  display_clipped?: boolean;
+  completion: {
+    checklist: { requirement: string; evidence: string }[];
+    limitations: string | null;
+    completed_at: string;
+    omitted_checklist_entries?: number;
+  } | null;
+}
+export interface GoalControls {
+  revision: string;
+  actions: { action: GoalAction; admitted: boolean; reason: string | null }[];
+}
+export interface GoalChange {
+  revision: string;
+  action: GoalAction;
+  objective?: string;
+  duration_seconds?: number;
+}
+export interface NativeQuestion {
+  id: string;
+  prompt: string;
+  allow_multiple: boolean;
+  options: { label: string; description: string }[];
+}
+export interface NativeUserRequest {
+  id: string;
+  questions: NativeQuestion[];
+}
+export interface NativeAnswer {
+  question_id: string;
+  selected_options: string[];
+  freeform_text: string | null;
+}
+export interface AnswerTarget {
+  subscription: string;
+  request_id: string;
+  user_request_id: string;
+}
 export interface NativeState {
   info: CodingConversation;
   /** Authoritative choice for the next request, even while another is running. */
@@ -44,6 +98,11 @@ export interface NativeState {
   active_request: string | null;
   requests: NativeRequest[];
   pending_user_request: boolean;
+  plan: NativePlan | null;
+  action_disabled_reason: string | null;
+  goal?: NativeGoal | null;
+  goal_controls?: GoalControls;
+  user_request: NativeUserRequest | null;
   usage?: SessionUsage | null;
   compression?: {
     status: "running" | "completed" | "failed" | "cancelled" | "interrupted";
@@ -61,13 +120,19 @@ export interface JournalCut {
 export type EntryAnchor = "latest" | { before: string } | { after: string };
 export interface CodingRow {
   id: string;
-  kind: "user" | "assistant" | "tool" | "notice" | "child";
+  kind: "user" | "assistant" | "tool" | "notice" | "plan" | "child";
   child?: ChildAttempt;
   text?: string;
   entry_id?: string | null;
   request_id?: string | null;
   clipped?: boolean;
   historical?: boolean;
+  plan?: NativePlan;
+  answer?: {
+    request_id: string;
+    user_request_id: string;
+    answers: NativeAnswer[];
+  };
   image_count?: number;
   tool?: {
     invocation_id: string | null;
@@ -100,6 +165,27 @@ export interface ProjectOverlap {
   conversations: { id: string }[];
 }
 export interface RunApi {
+  setMode(
+    id: string,
+    mode: CodingMode,
+  ): Promise<{ conversation_id: string; mode: CodingMode }>;
+  decidePlan(
+    id: string,
+    plan: NativePlan,
+    decision: PlanDecision,
+  ): Promise<PlanActionResult>;
+  changeGoal?(
+    id: string,
+    change: GoalChange,
+  ): Promise<{
+    conversation_id: string;
+    request_id: string | null;
+  }>;
+  answer(
+    id: string,
+    target: AnswerTarget,
+    answers: NativeAnswer[],
+  ): Promise<AnswerTarget & { conversation_id: string; accepted: boolean }>;
   commands?(id: string): Promise<CommandCatalog>;
   command?(
     id: string,

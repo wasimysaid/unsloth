@@ -36,6 +36,77 @@ function client(response: () => Response) {
   return { api, requests };
 }
 
+test("mode and plan decisions are separate authenticated non-replayed commands with exact revision", async () => {
+  const c = client(() => Response.json({ conversation_id: "conversation/id" }));
+  await c.api.codingRunApi.setMode("conversation/id", "plan");
+  await c.api.codingRunApi.decidePlan(
+    "conversation/id",
+    {
+      id: "plan-id",
+      revision: "native-revision",
+      name: "Plan",
+      path: "/plan.md",
+      markdown: "# Plan",
+      status: "review_pending",
+    },
+    "implement_fresh",
+  );
+  assert.deepEqual(
+    c.requests.map(({ path, init, options }) => ({
+      path,
+      body: JSON.parse(String(init?.body)),
+      options,
+    })),
+    [
+      {
+        path: "/api/coding/conversations/conversation%2Fid/mode",
+        body: { mode: "plan" },
+        options: { retryNetworkErrors: false },
+      },
+      {
+        path: "/api/coding/conversations/conversation%2Fid/plan-actions",
+        body: {
+          plan_id: "plan-id",
+          revision: "native-revision",
+          decision: "implement_fresh",
+        },
+        options: { retryNetworkErrors: false },
+      },
+    ],
+  );
+});
+
+test("goal changes carry exact native revision and action without transport replay or fabricated completion", async () => {
+  const result = { conversation_id: "native/id?", request_id: null };
+  const c = client(() => Response.json(result));
+  const change = {
+    action: "pause" as const,
+    revision: "native-owner-goal-revision",
+  };
+  assert.deepEqual(
+    await c.api.codingRunApi.changeGoal!(result.conversation_id, change),
+    result,
+  );
+  assert.deepEqual(c.requests, [
+    {
+      path: "/api/coding/conversations/native%2Fid%3F/goal",
+      init: {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(change),
+      },
+      options: { retryNetworkErrors: false },
+    },
+  ]);
+  const stale = client(() =>
+    Response.json({ detail: "Goal controls are stale" }, { status: 409 }),
+  );
+  await assert.rejects(
+    stale.api.codingRunApi.changeGoal!("id", change),
+    /stale/,
+  );
+});
+
 test("browse uses authenticated host API with query encoding and cancellation", async () => {
   const directory = {
     path: "/canonical",
@@ -503,6 +574,50 @@ test("coding transport failure stays unconfirmed without claiming native work di
   );
 });
 
+test("answers address exact conversation, request, question and live view without transport replay", async () => {
+  const target = {
+    subscription: "live-view",
+    request_id: "request/id?",
+    user_request_id: "question/id?",
+  };
+  const answers = [
+    {
+      question_id: "choice",
+      selected_options: ["Native label"],
+      freeform_text: "Custom answer",
+    },
+  ];
+  const result = {
+    conversation_id: "conversation/id?",
+    ...target,
+    accepted: true,
+  };
+  const c = client(() => Response.json(result));
+  assert.deepEqual(
+    await c.api.codingRunApi.answer(result.conversation_id, target, answers),
+    result,
+  );
+  assert.deepEqual(c.requests, [
+    {
+      path: "/api/coding/conversations/conversation%2Fid%3F/requests/request%2Fid%3F/questions/question%2Fid%3F/answers",
+      init: {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscription: target.subscription, answers }),
+      },
+      options: { retryNetworkErrors: false },
+    },
+  ]);
+  const loss = client(() => {
+    throw new Error("Lost answer acknowledgement");
+  });
+  await assert.rejects(
+    loss.api.codingRunApi.answer(result.conversation_id, target, answers),
+    /Lost answer/,
+  );
+  assert.equal(loss.requests.length, 1);
+});
+
 test("coding request preserves abort and non-transport authentication errors", async () => {
   for (const original of [
     new DOMException("Detached", "AbortError"),
@@ -593,4 +708,48 @@ test("structured overlap refusal is distinct from native busy/capacity and malfo
     malformed.api.codingRunApi.checkOverlap("id"),
     /could not be confirmed.*No prompt was sent/,
   );
+});
+
+test("MCP apply/reconnect and read-only reconciliation use exact native identities with no caching or replay", async () => {
+  const native = { operation_id: "operation/id?", status: "running" };
+  const c = client(() => Response.json(native));
+  assert.deepEqual(
+    await c.api.mcpSettingsApi.apply("conversation/id?", "operation/id?"),
+    native,
+  );
+  assert.deepEqual(
+    await c.api.mcpSettingsApi.reconnect(
+      "conversation/id?",
+      "reconnect-id",
+      "configured",
+    ),
+    native,
+  );
+  assert.deepEqual(
+    await c.api.mcpSettingsApi.inspectOperation(
+      "conversation/id?",
+      "operation/id?",
+    ),
+    native,
+  );
+  assert.deepEqual(
+    c.requests.map((request) => request.path),
+    [
+      "/api/coding/conversations/conversation%2Fid%3F/mcp/apply",
+      "/api/coding/conversations/conversation%2Fid%3F/mcp/reconnect",
+      "/api/coding/conversations/conversation%2Fid%3F/mcp/operations/operation%2Fid%3F",
+    ],
+  );
+  assert.deepEqual(JSON.parse(c.requests[0].init!.body as string), {
+    operation_id: "operation/id?",
+  });
+  assert.deepEqual(JSON.parse(c.requests[1].init!.body as string), {
+    operation_id: "reconnect-id",
+    name: "configured",
+  });
+  for (const request of c.requests) {
+    assert.equal(request.init?.cache, "no-store");
+    assert.deepEqual(request.options, { retryNetworkErrors: false });
+  }
+  assert.equal(c.requests[2].init?.method, undefined);
 });

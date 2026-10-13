@@ -36,8 +36,11 @@ export function CodingCommandControls({
     state.configuring ||
     state.configurationUncertain ||
     Boolean(
-      state.stopping ||
+      state.goalChanging ||
+        state.reconcilingGoal ||
+        state.stopping ||
         state.reconcilingAction ||
+        state.planControl ||
         state.uncertainSubmission ||
         state.uncertainCommand ||
         state.storageError,

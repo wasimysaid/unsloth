@@ -21,6 +21,7 @@ export function codingRunAdapter(
       state.connection !== "connected" ||
       state.recovering ||
       state.submitting ||
+      state.native?.pending_user_request === true ||
       state.configuring ||
       state.configurationUncertain ||
       Boolean(
@@ -28,6 +29,9 @@ export function codingRunAdapter(
           state.uncertainSubmission ||
           state.storageError ||
           state.reconcilingAction ||
+          state.planControl ||
+          state.goalChanging ||
+          state.reconcilingGoal ||
           state.commandBusy ||
           state.uncertainCommand ||
           state.overlapWarning,

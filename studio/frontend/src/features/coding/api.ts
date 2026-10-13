@@ -14,6 +14,8 @@ import type {
 import type {
   McpDraft,
   McpInventory,
+  McpOperation,
+  McpOperationInspection,
   McpSaveResult,
   McpSettingsApi,
 } from "./mcp-types";
@@ -134,6 +136,43 @@ export const codingApi: CodingApi = {
  * reconciled by an explicit editor read, not a second submission.
  */
 export const mcpSettingsApi: McpSettingsApi = {
+  async apply(id, operationId) {
+    return (await (
+      await codingRequest(
+        `/conversations/${encodeURIComponent(id)}/mcp/apply`,
+        {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ operation_id: operationId }),
+        },
+      )
+    ).json()) as McpOperation;
+  },
+  async reconnect(id, operationId, name) {
+    return (await (
+      await codingRequest(
+        `/conversations/${encodeURIComponent(id)}/mcp/reconnect`,
+        {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            operation_id: operationId,
+            name: name ?? null,
+          }),
+        },
+      )
+    ).json()) as McpOperation;
+  },
+  async inspectOperation(id, operationId) {
+    return (await (
+      await codingRequest(
+        `/conversations/${encodeURIComponent(id)}/mcp/operations/${encodeURIComponent(operationId)}`,
+        { cache: "no-store" },
+      )
+    ).json()) as McpOperationInspection;
+  },
   async inventory(id) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/mcp/inventory`,
@@ -239,6 +278,39 @@ export async function discoverCodingSkills(id: string, signal?: AbortSignal) {
 }
 
 export const codingRunApi: RunApi = {
+  async changeGoal(id, change) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/goal`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(change),
+      },
+    );
+    return await response.json();
+  },
+  async setMode(id, mode) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/mode`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      },
+    );
+    return await response.json();
+  },
+  async answer(id, target, answers) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/requests/${encodeURIComponent(target.request_id)}/questions/${encodeURIComponent(target.user_request_id)}/answers`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscription: target.subscription, answers }),
+      },
+    );
+    return await response.json();
+  },
   async commands(id) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/commands`,
@@ -258,6 +330,21 @@ export const codingRunApi: RunApi = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, tail, operation_id: operationId }),
+      },
+    );
+    return await response.json();
+  },
+  async decidePlan(id, plan, decision) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/plan-actions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          plan_id: plan.id,
+          revision: plan.revision,
+          decision,
+        }),
       },
     );
     return await response.json();

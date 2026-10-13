@@ -17,6 +17,9 @@ const { McpAppliedState } = loadWithStubs<typeof Applied>(
   { "react/jsx-runtime": jsxRuntime },
 );
 const inventory: McpInventory = {
+  saved_revision: "native-saved-r1",
+  applied_revision: "native-applied-r0",
+  configured_tools: 0,
   documents: [],
   entries: [],
   effective: [],

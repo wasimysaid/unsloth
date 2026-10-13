@@ -46,6 +46,15 @@ class ProviderRequest:
         assert any(tool.get("function", {}).get("name") == name for tool in self.body.get("tools", [])), f"Native provider did not advertise {name}"
         self.response.put((200, "text/event-stream", tool_completion(identifier, name, arguments)))
 
+    def ask_user(self, identifier: str, questions: list[dict]) -> None:
+        # Only provider tool-call identity/arguments are supplied by the fixture.
+        # Native Mimir creates the actual pending user-request identity and waits.
+        # Native's tool schema admits omitted options for open-ended questions,
+        # but an explicitly supplied options array must contain 2–4 choices.
+        arguments = [{key: value for key, value in question.items()
+                      if key != "options" or value} for question in questions]
+        self.tool(identifier, "ask_user", {"questions": arguments})
+
     def fail(self) -> None:
         # No secret/configuration content in the public fixture failure.
         self.response.put((400, "text/plain", b"ACCEPTANCE_PROVIDER_FAILURE"))

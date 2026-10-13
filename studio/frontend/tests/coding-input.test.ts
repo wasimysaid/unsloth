@@ -204,6 +204,15 @@ async function harness(storage = memorySubmissionStorage()) {
   let deliver!: (value: unknown) => Promise<void>;
   let failure: Error | null = null;
   const api: RunApi = {
+    async setMode() {
+      throw new Error("Rich input must not change coding mode");
+    },
+    async decidePlan() {
+      throw new Error("Rich input must not decide a native plan");
+    },
+    async answer() {
+      throw new Error("Input tests must not answer a question");
+    },
     async configure() {
       throw new Error("Unexpected configuration change in rich-input test");
     },

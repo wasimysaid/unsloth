@@ -21,6 +21,9 @@ const native: NativeState = {
     { id: "parent-request", status: "running", submission_key: "key" },
   ],
   pending_user_request: false,
+  plan: null,
+  action_disabled_reason: null,
+  user_request: null,
 };
 const child: ChildAttempt = {
   handle: "agent-native",
@@ -35,6 +38,15 @@ function harness() {
   let position = 0;
   const cancellations: unknown[] = [];
   const api: RunApi = {
+    async setMode() {
+      throw new Error("Child inspection must not change coding mode");
+    },
+    async decidePlan() {
+      throw new Error("Child inspection must not decide a native plan");
+    },
+    async answer() {
+      throw new Error("Child inspection must not answer a parent question");
+    },
     async configure() {
       throw new Error("Child inspection must not configure the parent");
     },
