@@ -41,6 +41,7 @@ class CodingRuntime:
         self._start_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
         self._pending: dict[int, asyncio.Future] = {}
+        self._opening_views: set[int] = set()
         self._subscriptions: dict[str, asyncio.Queue] = {}
         self._overflowed: set[str] = set()
         self._abandoned_views: set[int] = set()
@@ -221,7 +222,9 @@ class CodingRuntime:
                     ))
                 elif "result" in payload:
                     result = payload["result"]
-                    if isinstance(result, dict) and isinstance(result.get("subscription"), str):
+                    if identifier in self._opening_views and isinstance(result, dict) and isinstance(result.get("subscription"), str):
+                        # Only view admission acquires a queue. Answer ACKs echo the
+                        # existing subscription; replacing it strands the SSE reader.
                         # Register before waking the command caller: a native start may
                         # immediately follow the response in the very same pipe read.
                         queue = asyncio.Queue(maxsize = 128)
@@ -254,6 +257,8 @@ class CodingRuntime:
             raise CodingRuntimeError("invalid", "The coding command is too large.")
         future = asyncio.get_running_loop().create_future()
         self._pending[identifier] = future
+        if method == "view":
+            self._opening_views.add(identifier)
         delivered = False
         try:
             async with self._write_lock:
@@ -280,6 +285,7 @@ class CodingRuntime:
             raise CodingRuntimeError("disconnected", "The coding runtime disconnected; nothing was replayed.") from exc
         finally:
             self._pending.pop(identifier, None)
+            self._opening_views.discard(identifier)
             if method == "view" and not delivered and not self._failure:
                 if future.done() and not future.cancelled():
                     if future.exception() is None:

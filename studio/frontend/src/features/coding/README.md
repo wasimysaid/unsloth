@@ -1,4 +1,4 @@
-# Coding native run/stop, recovery, reported changes, rich inputs, concurrency and Mimir Settings
+# Coding native execution, recovery, questions, goals, reported changes, rich inputs, concurrency and Mimir Settings
 
 `/coding` keeps Studio’s authenticated route gate, sidebar primitives and composer
 CSS, without importing ordinary chat execution, tool orchestration, model loading
@@ -67,6 +67,62 @@ content is authoritative, not model-only output. Starts/results of one invocatio
 share a compact chronological slot; repeated invocations remain separate. Historical
 reports are labeled and are not claims about the current filesystem. There are no
 Apply/Revert controls or tool-selection pills.
+
+## Native mode and plan decisions (#239)
+
+Build/Plan radios show only `state.configuration.mode` from the ordered native view.
+They never optimistically change mode, accept a plan, or rewrite running work.
+`POST /conversations/{id}/mode` sends only `{mode}` to native configuration.
+`POST /conversations/{id}/plan-actions` sends `{plan_id,revision,decision}` to native
+admission; decisions are `implement`, `implement_fresh`, and `save_and_stop`, not
+prompts or mode changes. Native current identity, revision and busy admission are
+authoritative. All admitted decisions return to Build; save-and-stop starts no
+implementation request. Fresh implementation clears model context, not saved public
+history.
+
+The expandable current plan preserves native identity, status, path and Markdown.
+Saved lifecycle rows use the same renderer as inspection-only historical records,
+without actionable controls. Clipping is disclosed. Controls explain busy/refused
+states, action failures and reconnect uncertainty in text. After a mode/plan command,
+reconstruct a fresh captured view before permitting another choice. Lost responses
+never trigger command replay. Late responses to a detached surface do not reconnect
+it. A subsequent choice must address the currently captured native revision;
+native stale validation is still required for races after browser checks.
+
+Stable selectors: `coding-current-plan`, `coding-historical-plan`,
+`coding-plan-content`, `coding-plan-mode`, `coding-plan-reconciliation`.
+
+## Native question cards (#237)
+
+The authoritative `state.user_request` supplies question IDs, prompts, native option
+labels/descriptions, and single/multiple selection. Expanded inline cards render
+those controls separately from the disabled ordinary composer. HTML radio groups,
+checkboxes, freeform textareas and Submit support keyboard operation and wrap at
+narrow widths. A new card focuses its heading only while following latest activity;
+reconnect does not steal focus from an existing draft or earlier reading.
+
+`POST /conversations/{id}/requests/{request_id}/questions/{user_request_id}/answers`
+uses `{subscription, answers:[{question_id,selected_options,freeform_text}]}`. Every
+answer captures the exact current live view, running request and pending native
+question identity. Browser guards invalidate old controls on Stop, replacement,
+completion, reconnect and detach; host/native validation is the final authority.
+A command being sent is **Submitting**, never accepted. Only a matching native
+acceptance or typed saved public answer evidence can confirm **Accepted**. The
+transcript displays native accepted answer rows, including after history restoration.
+
+A lost acknowledgement never triggers automatic replay. A fresh atomic view and
+captured-cut history reconcile the exact answer. If the native question is still
+waiting, the retained draft is actionable only through explicit resubmission using
+the new live view. If it is gone with no available accepted evidence, its outcome
+stays unconfirmed and the old draft cannot answer a replacement. Transport loss
+neither cancels the question nor releases the host owner. Native errors remain
+visible with their draft. Up to eight form drafts are ephemeral, not saved public
+history; a full browser reload drops unsent drafts but never replays an answer.
+
+Evidence selectors: `coding-question-card` (native `data-question-id`,
+`data-request-id`, `data-subscription`), `coding-answer-status`, and
+`coding-submit-answer`. Cards disappear from latest activity when their accepted
+native transcript row is visible; no optimistic or duplicate answer row is added.
 
 ## Concurrent conversations and overlap (#247)
 
@@ -201,9 +257,10 @@ or arbitrary last-event replay is sent. The persistent disconnect banner survive
 HTTP connection, unfinished entry reads and recovering resets until capture/checkpoint
 is complete. A native closed view instead requires deliberate reopen, preserving
 native lease/folder/trust errors. Detach aborts only watching and reconnect timers,
-not accepted work or the conversation owner. Late Stop replies are gated by the
-captured lifecycle generation, so neither cancellation refusal nor transport failure
-can reconnect a detached or superseded view. No process restart or command replay
+not accepted work or the conversation owner. Late Stop replies are gated by command attachment lifetime and exact terminal
+evidence, so neither cancellation refusal nor transport failure can reconnect a
+detached surface. Mode-driven view reconstruction does not retire an outstanding
+Stop reply or strand its error reconciliation. No process restart or command replay
 is added. Nonprogressing/oversized older pages stay visibly incomplete and actionable.
 Coding-specific transport messages explicitly leave delivery/work unconfirmed rather
 than inferring host death or suggesting relaunch; native HTTP refusals and aborts
@@ -213,6 +270,31 @@ Stable browser evidence selectors: `coding-disconnect-banner`,
 `coding-delivery-recovery` (with `data-submission-key`), `coding-retry-submission`,
 `coding-submission-recovered`, `coding-submission-storage-error`, `coding-unsent-draft`,
 `coding-action-reconciliation`, and `coding-opening-reconciliation`.
+
+## Autonomous goals (#240)
+
+`GoalSummary` is a compact keyboard-operable disclosure above the transcript. The
+native goal objective, phase/cause/reason, independent review gap and accepted
+completion checklist remain separate from ordinary request status. Only a native
+`complete` goal with its independent completion evidence is labeled verified;
+ordinary turns, model claims and HTTP acknowledgments do not establish completion.
+The expanded content is bounded/scrollable and controls wrap on narrow screens.
+
+`POST /conversations/{id}/goal` forwards native `{revision, action, objective?,
+duration_seconds?}` to `change_goal`. The native owner projects admitted actions
+and explanations in `goal_controls` and atomically rejects stale admission identities.
+Studio does not infer busy support or weaken native guards to enable a button.
+Start/edit drafts capture their original revision and remain visibly stale after a
+state change; they cannot submit against a different incarnation. All goal actions
+are disabled during incomplete reconstruction or uncertain delivery. A fresh captured
+view reconciles uncertain commands without replay. Late replies cannot revive a
+detached/superseded watcher. Main-session Stop remains separately available while a
+goal command is pending and retains its existing awaited-cleanup semantics.
+
+Pause is not Stop, clear is not history deletion, and reopening never resumes work.
+A native `restart` cause is shown as interrupted requiring explicit resume.
+The `--workload goals` coding-route browser driver exercises this product path with
+deterministic external provider/reviewer replies, not a real-model workload claim.
 
 ## Native commands and current-session diagnostics (#243)
 

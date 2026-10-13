@@ -9,8 +9,10 @@ import unittest
 from unittest.mock import patch
 import urllib.request
 
-from coding_browser_acceptance import shared_trust_path
+from coding_browser_acceptance import FIXTURE_WORKLOADS, WORKLOADS, shared_trust_path
+from coding_plan_scenarios import ACTION_LABELS, action_body, proposed_plan, provider_context, validate_action_ack
 from coding_provider_fixture import ProviderFixture, ProviderRequest, text_completion, tool_completion
+from coding_question_scenarios import QUESTION_SET, accepted_answer_rows, answer_url
 from coding_extension_scenarios import (DISABLED_PLUGIN, NONLIVE_PLUGIN, EFFECTIVE_SKILL,
                                         DISABLED_SKILL, prepare_extension_fixtures,
                                         advance_disabled_fixture_version,
@@ -66,6 +68,23 @@ class DeterministicProviderTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "absent"):
             request.tool_result("missing-id")
         self.assertEqual(request.tool_result("actual-tool"), "actual result")
+
+    def test_ask_user_fixture_supplies_only_advertised_tool_arguments(self):
+        request = ProviderRequest({"tools": [{"function": {"name": "ask_user"}}]})
+        request.ask_user("provider-call-not-native-question-id", QUESTION_SET)
+        status, content_type, payload = request.response.get_nowait()
+        self.assertEqual((status, content_type), (200, "text/event-stream"))
+        event = json.loads(payload.decode().split("\n")[0][6:])
+        tool = event["choices"][0]["delta"]["tool_calls"][0]
+        self.assertEqual(tool["id"], "provider-call-not-native-question-id")
+        self.assertEqual(tool["function"]["name"], "ask_user")
+        arguments = json.loads(tool["function"]["arguments"])["questions"]
+        self.assertEqual(arguments[:2], QUESTION_SET[:2])
+        self.assertEqual(arguments[2], {key: value for key, value in QUESTION_SET[2].items() if key != "options"})
+        self.assertNotIn("options", arguments[2], "Open-ended native tool input omits the optional bounded options array")
+        self.assertEqual(QUESTION_SET[2]["options"], [], "Expected public controls are not mutated by the provider fixture")
+        with self.assertRaisesRegex(AssertionError, "did not advertise"):
+            ProviderRequest({"tools": []}).ask_user("call", QUESTION_SET)
 
     def test_real_loopback_http_consumes_request_and_serves_sse(self):
         fixture = ProviderFixture()
@@ -271,6 +290,90 @@ class ChildWorkloadTests(unittest.TestCase):
         events[1]["child"]["attempt"] = None
         with self.assertRaisesRegex(AssertionError, "exact attempt"):
             validate_child_events(events, "agent-exact")
+
+
+class PlanWorkloadTests(unittest.TestCase):
+    def test_plan_uses_fixture_without_changing_live_or_opening_workloads(self):
+        self.assertIn("plan", WORKLOADS)
+        self.assertIn("plan", FIXTURE_WORKLOADS)
+        self.assertIn("questions", WORKLOADS)
+        self.assertIn("questions", FIXTURE_WORKLOADS)
+        self.assertIn("goals", WORKLOADS)
+        self.assertIn("goals", FIXTURE_WORKLOADS)
+        self.assertEqual(set(FIXTURE_WORKLOADS), {
+            "deterministic", "picker", "recovery", "plan", "goals", "questions", "commands", "retirement",
+            "concurrency", "children", "inputs", "file-changes",
+        })
+        self.assertTrue(set(FIXTURE_WORKLOADS).issubset(WORKLOADS))
+        self.assertNotIn("live", FIXTURE_WORKLOADS)
+        self.assertNotIn("opening", FIXTURE_WORKLOADS)
+
+    def test_proposal_is_a_final_native_block_not_a_simulated_execution(self):
+        answer = proposed_plan("Native review", "EVIDENCE_239", "native.txt")
+        self.assertTrue(answer.startswith("<proposed_plan>\n# Native review\n"))
+        self.assertTrue(answer.endswith("\n</proposed_plan>"))
+        for heading in ("## Requirements", "## Technical Design", "## Delivery Plan", "### 1.", "### 2."):
+            self.assertIn(heading, answer)
+        self.assertIn("EVIDENCE_239", answer)
+        self.assertIn("native.txt", answer)
+
+    def test_action_body_preserves_exact_native_artifact_and_revision(self):
+        plan = {"id": "native-plan-239", "revision": "review_pending:" + "a" * 64}
+        for decision in ACTION_LABELS:
+            with self.subTest(decision=decision):
+                self.assertEqual(action_body(plan, decision), {
+                    "plan_id": plan["id"], "revision": plan["revision"], "decision": decision})
+        self.assertEqual(plan, {"id": "native-plan-239", "revision": "review_pending:" + "a" * 64})
+        for malformed in ({"revision": "r"}, {"id": "p"}, {"id": "", "revision": "r"}, {"id": "p", "revision": ""}):
+            with self.subTest(plan=malformed), self.assertRaises(AssertionError):
+                action_body(malformed, "implement")
+        with self.assertRaisesRegex(AssertionError, "Unknown"):
+            action_body(plan, "switch-to-build-only")
+
+    def test_ack_requires_exact_target_and_native_request_for_implementation(self):
+        plan = {"id": "native-plan"}
+        for decision in ACTION_LABELS:
+            valid = {"conversation_id": "native-conversation", "plan_id": "native-plan",
+                     "decision": decision, "request_id": None if decision == "save_and_stop" else "native-request"}
+            validate_action_ack(valid, "native-conversation", plan, decision)
+            for field, wrong in (("conversation_id", "other-conversation"), ("plan_id", "other-plan"),
+                                 ("decision", "other-decision"),
+                                 ("request_id", "must-not-run" if decision == "save_and_stop" else None)):
+                with self.subTest(decision=decision, field=field), self.assertRaises(AssertionError):
+                    validate_action_ack(dict(valid, **{field: wrong}), "native-conversation", plan, decision)
+        with self.assertRaisesRegex(AssertionError, "Unknown"):
+            validate_action_ack({}, "native-conversation", plan, "unrecognized")
+
+    def test_provider_context_inspects_message_text_not_credentials_or_tool_schema(self):
+        request = ProviderRequest({"authorization": "not-message-context", "tools": [{"secret": "not-context"}],
+                                   "messages": [{"role": "user", "content": "EARLIER_CONTEXT"},
+                                                {"role": "user", "content": [
+                                                    {"type": "text", "text": "<accepted_plan>plan</accepted_plan>"},
+                                                    {"type": "image_url", "image_url": {"url": "private-url"}}]}]})
+        self.assertEqual(provider_context(request), "EARLIER_CONTEXT\n<accepted_plan>plan</accepted_plan>")
+        self.assertEqual(provider_context(ProviderRequest({"messages": [{"role": "user", "content": None}]})), "")
+
+
+class QuestionEvidenceTests(unittest.TestCase):
+    def test_exact_ids_are_encoded_as_distinct_url_segments(self):
+        self.assertEqual(answer_url("http://test", {"conversation_id": "conversation/one", "request_id": "request?two",
+                                                   "user_request_id": "question three", "subscription": "not-in-url"}),
+                         "http://test/api/coding/conversations/conversation%2Fone/requests/request%3Ftwo/questions/question%20three/answers")
+
+    def test_history_audit_requires_one_durable_input_for_each_exact_question(self):
+        answers = [{"question_id": "notes", "selected_options": [], "freeform_text": "actual answer"}]
+        row = {"id": "public-row", "entry_id": "native-entry", "kind": "user", "answer": {
+            "request_id": "native-request", "user_request_id": "native-question", "answers": [{**answer, "none_of_above": False} for answer in answers]}}
+        expected = {("native-request", "native-question"): answers}
+        self.assertEqual(accepted_answer_rows([{"kind": "assistant", "text": "done"}, row], expected), [row])
+        for rows, wanted in (([], expected), ([row, row], expected),
+                             ([row, row], {**expected, ("native-request", "replacement-question"): answers}),
+                             ([row], {("another-request", "native-question"): answers}),
+                             ([{**row, "entry_id": None}], expected),
+                             ([{**row, "kind": "tool"}], expected),
+                             ([row], {("native-request", "native-question"): []})):
+            with self.subTest(rows=rows, expected=wanted), self.assertRaises(AssertionError):
+                accepted_answer_rows(rows, wanted)
 
 
 if __name__ == "__main__":

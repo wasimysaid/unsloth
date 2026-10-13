@@ -104,6 +104,51 @@ class PromptSubmission(BaseModel):
         return self
 
 
+class ModeSelection(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    mode: Literal["build", "plan"]
+
+
+class PlanSelection(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    plan_id: str = Field(min_length = 1, max_length = 128)
+    revision: str = Field(min_length = 1, max_length = 256)
+    decision: Literal["implement", "implement_fresh", "save_and_stop"]
+
+
+class GoalChange(BaseModel):
+    """Native admission identity, not a Studio lifecycle or completion claim."""
+    model_config = ConfigDict(extra = "forbid")
+    revision: str = Field(min_length = 1, max_length = 1024)
+    action: Literal["start", "edit", "pause", "resume", "clear"]
+    objective: str | None = Field(default = None, min_length = 1, max_length = 65536)
+    duration_seconds: int | None = Field(default = None, ge = 1800, le = 9007199254740991, strict = True)
+
+    @model_validator(mode = "after")
+    def valid_action_fields(self):
+        if self.action in ("start", "edit"):
+            if not self.objective or not self.objective.strip():
+                raise ValueError("Start and edit require a non-empty goal objective.")
+        elif "objective" in self.model_fields_set:
+            raise ValueError("Only start and edit accept an objective.")
+        if self.action not in ("start", "resume") and "duration_seconds" in self.model_fields_set:
+            raise ValueError("Only start and resume accept a duration.")
+        return self
+
+
+class QuestionAnswer(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    question_id: str = Field(min_length = 1, max_length = 128)
+    selected_options: list[str] = Field(max_length = 4)
+    freeform_text: str | None = Field(default = None, max_length = 65536)
+
+
+class AnswerSubmission(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    subscription: str = Field(min_length = 1, max_length = 128)
+    answers: list[QuestionAnswer] = Field(min_length = 1, max_length = 3)
+
+
 class CommandInvocation(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     operation_id: str = Field(min_length = 1, max_length = 128)
@@ -156,6 +201,7 @@ def _http_error(exc: CodingRuntimeError) -> HTTPException:
         })
     status = {"invalid": 400, "not_found": 404, "denied": 403,
               "busy": 409, "conflict": 409, "trust_conflict": 409,
+              "stale_plan": 409, "stale_goal": 409,
               "unavailable": 503, "disconnected": 503, "uncertain": 504,
               "limit": 429, "failed": 502, "protocol": 502}.get(exc.code, 502)
     return HTTPException(status_code = status, detail = exc.message,
@@ -297,6 +343,37 @@ async def submit_prompt(conversation_id: str, body: PromptSubmission, request: R
 async def cancel_request(conversation_id: str, request_id: str, request: Request):
     # Acceptance is not settlement. The ordered native view confirms completion.
     return await _command(request, "cancel", {"conversation_id": conversation_id, "request_id": request_id})
+
+
+@router.post("/conversations/{conversation_id}/mode")
+async def select_mode(conversation_id: str, body: ModeSelection, request: Request):
+    # Configuration selection is not plan acceptance; native execution owns admission.
+    return await _command(request, "set_mode", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+@router.post("/conversations/{conversation_id}/plan-actions")
+async def decide_plan(conversation_id: str, body: PlanSelection, request: Request):
+    # Exact current identity/revision is validated at the native operation boundary.
+    return await _command(request, "decide_plan", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+@router.post("/conversations/{conversation_id}/goal")
+async def change_goal(conversation_id: str, body: GoalChange, request: Request):
+    # Native owner validates revision and admission atomically. No retry or
+    # inference from an accepted command to verified completion belongs here.
+    return await _command(request, "change_goal", {"conversation_id": conversation_id,
+                                                  **body.model_dump(exclude_unset = True)})
+
+
+@router.post("/conversations/{conversation_id}/requests/{request_id}/questions/{user_request_id}/answers")
+async def answer_questions(conversation_id: str, request_id: str, user_request_id: str,
+                           body: AnswerSubmission, request: Request):
+    # Native admission validates the current request/question/view before accepting
+    # the waiter. Public answer history and terminal cleanup are separate evidence;
+    # uncertain delivery must be reconciled through the native view, never replayed.
+    return await _command(request, "answer", {"conversation_id": conversation_id,
+                          "request_id": request_id, "user_request_id": user_request_id,
+                          **body.model_dump()})
 
 
 @router.get("/conversations/{conversation_id}/commands")

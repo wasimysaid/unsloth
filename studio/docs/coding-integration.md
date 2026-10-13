@@ -1,4 +1,128 @@
-# Coding: trusted projects, run/stop, recovery, reported file changes, rich inputs, concurrency, idle retirement and focused Settings
+# Coding: trusted projects, native execution, recovery, plans, questions, goals, models, reported changes, rich inputs, concurrency, idle retirement and focused Settings
+
+## Native plans and explicit implementation (#239)
+
+Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`
+and paired private Mimir `91b975adae2df627d7c67c6bcede6d910a592a7d`.
+Build/Plan controls select native configuration; only the ordered native view changes
+the displayed mode. Selecting Build never accepts a plan. Native busy guards remain
+in charge and already-running work is not rewritten.
+
+The current native plan is expandable and keeps its identity, Markdown, path,
+revision and lifecycle. Public saved lifecycle records use the same inspection-only
+renderer and preserve their recorded bodies when reopened, not today's filesystem
+contents. Plan actions address the exact captured revision and native identity.
+Implementation continues the conversation, fresh implementation clears model context
+while retaining public history, and save-and-stop persists the plan without starting
+an implementation request. All three native decisions return to Build.
+
+The authenticated bridge admits separate `set_mode` and `decide_plan` commands, not
+synthetic prompts or mode-switch acceptance. Native validation rejects stale revisions,
+changed current plans and accepted-action replay. Browser controls display busy/error
+reasons and reconstruct a fresh captured view after any action response, including
+uncertain delivery. Reconnection never replays a plan decision. An acknowledgment is
+not terminal implementation completion; native request/lifecycle evidence supplies
+that outcome.
+
+Run the plan workload after rebuilding the paired runtime/product plugin and frontend:
+
+```sh
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir /path/to/current/mimir --plugin-package /path/to/current/package \
+  --workload plan --browser firefox --evidence-dir /path/to/worker/plans
+```
+
+This uses the built UI, authenticated coding routes, installed product plugin and
+native Mimir with a deterministic HTTP provider. It is not live-model acceptance
+or implemented-UI human review; those remain the separate #255–256 gates.
+
+## Autonomous-goal slice (#240)
+
+Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`
+and private Mimir `91b975adae2df627d7c67c6bcede6d910a592a7d`.
+The compact goal disclosure above the transcript shows native objective,
+phase/cause/reason, independent review gap and accepted completion checklist.
+Latest visible native `update_status` public output is also inspectable as a
+conversation-level progress report, explicitly not goal-specific verification;
+historical and clipped reports remain labeled. No private result JSON is decoded
+and no second checklist/history store is introduced.
+
+The authenticated goal endpoint passes native admission identity and action to the
+same production frontend plugin. Native controls provide admitted actions and
+busy/disabled reasons; Mimir owns scheduling and lifecycle. Start/edit drafts retain
+their captured identity and become non-submittable when stale. Reconnect and
+uncertain responses reconstruct native state before another action, never replay
+commands. Main-session Stop remains available while goal admission is pending;
+its exact cancellation attempt survives goal-triggered watcher reconstruction,
+while detach and terminal settlement still supersede late replies.
+
+Only native independently reviewed completion evidence establishes verified goal
+completion. Model claims, command acknowledgment and ordinary request completion
+cannot do so. Pause/clear cancel only the matching goal-owned root and children,
+never unrelated activity; admission acknowledgment is not cleanup. Main-session Stop
+remains the separate awaited-cleanup control. Reopened interrupted goals require
+explicit resume. Native start/resume require idle admission and a model; edit/pause/
+clear retain their native phase guards during busy activity. This revalidates and
+corrects the former blanket busy-refusal documentation without relaxing guards.
+Goal strings/evidence are clipped at native public display bounds (16 KiB/string,
+64 KiB aggregate, 128 checklist entries), with explicit partial-evidence notices.
+Clipped objective text is not silently reused as the full replacement in an edit.
+
+Run the real coding-route goal driver after building the paired CLI/plugin and UI:
+
+```sh
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir /path/to/current/mimir --plugin-package /path/to/current/package \
+  --workload goals --evidence-dir /path/to/worker/goals
+```
+
+A2/A7/A10 evidence is recorded through authenticated production coding routes,
+installed product plugin, native tools/goals and the built rendered UI at
+1440×1000 and 390×844. Deterministic provider and independent-review replies remain
+fixture evidence, not real-model acceptance. Completed external-provider/local-model
+workloads and implemented-UI human review remain the separate #255–256 gates.
+
+## Safe questions slice (#237)
+
+Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`
+and private Mimir `91b975adae2df627d7c67c6bcede6d910a592a7d`.
+The native public state now supplies the actual pending question and controls.
+Expanded inline cards stay separate from ordinary prompt input, with keyboard-native
+single/multiple selection, custom answers, non-color status and wrapping layout.
+Focus follows the exact accepted question when its controls disappear, including
+checkpoint row replacement; outside interaction revokes a deferred focus handoff.
+
+Answers target the exact conversation, live view, active coding request and pending
+user request. Native admission validates current authority; stale actions must not
+answer another question. The authenticated endpoint and private framing carry the
+same identities. Public accepted answers are restored from Mimir history, never
+synthesized from a sent browser command. Waiting, submitting, accepted, errors and
+unconfirmed delivery remain distinct. Stop still awaits terminal native cleanup.
+The bridge acquires an event queue only for a `view` command: answer acknowledgments
+merely echo their target subscription and must not replace the queue held by SSE.
+
+On answer transport uncertainty the frontend retains its in-memory draft, opens a
+fresh captured view/history cut, and reconciles the exact question. It never blindly
+resubmits. Confirmed still-waiting state permits only an explicit action with the new
+view identity; an absent question without accepted evidence remains unconfirmed and
+non-actionable, not cancelled. Native validation errors preserve the draft. Full
+browser reload drops unsent form drafts, but accepted native transcript answers
+remain readable and no answer is replayed. These drafts are not a second history.
+
+Reproduce the deterministic native coding-route scenarios with:
+
+```sh
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir /path/to/paired/mimir --plugin-package /path/to/current/package \
+  --workload questions --browser firefox --evidence-dir /path/to/worker/questions
+```
+
+Focused contract suites and the route driver cover accepted/history-restored answers,
+invalid and stale identities, replacement, lost acknowledgements, reconnect and
+Stop while waiting. Browser evidence records exact view/conversation/request/question
+identities, desktop 1440×1000 and narrow 390×844 viewports, screenshots and confirmed
+terminal cleanup. This is deterministic provider/fault-injected native execution,
+not external-provider/local-model full-PoC or human-review acceptance (#255–256).
 
 ## Native MCP apply/reconnect (#251)
 
@@ -619,10 +743,23 @@ The task-local `worker/ticket-result.json` and browser `report.json` identify ac
 commands/artifacts/results; this tracked matrix intentionally contains no stale
 claim tied to a mutable local HEAD or absent screenshots.
 
+## Question-contract replacement inventory (#237)
+
+Session Control 11 replaces the former pending-ID-only answer call with an exact
+active-request plus pending-user-request call. Tool Invocation 9 follows its public
+dependency. Native controller/carrier callers, generated SDK imports, TUI responder,
+registry expectations, fixtures and SDK documentation are updated together; the old
+answer admission form is not kept as a competing fallback. Display entries and view
+observations add typed accepted-answer metadata, projected natively from the existing
+question-result journal with exact correlation IDs. No private schema is decoded by
+Studio, no second receipt/history store is added, and generic tool results remain
+available independently of accepted answers. SDK fixtures must be rebuilt against
+these contracts, not reused from an older Wasm artifact.
+
 | ID | Implemented coverage (see attempt reports for verification) | Remaining capability evidence |
 |---|---|---|
 | A1 | Native opening/SDK contracts; single supervised product plugin; authenticated HTTP/SSE; exact submission/request/tool identities; atomic ordered public view, checkpoints/reset/recovery, bounded cut reads and durable reconnect reconciliation (#236) | Cross-feature integration and packaged-consumer regression (#254) |
-| A2 | Native prompt/Stop controls; compact inspectable public tool results/failures and clipping disclosure; exact child-attempt inspector with non-consuming outcomes, public historical completion records, bounded child views and real native-delegation route driver (#241) | Questions, modes, plans/goals and diagnostics (respective tickets); cross-feature/live-model acceptance (#254/#255) |
+| A2 | Native prompt/Stop controls; compact inspectable public tool results/failures and clipping disclosure; native inline questions and retained accepted answers (#237); exact child-attempt inspector with non-consuming outcomes, public historical completion records, bounded child views and real native-delegation route driver (#241) | Modes, plans/goals and cross-feature/live-model acceptance (#254/#255) |
 | A3 | Shared typed live/historical reported changes; collapsed inspection-only rows, bounded unified hunks, optional counts and incomplete/binary labels (#238) | See task-local file-change browser and SDK reports; cross-feature/live acceptance (#254/#255) |
 | A4 | #244 next-request picker: native catalog/identity, stepped reasoning/default reset, provider search/navigation/favorites, separate running/next state, configuration/dequeue races | Live catalog refresh (#245) and cross-feature integration (#254) |
 | A5 | Externally configured provider admission; no Studio local-model serving | Local-model requests and whole-request protection (#246/#255) |
@@ -698,5 +835,5 @@ Start/Resume, while Edit/Pause/Clear use the existing running-goal path and capt
 cancellation for Pause/Clear. Thus the historical blanket-busy discrepancy must
 be tested at the exact delivered source in #240; do not bypass guards or claim
 support solely from the enum. #235 must await exact cancellation settlement;
-#237 must address pending questions by native identity; #242 must use native
-image/skill admission. These capabilities are deliberately not wired here.
+#237 addresses pending questions by exact native and live-view identity; #242 must
+use native image/skill admission. Remaining capabilities are not wired here.
