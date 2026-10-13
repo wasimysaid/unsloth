@@ -1,4 +1,4 @@
-# Coding: native execution, recovery, maintenance, questions, goals, rich inputs, models, file changes and Settings
+# Coding: native execution, recovery, maintenance, plans, questions, goals, rich inputs, models, file changes and Settings
 
 ## Process recovery and whole-runtime maintenance (#249)
 
@@ -34,7 +34,7 @@ from a drained/prepared runtime. Completing a prepared restart still requires
 another explicit user action; inspection itself does not stop or replace a process.
 
 Create/open HTTP replies stamp `runtime_generation`. Prompts, question answers, goal changes,
-native command dispatch, cancellation, bounded history and SSE require
+mode selection, plan decisions, native command dispatch, cancellation, bounded history and SSE require
 `X-Mimir-Runtime-Generation` from that opening. Stale-tab
 operations are rejected before native delivery even if another tab has reopened
 the same saved conversation ID in the replacement process. Epochs do not reset to
@@ -84,6 +84,44 @@ local-model protection integration. The required combined local-protection clean
 scenario must be run once that dependency is integrated; no synthetic lease or
 per-inference protection is substituted. Full cross-feature/live/human acceptance
 remains #254–256 and cannot be claimed from this ticket's scoped evidence.
+
+## Native plans and explicit implementation (#239)
+
+Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`
+and paired private Mimir `91b975adae2df627d7c67c6bcede6d910a592a7d`.
+Build/Plan controls select native configuration; only the ordered native view changes
+the displayed mode. Selecting Build never accepts a plan. Native busy guards remain
+in charge and already-running work is not rewritten.
+
+The current native plan is expandable and keeps its identity, Markdown, path,
+revision and lifecycle. Public saved lifecycle records use the same inspection-only
+renderer and preserve their recorded bodies when reopened, not today's filesystem
+contents. Plan actions address the exact captured revision and native identity.
+Implementation continues the conversation, fresh implementation clears model context
+while retaining public history, and save-and-stop persists the plan without starting
+an implementation request. All three native decisions return to Build.
+
+The authenticated bridge admits separate `set_mode` and `decide_plan` commands, not
+synthetic prompts or mode-switch acceptance. Native validation rejects stale revisions,
+changed current plans and accepted-action replay. Browser controls display busy/error
+reasons and reconstruct a fresh captured view after an action response, including
+uncertain delivery. Owner-loss evidence instead requires deliberate reopening; it
+never automatically reconnects into a replacement owner or replays the command.
+Reconnection never replays a plan decision. An acknowledgment is
+not terminal implementation completion; native request/lifecycle evidence supplies
+that outcome.
+
+Run the plan workload after rebuilding the paired runtime/product plugin and frontend:
+
+```sh
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir /path/to/current/mimir --plugin-package /path/to/current/package \
+  --workload plan --browser firefox --evidence-dir /path/to/worker/plans
+```
+
+This uses the built UI, authenticated coding routes, installed product plugin and
+native Mimir with a deterministic HTTP provider. It is not live-model acceptance
+or implemented-UI human review; those remain the separate #255–256 gates.
 
 ## Autonomous-goal slice (#240)
 

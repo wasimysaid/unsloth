@@ -14,7 +14,8 @@ not ML/training startup. Default deterministic mode uses an external HTTP protoc
 fixture and real native tools, not a live model. --workload live uses the existing
 native provider/credential profile directly; history remains Mimir-owned there.
 Disposable projects, Studio auth and evidence stay in evidence-dir. Use a distinct
-evidence directory for each run. --workload opening runs the previous opening suite.
+evidence directory for each run. --workload opening runs the previous opening suite;
+--workload plan exercises native Plan refusal, each action, history and lost-ACK recovery.
 --workload questions covers keyboard answers, durable history, stale targets,
 pre/post-delivery ACK loss, reconnect/reopen and Stop while native ask_user waits.
 --workload picker adds ticket-244 rendered model/reasoning/favorites/layout checks
@@ -52,6 +53,7 @@ from coding_extension_scenarios import prepare_extension_fixtures, run_extension
 from coding_input_scenarios import prepare_input_project, input_scenarios, live_input_scenario
 from coding_recovery_scenarios import run_recovery_scenarios
 from coding_maintenance_scenarios import run_maintenance_scenarios, verify_shutdown
+from coding_plan_scenarios import run_plan_scenarios
 from coding_goal_scenarios import run_goal_scenarios
 from coding_question_scenarios import run_question_scenarios
 from coding_command_scenarios import run_command_scenarios
@@ -59,6 +61,10 @@ from coding_retirement_scenarios import run_retirement_scenarios
 from coding_concurrency_scenarios import run_concurrency_scenarios
 from coding_child_scenarios import CHILD_EVENT_CAPTURE, run_child_scenarios
 from coding_file_change_scenarios import LIVE_PROFILE_OBSERVER, run_file_change_scenarios
+
+
+WORKLOADS = ("opening", "deterministic", "picker", "recovery", "maintenance", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live")
+FIXTURE_WORKLOADS = ("deterministic", "picker", "recovery", "maintenance", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "file-changes")
 
 
 def shared_trust_path() -> Path:
@@ -75,8 +81,8 @@ def main() -> None:
     parser.add_argument("--plugin-package", type = Path)
     parser.add_argument("--commands-package", type = Path, help = "Current packaged SDK test.commands contribution fixture (commands workload only)")
     parser.add_argument("--evidence-dir", type = Path, required = True)
-    parser.add_argument("--workload", choices = ("opening", "deterministic", "picker", "recovery", "maintenance", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live"), default = "deterministic",
-                        help = "Live uses the existing native provider/credential profile; never copies credentials")
+    parser.add_argument("--workload", choices = WORKLOADS, default = "deterministic",
+                        help = "Fixture workloads use controlled HTTP provider replies with real native execution; live uses the existing native provider/credential profile and never copies credentials")
     parser.add_argument("--extensions", action = "store_true", help = "Run ticket-252 Settings inventory and scoped reload scenarios (requires deterministic workload)")
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
     parser.add_argument("--chrome", default = "/usr/bin/google-chrome", help = "Chromium executable; ignored for Firefox")
@@ -109,7 +115,7 @@ def main() -> None:
     live = args.workload in ("live", "inputs-live", "file-changes-live")
     native = shared_trust_path().parent if live else state_root / "mimir-home"
     native.mkdir(exist_ok = True)
-    provider = ProviderFixture() if args.workload in ("deterministic", "picker", "recovery", "maintenance", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "file-changes") else None
+    provider = ProviderFixture() if args.workload in FIXTURE_WORKLOADS else None
     if provider:
         provider.configure(native, picker = args.workload == "picker", images = args.workload == "inputs")
     extension_packages = prepare_extension_fixtures(state_root, native, args.plugin_package.resolve()) if args.extensions else []
@@ -412,6 +418,10 @@ def main() -> None:
                     elif args.workload == "maintenance":
                         run_maintenance_scenarios(page, context, base, provider, first, second_id,
                                                   report, scenario, snapshot, server.pid)
+                    elif args.workload == "plan":
+                        run_plan_scenarios(page, context, base, provider, first, second_id,
+                                           report, scenario, snapshot,
+                                           opening_generation = reopened.value.json()["runtime_generation"])
                     elif args.workload == "questions":
                         run_question_scenarios(page, context, base, provider, first, second_id,
                                                report, scenario, snapshot)
@@ -480,8 +490,13 @@ def main() -> None:
                     page.get_by_role("button", name = "Refresh coding conversations", exact = True).click()
                     owned_elsewhere = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text = foreign_id)
                     expect(owned_elsewhere).to_be_visible()
-                    owned_elsewhere.click()
-                    expect(page.get_by_role("alert").filter(has_text = "another process")).to_be_visible(timeout = 60000)
+                    with page.expect_response(lambda response: response.url == base + f"/api/coding/conversations/{foreign_id}/open"
+                                              and response.request.method == "POST", timeout = 60000) as refusal:
+                        owned_elsewhere.click()
+                    assert refusal.value.status == 409, "Studio bypassed native execution lease admission"
+                    refusal_detail = refusal.value.json()["detail"]
+                    assert "another owner" in refusal_detail, refusal_detail
+                    expect(page.get_by_role("alert").filter(has_text = refusal_detail)).to_be_visible(timeout = 60000)
                     expect(page.get_by_test_id("coding-conversation-id")).to_have_text(first_id)
                     assert foreign.poll() is None, "Studio cancelled the foreign owner"
                     snapshot(page, "desktop-lease-refusal")
@@ -534,8 +549,14 @@ def main() -> None:
                 ("get", f"/api/coding/conversations/{first_id}/overlap", {}),
                 ("get", f"/api/coding/conversations/{first_id}/skills", {}),
                 ("post", f"/api/coding/conversations/{first_id}/prompts", {"data": {"submission_key": "unauthenticated-valid-key", "text": "Must not execute"}}),
-                ("post", f"/api/coding/conversations/{first_id}/requests/{report.get('workload', report.get('recovery', report.get('children', report.get('file_changes', {})))).get('requests', [{}])[0].get('request_id', 'known-request')}/cancel", {}),
+                ("post", f"/api/coding/conversations/{first_id}/requests/{report.get('workload', report.get('recovery', report.get('plan', report.get('children', report.get('file_changes', {}))))).get('requests', [{}])[0].get('request_id', 'known-request')}/cancel", {}),
                 ("post", f"/api/coding/conversations/{first_id}/entries", {"data": {"cut": {}, "anchor": "latest", "max_entries": 10, "max_bytes": 1024}}),
+                *((
+                    ("post", f"/api/coding/conversations/{first_id}/mode", {"data": {"mode": "build"}}),
+                    ("post", f"/api/coding/conversations/{first_id}/plan-actions", {"data": {
+                        "plan_id": report["plan"]["plans"][-1]["id"],
+                        "revision": report["plan"]["plans"][-1]["revision"], "decision": "implement"}}),
+                ) if args.workload == "plan" else ()),
                 ("post", f"/api/coding/conversations/{first_id}/goal", {"data": {"revision": "unauthenticated-native-revision", "action": "pause"}}),
             ):
                 response = getattr(unauth, method)(path, **kwargs)
@@ -551,7 +572,7 @@ def main() -> None:
             if provider:
                 provider.assert_no_request()
             report["unauthenticated_requests"] = denied_requests
-            scenario("A6-known-id-auth", "All fifteen coding surfaces (browse/catalog/history/create/open/SSE/diagnostics/inventory/reload/overlap/skills/prompt/cancel/bounded entries/goal), including real conversation/request IDs, refused unauthenticated requests")
+            scenario("A6-known-id-auth", f"All {len(denied_requests)} checked coding surfaces, including exact native identities and workload-specific controls, refused unauthenticated requests")
             # Measure over more than two ordinary indicator polling intervals.
             # No ordinary-model status response is mocked and no model is loaded.
             page.wait_for_timeout(11000)

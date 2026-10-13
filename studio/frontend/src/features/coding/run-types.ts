@@ -2,6 +2,12 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 import type {
+  CodingMode,
+  NativePlan,
+  PlanActionResult,
+  PlanDecision,
+} from "./plan-types.ts";
+import type {
   ChildAttempt,
   ChildDetail,
   ChildPresentation,
@@ -90,6 +96,8 @@ export interface NativeState {
   active_request: string | null;
   requests: NativeRequest[];
   pending_user_request: boolean;
+  plan: NativePlan | null;
+  action_disabled_reason: string | null;
   goal?: NativeGoal | null;
   goal_controls?: GoalControls;
   user_request: NativeUserRequest | null;
@@ -110,13 +118,14 @@ export interface JournalCut {
 export type EntryAnchor = "latest" | { before: string } | { after: string };
 export interface CodingRow {
   id: string;
-  kind: "user" | "assistant" | "tool" | "notice" | "child";
+  kind: "user" | "assistant" | "tool" | "notice" | "plan" | "child";
   child?: ChildAttempt;
   text?: string;
   entry_id?: string | null;
   request_id?: string | null;
   clipped?: boolean;
   historical?: boolean;
+  plan?: NativePlan;
   answer?: {
     request_id: string;
     user_request_id: string;
@@ -154,6 +163,15 @@ export interface ProjectOverlap {
   conversations: { id: string }[];
 }
 export interface RunApi {
+  setMode(
+    id: string,
+    mode: CodingMode,
+  ): Promise<{ conversation_id: string; mode: CodingMode }>;
+  decidePlan(
+    id: string,
+    plan: NativePlan,
+    decision: PlanDecision,
+  ): Promise<PlanActionResult>;
   changeGoal?(
     id: string,
     change: GoalChange,

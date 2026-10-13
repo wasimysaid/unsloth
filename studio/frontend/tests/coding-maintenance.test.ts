@@ -314,6 +314,8 @@ test("rendered interrupted control never auto-submits and explicit click is disa
       running_configuration: null,
       pending_user_request: false,
       user_request: null,
+      plan: null,
+      action_disabled_reason: null,
     },
   };
   let continued = 0;
@@ -344,6 +346,7 @@ test("rendered interrupted control never auto-submits and explicit click is disa
   assert.equal(continued, 1);
   assert.equal(codingCanContinue({ ...state, goalChanging: "pause" }), false);
   assert.equal(codingCanContinue({ ...state, reconcilingGoal: "pause" }), false);
+  assert.equal(codingCanContinue({ ...state, planControl: { kind: "mode", mode: "build" } }), false);
   const uncertain = recovery.CodingRecoveryControls({
     state: {
       ...state,
@@ -429,6 +432,8 @@ for (const ownerGeneration of [1, 2, 100]) {
     let liveSignal!: AbortSignal;
     const cancelled: string[] = [];
     const api: RunApi = {
+      setMode: async () => { throw new Error("No mode should change"); },
+      decidePlan: async () => { throw new Error("No plan should be decided"); },
       answer: async () => { throw new Error("No answer should be replayed"); },
       configure: async () => { throw new Error("No configuration should change"); },
       checkOverlap: async () => { throw new Error("No overlap preflight should run"); },
@@ -574,6 +579,7 @@ for (const ownerGeneration of [1, 2, 100]) {
       "./presentation": {},
       "./answer-focus": answerFocus,
       "./question-card": { QuestionCard: "question-card" },
+      "./plan-card": { PlanCard: "plan-card", CodingModeControl: "mode-control" },
       "./goal-summary": { GoalSummary: "goal-summary" },
       "./run-runtime": { codingRunAdapter: () => ({}) },
       "./run-session": {
@@ -1017,6 +1023,8 @@ test("stream process loss retires cached cleanup and pre-loss reads before expos
   const run = createCodingRun(
     "saved",
     {
+      setMode: async () => { throw new Error("No mode replay"); },
+      decidePlan: async () => { throw new Error("No plan replay"); },
       answer: async () => { throw new Error("No answer replay"); },
       configure: async () => { throw new Error("No configuration replay"); },
       checkOverlap: async () => { throw new Error("No overlap replay"); },

@@ -41,6 +41,8 @@ export function goalActionDisabledReason(
     return "A goal action is awaiting native admission. Stop remains available.";
   if (state.reconcilingGoal)
     return "Inspecting a fresh native goal state; no action is replayed.";
+  if (state.planControl)
+    return "Reconcile native plan or mode admission before changing the goal.";
   if (state.stopping || state.reconcilingAction)
     return "Wait for main-session Stop and terminal cleanup to be confirmed.";
   if (state.submitting || state.uncertainSubmission)

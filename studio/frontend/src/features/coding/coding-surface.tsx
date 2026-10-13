@@ -21,6 +21,7 @@ import {
 } from "react";
 import { restoreAnswerFocus, watchAnswerFocus } from "./answer-focus";
 import { createCodingRunApi } from "./api";
+import { CodingModeControl, PlanCard } from "./plan-card";
 import { GoalSummary } from "./goal-summary";
 import { ChildActivityRows, ChildInspector } from "./child-inspector";
 import { CodingComposer } from "./coding-composer";
@@ -126,6 +127,8 @@ function NativeMessage() {
         ) : (
           <div className="space-y-2">{reports}</div>
         )
+      ) : row.plan ? (
+        <PlanCard plan={row.plan} historical={true} />
       ) : (
         <>
           <p className="mb-1 text-[11px] font-medium text-muted-foreground">
@@ -247,6 +250,7 @@ export function CodingSurface({
       !state.uncertainSubmission &&
       !state.storageError &&
       !state.reconcilingAction &&
+      !state.planControl &&
       !state.goalChanging &&
       !state.reconcilingGoal &&
       !state.native?.pending_user_request &&
@@ -267,6 +271,7 @@ export function CodingSurface({
             state.configurationUncertain ||
             state.stopping ||
             state.reconcilingAction ||
+            state.planControl ||
             state.goalChanging ||
             state.reconcilingGoal ||
             state.commandBusy ||
@@ -440,95 +445,106 @@ export function CodingSurface({
             )}
           </div>
         )}
+        {state?.native?.plan && (
+          <PlanCard
+            key={state.native.plan.id}
+            plan={state.native.plan}
+            state={state}
+            run={run}
+          />
+        )}
         {state && run && <GoalSummary state={state} run={run} />}
-        <div className="relative flex min-h-0 min-w-0 flex-1 gap-3">
+        {/* Retain scrollable history beside the lazy child inspector when a plan expands. */}
         <div
-          ref={viewport}
-          className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto"
-          data-testid="coding-transcript"
-          aria-label="Coding transcript"
-          aria-busy={state?.connection === "loading" || state?.recovering}
-          onScroll={() => {
-            const node = viewport.current;
-            if (!node) return;
-            follow.current =
-              node.scrollHeight - node.scrollTop - node.clientHeight < 48;
-            setAway(!follow.current);
-          }}
+          className={`relative flex min-w-0 flex-1 gap-3 ${state?.native?.plan ? "min-h-32" : "min-h-0"}`}
         >
-          {state?.older && (
-            <div className="text-center text-xs text-muted-foreground">
-              <p>Earlier history is not shown in this bounded view.</p>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={state.loadingEarlier}
-                onClick={() => {
-                  follow.current = false;
-                  void run
-                    ?.loadEarlier()
-                    .then(() => viewport.current?.scrollTo({ top: 0 }));
-                }}
-              >
-                {state.loadingEarlier
-                  ? "Loading earlier history…"
-                  : "Load earlier history"}
-              </Button>
-            </div>
-          )}
-          {state?.viewingEarlier && (
-            <p className="text-center text-xs text-muted-foreground">
-              Historical page · newer transcript messages are not shown.
-              {state.native?.pending_user_request
-                ? " Question controls below still reflect current native state."
-                : " Native work may still be running."}
-            </p>
-          )}
-          <AnswerFocus.Provider value={answerFocus}>
-            <ThreadPrimitive.Messages components={messageComponents} />
-            {run &&
-              state?.answerForms
-                .filter(
-                  (form) =>
-                    !(state.viewingEarlier && form.status === "accepted") &&
-                    !state.rows.some(
-                      (row) =>
-                        row.answer?.request_id === form.target.request_id &&
-                        row.answer.user_request_id ===
-                          form.target.user_request_id,
-                    ),
-                )
-                .map((form) => (
-                  <QuestionCard
-                    key={`${form.target.request_id}:${form.target.user_request_id}`}
-                    form={form}
-                    run={run}
-                    live={Boolean(
-                      state.answerTarget &&
-                        state.answerTarget.subscription ===
-                          form.target.subscription &&
-                        state.answerTarget.request_id ===
-                          form.target.request_id &&
-                        state.answerTarget.user_request_id ===
-                          form.target.user_request_id,
-                    )}
-                    focus={follow.current && !state.viewingEarlier}
-                    onReleaseFocus={(questionId) => {
-                      if (document.activeElement !== document.body) return;
-                      answerFocus.current = questionId;
-                      const answer =
-                        viewport.current?.querySelector<HTMLElement>(
-                          `[data-native-answer="${CSS.escape(questionId)}"]`,
-                        );
-                      if (answer?.isConnected) {
-                        answer.focus();
-                        answerFocus.current = null;
-                      }
-                    }}
-                  />
-                ))}
-          </AnswerFocus.Provider>
-          {run && <ChildActivityRows view={run.childView} />}
+          <div
+            ref={viewport}
+            className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto"
+            data-testid="coding-transcript"
+            aria-label="Coding transcript"
+            aria-busy={state?.connection === "loading" || state?.recovering}
+            onScroll={() => {
+              const node = viewport.current;
+              if (!node) return;
+              follow.current =
+                node.scrollHeight - node.scrollTop - node.clientHeight < 48;
+              setAway(!follow.current);
+            }}
+          >
+            {state?.older && (
+              <div className="text-center text-xs text-muted-foreground">
+                <p>Earlier history is not shown in this bounded view.</p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={state.loadingEarlier}
+                  onClick={() => {
+                    follow.current = false;
+                    void run
+                      ?.loadEarlier()
+                      .then(() => viewport.current?.scrollTo({ top: 0 }));
+                  }}
+                >
+                  {state.loadingEarlier
+                    ? "Loading earlier history…"
+                    : "Load earlier history"}
+                </Button>
+              </div>
+            )}
+            {state?.viewingEarlier && (
+              <p className="text-center text-xs text-muted-foreground">
+                Historical page · newer transcript messages are not shown.
+                {state.native?.pending_user_request
+                  ? " Question controls below still reflect current native state."
+                  : " Native work may still be running."}
+              </p>
+            )}
+            <AnswerFocus.Provider value={answerFocus}>
+              <ThreadPrimitive.Messages components={messageComponents} />
+              {run &&
+                state?.answerForms
+                  .filter(
+                    (form) =>
+                      !(state.viewingEarlier && form.status === "accepted") &&
+                      !state.rows.some(
+                        (row) =>
+                          row.answer?.request_id === form.target.request_id &&
+                          row.answer.user_request_id ===
+                            form.target.user_request_id,
+                      ),
+                  )
+                  .map((form) => (
+                    <QuestionCard
+                      key={`${form.target.request_id}:${form.target.user_request_id}`}
+                      form={form}
+                      run={run}
+                      live={Boolean(
+                        state.answerTarget &&
+                          state.answerTarget.subscription ===
+                            form.target.subscription &&
+                          state.answerTarget.request_id ===
+                            form.target.request_id &&
+                          state.answerTarget.user_request_id ===
+                            form.target.user_request_id,
+                      )}
+                      focus={follow.current && !state.viewingEarlier}
+                      onReleaseFocus={(questionId) => {
+                        if (document.activeElement !== document.body) return;
+                        answerFocus.current = questionId;
+                        const answer =
+                          viewport.current?.querySelector<HTMLElement>(
+                            `[data-native-answer="${CSS.escape(questionId)}"]`,
+                          );
+                        if (answer?.isConnected) {
+                          answer.focus();
+                          answerFocus.current = null;
+                        }
+                      }}
+                    />
+                  ))}
+            </AnswerFocus.Provider>
+            {run && <ChildActivityRows view={run.childView} />}
           </div>
           {run && <ChildInspector view={run.childView} />}
         </div>
@@ -554,6 +570,7 @@ export function CodingSurface({
           className="shrink-0 space-y-3"
           aria-label="Coding project and prompt"
         >
+          <CodingModeControl state={state} run={run} />
           {state && run && <CodingCommandControls run={run} state={state} />}
           {state?.unsentDraft && <CodingUnsentDraft text={state.unsentDraft} />}
           <CodingComposer
@@ -572,6 +589,7 @@ export function CodingSurface({
                 Boolean(
                   state?.recovering ||
                     state?.configurationUncertain ||
+                    state?.planControl ||
                     state?.goalChanging ||
                     state?.reconcilingGoal ||
                     state?.commandBusy ||

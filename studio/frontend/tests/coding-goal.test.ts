@@ -45,6 +45,8 @@ function native(
     requests: [{ id: "request", status: "running", submission_key: null }],
     pending_user_request: false,
     user_request: null,
+    plan: null,
+    action_disabled_reason: null,
     goal: value,
     goal_controls: {
       revision,
@@ -74,6 +76,12 @@ function harness() {
     | (() => Promise<{ conversation_id: string; request_id: null }>)
     | null = null;
   const api: RunApi = {
+    async setMode() {
+      throw new Error("Goal tests must not change native mode");
+    },
+    async decidePlan() {
+      throw new Error("Goal tests must not decide plans");
+    },
     async answer() {
       throw new Error("Goal tests must not answer questions");
     },

@@ -44,6 +44,8 @@ const native = (active: string | null = null): NativeState => ({
     ? [{ id: active, status: "running", submission_key: "key" }]
     : [],
   pending_user_request: false,
+  plan: null,
+  action_disabled_reason: null,
   user_request: null,
 });
 function harness(
@@ -60,6 +62,17 @@ function harness(
   let rows: CodingRow[] = [];
   let submitError: Error | null = null;
   const api: RunApi = {
+    async setMode(id, mode) {
+      return { conversation_id: id, mode };
+    },
+    async decidePlan(id, plan, decision) {
+      return {
+        conversation_id: id,
+        plan_id: plan.id,
+        decision,
+        request_id: null,
+      };
+    },
     async answer(id, target) {
       return { conversation_id: id, ...target, accepted: true };
     },
