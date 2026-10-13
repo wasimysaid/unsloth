@@ -116,6 +116,14 @@ export const codingApi: CodingApi = {
   },
 };
 
+export async function discoverCodingSkills(id: string, signal?: AbortSignal) {
+  const response = await codingRequest(
+    `/conversations/${encodeURIComponent(id)}/skills`,
+    { signal },
+  );
+  return (await response.json()) as { skills: import("./input").CodingSkill[] };
+}
+
 export const codingRunApi: RunApi = {
   async checkOverlap(id) {
     const response = await codingRequest(
@@ -128,7 +136,7 @@ export const codingRunApi: RunApi = {
       );
     return overlap;
   },
-  async submit(id, submissionKey, text, overlapConfirmed = false) {
+  async submit(id, submissionKey, text, extras, overlapConfirmed = false) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/prompts`,
       {
@@ -137,6 +145,7 @@ export const codingRunApi: RunApi = {
         body: JSON.stringify({
           submission_key: submissionKey,
           text,
+          ...extras,
           ...(overlapConfirmed ? { overlap_confirmed: true } : {}),
         }),
       },
