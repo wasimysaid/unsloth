@@ -20,6 +20,7 @@ import {
 import { codingRunApi } from "./api";
 import { ChildActivityRows, ChildInspector } from "./child-inspector";
 import { CodingComposer } from "./coding-composer";
+import { CodingCommandControls } from "./command-controls";
 import { createInputDraft } from "./input";
 import { CodingModelPicker } from "./model-configuration-popover";
 import { nativeMessageRow } from "./presentation";
@@ -161,6 +162,8 @@ export function CodingSurface({
       !state.uncertainSubmission &&
       !state.storageError &&
       !state.reconcilingAction &&
+      !state.commandBusy &&
+      !state.uncertainCommand &&
       !state.overlapWarning,
   );
   return (
@@ -176,6 +179,8 @@ export function CodingSurface({
             state.configurationUncertain ||
             state.stopping ||
             state.reconcilingAction ||
+            state.commandBusy ||
+            state.uncertainCommand ||
             state.storageError,
         )}
         onContinue={() => void run?.continueOverlap()}
@@ -405,6 +410,7 @@ export function CodingSurface({
           className="shrink-0 space-y-3"
           aria-label="Coding project and prompt"
         >
+          {state && run && <CodingCommandControls run={run} state={state} />}
           {state?.unsentDraft && <CodingUnsentDraft text={state.unsentDraft} />}
           <CodingComposer
             conversationId={conversationId}
@@ -419,7 +425,12 @@ export function CodingSurface({
               configuration={state?.native?.configuration ?? null}
               disabled={
                 state?.connection !== "connected" ||
-                Boolean(state?.recovering || state?.configurationUncertain)
+                Boolean(
+                  state?.recovering ||
+                    state?.configurationUncertain ||
+                    state?.commandBusy ||
+                    state?.uncertainCommand,
+                )
               }
               configuring={Boolean(state?.configuring)}
               configure={(change) =>

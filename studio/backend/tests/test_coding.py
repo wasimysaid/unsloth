@@ -43,6 +43,13 @@ def coding_app(monkeypatch, tmp_path):
     ("POST", "/conversations/known-id/configuration", {"provider": "native-provider", "model": "native-model"}),
     ("POST", "/conversations/known-id/requests/exact-request/cancel", None),
     ("POST", "/conversations/known-id/entries", {"cut": {"journal": "root", "leaf": None}}),
+    ("GET", "/conversations/known-id/commands", None),
+    ("POST", "/conversations/known-id/commands", {"operation_id": "command-op", "name": "compress", "tail": ""}),
+    ("GET", "/conversations/known-id/commands/command-op", None),
+    ("GET", "/conversations/known-id/diagnostics/context", None),
+    ("GET", "/conversations/known-id/diagnostics/tokens", None),
+    ("GET", "/conversations/known-id/diagnostics/retry", None),
+    ("GET", "/conversations/known-id/diagnostics/execution", None),
     ("GET", "/conversations/known-id/children/agent-exact/attempts/1", None),
 ])
 async def test_every_surface_requires_existing_studio_auth(coding_app, method, path, body):

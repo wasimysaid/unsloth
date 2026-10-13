@@ -102,6 +102,13 @@ class PromptSubmission(BaseModel):
         return self
 
 
+class CommandInvocation(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    operation_id: str = Field(min_length = 1, max_length = 128)
+    name: str = Field(min_length = 1, max_length = 256, pattern = r"^[^\s/]+$")
+    tail: str = Field(default = "", max_length = 16384)
+
+
 class ModelConfiguration(BaseModel):
     """Exact native identity/effort only; credential and provider setup stay external."""
     model_config = ConfigDict(extra = "forbid")
@@ -276,6 +283,9 @@ async def conversation_skills(conversation_id: str, request: Request):
 
 @router.post("/conversations/{conversation_id}/prompts", status_code = 202)
 async def submit_prompt(conversation_id: str, body: PromptSubmission, request: Request):
+    # Slash attempts never bypass native command handling, including recovered drafts.
+    if body.text.lstrip().startswith("/"):
+        raise HTTPException(400, "Slash commands must use native command dispatch; no model prompt was submitted.")
     # Mimir admits/deduplicates the submission and owns scheduling and saved input.
     return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump(exclude_unset = True), "overlap_confirmed": body.overlap_confirmed})
 
@@ -284,6 +294,29 @@ async def submit_prompt(conversation_id: str, body: PromptSubmission, request: R
 async def cancel_request(conversation_id: str, request_id: str, request: Request):
     # Acceptance is not settlement. The ordered native view confirms completion.
     return await _command(request, "cancel", {"conversation_id": conversation_id, "request_id": request_id})
+
+
+@router.get("/conversations/{conversation_id}/commands")
+async def discover_commands(conversation_id: str, request: Request):
+    return await _command(request, "commands", {"conversation_id": conversation_id})
+
+
+@router.post("/conversations/{conversation_id}/commands")
+async def invoke_command(conversation_id: str, body: CommandInvocation, request: Request):
+    # Not prompt delivery: the browser reconciles a lost reply before another action.
+    return await _command(request, "command", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+@router.get("/conversations/{conversation_id}/commands/{operation_id}")
+async def inspect_command_receipt(conversation_id: str, operation_id: str, request: Request):
+    # Read an already-delivered operation. This never invokes/replays a command.
+    return await _command(request, "command_receipt", {"conversation_id": conversation_id, "operation_id": operation_id})
+
+
+@router.get("/conversations/{conversation_id}/diagnostics/{kind}")
+async def inspect_diagnostics(conversation_id: str, kind: Literal["context", "tokens", "retry", "execution"], request: Request):
+    # Native plugin returns an allowlisted bounded projection, never raw logs/config.
+    return await _command(request, "diagnostics", {"conversation_id": conversation_id, "kind": kind})
 
 
 @router.post("/conversations/{conversation_id}/entries")

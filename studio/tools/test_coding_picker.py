@@ -106,7 +106,7 @@ class PickerEvidenceTests(unittest.TestCase):
 
         def external_client(name, api_model, effort):
             try:
-                body = json.dumps({"model": api_model, "reasoning_effort": effort, "messages": []}).encode()
+                body = json.dumps({"model": api_model, "reasoning_effort": effort, "messages": [], "stream": True}).encode()
                 request = urllib.request.Request(fixture.base_url + "/chat/completions", data=body, headers={"Content-Type": "application/json"})
                 with urllib.request.urlopen(request, timeout=10) as response:
                     responses[name] = (response.status, response.read())

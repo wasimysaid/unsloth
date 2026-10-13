@@ -28,6 +28,8 @@ export function codingRunAdapter(
           state.uncertainSubmission ||
           state.storageError ||
           state.reconcilingAction ||
+          state.commandBusy ||
+          state.uncertainCommand ||
           state.overlapWarning,
       ),
     isLoading: state?.connection === "loading",
