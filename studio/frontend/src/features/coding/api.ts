@@ -5,6 +5,12 @@ import { authFetch } from "@/features/auth/api";
 import { readFastApiError } from "@/lib/format-fastapi-error";
 import { CodingHttpError, CodingOverlapError, projectOverlap } from "./errors";
 import { consumeCodingEvents } from "./events";
+import type {
+  ExtensionInventory,
+  MaintenanceApi,
+  PluginReloadStatus,
+  RuntimeDiagnostics,
+} from "./maintenance";
 import type { EntryPage, RunApi } from "./run-types";
 import type {
   CodingApi,
@@ -113,6 +119,37 @@ export const codingApi: CodingApi = {
       signal,
     });
     return (await response.json()) as CodingProjectDirectory;
+  },
+};
+
+export async function readCodingDiagnostics(): Promise<RuntimeDiagnostics> {
+  return (await (
+    await codingRequest("/diagnostics")
+  ).json()) as RuntimeDiagnostics;
+}
+
+export const codingMaintenanceApi: MaintenanceApi = {
+  async inspect(id, operationId) {
+    const query = operationId
+      ? `?${new URLSearchParams({ operation_id: operationId })}`
+      : "";
+    return (await (
+      await codingRequest(
+        `/conversations/${encodeURIComponent(id)}/extensions${query}`,
+      )
+    ).json()) as ExtensionInventory;
+  },
+  async reload(id, operationId) {
+    return (await (
+      await codingRequest(
+        `/conversations/${encodeURIComponent(id)}/plugins/reload`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ operation_id: operationId }),
+        },
+      )
+    ).json()) as PluginReloadStatus;
   },
 };
 
