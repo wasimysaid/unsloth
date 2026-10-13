@@ -321,6 +321,45 @@ test("event stream uses authenticated fetch, exposes a disconnect event and is c
   assert.deepEqual(c.requests[0].options, { retryNetworkErrors: false });
 });
 
+test("MCP Settings reads and saves only native scoped identities, without caches or replay", async () => {
+  const draft = {
+    edit_id: "native-edit",
+    revision: "native-revision",
+    source: "native-source",
+    name: "server",
+    json: "{}",
+  };
+  const c = client(() => Response.json(draft));
+  await c.api.mcpSettingsApi.inventory("native/id");
+  await c.api.mcpSettingsApi.edit("native/id", "native-source", "server");
+  await c.api.mcpSettingsApi.save("native/id", draft, '{"enabled":false}');
+  assert.deepEqual(
+    c.requests.map((row) => row.path),
+    [
+      "/api/coding/conversations/native%2Fid/mcp/inventory",
+      "/api/coding/conversations/native%2Fid/mcp/edit",
+      "/api/coding/conversations/native%2Fid/mcp/save",
+    ],
+  );
+  assert.deepEqual(JSON.parse(c.requests[1].init?.body as string), {
+    source: "native-source",
+    name: "server",
+  });
+  assert.deepEqual(JSON.parse(c.requests[2].init?.body as string), {
+    edit_id: "native-edit",
+    revision: "native-revision",
+    json: '{"enabled":false}',
+  });
+  assert.ok(c.requests.every((row) => row.init?.cache === "no-store"));
+  assert.ok(
+    c.requests.every(
+      (row) =>
+        (row.options as { retryNetworkErrors: boolean }).retryNetworkErrors ===
+        false,
+    ),
+  );
+});
+
 test("picker reads only authenticated native catalog and sends identity patches separately from prompts", async () => {
   const c = client(() => Response.json([]));
   const controller = new AbortController();
@@ -354,6 +393,26 @@ test("picker reads only authenticated native catalog and sends identity patches 
         JSON.stringify(request.options) === '{"retryNetworkErrors":false}',
     ),
   );
+});
+
+test("MCP native errors stay actionable refusals, never successful persistence", async () => {
+  const draft = {
+    edit_id: "native-edit",
+    revision: "native-revision",
+    source: "native-source",
+    name: "server",
+    json: "{}",
+  };
+  for (const status of [400, 403, 409, 502, 504]) {
+    const c = client(() =>
+      Response.json({ detail: "Native refusal; draft retained" }, { status }),
+    );
+    await assert.rejects(
+      c.api.mcpSettingsApi.save("native-id", draft, "my draft"),
+      /Native refusal; draft retained/,
+    );
+    assert.equal(c.requests.length, 1);
+  }
 });
 
 test("Settings maintenance encodes exact targets and reconciliation IDs without replay", async () => {

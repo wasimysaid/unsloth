@@ -38,10 +38,12 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { codingApi } from "./api";
+import { codingApi, mcpSettingsApi } from "./api";
 import { CodingSurface } from "./coding-surface";
 import { ProjectFolderDialog } from "./project-folder-dialog";
 import { restoreProjectPickerFocus } from "./project-picker-focus";
+import { MimirSettings } from "./mimir-settings";
+import { createMcpSettings } from "./mcp-settings";
 import { createCodingSession } from "./session";
 import type { CodingSession, CodingSessionState } from "./session";
 
@@ -199,6 +201,8 @@ function CodingSidebar({
 
 export function CodingPage() {
   const [session] = useState(() => createCodingSession(codingApi));
+  const [settings] = useState(() => createMcpSettings(mcpSettingsApi));
+  const [tab, setTab] = useState<"conversation" | "settings">("conversation");
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
   const [folderOpen, setFolderOpen] = useState(false);
   const folderInvoker = useRef<HTMLElement | null>(null);
@@ -241,13 +245,35 @@ export function CodingPage() {
           />
           <Code2 className="size-4 text-muted-foreground" aria-hidden="true" />
           <span className="font-heading text-sm font-medium">Coding</span>
-          <span className="ml-auto text-xs text-muted-foreground">
-            Mimir coding
-          </span>
+          <nav
+            className="ml-auto flex flex-wrap gap-1"
+            aria-label="Coding views"
+          >
+            <Button
+              size="sm"
+              variant={tab === "conversation" ? "secondary" : "ghost"}
+              aria-pressed={tab === "conversation"}
+              onClick={() => setTab("conversation")}
+            >
+              Conversation
+            </Button>
+            <Button
+              size="sm"
+              variant={tab === "settings" ? "secondary" : "ghost"}
+              aria-pressed={tab === "settings"}
+              onClick={() => setTab("settings")}
+            >
+              Mimir Settings
+            </Button>
+          </nav>
         </header>
+        {tab === "settings" && (
+          <MimirSettings settings={settings} conversation={state.active} />
+        )}
         <main
-          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 py-4 sm:px-8"
+          className={`min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 py-4 sm:px-8 ${tab === "conversation" ? "flex" : "hidden"}`}
           aria-busy={state.opening}
+          hidden={tab !== "conversation"}
         >
           <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col gap-4">
             <section

@@ -262,10 +262,14 @@ class CodingRuntime:
             delivered = True
             return result
         except TimeoutError as exc:
-            raise CodingRuntimeError(
-                "uncertain", "Mimir has not confirmed this operation. It was not retried; "
+            reconciliation = (
+                "load the saved MCP version for comparison before deliberately retrying. Your draft is retained."
+                if method == "mcp_save" else
                 "reconnect the native view to reconcile its state. Prompt retries must reuse "
-                "the original submission identity; do not blindly retry other commands.",
+                "the original submission identity; do not blindly retry other commands."
+            )
+            raise CodingRuntimeError(
+                "uncertain", "Mimir has not confirmed this operation. It was not retried; " + reconciliation,
             ) from exc
         except (BrokenPipeError, ConnectionResetError) as exc:
             raise CodingRuntimeError("disconnected", "The coding runtime disconnected; nothing was replayed.") from exc

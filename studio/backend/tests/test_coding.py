@@ -38,6 +38,10 @@ def coding_app(monkeypatch, tmp_path):
     ("POST", "/conversations", {"cwd": "/"}),
     ("POST", "/conversations/known-id/open", None),
     ("GET", "/conversations/known-id/events", None),
+    ("GET", "/conversations/known-id/mcp/inventory", None),
+    ("POST", "/conversations/known-id/mcp/edit", {"source": "native-source", "name": "server"}),
+    ("POST", "/conversations/known-id/mcp/save", {"edit_id": "edit-1", "revision": "r1", "json": "{}"}),
+    ("POST", "/conversations/known-id/mcp/release", {"edit_id": "edit-1"}),
     ("GET", "/conversations/known-id/overlap", None),
     ("POST", "/conversations/known-id/prompts", {"submission_key": "exact-key", "text": "work"}),
     ("POST", "/conversations/known-id/configuration", {"provider": "native-provider", "model": "native-model"}),
@@ -412,6 +416,34 @@ async def test_fatal_framing_closes_stdin_and_reaps_actual_child(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_mcp_forwards_only_native_scoped_operations_and_actual_results(coding_app):
+    app, headers = coding_app
+    commands = []
+    native_inventory = {"documents": [], "entries": [], "effective": [], "live": [], "diagnostics": []}
+    draft = {"edit_id": "host-edit", "revision": "actual-r1", "source": "native-source", "name": "server", "json": "{}"}
+    saved = {"draft": {**draft, "revision": "actual-r2"}, "inventory": native_inventory}
+    class RecordingRuntime:
+        async def command(self, method, params):
+            commands.append((method, params))
+            return {"mcp_inventory": native_inventory, "mcp_edit": draft, "mcp_save": saved}[method]
+    app.state.coding_runtime = RecordingRuntime()
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        prefix = "/api/coding/conversations/native-session/mcp"
+        inventory = await client.get(prefix + "/inventory")
+        editor = await client.post(prefix + "/edit", json = {"source": "native-source", "name": "server"})
+        result = await client.post(prefix + "/save", json = {"edit_id": "host-edit", "revision": "actual-r1", "json": "{}"})
+        assert inventory.json() == native_inventory
+        assert editor.json() == draft
+        assert result.json() == saved
+        assert all(response.headers["cache-control"] == "no-store" for response in (inventory, editor, result))
+    assert commands == [
+        ("mcp_inventory", {"conversation_id": "native-session"}),
+        ("mcp_edit", {"conversation_id": "native-session", "source": "native-source", "name": "server"}),
+        ("mcp_save", {"conversation_id": "native-session", "edit_id": "host-edit", "revision": "actual-r1", "json": "{}"}),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_model_configuration_is_native_and_never_part_of_queued_prompt(coding_app):
     app, headers = coding_app
     calls = []
@@ -543,6 +575,62 @@ async def test_overlap_preflight_and_refusal_carry_canonical_identity_without_op
         ("prompt", {"conversation_id": "exact-id", **body, "overlap_confirmed": False}),
         ("prompt", {"conversation_id": "exact-id", **body, "overlap_confirmed": True}),
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code,status", [("conflict", 409), ("busy", 409), ("invalid", 400), ("denied", 403), ("not_found", 404), ("failed", 502), ("uncertain", 504)])
+async def test_mcp_native_refusals_do_not_cancel_apply_reopen_or_retry(coding_app, code, status):
+    app, headers = coding_app
+    commands = []
+    class RefusingRuntime:
+        async def command(self, method, params):
+            commands.append(method)
+            raise CodingRuntimeError(code, "Native configuration refusal; retain draft and reconcile.")
+    app.state.coding_runtime = RefusingRuntime()
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        response = await client.post("/api/coding/conversations/known/mcp/save", json = {"edit_id": "host-edit", "revision": "r1", "json": "{}"})
+        assert response.status_code == status
+        assert response.json()["detail"] == "Native configuration refusal; retain draft and reconcile."
+        assert response.headers["cache-control"] == "no-store"
+    assert commands == ["mcp_save"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [
+    {"edit_id": "host-edit", "json": "controlled-secret-250"},
+    {"edit_id": [], "revision": "r1", "json": "controlled-secret-250"},
+    {"edit_id": "host-edit", "revision": "r1", "json": "controlled-secret-250", "path": "/not-a-native-source"},
+    {"edit_id": "host-edit", "revision": "r1", "json": "controlled-secret-250" + "x" * 524288},
+])
+async def test_mcp_request_validation_never_echoes_secret_drafts(coding_app, body):
+    app, headers = coding_app
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        response = await client.post("/api/coding/conversations/known/mcp/save", json = body)
+        assert response.status_code == 422
+        assert "controlled-secret-250" not in response.text
+        assert "input" not in response.json()
+        assert "Invalid MCP Settings request" in response.json()["detail"]
+        assert response.headers["cache-control"] == "no-store"
+    assert not hasattr(app.state, "coding_runtime")
+
+
+@pytest.mark.asyncio
+async def test_uncertain_mcp_save_is_not_replayed_and_requires_saved_version_comparison(monkeypatch):
+    import core.coding_runtime as module
+    monkeypatch.setattr(module, "COMMAND_TIMEOUT", 0.01)
+    commands = []
+    class Writer:
+        def write(self, data):
+            commands.append(json.loads(data[4:]))
+        async def drain(self):
+            pass
+    runtime = CodingRuntime()
+    runtime.process = SimpleNamespace(stdin = Writer(), returncode = 0)
+    with pytest.raises(CodingRuntimeError, match = "saved MCP version for comparison") as refused:
+        await runtime.command("mcp_save", {"edit_id": "host-edit", "revision": "r1", "json": "{}"})
+    assert refused.value.code == "uncertain"
+    assert len(commands) == 1
+    assert not runtime._pending
 
 
 @pytest.mark.asyncio

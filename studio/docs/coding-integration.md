@@ -566,7 +566,7 @@ The task-local `worker/ticket-result.json` and browser `report.json` identify ac
 commands/artifacts/results; this tracked matrix intentionally contains no stale
 claim tied to a mutable local HEAD or absent screenshots.
 
-| ID | Implemented #234–238/#241/#242/#247/#248/#252 coverage (see attempt reports for verification) | Remaining capability evidence |
+| ID | Implemented coverage (see attempt reports for verification) | Remaining capability evidence |
 |---|---|---|
 | A1 | Native opening/SDK contracts; single supervised product plugin; authenticated HTTP/SSE; exact submission/request/tool identities; atomic ordered public view, checkpoints/reset/recovery, bounded cut reads and durable reconnect reconciliation (#236) | Cross-feature integration and packaged-consumer regression (#254) |
 | A2 | Native prompt/Stop controls; compact inspectable public tool results/failures and clipping disclosure; exact child-attempt inspector with non-consuming outcomes, public historical completion records, bounded child views and real native-delegation route driver (#241) | Questions, modes, plans/goals and diagnostics (respective tickets); cross-feature/live-model acceptance (#254/#255) |
@@ -575,9 +575,58 @@ claim tied to a mutable local HEAD or absent screenshots.
 | A5 | Externally configured provider admission; no Studio local-model serving | Local-model requests and whole-request protection (#246/#255) |
 | A6 | Canonical/native validated opening, non-persisting effective trust, saved-policy tests, child inheritance, mismatch/lease refusals, authenticated run/Stop/history access; independent concurrent native workloads and canonical-folder warning/admission (#247); same-identity trusted history reopening after idle retirement (#248) | Process-loss recovery (#249) and cross-feature acceptance (#254–255) |
 | A7 | Exact request cancellation; Stop acknowledgment distinct from cleanup; disconnect never stops owners; typed native failures; durable submission identity across reload/native restart, automatic authoritative reconnect and non-prompt reconciliation (#236); no automatic work replay; awaited EOF shutdown; continuous unviewed/native-quiescent retention, controlled clocks, atomic native retirement and failure-safe cleanup retry (#248) | Full process-interruption/maintenance scenarios (#249) and cross-feature live-model acceptance (#254–255) |
-| A8 | Focused Mimir Settings; native headless installed/enabled/selected/live inventory, effective skills, bounded diagnostics, exact scoped reload and uncertain-outcome reconciliation (#252) | MCP save/apply/reconnect (#250–251) and separately owned runtime restart (#249) |
+| A8 | Focused Mimir Settings; native headless installed/enabled/selected/live inventory, effective skills, bounded diagnostics, exact scoped reload and uncertain-outcome reconciliation (#252); scoped native MCP inventory, revision-checked persistence and draft reconciliation, save-only Settings with configured/applied distinction (#250) | MCP live apply/reconnect (#251) and separately owned runtime restart (#249) |
 | A9 | Ordinary-chat store/engine untouched; affected shared/ordinary-chat tests; coding route excludes ordinary model observers and chat execution imports | Real ordinary-chat smoke and cross-feature regression (#254/#255) |
 | A10 | Rendered opening, deterministic provider/native-tool, cancellation/failure, keyboard/narrow, and separate live-provider driver | Full cross-feature execution UI checks and user's implemented-UI review (#255/#256) |
+
+## MCP save-only Settings slice (#250)
+
+Revalidated paired baselines: Studio `1ca8b10f3f3c43fddf3e510cf90aa5c65b79d9bd`
+and Mimir `1fd0ca7275f25a3bde6507a17535983e2aeec5ee`. Settings extends the
+existing authenticated coding boundary and single `studio.frontend` activation;
+no Studio file editor, competing configuration store, or additional plugin is added.
+See [frontend Settings contracts](../frontend/src/features/coding/README.md#mimir-settings-250)
+and the paired native SDK/protocol documentation for resource/revision semantics.
+
+The real-route MCP driver uses the built UI, production auth/coding routers,
+installed product plugin and native Mimir. It isolates **all four** MCP layers
+(including the OS home layer) and configuration/history/trust. It performs actual
+native reads/writes (including a readable, non-writable inherited layer),
+conflicting authenticated writers, invalid definitions, permission/persistence
+faults, deliberate reconciliation, enabled-but-unapplied
+configuration, and rendered keyboard/focus/narrow error flows. It also exercises a
+compact definition whose normalized editor JSON exceeds the native bound: refusal
+must precede persistence and retain the draft/revision. The bounded save acknowledgment
+contains the actual committed revision and source-configured state independently of
+best-effort inventory; unavailable inventory never replays or falsifies a completed
+save. It does not call a provider, apply/reconnect servers, or claim
+full-Studio/ordinary-chat smoke evidence.
+
+```sh
+.venv/bin/python studio/tools/coding_mcp_browser_acceptance.py \
+  --mimir /path/to/current/mimir \
+  --plugin-package /path/to/rebuilt/studio-frontend/package \
+  --evidence-dir /path/to/attempt/worker/mcp-browser
+```
+
+Use task-owned backend/test dependencies, `playwright` and `psutil`; Chrome is the
+default, with software-rendered Firefox available via `--browser firefox`.
+The driver records 1440×1000 and 390×844 screenshots, native conversation identity,
+opaque committed edit revisions, source/binary hashes, sanitized requests/logs and
+awaited native-process/server cleanup. Its report is evidence only after terminal
+success and screenshot inspection. `test_coding_mcp_browser_acceptance.py` tests
+fixture isolation/redaction; it is not a browser result. A task-owned native
+persistence-writer lock injects actual cross-process busy refusal through the real
+save path. This is distinct from busy-sensitive live apply (#251); mocked native
+busy/error propagation checks are supplementary, not live runtime-apply validation.
+
+Focused native tests cover document revision conflicts (including inherited input
+changes and semantically equal target rewrites), validation, failed persistence,
+closed editors and activation/session identity. Studio controller/API/auth tests
+cover draft retention, no replay, deliberate rebase, and native editor-only cleanup.
+Actual React rendered fixtures distinguish unavailable live observations from
+known-empty applied connections using `live_available`, never diagnostic parsing.
+Full provider/local-model workloads and human acceptance remain #255/#256.
 
 ## Source-sensitive command-admission follow-ups
 
