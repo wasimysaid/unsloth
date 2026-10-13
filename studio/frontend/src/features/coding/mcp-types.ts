@@ -38,6 +38,9 @@ export interface McpLive {
   diagnostics: string[];
 }
 export interface McpInventory {
+  saved_revision: string;
+  applied_revision: string | null;
+  configured_tools: number;
   documents: McpSource[];
   entries: McpEntry[];
   effective: McpEffective[];
@@ -58,7 +61,33 @@ export interface McpSaveResult {
   inventory: McpInventory | null;
   inventory_error: string | null;
 }
+export interface McpOperation {
+  operation_id: string;
+  session_id: string;
+  kind: "apply" | "reconnect";
+  name: string | null;
+  status: "running" | "completed" | "failed";
+  error: string | null;
+  saved_revision: string;
+  applied_revision: string | null;
+  live_available: boolean;
+  configured_tools: number;
+}
+export interface McpOperationInspection {
+  operation: McpOperation | null;
+  inventory: McpInventory;
+}
 export interface McpSettingsApi {
+  apply(id: string, operationId: string): Promise<McpOperation>;
+  reconnect(
+    id: string,
+    operationId: string,
+    name?: string,
+  ): Promise<McpOperation>;
+  inspectOperation(
+    id: string,
+    operationId: string,
+  ): Promise<McpOperationInspection>;
   inventory(id: string): Promise<McpInventory>;
   edit(id: string, source: string, name: string): Promise<McpDraft>;
   save(id: string, draft: McpDraft, json: string): Promise<McpSaveResult>;

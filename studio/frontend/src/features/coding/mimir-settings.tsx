@@ -67,9 +67,23 @@ function McpConfiguration({
   const focusedDraft = useRef<string | null>(null);
   const [discardConfirm, setDiscardConfirm] = useState(false);
   const busy = state.operation !== null;
+  const runtimeBlocked =
+    busy || state.pendingMcp !== null || state.recoveryBlocked;
+  const pendingOperationId = state.pendingMcp?.id;
   useEffect(() => {
     void settings.refresh(id);
   }, [settings, id]);
+  useEffect(() => {
+    if (!pendingOperationId) return;
+    // Bounded read-only observation, not retries. Leaving Settings never cancels
+    // native work; mounting it again reconciles the retained delivery identity.
+    const expires = Date.now() + 60_000;
+    const timer = window.setInterval(() => {
+      if (Date.now() >= expires) window.clearInterval(timer);
+      else void settings.inspectOperation(id);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [settings, id, pendingOperationId]);
   const draftId = state.draft?.edit_id;
   useEffect(() => {
     // An editor can arrive before the operation's finally branch enables it.
@@ -83,8 +97,8 @@ function McpConfiguration({
     }
   }, [draftId, busy]);
   useEffect(() => {
-    if (state.error) error.current?.focus();
-  }, [state.error]);
+    if (state.error || state.runtimeError) error.current?.focus();
+  }, [state.error, state.runtimeError]);
   const draft = state.draft;
   const dirty = draft !== null && draft.json !== state.text;
   const inventory = state.inventory;
@@ -112,12 +126,55 @@ function McpConfiguration({
           </Button>
           <span role="status" className="text-xs text-muted-foreground">
             {busy
-              ? `${state.operation === "save" ? "Saving" : "Reading"} native configuration…`
+              ? state.operation === "apply"
+                ? "Applying saved native MCP configuration…"
+                : state.operation === "reconnect"
+                  ? "Reconnecting configured MCP servers…"
+                  : `${state.operation === "save" ? "Saving" : "Reading"} native configuration…`
               : "Refresh reads saved and applied state; it does not change your draft."}
           </span>
         </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            className={buttonClass}
+            disabled={runtimeBlocked || !inventory}
+            onClick={() => void settings.apply(id, crypto.randomUUID())}
+          >
+            Apply saved MCP configuration
+          </Button>
+          <Button
+            className={buttonClass}
+            variant="outline"
+            disabled={runtimeBlocked || !inventory}
+            onClick={() => void settings.reconnect(id, crypto.randomUUID())}
+          >
+            Reconnect configured servers
+          </Button>
+          {state.pendingMcp && (
+            <Button
+              className={buttonClass}
+              variant="outline"
+              disabled={busy}
+              onClick={() => void settings.inspectOperation(id)}
+            >
+              Reconcile MCP operation
+            </Button>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Apply reads saved configuration for this conversation; unsaved drafts
+          are not applied. Reconnect replaces only configured connections using
+          their currently applied definitions. Both require native safe-idle
+          admission and never Stop work, reload plugins or restart Mimir.
+        </p>
+        {dirty && (
+          <p className="text-sm">
+            Unsaved draft retained — save separately before applying those
+            edits.
+          </p>
+        )}
       </div>
-      {state.error && (
+      {(state.error || state.runtimeError) && (
         <div
           ref={error}
           tabIndex={-1}
@@ -125,16 +182,64 @@ function McpConfiguration({
           className="space-y-2 rounded-xl border border-destructive/50 p-4 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <p className="break-words font-medium text-destructive">
-            {state.error}
+            {state.error ?? state.runtimeError}
           </p>
           <p>
             {draft
               ? "Your draft and original revision are retained."
-              : "No draft was replaced or configuration applied."}{" "}
-            Check the native error, then retry. For a conflict or uncertain
-            save, load the saved version for comparison before deciding what to
-            save.
+              : "No draft was replaced."}{" "}
+            Saved configuration is retained.{" "}
+            {state.runtimeError
+              ? state.pendingMcp
+                ? "Inspect this exact native operation before another apply or reconnect. Unknown status is not failure or permission to retry."
+                : "Inspect applied connections and the native busy/error reason, then retry explicitly when safe. No work was cancelled."
+              : "For a conflict or uncertain save, load the saved version for comparison before deciding what to save."}
           </p>
+        </div>
+      )}
+      {(state.pendingMcp || state.runtimeOperation) && (
+        <div
+          role="status"
+          data-testid="mcp-operation-result"
+          className="space-y-2 rounded-xl border p-4 text-sm"
+        >
+          <p className="font-medium">
+            {state.runtimeOperation
+              ? `${state.runtimeOperation.kind === "apply" ? "Apply" : "Reconnect"} ${state.runtimeOperation.status === "running" ? "in progress" : state.runtimeOperation.status}`
+              : "MCP operation unconfirmed"}
+          </p>
+          <p className="break-all font-mono text-xs">
+            Operation:{" "}
+            {state.pendingMcp?.id ?? state.runtimeOperation?.operation_id}
+          </p>
+          {state.pendingMcp && (
+            <p>
+              Native settlement has not been confirmed. No command will be
+              replayed. Refresh or reconcile this exact operation.
+            </p>
+          )}
+          {state.runtimeOperation && (
+            <>
+              <p className="break-all font-mono text-xs">
+                Saved effective revision at admission:{" "}
+                {state.runtimeOperation.saved_revision}
+              </p>
+              <p className="break-all font-mono text-xs">
+                Applied revision at outcome:{" "}
+                {state.runtimeOperation.applied_revision ?? "Unavailable"}
+              </p>
+              <p>
+                {state.runtimeOperation.live_available
+                  ? `${state.runtimeOperation.configured_tools} configured tools observed at outcome`
+                  : "Connection/tool evidence unavailable at outcome"}
+              </p>
+              <p>
+                Completion is the native operation outcome, not proof all
+                servers are connected. Inspect the current connection and tool
+                evidence below.
+              </p>
+            </>
+          )}
         </div>
       )}
       {state.savedRevision && (

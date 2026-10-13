@@ -685,3 +685,47 @@ test("structured overlap refusal is distinct from native busy/capacity and malfo
     /could not be confirmed.*No prompt was sent/,
   );
 });
+
+test("MCP apply/reconnect and read-only reconciliation use exact native identities with no caching or replay", async () => {
+  const native = { operation_id: "operation/id?", status: "running" };
+  const c = client(() => Response.json(native));
+  assert.deepEqual(
+    await c.api.mcpSettingsApi.apply("conversation/id?", "operation/id?"),
+    native,
+  );
+  assert.deepEqual(
+    await c.api.mcpSettingsApi.reconnect(
+      "conversation/id?",
+      "reconnect-id",
+      "configured",
+    ),
+    native,
+  );
+  assert.deepEqual(
+    await c.api.mcpSettingsApi.inspectOperation(
+      "conversation/id?",
+      "operation/id?",
+    ),
+    native,
+  );
+  assert.deepEqual(
+    c.requests.map((request) => request.path),
+    [
+      "/api/coding/conversations/conversation%2Fid%3F/mcp/apply",
+      "/api/coding/conversations/conversation%2Fid%3F/mcp/reconnect",
+      "/api/coding/conversations/conversation%2Fid%3F/mcp/operations/operation%2Fid%3F",
+    ],
+  );
+  assert.deepEqual(JSON.parse(c.requests[0].init!.body as string), {
+    operation_id: "operation/id?",
+  });
+  assert.deepEqual(JSON.parse(c.requests[1].init!.body as string), {
+    operation_id: "reconnect-id",
+    name: "configured",
+  });
+  for (const request of c.requests) {
+    assert.equal(request.init?.cache, "no-store");
+    assert.deepEqual(request.options, { retryNetworkErrors: false });
+  }
+  assert.equal(c.requests[2].init?.method, undefined);
+});

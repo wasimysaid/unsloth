@@ -19,6 +19,9 @@ from typing import Any
 log = logging.getLogger(__name__)
 MAX_FRAME = 1024 * 1024
 COMMAND_TIMEOUT = 60
+# Cold native component validation/compilation may exceed two minutes on a
+# development build. This setup bound never extends execution-command deadlines.
+INSTALL_TIMEOUT = 600
 PLUGIN_ID = "studio.frontend"
 
 
@@ -101,7 +104,7 @@ class CodingRuntime:
                         stderr = asyncio.subprocess.DEVNULL,
                     )
                     try:
-                        installed = await asyncio.wait_for(installer.wait(), timeout = 120)
+                        installed = await asyncio.wait_for(installer.wait(), timeout = INSTALL_TIMEOUT)
                     except BaseException as exc:
                         with anyio.CancelScope(shield = True):
                             if installer.returncode is None:
@@ -270,6 +273,8 @@ class CodingRuntime:
             reconciliation = (
                 "load the saved MCP version for comparison before deliberately retrying. Your draft is retained."
                 if method == "mcp_save" else
+                "inspect the exact native MCP operation before another apply or reconnect. Saved configuration and drafts are retained."
+                if method in {"mcp_apply", "mcp_reconnect"} else
                 "reconnect the native view to reconcile its state. Prompt retries must reuse "
                 "the original submission identity; do not blindly retry other commands."
             )
