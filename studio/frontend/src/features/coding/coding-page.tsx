@@ -40,10 +40,10 @@ import {
 } from "react";
 import { codingApi, mcpSettingsApi } from "./api";
 import { CodingSurface } from "./coding-surface";
+import { createMcpSettings } from "./mcp-settings";
+import { MimirSettings } from "./mimir-settings";
 import { ProjectFolderDialog } from "./project-folder-dialog";
 import { restoreProjectPickerFocus } from "./project-picker-focus";
-import { MimirSettings } from "./mimir-settings";
-import { createMcpSettings } from "./mcp-settings";
 import { createCodingSession } from "./session";
 import type { CodingSession, CodingSessionState } from "./session";
 
@@ -271,11 +271,11 @@ export function CodingPage() {
           <MimirSettings settings={settings} conversation={state.active} />
         )}
         <main
-          className={`min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 py-4 sm:px-8 ${tab === "conversation" ? "flex" : "hidden"}`}
+          className={`min-h-0 min-w-0 flex-1 flex-col overflow-y-auto px-4 py-4 sm:px-8 ${tab === "conversation" ? "flex" : "hidden"}`}
           aria-busy={state.opening}
           hidden={tab !== "conversation"}
         >
-          <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col gap-4">
+          <div className="mx-auto flex min-h-min w-full max-w-2xl flex-1 flex-col gap-4">
             <section
               className="shrink-0 space-y-2 text-center"
               aria-label="Coding conversation"

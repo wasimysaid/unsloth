@@ -147,6 +147,14 @@ function harness(
     cancellations,
     event,
     start,
+    view(epoch: string, position: number, event: unknown) {
+      return deliver({
+        subscription: "view",
+        observation_epoch: epoch,
+        position,
+        event,
+      });
+    },
     setRows(value: CodingRow[]) {
       rows = value;
     },
@@ -461,6 +469,167 @@ test("reconnect releases an earlier-history loading flag from the old view incar
   h.run.detach();
 });
 
+for (const rejected of [false, true]) {
+  test(`Jump to latest supersedes the first pending older-history ${rejected ? "failure" : "page"} and settles loading`, async () => {
+    const h = harness();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h.api.readEntries = async (_id, cut, anchor) => {
+      const earlier = anchor !== "latest";
+      if (earlier) {
+        await gate;
+        if (rejected) throw new Error("Superseded older-history failure");
+      }
+      const entry = earlier ? "older" : "latest";
+      return {
+        cut,
+        rows: [{ id: entry, entry_id: entry, kind: "assistant", text: entry }],
+        older: !earlier,
+        newer: earlier,
+        first_id: entry,
+        last_id: entry,
+      };
+    };
+    try {
+      await h.start(native("running-request"));
+      const signal = h.signal();
+      const loading = h.run.loadEarlier();
+      assert.equal(h.run.getSnapshot().loadingEarlier, true);
+      assert.equal(h.run.getSnapshot().viewingEarlier, false);
+      h.run.showLatest();
+      assert.equal(h.run.getSnapshot().loadingEarlier, true);
+      release();
+      await loading;
+      assert.equal(h.run.getSnapshot().loadingEarlier, false);
+      assert.equal(h.run.getSnapshot().viewingEarlier, false);
+      assert.equal(h.run.getSnapshot().newer, false);
+      assert.deepEqual(
+        h.run.getSnapshot().rows.map((row) => row.id),
+        ["latest"],
+      );
+      assert.equal(h.run.getSnapshot().error, null);
+      assert.equal(
+        h.run.getSnapshot().native?.active_request,
+        "running-request",
+      );
+      assert.equal(h.signal(), signal);
+      assert.equal(signal?.aborted, false);
+      assert.deepEqual(h.cancellations, []);
+      if (!rejected) {
+        // Supersession is not a permanent ban on a later explicit history action.
+        await h.run.loadEarlier();
+        assert.equal(h.run.getSnapshot().loadingEarlier, false);
+        assert.equal(h.run.getSnapshot().viewingEarlier, true);
+        assert.deepEqual(
+          h.run.getSnapshot().rows.map((row) => row.id),
+          ["older", "latest"],
+        );
+      }
+    } finally {
+      release();
+      h.run.detach();
+    }
+  });
+}
+
+for (const retained of ["history", "reading"] as const) {
+  test(`Jump to latest supersedes retained ${retained} intent during pending reconnect capture without aborting native authority`, async () => {
+    const h = harness();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h.api.readEntries = async (_id, cut, anchor) => {
+      const entry = anchor === "latest" ? "previous-latest" : "older";
+      return {
+        cut,
+        rows: [{ id: entry, entry_id: entry, kind: "assistant", text: entry }],
+        older: anchor === "latest",
+        newer: anchor !== "latest",
+        first_id: entry,
+        last_id: entry,
+      };
+    };
+    try {
+      await h.start();
+      if (retained === "history") await h.run.loadEarlier();
+      else h.run.setReading(true);
+      const previous = h.run.getSnapshot().rows;
+      const reads: { cut: JournalCut; anchor: unknown }[] = [];
+      h.api.readEntries = async (_id, cut, anchor, signal) => {
+        reads.push({ cut, anchor });
+        if (anchor === "latest") await gate;
+        assert.equal(
+          signal?.aborted,
+          false,
+          "Reading intent must not abort authoritative native history capture",
+        );
+        return {
+          cut,
+          rows: [
+            {
+              id: "fresh-latest",
+              entry_id: "fresh-latest",
+              kind: "assistant",
+              text: "Fresh captured native output",
+            },
+          ],
+          older: true,
+          newer: false,
+          first_id: "fresh-latest",
+          last_id: "fresh-latest",
+        };
+      };
+      h.run.connect();
+      const signal = h.signal();
+      const reconstructing = h.event({
+        type: "start",
+        state: native("reconnected-request"),
+        recovering: false,
+        root: { cut: { journal: "root", leaf: "cut2" }, live_invocations: [] },
+      });
+      assert.equal(h.run.getSnapshot().connection, "loading");
+      assert.deepEqual(h.run.getSnapshot().rows, previous);
+      h.run.showLatest();
+      release();
+      await reconstructing;
+      assert.equal(h.run.getSnapshot().connection, "connected");
+      assert.equal(h.run.getSnapshot().loadingEarlier, false);
+      assert.equal(h.run.getSnapshot().viewingEarlier, false);
+      assert.equal(h.run.getSnapshot().newer, false);
+      assert.deepEqual(
+        h.run.getSnapshot().rows.map((row) => row.id),
+        ["fresh-latest"],
+      );
+      assert.equal(
+        h.run.getSnapshot().native?.active_request,
+        "reconnected-request",
+      );
+      assert.equal(h.run.getSnapshot().activityVersion, 0);
+      assert.equal(h.signal(), signal);
+      assert.equal(signal?.aborted, false);
+      assert.deepEqual(h.cancellations, []);
+      // Capture advanced the authoritative cut even though historical UI intent
+      // was superseded; the subsequent checkpoint continues from the new cut.
+      await h.event({
+        type: "checkpoint",
+        cut: { journal: "root", leaf: "cut3" },
+        live_invocations: [],
+      });
+      assert.deepEqual(reads, [
+        { cut: { journal: "root", leaf: "cut2" }, anchor: "latest" },
+        { cut: { journal: "root", leaf: "cut3" }, anchor: { after: "cut2" } },
+      ]);
+      assert.equal(h.run.getSnapshot().viewingEarlier, false);
+    } finally {
+      release();
+      h.run.detach();
+    }
+  });
+}
+
 test("bounded history navigation anchors the retained entry and shows an earlier window without hiding omission", async () => {
   const h = harness();
   await h.start();
@@ -508,6 +677,315 @@ test("bounded history navigation anchors the retained entry and shows an earlier
   assert.deepEqual(anchorSeen, { before: oldest });
   assert.equal(h.run.getSnapshot().rows[0].text, "Previously evicted");
   assert.equal(h.run.getSnapshot().older, true);
+  assert.equal(h.run.getSnapshot().newer, true);
+  assert.equal(h.run.getSnapshot().rows.length, 1000);
+  const retained = h.run.getSnapshot().rows.at(-1)?.entry_id;
+  h.api.readEntries = async (_id, cut, anchor) => {
+    anchorSeen = anchor;
+    return {
+      cut,
+      rows: [
+        {
+          id: "entry-1099",
+          entry_id: "entry-1099",
+          kind: "assistant",
+          text: "Newest retained entry",
+        },
+      ],
+      older: true,
+      newer: false,
+      first_id: "entry-1099",
+      last_id: "entry-1099",
+    };
+  };
+  await h.run.loadNewer();
+  assert.deepEqual(anchorSeen, { after: retained });
+  assert.equal(h.run.getSnapshot().rows.length, 1000);
+  assert.equal(h.run.getSnapshot().rows.at(-1)?.text, "Newest retained entry");
+  assert.equal(h.run.getSnapshot().older, true);
+  assert.equal(h.run.getSnapshot().newer, false);
+  h.run.detach();
+});
+
+test("history prepends keep the current reading rows and can navigate forward at the same immutable cut", async () => {
+  const h = harness();
+  const row = (n: number): CodingRow => ({
+    id: `entry-${n}`,
+    entry_id: `entry-${n}`,
+    kind: "assistant",
+    text: `Row ${n}`,
+  });
+  h.api.readEntries = async (_id, cut, anchor) => {
+    const values =
+      anchor === "latest" ? [3, 4] : "before" in anchor ? [1, 2] : [5, 6];
+    return {
+      cut,
+      rows: values.map(row),
+      older: values[0] !== 1,
+      newer: values[0] !== 5,
+      first_id: `entry-${values[0]}`,
+      last_id: `entry-${values.at(-1)}`,
+    };
+  };
+  // Initial latest capture must not claim newer content.
+  const read = h.api.readEntries;
+  h.api.readEntries = async (...args) => ({
+    ...(await read(...args)),
+    ...(args[2] === "latest" ? { newer: false } : {}),
+  });
+  await h.start();
+  await h.run.loadEarlier();
+  assert.deepEqual(
+    h.run.getSnapshot().rows.map((r) => r.id),
+    [1, 2, 3, 4].map((n) => `entry-${n}`),
+  );
+  assert.equal(h.run.getSnapshot().viewingEarlier, true);
+  assert.equal(h.run.getSnapshot().newer, false);
+  h.run.showLatest();
+  assert.deepEqual(
+    h.run.getSnapshot().rows.map((r) => r.id),
+    ["entry-3", "entry-4"],
+  );
+  h.run.detach();
+});
+
+test("same-epoch replay reconstructs rows without inventing new activity; unseen positions still count", async () => {
+  const h = harness();
+  const start = {
+    type: "start",
+    state: native(),
+    recovering: false,
+    root: { cut: { journal: "root", leaf: "cut1" }, live_invocations: [] },
+  };
+  const activity = {
+    type: "activity",
+    rows: [{ id: "live", kind: "assistant", text: "Seen text" }],
+  };
+  const completed = {
+    type: "completed",
+    completion: { request_id: "old", stop_reason: "completed", error: null },
+  };
+  try {
+    await h.view("process-one", 10, start);
+    await h.view("process-one", 11, activity);
+    await h.view("process-one", 12, completed);
+    assert.equal(h.run.getSnapshot().activityVersion, 2);
+    h.run.connect();
+    await h.view("process-one", 10, start);
+    await h.view("process-one", 11, activity);
+    await h.view("process-one", 12, completed);
+    assert.equal(
+      h.run.getSnapshot().rows[0].text,
+      "Seen text",
+      "Replay must still reconstruct the public projection",
+    );
+    assert.equal(h.run.getSnapshot().activityVersion, 2);
+    await h.view("process-one", 13, {
+      type: "activity",
+      rows: [
+        {
+          id: "live",
+          kind: "assistant",
+          text: "Seen text plus genuinely unseen output",
+        },
+      ],
+    });
+    assert.equal(h.run.getSnapshot().activityVersion, 3);
+  } finally {
+    h.run.detach();
+  }
+});
+
+test("same-epoch reset replay rebuilds the branch without inventing new activity", async () => {
+  const h = harness();
+  const capture = {
+    state: native(),
+    recovering: false,
+    root: { cut: { journal: "root", leaf: "cut1" }, live_invocations: [] },
+  };
+  const activity = {
+    type: "activity",
+    rows: [{ id: "reset-live", kind: "assistant", text: "Seen after reset" }],
+  };
+  const completed = {
+    type: "completed",
+    completion: { request_id: "old", stop_reason: "completed", error: null },
+  };
+  try {
+    await h.view("process-one", 10, { type: "start", ...capture });
+    await h.view("process-one", 11, { type: "reset", ...capture });
+    await h.view("process-one", 12, activity);
+    await h.view("process-one", 13, completed);
+    assert.equal(h.run.getSnapshot().activityVersion, 2);
+    h.run.connect();
+    await h.view("process-one", 10, { type: "start", ...capture });
+    await h.view("process-one", 11, { type: "reset", ...capture });
+    await h.view("process-one", 12, activity);
+    await h.view("process-one", 13, completed);
+    assert.equal(h.run.getSnapshot().rows[0].text, "Seen after reset");
+    assert.equal(h.run.getSnapshot().activityVersion, 2);
+    await h.view("process-one", 14, {
+      type: "activity",
+      rows: [
+        {
+          id: "reset-live",
+          kind: "assistant",
+          text: "Genuinely new after reset",
+        },
+      ],
+    });
+    assert.equal(h.run.getSnapshot().activityVersion, 3);
+  } finally {
+    h.run.detach();
+  }
+});
+
+test("a new observation epoch never suppresses genuinely new low-position activity", async () => {
+  const h = harness();
+  const start = {
+    type: "start",
+    state: native(),
+    recovering: false,
+    root: { cut: { journal: "root", leaf: "cut1" }, live_invocations: [] },
+  };
+  try {
+    await h.view("process-one", 100, start);
+    await h.view("process-one", 101, {
+      type: "activity",
+      rows: [{ id: "old", kind: "assistant", text: "Previously observed" }],
+    });
+    h.run.connect();
+    await h.view("process-two", 1, start);
+    await h.view("process-two", 2, {
+      type: "activity",
+      rows: [{ id: "new", kind: "assistant", text: "New native lifetime" }],
+    });
+    assert.equal(h.run.getSnapshot().activityVersion, 2);
+    assert.equal(h.run.getSnapshot().rows[0].text, "New native lifetime");
+  } finally {
+    h.run.detach();
+  }
+});
+
+test("usage-only state reconstruction is not new transcript activity", async () => {
+  const h = harness();
+  try {
+    await h.start();
+    const captured = h.run.getSnapshot().native;
+    assert.ok(captured);
+    await h.event({
+      type: "state",
+      state: { ...captured, usage: { context_window: 128000, stale: true } },
+    });
+    assert.equal(h.run.getSnapshot().native?.usage?.context_window, 128000);
+    assert.equal(h.run.getSnapshot().activityVersion, 0);
+    await h.event({
+      type: "state",
+      state: { ...captured, active_request: "actual-new-request" },
+    });
+    assert.equal(h.run.getSnapshot().activityVersion, 1);
+  } finally {
+    h.run.detach();
+  }
+});
+
+test("activity indication ignores captures/checkpoints and counts actual live public activity", async () => {
+  const h = harness();
+  await h.start();
+  assert.equal(h.run.getSnapshot().activityVersion, 0);
+  await h.event({
+    type: "activity",
+    rows: [{ id: "live", kind: "assistant", text: "New output" }],
+  });
+  assert.equal(h.run.getSnapshot().activityVersion, 1);
+  await h.event({
+    type: "checkpoint",
+    cut: { journal: "root", leaf: "cut1" },
+    live_invocations: [],
+  });
+  assert.equal(h.run.getSnapshot().activityVersion, 1);
+  await h.start();
+  assert.equal(h.run.getSnapshot().activityVersion, 1);
+  h.run.detach();
+});
+
+test("reading snapshot survives latest-window eviction and reconnect without replacing native authority", async () => {
+  const h = harness();
+  const rows: CodingRow[] = Array.from({ length: 1000 }, (_, n) => ({
+    id: `entry-${n}`,
+    entry_id: `entry-${n}`,
+    kind: "assistant",
+    text: `Row ${n}`,
+  }));
+  h.setRows(rows);
+  await h.start();
+  h.run.setReading(true);
+  await h.event({
+    type: "activity",
+    rows: [{ id: "live", kind: "assistant", text: "New output below reader" }],
+  });
+  assert.equal(h.run.getSnapshot().rows[0].id, "entry-0");
+  assert.equal(h.run.getSnapshot().rows.length, 1000);
+  assert.equal(h.run.getSnapshot().viewingEarlier, true);
+  const version = h.run.getSnapshot().activityVersion;
+  h.setRows([
+    {
+      id: "new-latest",
+      entry_id: "new-latest",
+      kind: "assistant",
+      text: "Saved new output",
+    },
+  ]);
+  await h.start(native("request"));
+  assert.equal(h.run.getSnapshot().rows[0].id, "entry-0");
+  assert.equal(h.run.getSnapshot().native?.active_request, "request");
+  assert.equal(h.run.getSnapshot().activityVersion, version);
+  h.run.showLatest();
+  h.run.setReading(false);
+  assert.equal(h.run.getSnapshot().rows[0].id, "new-latest");
+  assert.equal(h.run.getSnapshot().viewingEarlier, false);
+  h.run.setReading(true);
+  h.setRows([
+    { id: "branch", entry_id: "branch", kind: "notice", text: "New branch" },
+  ]);
+  await h.event({
+    type: "reset",
+    state: native(),
+    root: { cut: { journal: "root", leaf: "branch" }, live_invocations: [] },
+  });
+  assert.equal(h.run.getSnapshot().rows[0].id, "branch");
+  assert.equal(h.run.getSnapshot().viewingEarlier, false);
+  h.run.detach();
+});
+
+test("eviction freezes the currently read projection, including rows received after the initial pause", async () => {
+  const h = harness();
+  h.setRows(
+    Array.from(
+      { length: 995 },
+      (_, n): CodingRow => ({
+        id: `entry-${n}`,
+        entry_id: `entry-${n}`,
+        kind: "assistant",
+        text: `Row ${n}`,
+      }),
+    ),
+  );
+  await h.start();
+  h.run.setReading(true);
+  const live = (n: number): CodingRow => ({
+    id: `live-${n}`,
+    kind: "assistant",
+    text: `New row ${n}`,
+  });
+  await h.event({ type: "activity", rows: [0, 1, 2].map(live) });
+  assert.equal(h.run.getSnapshot().rows.at(-1)?.id, "live-2");
+  await h.event({ type: "activity", rows: [3, 4, 5].map(live) });
+  assert.equal(h.run.getSnapshot().viewingEarlier, true);
+  assert.equal(h.run.getSnapshot().rows.at(-1)?.id, "live-2");
+  assert.equal(h.run.getSnapshot().rows[0].id, "entry-0");
+  h.run.showLatest();
+  assert.equal(h.run.getSnapshot().rows.at(-1)?.id, "live-5");
   h.run.detach();
 });
 

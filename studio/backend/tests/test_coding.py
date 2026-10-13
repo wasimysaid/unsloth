@@ -14,7 +14,7 @@ from fastapi import FastAPI
 
 from auth import storage
 from auth.authentication import create_access_token
-from core.coding_runtime import CodingRuntime, CodingRuntimeError, MAX_FRAME
+from core.coding_runtime import CodingRuntime, CodingRuntimeError, MAX_FRAME, runtime_for
 from routes.coding import router
 
 
@@ -142,6 +142,77 @@ async def test_open_never_accepts_a_replacement_working_directory(coding_app):
         assert "another process" in response.json()["detail"]
         bad = await client.post("/api/coding/conversations", json = {"cwd": "/", "trust": False})
         assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_observation_epoch_is_opaque_stable_and_specific_to_runtime_instance():
+    app = SimpleNamespace(state = SimpleNamespace())
+    runtime = runtime_for(app)
+    epoch = runtime.observation_epoch
+    assert isinstance(epoch, str) and len(epoch) == 32
+    assert all(character in "0123456789abcdef" for character in epoch)
+    assert runtime_for(app) is runtime
+    assert runtime_for(app).observation_epoch == epoch
+    assert runtime.process is None, "Observation metadata must not start Mimir"
+    runtime._fail(CodingRuntimeError("disconnected", "Native observation ended"))
+    with pytest.raises(CodingRuntimeError, match = "Native observation ended"):
+        await runtime.start()
+    assert runtime.observation_epoch == epoch, "Failure must not rotate the observation epoch"
+    await runtime.close()
+    assert runtime.observation_epoch == epoch
+    replacement = CodingRuntime()
+    assert replacement.observation_epoch != epoch
+    assert replacement.process is None
+
+
+@pytest.mark.asyncio
+async def test_sse_observation_epoch_preserves_native_envelopes_across_views_and_runtime_replacement(coding_app, monkeypatch):
+    app, headers = coding_app
+    originals = []
+    released = []
+    def observed_runtime(position):
+        runtime = CodingRuntime()
+        views = []
+        async def subscribe(conversation_id):
+            assert conversation_id == "native-conversation"
+            subscription = f"native-view-{position}-{len(views)}"
+            views.append(subscription)
+            items = [
+                {"subscription": subscription, "position": position, "event": {
+                    "type": "activity", "rows": [{"id": "native-row", "kind": "assistant", "text": "Supplied native content"}]}},
+                {"subscription": subscription, "position": position + 1, "event": {"type": "closed"}},
+            ]
+            originals.append((runtime.observation_epoch, items))
+            queue = asyncio.Queue()
+            for item in items:
+                queue.put_nowait(item)
+            return subscription, queue
+        async def unsubscribe(subscription):
+            released.append(subscription)
+        monkeypatch.setattr(runtime, "subscribe", subscribe)
+        monkeypatch.setattr(runtime, "unsubscribe", unsubscribe)
+        return runtime
+    runtime = observed_runtime(100)
+    app.state.coding_runtime = runtime
+    observed = []
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        for _ in range(2):
+            response = await client.get("/api/coding/conversations/native-conversation/events")
+            assert response.status_code == 200
+            observed.append([json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")])
+        # Only an explicit new runtime instance introduces a new observation domain.
+        app.state.coding_runtime = observed_runtime(1)
+        response = await client.get("/api/coding/conversations/native-conversation/events")
+        assert response.status_code == 200
+        observed.append([json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")])
+    for envelopes, (epoch, items) in zip(observed, originals, strict = True):
+        assert envelopes == [{**item, "observation_epoch": epoch} for item in items]
+        assert all("observation_epoch" not in item for item in items), "Native queue items must not be mutated"
+    assert observed[0][0]["observation_epoch"] == observed[1][0]["observation_epoch"] == runtime.observation_epoch
+    assert observed[2][0]["observation_epoch"] != runtime.observation_epoch
+    assert [frames[0]["position"] for frames in observed] == [100, 100, 1]
+    assert released == ["native-view-100-0", "native-view-100-1", "native-view-1-0"]
+    assert runtime.process is None and app.state.coding_runtime.process is None
 
 
 @pytest.mark.asyncio

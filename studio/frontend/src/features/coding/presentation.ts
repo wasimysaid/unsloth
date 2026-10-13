@@ -4,6 +4,15 @@ import type { CodingRow } from "./run-types.ts";
 
 export type PresentationRow = CodingRow & { grouped?: CodingRow[] };
 
+/** Presentation key only. Native row/entry identities remain unchanged in metadata.
+ * Exact invocation/answer identities survive provisional -> saved replacement. */
+export function readingRowKey(row: CodingRow): string {
+  if (row.answer)
+    return `answer:${row.answer.request_id}:${row.answer.user_request_id}`;
+  if (row.tool?.invocation_id) return `invocation:${row.tool.invocation_id}`;
+  return `row:${row.id}`;
+}
+
 /** assistant-ui creates a transient empty assistant while a native request runs.
  * It has no native identity/output and is not a transcript entry. */
 export function nativeMessageRow(message: {

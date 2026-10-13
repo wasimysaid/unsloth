@@ -9,6 +9,7 @@ import {
   codingRowSize,
   reportedCounts,
   reportedUnifiedDiff,
+  reportedUnifiedDiffSections,
 } from "../src/features/coding/file-changes.ts";
 import { groupCodingRows } from "../src/features/coding/presentation.ts";
 import type { CodingRow } from "../src/features/coding/run-types.ts";
@@ -248,4 +249,144 @@ test("structured effects count toward the ephemeral transcript budget and no-pro
   };
   assert.equal(codingRowSize(noProfile), "Actual output".length);
   assert.equal(groupCodingRows([noProfile])[0].tool?.output, "Actual output");
+});
+
+function sectionOracle(file: FileChangeFile, expected: string): string[] {
+  const before = structuredClone(file);
+  const sections = reportedUnifiedDiffSections(file);
+  assert.equal(
+    sections.join(""),
+    expected,
+    "Sections must preserve every supplied unified character exactly once",
+  );
+  for (const section of sections) {
+    assert.ok(section.length > 0);
+    assert.ok(section.length <= MAX_DIFF_CHARACTERS);
+    assert.ok(Buffer.byteLength(section, "utf8") <= MAX_DIFF_CHARACTERS);
+    assert.ok(section.split("\n").length <= MAX_DIFF_LINES);
+    assert.doesNotMatch(
+      section,
+      /[\uD800-\uDBFF]$|^[\uDC00-\uDFFF]/,
+      "Section edges must not split a Unicode scalar",
+    );
+  }
+  assert.deepEqual(
+    file,
+    before,
+    "Formatting must not mutate the supplied report",
+  );
+  return sections;
+}
+
+test("bounded diff sections preserve the complete 450-line supplied tail without inventing ranges", () => {
+  const contents = Array.from(
+    { length: 450 },
+    (_, index) => `SYNTHETIC_LARGE_${index.toString().padStart(3, "0")}\n`,
+  );
+  const file = changed({
+    partial: true,
+    truncated: true,
+    hunks: [
+      {
+        lines: contents.map((content, index) => ({
+          old_line: null,
+          new_line: index + 1,
+          kind: "added",
+          content,
+        })),
+      },
+    ],
+  });
+  const sections = sectionOracle(
+    file,
+    `--- src/example.ts\n+++ src/example.ts\n@@ -?,? +1,450 @@\n${contents.map((content) => `+${content}`).join("")}`,
+  );
+  assert.ok(sections.length > 1);
+  assert.doesNotMatch(sections[0], /SYNTHETIC_LARGE_449/);
+  const tail = sections.at(-1);
+  assert.ok(tail);
+  assert.match(tail, /SYNTHETIC_LARGE_449/);
+  assert.doesNotMatch(sections.join(""), /No newline/);
+});
+
+test("oversized single diff lines and headers remain accessible, including Unicode and EOF evidence", () => {
+  const path = `reported/${"界🙂".repeat(6000)}`;
+  const content = `begin-${"界🙂".repeat(10000)}-supported-tail`;
+  const file = changed({
+    path,
+    hunks: [
+      { lines: [{ old_line: null, new_line: 19, kind: "added", content }] },
+    ],
+  });
+  const sections = sectionOracle(
+    file,
+    `--- ${path}\n+++ ${path}\n@@ -?,? +19,1 @@\n+${content}\n\\ No newline at end of file\n`,
+  );
+  assert.ok(sections.length > 5);
+  const tail = sections.at(-1);
+  assert.ok(tail);
+  assert.match(tail, /-supported-tail\n\\ No newline at end of file\n$/);
+});
+
+test("diff sections preserve embedded newlines, CRLF, unknown partial ranges and chronological hunk boundaries", () => {
+  const content = `first\r\n${"supplied embedded line\n".repeat(900)}last\n`;
+  const file = changed({
+    partial: true,
+    hunks: [
+      { lines: [{ old_line: null, new_line: null, kind: "context", content }] },
+      {
+        lines: [
+          { old_line: 7, new_line: null, kind: "removed", content: "old" },
+          { old_line: null, new_line: 9, kind: "added", content: "new\r\n" },
+        ],
+      },
+    ],
+  });
+  sectionOracle(
+    file,
+    `--- src/example.ts\n+++ src/example.ts\n@@ -?,? +?,? @@\n ${content}@@ -7,1 +9,1 @@\n-old\n\\ No newline at end of file\n+new\r\n`,
+  );
+});
+
+test("small and metadata-only section output agrees with the existing formatter", () => {
+  for (const file of [
+    changed(),
+    changed({ status: "created" }),
+    changed({ status: "deleted" }),
+    changed({ binary: true }),
+    changed({ hunks: [] }),
+    changed({ partial: true, truncated: true }),
+  ]) {
+    const expected = reportedUnifiedDiff(file);
+    assert.equal(expected.clipped, false);
+    const sections = sectionOracle(file, expected.text);
+    assert.equal(sections.length, expected.text ? 1 : 0);
+  }
+});
+
+test("section boundaries obey both limits at exact byte and line edges without empty or lost content", () => {
+  for (const length of [
+    MAX_DIFF_CHARACTERS - 1,
+    MAX_DIFF_CHARACTERS,
+    MAX_DIFF_CHARACTERS + 1,
+    MAX_DIFF_CHARACTERS * 3,
+    MAX_DIFF_LINES - 1,
+    MAX_DIFF_LINES,
+    MAX_DIFF_LINES + 1,
+  ]) {
+    for (const content of ["x".repeat(length), "x\n".repeat(length)]) {
+      const file = changed({
+        truncated: true,
+        hunks: [
+          {
+            lines: [{ old_line: null, new_line: null, kind: "added", content }],
+          },
+        ],
+      });
+      sectionOracle(
+        file,
+        `--- src/example.ts\n+++ src/example.ts\n@@ -?,? +?,? @@\n+${content.replace(/\n$/, "")}\n`,
+      );
+    }
+  }
 });
