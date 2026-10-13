@@ -198,6 +198,45 @@ test("run and Stop carry exact native identities without implicit transport retr
     assert.deepEqual(request.options, { retryNetworkErrors: false });
 });
 
+test("effective skills and rich prompt inputs use authenticated exact-ID transport without replay", async () => {
+  const discovered = {
+    skills: [
+      {
+        name: "review",
+        qualified_name: "plugin:alpha:review",
+        description: "Metadata only",
+      },
+    ],
+  };
+  const c = client(() => Response.json(discovered));
+  const abort = new AbortController();
+  assert.deepEqual(
+    await c.api.discoverCodingSkills("native/id", abort.signal),
+    discovered,
+  );
+  assert.equal(
+    c.requests[0].path,
+    "/api/coding/conversations/native%2Fid/skills",
+  );
+  assert.equal(c.requests[0].init?.signal, abort.signal);
+  const extras = {
+    skill_mentions: [{ name: "plugin:alpha:review", start: 0, end: 20 }],
+    images: [{ mime_type: "image/png", data: "exact-base64" }],
+  };
+  await c.api.codingRunApi.submit(
+    "native/id",
+    "same-key",
+    "@plugin:alpha:review",
+    extras,
+  );
+  assert.deepEqual(JSON.parse(String(c.requests[1].init?.body)), {
+    submission_key: "same-key",
+    text: "@plugin:alpha:review",
+    ...extras,
+  });
+  assert.deepEqual(c.requests[1].options, { retryNetworkErrors: false });
+});
+
 test("event stream uses authenticated fetch, exposes a disconnect event and is cancellable", async () => {
   const text = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({
@@ -246,4 +285,53 @@ test("Settings maintenance encodes exact targets and reconciliation IDs without 
   ]);
   assert.deepEqual(JSON.parse(c.requests[1].init!.body as string), { operation_id: "one-op" });
   assert.ok(c.requests.every((request) => JSON.stringify(request.options) === JSON.stringify({ retryNetworkErrors: false })));
+});
+
+test("coding transport failure stays unconfirmed without claiming native work died or suggesting relaunch", async () => {
+  const transport = Object.assign(
+    new Error("Unsloth isn't running -- please relaunch it."),
+    { unslothTransportFailure: true },
+  );
+  const c = client(() => {
+    throw transport;
+  });
+  await assert.rejects(
+    c.api.codingRunApi.readEntries(
+      "conversation",
+      { journal: "root", leaf: "captured" },
+      "latest",
+    ),
+    (reason: unknown) => {
+      assert.ok(reason instanceof Error);
+      assert.match(
+        reason.message,
+        /Coding response unconfirmed.*work may still be running/,
+      );
+      assert.doesNotMatch(reason.message, /relaunch|isn't running/);
+      assert.equal(reason.cause, transport);
+      assert.equal("admissionRejected" in reason, false);
+      return true;
+    },
+  );
+  assert.equal(
+    c.requests.length,
+    1,
+    "transport loss must not replay a coding request",
+  );
+});
+
+test("coding request preserves abort and non-transport authentication errors", async () => {
+  for (const original of [
+    new DOMException("Detached", "AbortError"),
+    new Error("Another tab is switching accounts; this tab will reload."),
+  ]) {
+    const c = client(() => {
+      throw original;
+    });
+    await assert.rejects(
+      c.api.codingApi.openConversation("saved"),
+      (reason: unknown) => reason === original,
+    );
+    assert.equal(c.requests.length, 1);
+  }
 });

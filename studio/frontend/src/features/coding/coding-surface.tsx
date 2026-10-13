@@ -4,13 +4,12 @@
 import { Button } from "@/components/ui/button";
 import {
   AssistantRuntimeProvider,
-  ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
   useExternalStoreRuntime,
   useMessage,
 } from "@assistant-ui/react";
-import { ArrowDown, ArrowUp, Square } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -19,6 +18,8 @@ import {
   useSyncExternalStore,
 } from "react";
 import { codingRunApi } from "./api";
+import { CodingComposer } from "./coding-composer";
+import { createInputDraft } from "./input";
 import { nativeMessageRow } from "./presentation";
 import { codingRunAdapter } from "./run-runtime";
 import {
@@ -27,6 +28,7 @@ import {
   createCodingRun,
 } from "./run-session";
 import { ToolReport } from "./tool-report";
+import { CodingUnsentDraft } from "./unsent-draft";
 
 function NativeMessage() {
   const message = useMessage();
@@ -38,7 +40,8 @@ function NativeMessage() {
     (item) =>
       !item.tool?.quiet ||
       item.tool?.status === "failed" ||
-      item.tool?.semantic_content,
+      item.tool?.semantic_content ||
+      item.tool?.output_profile?.kind === "file_change",
   );
   const quiet = tools.filter((item) => !visible.includes(item));
   const reports = (
@@ -93,6 +96,13 @@ function NativeMessage() {
           <div className="whitespace-pre-wrap text-sm leading-relaxed">
             {row.text}
           </div>
+          {row.kind === "user" && (row.image_count ?? 0) > 0 && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Native saved input · {row.image_count}{" "}
+              {row.image_count === 1 ? "image" : "images"} · request outcome
+              shown separately
+            </p>
+          )}
           {row.clipped && (
             <p className="mt-2 text-xs font-medium">
               Content clipped to the presentation bound.
@@ -120,7 +130,8 @@ export function CodingSurface({
     run?.subscribe ?? (() => () => {}),
     run?.getSnapshot ?? (() => null),
   );
-  const runtime = useExternalStoreRuntime(codingRunAdapter(state, run));
+  const [draft] = useState(createInputDraft);
+  const runtime = useExternalStoreRuntime(codingRunAdapter(state, run, draft));
   const viewport = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const [away, setAway] = useState(false);
@@ -140,7 +151,9 @@ export function CodingSurface({
       !state.recovering &&
       !state.stopping &&
       !state.submitting &&
-      !state.uncertainSubmission,
+      !state.uncertainSubmission &&
+      !state.storageError &&
+      !state.reconcilingAction,
   );
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -188,7 +201,43 @@ export function CodingSurface({
                 {state.error}
               </p>
             )}
-            {state.connection === "disconnected" && (
+            {state.storageError && (
+              <p
+                role="alert"
+                data-testid="coding-submission-storage-error"
+                className="break-words text-destructive"
+              >
+                {state.storageError}{" "}
+                {state.unsentDraft
+                  ? "Copy the retained unsent draft below before reopening. Restore browser storage before sending."
+                  : "Restore browser storage and deliberately reopen before sending."}
+              </p>
+            )}
+            {state.disconnected && (
+              <p
+                role="status"
+                data-testid="coding-disconnect-banner"
+                className="break-words font-medium"
+              >
+                {state.reopenRequired
+                  ? "Disconnected · work may still be running. The native view closed; deliberately reopen the saved conversation."
+                  : "Disconnected · work may still be running. Reconnecting automatically; this warning stays until native history is rebuilt."}
+              </p>
+            )}
+            {(state.reconcilingAction || state.retryStop) && (
+              <p role="status" data-testid="coding-action-reconciliation">
+                {state.reconcilingAction
+                  ? "Inspecting a fresh native view before another action; cancellation was not replayed."
+                  : "Fresh native view inspected. Explicit retry targets only the same active request; cancellation is not exactly-once."}
+              </p>
+            )}
+            {state.deliveryRecovered && (
+              <p role="status" data-testid="coding-submission-recovered">
+                Native prompt acceptance confirmed. Delivery recovery does not
+                start a new continuation.
+              </p>
+            )}
+            {state.disconnected && !state.reopenRequired && (
               <Button
                 variant="outline"
                 size="sm"
@@ -198,19 +247,34 @@ export function CodingSurface({
               </Button>
             )}
             {state.uncertainSubmission && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={
-                  state.connection !== "connected" ||
-                  state.recovering ||
-                  state.submitting ||
-                  Boolean(state.stopping)
-                }
-                onClick={() => void run?.retrySubmission()}
+              <div
+                data-testid="coding-delivery-recovery"
+                data-submission-key={state.uncertainSubmission.key}
+                className="space-y-2"
               >
-                Retry same submission
-              </Button>
+                <p>
+                  Prompt delivery is unconfirmed. The original submission
+                  identity is saved; no prompt is replayed automatically.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  data-testid="coding-retry-submission"
+                  disabled={
+                    state.connection !== "connected" ||
+                    state.recovering ||
+                    state.submitting ||
+                    Boolean(
+                      state.stopping ||
+                        state.storageError ||
+                        state.reconcilingAction,
+                    )
+                  }
+                  onClick={() => void run?.retrySubmission()}
+                >
+                  Retry same submission
+                </Button>
+              </div>
             )}
           </div>
         )}
@@ -278,62 +342,14 @@ export function CodingSurface({
           className="shrink-0 space-y-3"
           aria-label="Coding project and prompt"
         >
-          <ComposerPrimitive.Root
-            className="aui-composer-root relative w-full"
-            aria-label="Coding composer"
-          >
-            <div className="unsloth-composer-surface">
-              <div className="flex min-w-0 items-end gap-2">
-                <ComposerPrimitive.Input
-                  className="unsloth-composer-input disabled:cursor-not-allowed"
-                  aria-label="Coding prompt"
-                  aria-describedby="coding-send-explanation"
-                  placeholder="What would you like to build?"
-                  submitMode="enter"
-                  disabled={!canSend}
-                  minRows={2}
-                  maxRows={5}
-                  addAttachmentOnPaste={false}
-                  unstable_focusOnThreadSwitched={false}
-                  unstable_focusOnRunStart={false}
-                  unstable_focusOnScrollToBottom={false}
-                />
-                {active || state?.stopping ? (
-                  <Button
-                    type="button"
-                    size="icon"
-                    aria-label={state?.stopping ? "Stopping…" : "Stop"}
-                    title={
-                      state?.stopping
-                        ? "Waiting for native terminal cleanup"
-                        : "Cancel this exact native request"
-                    }
-                    disabled={
-                      Boolean(state?.stopping) ||
-                      state?.connection !== "connected"
-                    }
-                    className="mb-1 shrink-0 rounded-full"
-                    onClick={() => void run?.stop()}
-                  >
-                    <Square className="size-4" aria-hidden="true" />
-                  </Button>
-                ) : (
-                  <ComposerPrimitive.Send asChild={true}>
-                    <Button
-                      type="submit"
-                      size="icon"
-                      aria-label="Send"
-                      disabled={!canSend}
-                      aria-describedby="coding-send-explanation"
-                      className="mb-1 shrink-0 rounded-full"
-                    >
-                      <ArrowUp className="size-5" aria-hidden="true" />
-                    </Button>
-                  </ComposerPrimitive.Send>
-                )}
-              </div>
-            </div>
-          </ComposerPrimitive.Root>
+          {state?.unsentDraft && <CodingUnsentDraft text={state.unsentDraft} />}
+          <CodingComposer
+            conversationId={conversationId}
+            run={run}
+            state={state}
+            draft={draft}
+            canSend={canSend}
+          />
           {children}
           <p
             id="coding-send-explanation"

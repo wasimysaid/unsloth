@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createCodingSession } from "../src/features/coding/session.ts";
+import { CodingHttpError } from "../src/features/coding/errors.ts";
 import type {
   CodingApi,
   CodingConversation,
@@ -85,12 +86,14 @@ test("history loading does not implicitly reopen; explicit reopening uses the na
 
 test("successful same-ID reopening advances the view incarnation, but failed reopening preserves it", async () => {
   let fail = false;
-  const session = createCodingSession(nativeApi({
-    openConversation: async (id) => {
-      if (fail) throw new Error("Cannot reopen");
-      return { id, cwd: "/saved" };
-    },
-  }));
+  const session = createCodingSession(
+    nativeApi({
+      openConversation: async (id) => {
+        if (fail) throw new Error("Cannot reopen");
+        return { id, cwd: "/saved" };
+      },
+    }),
+  );
   assert.equal(session.getSnapshot().openingGeneration, 0);
   await session.openConversation("same-native-id");
   assert.equal(session.getSnapshot().openingGeneration, 1);
@@ -129,11 +132,12 @@ test("native validation/open failures preserve the open conversation and expose 
   const session = createCodingSession(
     nativeApi({
       createConversation: async () => {
-        if (fail) throw new Error("Project folder is not a directory");
+        if (fail)
+          throw new CodingHttpError(422, "Project folder is not a directory");
         return { id: "native", cwd: "/good" };
       },
       openConversation: async () => {
-        throw new Error("Saved project was removed");
+        throw new CodingHttpError(404, "Saved project was removed");
       },
     }),
   );
@@ -232,4 +236,120 @@ test("failed history refresh is visible, can recover, and cannot overwrite a new
   await pending;
   assert.equal(session.getSnapshot().historyError, null);
   assert.equal(session.getSnapshot().conversations[0].id, "newer");
+});
+
+test("lost create acknowledgement inspects shared history before deliberate reopen, never fresh create replay", async () => {
+  const catalog = deferred<CodingConversation[]>();
+  let creates = 0;
+  const opens: string[] = [];
+  const session = createCodingSession(
+    nativeApi({
+      createConversation: async () => {
+        creates++;
+        throw new Error("Create ACK lost");
+      },
+      listConversations: () => catalog.promise,
+      openConversation: async (id) => {
+        opens.push(id);
+        return { id, cwd: "/canonical/saved" };
+      },
+    }),
+  );
+  const opening = session.createConversation("/requested");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(session.getSnapshot().opening, true);
+  assert.equal(session.getSnapshot().openingUncertainty?.inspected, false);
+  assert.match(
+    session.getSnapshot().openingError ?? "",
+    /unconfirmed, not failed/,
+  );
+  assert.equal(await session.createConversation("/requested"), false);
+  assert.equal(await session.openConversation("native-accepted"), false);
+  assert.equal(creates, 1);
+  assert.deepEqual(opens, []);
+  catalog.resolve([{ id: "native-accepted", cwd: "/canonical/saved" }]);
+  assert.equal(
+    await opening,
+    false,
+    "catalog visibility is not an acknowledgement",
+  );
+  assert.equal(session.getSnapshot().openingUncertainty?.inspected, true);
+  assert.equal(
+    session.getSnapshot().active,
+    null,
+    "catalog inspection does not implicitly reopen or infer identity by cwd",
+  );
+  assert.equal(await session.createConversation("/requested"), false);
+  assert.equal(creates, 1);
+  assert.equal(await session.openConversation("native-accepted"), true);
+  assert.deepEqual(opens, ["native-accepted"]);
+  assert.equal(session.getSnapshot().openingUncertainty, null);
+  assert.equal(session.getSnapshot().active?.cwd, "/canonical/saved");
+});
+
+test("failed uncertainty inspection blocks mutation until explicit history refresh succeeds", async () => {
+  let offline = true;
+  let creates = 0;
+  let opens = 0;
+  const session = createCodingSession(
+    nativeApi({
+      createConversation: async () => {
+        creates++;
+        throw new Error("Lost ACK");
+      },
+      listConversations: async () => {
+        if (offline) throw new Error("Catalog offline");
+        return [{ id: "accepted", cwd: "/saved" }];
+      },
+      openConversation: async (id) => {
+        opens++;
+        return { id, cwd: "/saved" };
+      },
+    }),
+  );
+  await session.createConversation("/project");
+  assert.equal(session.getSnapshot().opening, false);
+  assert.equal(session.getSnapshot().openingUncertainty?.inspected, false);
+  assert.equal(session.getSnapshot().historyError, "Catalog offline");
+  assert.equal(await session.createConversation("/project"), false);
+  assert.equal(await session.openConversation("accepted"), false);
+  assert.equal(creates, 1);
+  assert.equal(opens, 0);
+  offline = false;
+  await session.refreshConversations();
+  assert.equal(session.getSnapshot().openingUncertainty?.inspected, true);
+  assert.equal(await session.openConversation("accepted"), true);
+  assert.equal(opens, 1);
+});
+
+test("lost known-open acknowledgement preserves previous identity and requires inspected deliberate native reopen", async () => {
+  let lose = false;
+  const opens: string[] = [];
+  const session = createCodingSession(
+    nativeApi({
+      openConversation: async (id) => {
+        opens.push(id);
+        if (lose) throw new Error("Open ACK lost");
+        return { id, cwd: "/native/canonical" };
+      },
+      listConversations: async () => [{ id: "new", cwd: "/new" }],
+    }),
+  );
+  await session.openConversation("old");
+  lose = true;
+  await session.openConversation("new");
+  assert.deepEqual(opens, ["old", "new"]);
+  assert.equal(session.getSnapshot().active?.id, "old");
+  assert.equal(session.getSnapshot().openingGeneration, 1);
+  assert.deepEqual(session.getSnapshot().openingUncertainty, {
+    operation: "open",
+    id: "new",
+    inspected: true,
+  });
+  assert.equal(await session.createConversation("/new"), false);
+  lose = false;
+  await session.openConversation("new");
+  assert.deepEqual(opens, ["old", "new", "new"]);
+  assert.equal(session.getSnapshot().openingGeneration, 2);
+  assert.equal(session.getSnapshot().active?.cwd, "/native/canonical");
 });

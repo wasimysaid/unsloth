@@ -11,11 +11,13 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from auth.authentication import get_current_subject
 from auth.storage import create_initial_user, get_user_record
+from .coding_transport_faults import CodingTransportFaults
 from core.coding_runtime import close_coding_runtime
 from routes.auth import router as auth_router
 from routes.coding import router as coding_router
@@ -39,6 +41,16 @@ def create_app() -> FastAPI:
     app.state.secure = False
     app.include_router(auth_router, prefix = "/api/auth")
     app.include_router(coding_router, prefix = "/api/coding")
+    faults = {}
+    app.add_middleware(CodingTransportFaults, faults = faults)
+
+    @app.post("/api/coding-acceptance/reset/{conversation_id}", dependencies = [Depends(get_current_subject)])
+    async def reset_next_view(conversation_id: str):
+        # This test-only composition requires isolated history/auth above. The
+        # production app has no fault endpoints or middleware. Native work and
+        # saved history are not changed; only the next browser transport is.
+        faults["reset_conversation"] = conversation_id
+        return {"configured": True}
 
     @app.get("/api/{path:path}")
     async def unavailable(path: str):

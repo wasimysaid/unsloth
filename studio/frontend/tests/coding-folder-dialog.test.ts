@@ -9,6 +9,7 @@ import {
   type StubElement,
 } from "./helpers/module-stubs.ts";
 import { createCodingSession } from "../src/features/coding/session.ts";
+import { CodingHttpError } from "../src/features/coding/errors.ts";
 import type { CodingApi } from "../src/features/coding/types.ts";
 
 function nodes(node: unknown): StubElement[] {
@@ -207,20 +208,31 @@ test("editing the path after browse disables confirm until the new path is brows
 });
 
 test("editing while a browse is pending preserves the newer draft and invalidates selection", async () => {
-  let resolve!: (value: Awaited<ReturnType<CodingApi["browseProjects"]>>) => void;
+  let resolve!: (
+    value: Awaited<ReturnType<CodingApi["browseProjects"]>>,
+  ) => void;
   let signal: AbortSignal | undefined;
-  const p = picker(api({
-    browseProjects: (_path, current) => {
-      signal = current;
-      return new Promise((done) => { resolve = done; });
-    },
-  }));
+  const p = picker(
+    api({
+      browseProjects: (_path, current) => {
+        signal = current;
+        return new Promise((done) => {
+          resolve = done;
+        });
+      },
+    }),
+  );
   const pending = p.session.browse("/old");
   const input = p.render().find((node) => node.type === "Input")!;
-  (input.props.onChange as (event: unknown) => void)({ target: { value: "/new" } });
+  (input.props.onChange as (event: unknown) => void)({
+    target: { value: "/new" },
+  });
   resolve({ path: "/old", parent: "/", entries: [], truncated: false });
   await pending;
-  assert.equal(p.render().find((node) => node.type === "Input")!.props.value, "/new");
+  assert.equal(
+    p.render().find((node) => node.type === "Input")!.props.value,
+    "/new",
+  );
   assert.equal(signal?.aborted, true);
   assert.equal(p.session.getSnapshot().directory, null);
   assert.equal(p.button("Open project").props.disabled, true);
@@ -232,7 +244,7 @@ test("a failed native opening keeps the dialog open with the error; cancel clear
   const p = picker(
     api({
       createConversation: async () => {
-        throw new Error("Unreadable host folder");
+        throw new CodingHttpError(403, "Unreadable host folder");
       },
     }),
   );
@@ -251,4 +263,36 @@ test("a failed native opening keeps the dialog open with the error; cancel clear
   (p.button("Cancel").props.onClick as () => void)();
   assert.deepEqual(p.changes, [false]);
   assert.equal(p.session.getSnapshot().directory, null);
+});
+
+test("uncertain native creation disables repeated confirmation and lets the user close to inspect saved history", async () => {
+  let creations = 0;
+  const p = picker(
+    api({
+      createConversation: async () => {
+        creations++;
+        throw new Error("Lost create ACK");
+      },
+      listConversations: async () => [{ id: "accepted", cwd: "/canonical" }],
+    }),
+  );
+  await p.session.browse("/canonical");
+  await (p.button("Open project").props.onClick as () => Promise<void>)();
+  assert.equal(p.button("Open project").props.disabled, true);
+  await (p.button("Open project").props.onClick as () => Promise<void>)();
+  assert.equal(creations, 1);
+  assert.equal(p.session.getSnapshot().openingUncertainty?.inspected, true);
+  assert.equal(p.session.getSnapshot().active, null);
+  assert.ok(
+    p
+      .render()
+      .some(
+        (node) =>
+          node.props.role === "alert" &&
+          text(node.props.children).includes("unconfirmed, not failed"),
+      ),
+  );
+  assert.equal(p.button("Cancel").props.disabled, false);
+  (p.button("Cancel").props.onClick as () => void)();
+  assert.deepEqual(p.changes, [false]);
 });

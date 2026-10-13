@@ -198,7 +198,8 @@ export function ProjectFolderDialog({
               !state.directory ||
               path !== state.directory.path ||
               state.browsing ||
-              state.opening
+              state.opening ||
+              Boolean(state.openingUncertainty)
             }
             onClick={async () => {
               if (!state.directory || path !== state.directory.path) return;

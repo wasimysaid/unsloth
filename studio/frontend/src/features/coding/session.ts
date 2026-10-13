@@ -15,6 +15,11 @@ export interface CodingSessionState {
   historyError: string | null;
   opening: boolean;
   openingError: string | null;
+  openingUncertainty: {
+    operation: "create" | "open";
+    id: string | null;
+    inspected: boolean;
+  } | null;
   directory: CodingProjectDirectory | null;
   browsing: boolean;
   browseError: string | null;
@@ -35,12 +40,14 @@ export function createCodingSession(api: CodingApi) {
     historyError: null,
     opening: false,
     openingError: null,
+    openingUncertainty: null,
     directory: null,
     browsing: false,
     browseError: null,
   };
   const listeners = new Set<() => void>();
   let historyRevision = 0;
+  let openingMutation = false;
   let browseRevision = 0;
   let browseAbort: AbortController | null = null;
   const update = (patch: Partial<CodingSessionState>) => {
@@ -54,30 +61,74 @@ export function createCodingSession(api: CodingApi) {
     try {
       const conversations = await api.listConversations();
       if (revision === historyRevision)
-        update({ conversations, loadingConversations: false });
+        update({
+          conversations,
+          loadingConversations: false,
+          ...(state.openingUncertainty
+            ? {
+                opening: openingMutation,
+                openingUncertainty: {
+                  ...state.openingUncertainty,
+                  inspected: true,
+                },
+              }
+            : {}),
+        });
     } catch (error) {
       if (revision === historyRevision)
-        update({ historyError: errorText(error), loadingConversations: false });
+        update({
+          historyError: errorText(error),
+          loadingConversations: false,
+          ...(state.openingUncertainty ? { opening: openingMutation } : {}),
+        });
     }
   }
 
   async function open(
     operation: () => Promise<CodingConversation>,
+    kind: "create" | "open",
+    id: string | null,
   ): Promise<boolean> {
-    // One native opening at a time, including repeated keyboard activation.
-    if (state.opening) return false;
+    // Uncertain creation is never blindly repeated. Inspect the shared catalog,
+    // then deliberately reopen a saved identity; folder equality is not identity.
+    if (
+      state.opening ||
+      (state.openingUncertainty &&
+        (kind === "create" || !state.openingUncertainty.inspected))
+    )
+      return false;
+    openingMutation = true;
     update({ opening: true, openingError: null });
     try {
       const active = await operation();
+      openingMutation = false;
       // The canonical cwd and conversation ID come from Mimir, never the browser input.
       // A deliberate same-ID reopening also needs a fresh native view after
       // disconnect/closure; identity alone is not a subscription incarnation.
-      update({ active, opening: false, openingGeneration: state.openingGeneration + 1 });
+      update({
+        active,
+        opening: false,
+        openingUncertainty: null,
+        openingGeneration: state.openingGeneration + 1,
+      });
       void refreshConversations();
       return true;
     } catch (error) {
-      update({ opening: false, openingError: errorText(error) });
-      // Do not replace an already-open conversation when validation/opening fails.
+      openingMutation = false;
+      if (
+        error instanceof Error &&
+        "admissionRejected" in error &&
+        error.admissionRejected === true
+      ) {
+        update({ opening: false, openingError: errorText(error) });
+      } else {
+        update({
+          openingUncertainty: { operation: kind, id, inspected: false },
+          openingError: `${errorText(error)} Opening is unconfirmed, not failed. Inspect shared native history, then deliberately reopen a saved conversation; do not create another copy. Close the folder picker to inspect or refresh history.`,
+        });
+        await refreshConversations(); // Inspection only: never replays create/open.
+      }
+      // Native errors and uncertainty never replace an already-open identity/cwd.
       return false;
     }
   }
@@ -92,8 +143,9 @@ export function createCodingSession(api: CodingApi) {
     },
     refreshConversations,
     createConversation: (cwd: string) =>
-      open(() => api.createConversation(cwd)),
-    openConversation: (id: string) => open(() => api.openConversation(id)),
+      open(() => api.createConversation(cwd), "create", null),
+    openConversation: (id: string) =>
+      open(() => api.openConversation(id), "open", id),
     clearOpeningError: () => update({ openingError: null }),
     async browse(path: string) {
       const revision = ++browseRevision;
