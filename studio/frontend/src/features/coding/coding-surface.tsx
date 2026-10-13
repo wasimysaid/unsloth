@@ -19,6 +19,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { codingRunApi } from "./api";
+import { CodingModeControl, PlanCard } from "./plan-card";
 import { nativeMessageRow } from "./presentation";
 import { codingRunAdapter } from "./run-runtime";
 import {
@@ -82,6 +83,8 @@ function NativeMessage() {
         ) : (
           <div className="space-y-2">{reports}</div>
         )
+      ) : row.plan ? (
+        <PlanCard plan={row.plan} historical={true} />
       ) : (
         <>
           <p className="mb-1 text-[11px] font-medium text-muted-foreground">
@@ -143,11 +146,12 @@ export function CodingSurface({
       !state.submitting &&
       !state.uncertainSubmission &&
       !state.storageError &&
-      !state.reconcilingAction,
+      !state.reconcilingAction &&
+      !state.planControl,
   );
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <ThreadPrimitive.Root className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+      <ThreadPrimitive.Root className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto">
         {state && (
           <div
             className="space-y-2 rounded-xl border border-border/60 px-3 py-2 text-xs"
@@ -268,9 +272,19 @@ export function CodingSurface({
             )}
           </div>
         )}
+        {state?.native?.plan && (
+          <PlanCard
+            key={state.native.plan.id}
+            plan={state.native.plan}
+            state={state}
+            run={run}
+          />
+        )}
+        {/* Keep history inspectable with an expanded plan; the thread scrolls
+            when plan/status/composer content exceeds the available height. */}
         <div
           ref={viewport}
-          className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto"
+          className={`min-w-0 flex-1 space-y-3 overflow-y-auto ${state?.native?.plan ? "min-h-32" : "min-h-0"}`}
           data-testid="coding-transcript"
           aria-label="Coding transcript"
           aria-busy={state?.connection === "loading" || state?.recovering}
@@ -332,6 +346,7 @@ export function CodingSurface({
           className="shrink-0 space-y-3"
           aria-label="Coding project and prompt"
         >
+          <CodingModeControl state={state} run={run} />
           {state?.unsentDraft && <CodingUnsentDraft text={state.unsentDraft} />}
           <ComposerPrimitive.Root
             className="aui-composer-root relative w-full"

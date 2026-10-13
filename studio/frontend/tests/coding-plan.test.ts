@@ -1,0 +1,317 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
+import assert from "node:assert/strict";
+import test from "node:test";
+import type {
+  NativePlan,
+  PlanDecision,
+} from "../src/features/coding/plan-types.ts";
+import {
+  codingPlanControlReason,
+  createCodingRun,
+} from "../src/features/coding/run-session.ts";
+import type { NativeState, RunApi } from "../src/features/coding/run-types.ts";
+import { memorySubmissionStorage } from "./coding-storage-fixture.ts";
+
+const plan: NativePlan = {
+  id: "plan-exact",
+  revision: "revision-exact",
+  name: "Native proposal",
+  path: "/project/plan.md",
+  markdown: "# Native proposal\n\nPreserve this text.\n",
+  status: "review_pending",
+};
+const native = (): NativeState => ({
+  info: { id: "conversation", cwd: "/project" },
+  configuration: {
+    provider: "fixture",
+    model: "fixture",
+    reasoning: null,
+    mode: "plan",
+  },
+  active_request: null,
+  requests: [],
+  pending_user_request: false,
+  plan,
+  action_disabled_reason: null,
+});
+function harness() {
+  let deliver!: (value: unknown) => Promise<void>;
+  let position = 0;
+  const calls: unknown[] = [];
+  const api: RunApi = {
+    async setMode(id, mode) {
+      calls.push({ id, mode });
+      return { conversation_id: id, mode };
+    },
+    async decidePlan(id, selected, decision) {
+      calls.push({
+        id,
+        plan_id: selected.id,
+        revision: selected.revision,
+        decision,
+      });
+      return {
+        conversation_id: id,
+        plan_id: selected.id,
+        decision,
+        request_id:
+          decision === "save_and_stop" ? null : "native-implementation",
+      };
+    },
+    async submit() {
+      throw new Error("Plan actions must never submit a Studio prompt.");
+    },
+    async cancel() {
+      throw new Error("Plan actions must never simulate Stop.");
+    },
+    async readEntries(_id, cut) {
+      return {
+        cut,
+        rows: [{ id: "saved-plan", kind: "notice", plan }],
+        older: false,
+        newer: false,
+        first_id: "saved-plan",
+        last_id: "saved-plan",
+      };
+    },
+    async watch(_id, _signal, _connected, onView) {
+      deliver = onView;
+      await new Promise(() => {});
+    },
+  };
+  const run = createCodingRun("conversation", api, () => "unused", {
+    storage: () => memorySubmissionStorage(),
+  });
+  run.connect();
+  const start = (state = native(), recovering = false) =>
+    deliver({
+      subscription: "view",
+      position: ++position,
+      event: {
+        type: "start",
+        state,
+        recovering,
+        root: { cut: { journal: "root", leaf: "cut" }, live_invocations: [] },
+      },
+    });
+  return { run, api, calls, start };
+}
+
+test("mode selection is configuration, not plan acceptance; authoritative state waits for fresh cut", async () => {
+  const h = harness();
+  await h.start();
+  await h.run.setMode("build");
+  assert.deepEqual(h.calls, [{ id: "conversation", mode: "build" }]);
+  assert.equal(
+    h.run.getSnapshot().native?.configuration.mode,
+    "plan",
+    "no optimistic mode change",
+  );
+  assert.equal(h.run.getSnapshot().native?.plan?.status, "review_pending");
+  assert.ok(h.run.getSnapshot().planControlReconciling);
+  const selected = native();
+  selected.configuration.mode = "build";
+  await h.start(selected);
+  assert.equal(h.run.getSnapshot().planControl, null);
+  assert.equal(h.run.getSnapshot().native?.configuration.mode, "build");
+  assert.match(
+    h.run.getSnapshot().planControlNotice ?? "",
+    /Authoritative mode: build.*No command was replayed/,
+  );
+  assert.deepEqual(h.run.getSnapshot().rows[0].plan, plan);
+  assert.equal(h.run.getSnapshot().rows[0].historical, true);
+  h.run.detach();
+});
+
+for (const decision of [
+  "implement",
+  "implement_fresh",
+  "save_and_stop",
+] as PlanDecision[]) {
+  test(`${decision} addresses native plan revision without changing mode or inventing implementation`, async () => {
+    const h = harness();
+    await h.start();
+    await h.run.decidePlan(plan, decision);
+    assert.deepEqual(h.calls, [
+      {
+        id: "conversation",
+        plan_id: plan.id,
+        revision: plan.revision,
+        decision,
+      },
+    ]);
+    assert.equal(h.run.getSnapshot().native?.configuration.mode, "plan");
+    await h.run.decidePlan(plan, decision);
+    assert.equal(
+      h.calls.length,
+      1,
+      "another choice blocked until fresh reconstruction",
+    );
+    const settled = native();
+    settled.configuration.mode = "build";
+    settled.plan = {
+      ...plan,
+      status: decision === "save_and_stop" ? "saved_stopped" : "accepted",
+      revision: "new-revision",
+    };
+    await h.start(settled);
+    assert.equal(h.run.getSnapshot().planControl, null);
+    assert.equal(h.calls.length, 1);
+    h.run.detach();
+  });
+}
+
+test("uncertain plan acceptance reconnects but never retries; recovering cuts do not unlock actions", async () => {
+  const h = harness();
+  await h.start();
+  h.api.decidePlan = async () => {
+    h.calls.push("lost-plan-ack");
+    throw new Error("Lost acknowledgment");
+  };
+  await h.run.decidePlan(plan, "implement");
+  assert.equal(h.run.getSnapshot().planControlUncertain, true);
+  const changed = native();
+  changed.plan = {
+    ...plan,
+    status: "implementing",
+    revision: "accepted-revision",
+  };
+  await h.start(changed, true);
+  assert.ok(
+    h.run.getSnapshot().planControl,
+    "recovering native history still blocks actions",
+  );
+  await h.start(changed);
+  assert.equal(h.run.getSnapshot().planControl, null);
+  assert.match(
+    h.run.getSnapshot().planControlNotice ?? "",
+    /Delivery remains unconfirmed.*implementing.*No command was replayed/,
+  );
+  assert.deepEqual(h.calls, ["lost-plan-ack"]);
+  h.run.detach();
+});
+
+test("stale identities/revisions and native busy reasons cannot dispatch a different plan", async () => {
+  const h = harness();
+  await h.start();
+  await h.run.decidePlan({ ...plan, id: "old-plan" }, "implement");
+  await h.run.decidePlan(
+    { ...plan, revision: "old-revision" },
+    "save_and_stop",
+  );
+  assert.equal(h.calls.length, 0);
+  assert.match(h.run.getSnapshot().planControlError ?? "", /stale/);
+  const busy = native();
+  busy.action_disabled_reason = "Native child and tool work must settle first.";
+  await h.start(busy);
+  assert.match(
+    codingPlanControlReason(h.run.getSnapshot()) ?? "",
+    /child and tool/,
+  );
+  await h.run.decidePlan(plan, "implement_fresh");
+  assert.equal(h.calls.length, 0);
+  await h.run.setMode("build");
+  assert.deepEqual(
+    h.calls,
+    [{ id: "conversation", mode: "build" }],
+    "mode selection applies to future work; native plan busy admission is separate",
+  );
+  h.run.detach();
+});
+
+test("mode reconstruction cannot swallow a concurrent Stop failure or strand stopping", async () => {
+  const h = harness();
+  const running = native();
+  running.active_request = "exact-running";
+  running.requests = [
+    { id: "exact-running", status: "running", submission_key: null },
+  ];
+  running.action_disabled_reason = "busy";
+  await h.start(running);
+  let resolveMode!: (value: Awaited<ReturnType<RunApi["setMode"]>>) => void;
+  let rejectStop!: (reason: Error) => void;
+  h.api.setMode = async () =>
+    new Promise((resolve) => {
+      resolveMode = resolve;
+    });
+  h.api.cancel = async () =>
+    new Promise((_resolve, reject) => {
+      rejectStop = reject;
+    });
+  const selecting = h.run.setMode("build");
+  const stopping = h.run.stop();
+  resolveMode({ conversation_id: "conversation", mode: "build" });
+  await selecting;
+  await h.start(running);
+  rejectStop(new Error("Cancellation response lost"));
+  await stopping;
+  assert.equal(h.run.getSnapshot().reconcilingAction, "exact-running");
+  await h.start(running);
+  assert.equal(h.run.getSnapshot().stopping, null);
+  assert.equal(h.run.getSnapshot().retryStop, "exact-running");
+  assert.match(h.run.getSnapshot().error ?? "", /explicitly retry Stop/);
+  h.run.detach();
+});
+
+test("completed plan blocks replay but not mode selection; saved-stopped can be explicitly implemented", async () => {
+  const h = harness();
+  const completed = native();
+  completed.plan = {
+    ...plan,
+    status: "completed",
+    revision: "completed-revision",
+    action_disabled_reason: "plan_finished",
+  };
+  await h.start(completed);
+  assert.equal(codingPlanControlReason(h.run.getSnapshot()), null);
+  await h.run.decidePlan(completed.plan, "implement");
+  assert.equal(h.calls.length, 0);
+  assert.match(h.run.getSnapshot().planControlError ?? "", /finished/);
+  await h.run.setMode("plan");
+  assert.deepEqual(h.calls, [{ id: "conversation", mode: "plan" }]);
+  const saved = native();
+  saved.plan = { ...plan, status: "saved_stopped", revision: "saved-revision" };
+  await h.start(saved);
+  await h.run.decidePlan(saved.plan, "implement");
+  assert.equal(h.calls.length, 2);
+  h.run.detach();
+});
+
+test("late mode or plan replies cannot reconnect a detached surface", async () => {
+  const h = harness();
+  await h.start();
+  let resolve!: (value: Awaited<ReturnType<RunApi["decidePlan"]>>) => void;
+  h.api.decidePlan = async () =>
+    new Promise((done) => {
+      resolve = done;
+    });
+  const pending = h.run.decidePlan(plan, "implement");
+  h.run.detach();
+  resolve({
+    conversation_id: "conversation",
+    plan_id: plan.id,
+    decision: "implement",
+    request_id: "native-request",
+  });
+  await pending;
+  assert.equal(h.run.getSnapshot().planControlReconciling, false);
+  assert.equal(h.run.getSnapshot().native?.configuration.mode, "plan");
+});
+
+test("definite native rejection is displayed and reconciled without retry or content loss", async () => {
+  const h = harness();
+  await h.start();
+  h.api.decidePlan = async () => {
+    throw Object.assign(new Error("Native plan revision changed"), {
+      admissionRejected: true,
+    });
+  };
+  await h.run.decidePlan(plan, "implement");
+  assert.equal(h.run.getSnapshot().planControlUncertain, false);
+  assert.match(h.run.getSnapshot().planControlError ?? "", /revision changed/);
+  await h.start();
+  assert.equal(h.run.getSnapshot().planControl, null);
+  assert.equal(h.run.getSnapshot().native?.plan?.markdown, plan.markdown);
+  h.run.detach();
+});

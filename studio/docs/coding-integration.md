@@ -1,4 +1,44 @@
-# Coding: trusted projects, native run/stop, reopen and reconnect (#234–236)
+# Coding: trusted projects, native run/stop, recovery and plans (#234–239)
+
+## Native plans and explicit implementation (#239)
+
+Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`
+and paired private Mimir `91b975adae2df627d7c67c6bcede6d910a592a7d`.
+Build/Plan controls select native configuration; only the ordered native view changes
+the displayed mode. Selecting Build never accepts a plan. Native busy guards remain
+in charge and already-running work is not rewritten.
+
+The current native plan is expandable and keeps its identity, Markdown, path,
+revision and lifecycle. Public saved lifecycle records use the same inspection-only
+renderer and preserve their recorded bodies when reopened, not today's filesystem
+contents. Plan actions address the exact captured revision and native identity.
+Implementation continues the conversation, fresh implementation clears model context
+while retaining public history, and save-and-stop persists the plan without starting
+an implementation request. All three native decisions return to Build.
+
+The authenticated bridge admits separate `set_mode` and `decide_plan` commands, not
+synthetic prompts or mode-switch acceptance. Native validation rejects stale revisions,
+changed current plans and accepted-action replay. Browser controls display busy/error
+reasons and reconstruct a fresh captured view after any action response, including
+uncertain delivery. Reconnection never replays a plan decision. An acknowledgment is
+not terminal implementation completion; native request/lifecycle evidence supplies
+that outcome.
+
+Run the feature's real-route deterministic acceptance workload after rebuilding the
+paired runtime/product plugin and frontend:
+
+```sh
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir /path/to/current/mimir --plugin-package /path/to/current/package \
+  --workload plan --browser firefox --evidence-dir /path/to/worker/plans
+```
+
+This composes built Studio UI, production authenticated coding routes, the installed
+product plugin and native Mimir. The controlled HTTP provider is a deterministic
+fixture, not live-provider or Studio-local-model acceptance. Relevant scope is A2
+(native write refusal and plan outcomes), A7 (busy/stale/replay/reconnect), and A10
+(rendered keyboard/focus and 1440×1000 / 390×844 checks). Full-PoC live model and human
+review gates remain #255–256; feature automation does not replace them.
 
 ## Reopen/reconnect slice (#236)
 

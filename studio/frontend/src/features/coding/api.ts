@@ -103,6 +103,32 @@ export const codingApi: CodingApi = {
 };
 
 export const codingRunApi: RunApi = {
+  async setMode(id, mode) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/mode`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      },
+    );
+    return await response.json();
+  },
+  async decidePlan(id, plan, decision) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/plan-actions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          plan_id: plan.id,
+          revision: plan.revision,
+          decision,
+        }),
+      },
+    );
+    return await response.json();
+  },
   async submit(id, submissionKey, text) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/prompts`,

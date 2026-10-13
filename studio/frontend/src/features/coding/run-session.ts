@@ -2,9 +2,16 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 import {
-  pendingSubmissionStore,
   type SubmissionStorage,
+  pendingSubmissionStore,
 } from "./pending-submission.ts";
+import {
+  type CodingMode,
+  type NativePlan,
+  type PendingPlanControl,
+  type PlanDecision,
+  planDisabledExplanation,
+} from "./plan-types.ts";
 import type {
   CodingRow,
   EntryPage,
@@ -37,6 +44,11 @@ export interface CodingRunState {
   reopenRequired: boolean;
   reconcilingAction: string | null;
   retryStop: string | null;
+  planControl: PendingPlanControl | null;
+  planControlReconciling: boolean;
+  planControlUncertain: boolean;
+  planControlNotice: string | null;
+  planControlError: string | null;
 }
 const MAX_ROWS = 1000;
 const MAX_TEXT = 2 * 1024 * 1024;
@@ -76,6 +88,11 @@ export function createCodingRun(
     reopenRequired: false,
     reconcilingAction: null,
     retryStop: null,
+    planControl: null,
+    planControlReconciling: false,
+    planControlUncertain: false,
+    planControlNotice: null,
+    planControlError: null,
   };
   try {
     state.uncertainSubmission = pendingStore.load();
@@ -93,6 +110,8 @@ export function createCodingRun(
   let position: number | null = null;
   let subscription: string | null = null;
   let incarnation = 0;
+  // Command ownership survives view reconstruction, but not actual detachment.
+  let attachment = 0;
   let abort: AbortController | null = null;
   const listeners = new Set<() => void>();
   const update = (patch: Partial<CodingRunState>) => {
@@ -138,6 +157,28 @@ export function createCodingRun(
           : "Fresh native view has not confirmed released terminal cleanup for the cancellation target. No action was replayed; wait for native cleanup or deliberately reopen saved history to inspect again.",
     });
   };
+  const reconcilePlanControl = () => {
+    const control = state.planControl;
+    if (
+      !control ||
+      !state.planControlReconciling ||
+      state.recovering ||
+      state.connection !== "connected"
+    )
+      return;
+    const plan = state.native?.plan;
+    const observation =
+      control.kind === "mode"
+        ? `Authoritative mode: ${state.native?.configuration.mode}.`
+        : plan?.id !== control.plan_id
+          ? "The selected plan is no longer current. Its action was not replayed."
+          : `Native plan ${plan.id}: ${plan.status}.`;
+    update({
+      planControl: null,
+      planControlReconciling: false,
+      planControlNotice: `${state.planControlUncertain ? "Delivery remains unconfirmed. " : ""}Fresh native view inspected. ${observation} No command was replayed; any further choice must target the current native revision.`,
+    });
+  };
   const mergeRows = (source: CodingRow[]) => {
     // Saved starts/results and live activity refer to the same native invocation.
     // Collapse only that exact identity, preserving its first chronological slot.
@@ -165,14 +206,20 @@ export function createCodingRun(
     const rows = mergeRows([...saved, ...provisional]);
     let bytes = rows.reduce(
       (size, row) =>
-        size + (row.text?.length ?? 0) + (row.tool?.output.length ?? 0),
+        size +
+        (row.text?.length ?? 0) +
+        (row.tool?.output.length ?? 0) +
+        (row.plan?.markdown.length ?? 0),
       0,
     );
     let omitted = false;
     while (rows.length > MAX_ROWS || (bytes > MAX_TEXT && rows.length > 1)) {
       const row = rows.shift();
       if (!row) break;
-      bytes -= (row.text?.length ?? 0) + (row.tool?.output.length ?? 0);
+      bytes -=
+        (row.text?.length ?? 0) +
+        (row.tool?.output.length ?? 0) +
+        (row.plan?.markdown.length ?? 0);
       const keep = (item: CodingRow) =>
         item.id !== row.id &&
         !(row.entry_id && item.entry_id === row.entry_id) &&
@@ -186,7 +233,9 @@ export function createCodingRun(
         if (!keep(rows[i])) {
           const removed = rows.splice(i, 1)[0];
           bytes -=
-            (removed.text?.length ?? 0) + (removed.tool?.output.length ?? 0);
+            (removed.text?.length ?? 0) +
+            (removed.tool?.output.length ?? 0) +
+            (removed.plan?.markdown.length ?? 0);
         }
       }
       omitted = true;
@@ -400,6 +449,7 @@ export function createCodingRun(
       reconnectAttempt = 0;
       update({ disconnected: false, reopenRequired: false });
       reconcileAction();
+      reconcilePlanControl();
     }
   }
   function connect() {
@@ -453,6 +503,7 @@ export function createCodingRun(
       state.submitting ||
       state.stopping ||
       state.reconcilingAction ||
+      state.planControl ||
       state.storageError
     )
       throw new Error(
@@ -510,6 +561,45 @@ export function createCodingRun(
       update({ submitting: false });
     }
   }
+  async function planControl(
+    control: PendingPlanControl,
+    operation: () => Promise<void>,
+  ) {
+    const disabled =
+      control.kind === "mode"
+        ? codingModeControlReason(state)
+        : codingPlanControlReason(state);
+    if (disabled) {
+      update({ planControlError: disabled });
+      return;
+    }
+    const current = attachment;
+    update({
+      planControl: control,
+      planControlReconciling: false,
+      planControlUncertain: false,
+      planControlError: null,
+      planControlNotice: null,
+    });
+    try {
+      await operation();
+    } catch (reason) {
+      if (current !== attachment) return;
+      const rejected =
+        reason instanceof Error &&
+        "admissionRejected" in reason &&
+        reason.admissionRejected === true;
+      update({
+        planControlUncertain: !rejected,
+        planControlError: errorText(reason),
+      });
+    }
+    // Even an acknowledgment is not authoritative state. Reconstruct a new cut
+    // before another non-idempotent action; never retry the command automatically.
+    if (current !== attachment || abort === null) return;
+    update({ planControlReconciling: true });
+    connect();
+  }
   return {
     getSnapshot: () => state,
     subscribe(listener: () => void) {
@@ -520,11 +610,56 @@ export function createCodingRun(
     },
     connect,
     detach() {
+      ++attachment;
       ++incarnation;
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       reconnectTimer = null;
       abort?.abort();
       abort = null;
+    },
+    async setMode(mode: CodingMode) {
+      await planControl({ kind: "mode", mode }, async () => {
+        const result = await api.setMode(id, mode);
+        if (result.conversation_id !== id || result.mode !== mode)
+          throw new Error(
+            "The native mode selection identity could not be confirmed.",
+          );
+      });
+    },
+    async decidePlan(plan: NativePlan, decision: PlanDecision) {
+      if (
+        state.native?.plan?.id !== plan.id ||
+        state.native.plan.revision !== plan.revision
+      ) {
+        update({
+          planControlError:
+            "This plan is stale. Inspect the current native plan before choosing an action.",
+        });
+        return;
+      }
+      const reason = codingPlanDecisionReason(
+        state,
+        state.native.plan,
+        decision,
+      );
+      if (reason) {
+        update({ planControlError: reason });
+        return;
+      }
+      await planControl(
+        { kind: "plan", plan_id: plan.id, revision: plan.revision, decision },
+        async () => {
+          const result = await api.decidePlan(id, plan, decision);
+          if (
+            result.conversation_id !== id ||
+            result.plan_id !== plan.id ||
+            result.decision !== decision
+          )
+            throw new Error(
+              "The native plan decision identity could not be confirmed.",
+            );
+        },
+      );
     },
     async send(text: string) {
       if (!text.trim()) return;
@@ -548,12 +683,13 @@ export function createCodingRun(
         state.connection !== "connected"
       )
         return;
-      const current = incarnation;
+      const current = attachment;
       update({ stopping: request, retryStop: null, error: null });
       try {
         const result = await api.cancel(id, request);
-        // Detach/reconnect and terminal native evidence supersede late replies.
-        if (current !== incarnation || state.stopping !== request) return;
+        // Detachment and exact terminal evidence supersede late replies;
+        // a mode-driven view reconstruction does not retire cancellation delivery.
+        if (current !== attachment || state.stopping !== request) return;
         if (result.conversation_id !== id || result.request_id !== request)
           throw new Error(
             "The native cancellation identity could not be confirmed.",
@@ -567,7 +703,7 @@ export function createCodingRun(
           connect();
         }
       } catch (reason) {
-        if (current !== incarnation || state.stopping !== request) return;
+        if (current !== attachment || state.stopping !== request) return;
         update({
           reconcilingAction: request,
           error:
@@ -620,7 +756,10 @@ export function createCodingRun(
           page.rows.length > MAX_ROWS ||
           page.rows.reduce(
             (size, row) =>
-              size + (row.text?.length ?? 0) + (row.tool?.output.length ?? 0),
+              size +
+              (row.text?.length ?? 0) +
+              (row.tool?.output.length ?? 0) +
+              (row.plan?.markdown.length ?? 0),
             0,
           ) > MAX_TEXT
         )
@@ -639,6 +778,52 @@ export function createCodingRun(
   };
 }
 export type CodingRun = ReturnType<typeof createCodingRun>;
+
+export function codingModeControlReason(
+  state: CodingRunState | null,
+): string | null {
+  if (!state?.native) return "Open a coding conversation first.";
+  if (
+    state.connection !== "connected" ||
+    state.disconnected ||
+    state.recovering
+  )
+    return "Wait for a connected, reconstructed native view.";
+  if (state.planControl)
+    return state.planControlReconciling
+      ? "Inspecting a fresh native view; no command is being replayed."
+      : "Waiting for native action admission.";
+  if (state.stopping || state.reconcilingAction)
+    return "Wait for native Stop reconciliation and terminal cleanup.";
+  if (state.submitting || state.uncertainSubmission)
+    return "Reconcile prompt delivery before changing native controls.";
+  return null;
+}
+
+export function codingPlanControlReason(
+  state: CodingRunState | null,
+): string | null {
+  return (
+    codingModeControlReason(state) ??
+    planDisabledExplanation(state?.native?.action_disabled_reason)
+  );
+}
+
+export function codingPlanDecisionReason(
+  state: CodingRunState | null,
+  plan: NativePlan,
+  decision?: PlanDecision,
+): string | null {
+  if (plan.status === "saved_stopped" && decision === "save_and_stop")
+    return "This plan is already saved and stopped. Choose implementation explicitly when ready.";
+  return (
+    codingPlanControlReason(state) ??
+    planDisabledExplanation(plan.action_disabled_reason) ??
+    (!["review_pending", "saved_stopped"].includes(plan.status)
+      ? "This plan is not awaiting a decision. Implementation will not be replayed."
+      : null)
+  );
+}
 
 /** Current status feedback is request-scoped; earlier failures stay in native history. */
 export function codingRunCompletion(state: CodingRunState | null) {

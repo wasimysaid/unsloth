@@ -16,8 +16,8 @@ import type {
 } from "../src/features/coding/run-types.ts";
 
 import {
-  pendingSubmissionStorageKey,
   type SubmissionStorage,
+  pendingSubmissionStorageKey,
 } from "../src/features/coding/pending-submission.ts";
 import { memorySubmissionStorage } from "./coding-storage-fixture.ts";
 
@@ -34,6 +34,8 @@ const native = (active: string | null = null): NativeState => ({
     ? [{ id: active, status: "running", submission_key: "key" }]
     : [],
   pending_user_request: false,
+  plan: null,
+  action_disabled_reason: null,
 });
 function harness(
   storage: SubmissionStorage = memorySubmissionStorage(),
@@ -49,6 +51,17 @@ function harness(
   let rows: CodingRow[] = [];
   let submitError: Error | null = null;
   const api: RunApi = {
+    async setMode(id, mode) {
+      return { conversation_id: id, mode };
+    },
+    async decidePlan(id, plan, decision) {
+      return {
+        conversation_id: id,
+        plan_id: plan.id,
+        decision,
+        request_id: null,
+      };
+    },
     async submit(id, key, text) {
       submissions.push({ id, key, text });
       if (submitError) throw submitError;

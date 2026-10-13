@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import type {
+  CodingMode,
+  NativePlan,
+  PlanActionResult,
+  PlanDecision,
+} from "./plan-types.ts";
 import type { CodingConversation } from "./types.ts";
 
 export type RequestStatus =
@@ -26,6 +32,8 @@ export interface NativeState {
   active_request: string | null;
   requests: NativeRequest[];
   pending_user_request: boolean;
+  plan: NativePlan | null;
+  action_disabled_reason: string | null;
 }
 export interface JournalCut {
   journal: "root";
@@ -34,12 +42,13 @@ export interface JournalCut {
 export type EntryAnchor = "latest" | { before: string } | { after: string };
 export interface CodingRow {
   id: string;
-  kind: "user" | "assistant" | "tool" | "notice";
+  kind: "user" | "assistant" | "tool" | "notice" | "plan";
   text?: string;
   entry_id?: string | null;
   request_id?: string | null;
   clipped?: boolean;
   historical?: boolean;
+  plan?: NativePlan;
   tool?: {
     invocation_id: string | null;
     call_id: string;
@@ -64,6 +73,15 @@ export interface EntryPage {
   last_id: string | null;
 }
 export interface RunApi {
+  setMode(
+    id: string,
+    mode: CodingMode,
+  ): Promise<{ conversation_id: string; mode: CodingMode }>;
+  decidePlan(
+    id: string,
+    plan: NativePlan,
+    decision: PlanDecision,
+  ): Promise<PlanActionResult>;
   submit(
     id: string,
     submissionKey: string,
