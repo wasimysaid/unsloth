@@ -38,6 +38,8 @@ export interface NativeState {
   info: CodingConversation;
   /** Authoritative choice for the next request, even while another is running. */
   configuration: CodingConfiguration;
+  /** Native inventory/resolution failure, never a health certification. */
+  selection_unavailable?: string | null;
   running_configuration: CodingConfiguration | null;
   active_request: string | null;
   requests: NativeRequest[];

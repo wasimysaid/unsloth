@@ -243,6 +243,21 @@ async def catalog(request: Request, cwd: str = Query(min_length = 1, max_length 
     return await _command(request, "catalog", {"cwd": cwd})
 
 
+@router.get("/conversations/{conversation_id}/models")
+async def conversation_models(conversation_id: str, request: Request):
+    # Read the retained controller's inventory; never implicitly open/grant trust.
+    result = await _command(request, "models", {"conversation_id": conversation_id})
+    return JSONResponse(result, headers = {"Cache-Control": "no-store"})
+
+
+@router.post("/conversations/{conversation_id}/models/refresh")
+async def refresh_models(conversation_id: str, request: Request):
+    # Native refresh owns discovery and selectability. No restart, onboarding,
+    # health probe, provider replacement, prompt replay or Studio inventory.
+    result = await _command(request, "models.refresh", {"conversation_id": conversation_id})
+    return JSONResponse(result, headers = {"Cache-Control": "no-store"})
+
+
 @router.get("/conversations")
 async def conversations(request: Request, cursor: str | None = Query(default = None, max_length = 16384)):
     page = await _command(request, "list", {"cursor": cursor})

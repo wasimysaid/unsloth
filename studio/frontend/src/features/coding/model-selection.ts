@@ -26,7 +26,9 @@ export interface CodingConfigurationChange {
   reasoning?: string;
 }
 export interface CodingModelApi {
-  catalog(cwd: string, signal: AbortSignal): Promise<CodingProviderChoice[]>;
+  /** The retained controller's inventory, not a separately loaded folder catalog. */
+  catalog(id: string, signal: AbortSignal): Promise<CodingProviderChoice[]>;
+  refresh(id: string, signal: AbortSignal): Promise<CodingProviderChoice[]>;
 }
 
 export const modelIdentity = (provider: string, model: string) =>

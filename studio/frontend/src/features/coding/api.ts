@@ -11,14 +11,14 @@ import type {
   PluginReloadStatus,
   RuntimeDiagnostics,
 } from "./maintenance";
-import type { CodingModelApi } from "./model-selection";
-import type { EntryPage, RunApi } from "./run-types";
 import type {
   McpDraft,
   McpInventory,
   McpSaveResult,
   McpSettingsApi,
 } from "./mcp-types";
+import type { CodingModelApi } from "./model-selection";
+import type { EntryPage, RunApi } from "./run-types";
 import type {
   CodingApi,
   CodingConversation,
@@ -183,10 +183,17 @@ export const mcpSettingsApi: McpSettingsApi = {
 };
 
 export const codingModelApi: CodingModelApi = {
-  async catalog(cwd, signal) {
+  async catalog(id, signal) {
     const response = await codingRequest(
-      `/catalog?${new URLSearchParams({ cwd })}`,
-      { signal },
+      `/conversations/${encodeURIComponent(id)}/models`,
+      { signal, cache: "no-store" },
+    );
+    return await response.json();
+  },
+  async refresh(id, signal) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/models/refresh`,
+      { method: "POST", signal, cache: "no-store" },
     );
     return await response.json();
   },

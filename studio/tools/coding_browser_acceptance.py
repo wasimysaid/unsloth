@@ -46,6 +46,7 @@ import urllib.request
 from coding_provider_fixture import ProviderFixture
 from coding_run_scenarios import run_scenarios
 from coding_picker_scenarios import run_picker_scenarios
+from coding_catalog_scenarios import run_catalog_scenarios
 from coding_extension_scenarios import prepare_extension_fixtures, run_extension_scenarios
 from coding_input_scenarios import prepare_input_project, input_scenarios, live_input_scenario
 from coding_recovery_scenarios import run_recovery_scenarios
@@ -70,7 +71,7 @@ def main() -> None:
     parser.add_argument("--plugin-package", type = Path)
     parser.add_argument("--commands-package", type = Path, help = "Current packaged SDK test.commands contribution fixture (commands workload only)")
     parser.add_argument("--evidence-dir", type = Path, required = True)
-    parser.add_argument("--workload", choices = ("opening", "deterministic", "picker", "recovery", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live"), default = "deterministic",
+    parser.add_argument("--workload", choices = ("opening", "deterministic", "picker", "catalog", "recovery", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live"), default = "deterministic",
                         help = "Live uses the existing native provider/credential profile; never copies credentials")
     parser.add_argument("--extensions", action = "store_true", help = "Run ticket-252 Settings inventory and scoped reload scenarios (requires deterministic workload)")
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
@@ -104,9 +105,9 @@ def main() -> None:
     live = args.workload in ("live", "inputs-live", "file-changes-live")
     native = shared_trust_path().parent if live else state_root / "mimir-home"
     native.mkdir(exist_ok = True)
-    provider = ProviderFixture() if args.workload in ("deterministic", "picker", "recovery", "commands", "retirement", "concurrency", "children", "inputs", "file-changes") else None
+    provider = ProviderFixture() if args.workload in ("deterministic", "picker", "catalog", "recovery", "commands", "retirement", "concurrency", "children", "inputs", "file-changes") else None
     if provider:
-        provider.configure(native, picker = args.workload == "picker", images = args.workload == "inputs")
+        provider.configure(native, picker = args.workload in ("picker", "catalog"), images = args.workload == "inputs")
     extension_packages = prepare_extension_fixtures(state_root, native, args.plugin_package.resolve()) if args.extensions else []
     projects = state_root / "projects"
     projects.mkdir(exist_ok = True)
@@ -205,7 +206,7 @@ def main() -> None:
             assert server.poll() is None, "Restarted acceptance server exited"
             try:
                 urllib.request.urlopen(base + "/api/auth/status", timeout = 1).close()
-                return
+                return server.pid
             except (urllib.error.URLError, TimeoutError):
                 time.sleep(0.1)
         raise AssertionError("Restarted acceptance server did not become ready")
@@ -374,6 +375,9 @@ def main() -> None:
                     if args.workload == "picker":
                         run_picker_scenarios(page, context, base, provider, first,
                                              report, scenario, snapshot)
+                    elif args.workload == "catalog":
+                        run_catalog_scenarios(page, context, base, provider, native, first,
+                                              report, scenario, snapshot, restart_server)
                     elif args.workload == "inputs":
                         input_scenarios(page, context, base, provider, first, report, scenario, snapshot)
                     elif args.workload == "inputs-live":
@@ -496,6 +500,8 @@ def main() -> None:
                 ("post", "/api/coding/conversations", {"data": {"cwd": str(first)}}),
                 ("post", f"/api/coding/conversations/{first_id}/open", {}),
                 ("get", f"/api/coding/conversations/{first_id}/events", {}),
+                ("get", f"/api/coding/conversations/{first_id}/models", {}),
+                ("post", f"/api/coding/conversations/{first_id}/models/refresh", {}),
                 ("get", "/api/coding/diagnostics", {}),
                 ("get", f"/api/coding/conversations/{first_id}/extensions", {}),
                 ("post", f"/api/coding/conversations/{first_id}/plugins/reload", {"data": {"operation_id": "unauthenticated-reload-valid-key"}}),
@@ -518,7 +524,7 @@ def main() -> None:
             if provider:
                 provider.assert_no_request()
             report["unauthenticated_requests"] = denied_requests
-            scenario("A6-known-id-auth", "All fourteen coding surfaces (browse/catalog/history/create/open/SSE/diagnostics/inventory/reload/overlap/skills/prompt/cancel/bounded entries), including real conversation/request IDs, refused unauthenticated requests")
+            scenario("A6-known-id-auth", f"All {len(denied_requests)} requested coding surfaces, including live model inventory/refresh and real conversation/request IDs, refused unauthenticated requests")
             # Measure over more than two ordinary indicator polling intervals.
             # No ordinary-model status response is mocked and no model is loaded.
             page.wait_for_timeout(11000)

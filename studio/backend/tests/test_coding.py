@@ -31,6 +31,8 @@ def coding_app(monkeypatch, tmp_path):
 @pytest.mark.parametrize("method,path,body", [
     ("GET", "/projects/browse", None),
     ("GET", "/catalog?cwd=/", None),
+    ("GET", "/conversations/known-id/models", None),
+    ("POST", "/conversations/known-id/models/refresh", None),
     ("GET", "/diagnostics", None),
     ("GET", "/conversations/known-id/extensions", None),
     ("POST", "/conversations/known-id/plugins/reload", {"operation_id": "exact-operation"}),
