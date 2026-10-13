@@ -14,9 +14,9 @@ import {
 import type { RunApi } from "../src/features/coding/run-types.ts";
 import { memorySubmissionStorage } from "./coding-storage-fixture.ts";
 import {
+  type StubElement,
   loadWithStubs,
   stubJsxRuntime,
-  type StubElement,
 } from "./helpers/module-stubs.ts";
 
 const source = (path: string) =>
@@ -57,6 +57,12 @@ test("installed external runtime projects native state and forwards exact submis
         reasoning: null,
         mode: "build",
       };
+    },
+    async checkOverlap() {
+      return { cwd: "/project", conversations: [] };
+    },
+    async readChild() {
+      return { child: null, outcome: null };
     },
     async submit(id, submissionKey, text) {
       calls.push({ id, submission_key: submissionKey, text });
@@ -149,6 +155,7 @@ test("installed runtime upcoming assistant placeholder is not a native transcrip
     reopenRequired: false,
     reconcilingAction: null,
     retryStop: null,
+    overlapWarning: null,
     native: {
       info: { id: "conversation", cwd: "/project", title: null },
       configuration: {
@@ -255,6 +262,12 @@ test("installed composer.send retains a recoverable unsent draft when submission
   const api: RunApi = {
     async configure() {
       throw new Error("Unexpected configuration change in composer test");
+    },
+    async checkOverlap() {
+      return { cwd: "/project", conversations: [] };
+    },
+    async readChild() {
+      return { child: null, outcome: null };
     },
     async submit(id, key, text) {
       calls.push({ id, key, text });

@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path as ApiPath, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -63,6 +63,7 @@ class PromptSubmission(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     submission_key: str = Field(min_length = 1, max_length = 128)
     text: str = Field(min_length = 1, max_length = 65536)
+    overlap_confirmed: bool = Field(default = False, strict = True)
     skill_mentions: list[SkillMention] = Field(default_factory = list, max_length = 64)
     images: list[PromptImage] = Field(default_factory = list, max_length = 4)
 
@@ -109,9 +110,14 @@ class ModelConfiguration(BaseModel):
     reasoning: str | None = Field(default = None, min_length = 1, max_length = 1024)
 
 
-class RootCut(BaseModel):
+class ChildJournal(BaseModel):
     model_config = ConfigDict(extra = "forbid")
-    journal: Literal["root"]
+    child: str = Field(min_length = 1, max_length = 128, pattern = r"^[^\x00]+$")
+
+
+class JournalCut(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    journal: Literal["root"] | ChildJournal
     leaf: str | None = Field(max_length = 128)
 
 
@@ -128,13 +134,17 @@ class AfterEntry(BaseModel):
 class HistorySelection(BaseModel):
     """An immutable native view cut, never an independently moving snapshot."""
     model_config = ConfigDict(extra = "forbid")
-    cut: RootCut
+    cut: JournalCut
     anchor: Literal["latest"] | BeforeEntry | AfterEntry = "latest"
     max_entries: int = Field(default = 100, ge = 1, le = 128)
     max_bytes: int = Field(default = 262144, ge = 1024, le = 262144)
 
 
 def _http_error(exc: CodingRuntimeError) -> HTTPException:
+    if exc.code == "overlap_required":
+        return HTTPException(status_code = 409, detail = {
+            "code": exc.code, "message": exc.message, "overlap": exc.overlap,
+        })
     status = {"invalid": 400, "not_found": 404, "denied": 403,
               "busy": 409, "conflict": 409, "trust_conflict": 409,
               "unavailable": 503, "disconnected": 503, "uncertain": 504,
@@ -225,6 +235,12 @@ async def configure_model(conversation_id: str, body: ModelConfiguration, reques
     })
 
 
+@router.get("/conversations/{conversation_id}/overlap")
+async def project_overlap(conversation_id: str, request: Request):
+    # A read-only native preflight; never implicitly opens or retargets an owner.
+    return await _command(request, "overlap", {"conversation_id": conversation_id})
+
+
 @router.get("/conversations/{conversation_id}/skills")
 async def conversation_skills(conversation_id: str, request: Request):
     # Discover the retained native controller's effective project metadata only.
@@ -235,7 +251,7 @@ async def conversation_skills(conversation_id: str, request: Request):
 @router.post("/conversations/{conversation_id}/prompts", status_code = 202)
 async def submit_prompt(conversation_id: str, body: PromptSubmission, request: Request):
     # Mimir admits/deduplicates the submission and owns scheduling and saved input.
-    return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump(exclude_unset = True)})
+    return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump(exclude_unset = True), "overlap_confirmed": body.overlap_confirmed})
 
 
 @router.post("/conversations/{conversation_id}/requests/{request_id}/cancel")
@@ -247,6 +263,17 @@ async def cancel_request(conversation_id: str, request_id: str, request: Request
 @router.post("/conversations/{conversation_id}/entries")
 async def read_entries(conversation_id: str, body: HistorySelection, request: Request):
     return await _command(request, "read_entries", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+@router.get("/conversations/{conversation_id}/children/{handle}/attempts/{attempt}")
+async def child_detail(conversation_id: str, request: Request,
+                       handle: str = ApiPath(min_length = 1, max_length = 128, pattern = r"^[^\x00]+$"),
+                       attempt: int = ApiPath(ge = 1, le = 4294967295)):
+    # SDK inspection never claims the terminal completion owed to Mimir's parent.
+    # A current child's newer attempt is not relabeled as the selected old one.
+    return await _command(request, "child_detail", {
+        "conversation_id": conversation_id, "handle": handle, "attempt": attempt,
+    })
 
 
 @router.get("/conversations/{conversation_id}/events")

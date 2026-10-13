@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import type { ChildAttempt, ChildIdentity } from "./child-types.ts";
+import { createChildView } from "./child-view.ts";
+import { CodingOverlapError } from "./errors.ts";
 import { codingRowSize } from "./file-changes.ts";
 import type { CodingInput, CodingInputExtras } from "./input.ts";
 import type { CodingConfigurationChange } from "./model-selection.ts";
@@ -13,6 +16,7 @@ import type {
   EntryPage,
   JournalCut,
   NativeState,
+  ProjectOverlap,
   RunApi,
 } from "./run-types.ts";
 
@@ -44,6 +48,9 @@ export interface CodingRunState {
   reopenRequired: boolean;
   reconcilingAction: string | null;
   retryStop: string | null;
+  overlapWarning:
+    | (CodingInput & { key: string; overlap: ProjectOverlap })
+    | null;
 }
 const MAX_ROWS = 1000;
 const MAX_TEXT = 2 * 1024 * 1024;
@@ -63,6 +70,7 @@ export function createCodingRun(
   } = {},
 ) {
   const pendingStore = pendingSubmissionStore(id, options.storage);
+  const childView = createChildView(id, api);
   let state: CodingRunState = {
     connection: "loading",
     native: null,
@@ -85,6 +93,7 @@ export function createCodingRun(
     reopenRequired: false,
     reconcilingAction: null,
     retryStop: null,
+    overlapWarning: null,
   };
   try {
     state.uncertainSubmission = pendingStore.load();
@@ -202,6 +211,7 @@ export function createCodingRun(
       latestOlder = true;
       firstEntry = saved.find((row) => row.entry_id)?.entry_id ?? firstEntry;
     }
+    childView.history(historyWindow ? historyWindow.rows : rows);
     update({
       rows: historyWindow ? mergeRows(historyWindow.rows) : rows,
       older: historyWindow ? historyWindow.older : latestOlder,
@@ -319,6 +329,7 @@ export function createCodingRun(
       const native = event.state as NativeState;
       if (native.info.id !== id)
         throw new Error("Native view belongs to another conversation.");
+      childView.setConnected(false);
       saved = [];
       provisional = [];
       historyWindow = null;
@@ -338,6 +349,12 @@ export function createCodingRun(
         signal,
       );
       if (signal.aborted) return;
+      // Child metadata/cuts apply synchronously. Optional inspection reads are
+      // cancellable and revision-guarded, never a dependency of main-session Stop.
+      void childView.capture((event.children ?? []) as ChildAttempt[], saved);
+      // A recovering capture still owns a fresh inspection read generation.
+      // Leave it offline until the root checkpoint; do not abort it a second time.
+      if (!event.recovering) childView.setConnected(true);
       // Native active_request remains held through cleanup; journal terminal
       // status alone is insufficient, but this atomic capture can settle Stop.
       const stopped =
@@ -372,18 +389,36 @@ export function createCodingRun(
             ? state.retryStop
             : null,
       });
+    } else if (event.type === "child") {
+      void childView.child(event.child as ChildAttempt);
     } else if (event.type === "checkpoint") {
-      await checkpoint(
-        event as unknown as { cut: JournalCut; live_invocations: string[] },
-        signal,
-      );
-    } else if (event.type === "activity") {
-      for (const row of event.rows as CodingRow[]) {
-        const index = provisional.findIndex((item) => item.id === row.id);
-        if (index < 0) provisional.push(row);
-        else provisional[index] = row;
+      if (event.child) {
+        void childView.checkpoint(
+          event.child as ChildIdentity,
+          event.cut as JournalCut,
+          event.live_invocations as string[],
+        );
+      } else {
+        await checkpoint(
+          event as unknown as { cut: JournalCut; live_invocations: string[] },
+          signal,
+        );
+        childView.setConnected(true);
       }
-      publishRows();
+    } else if (event.type === "activity") {
+      if (event.child) {
+        childView.activity(
+          event.child as ChildIdentity,
+          event.rows as CodingRow[],
+        );
+      } else {
+        for (const row of event.rows as CodingRow[]) {
+          const index = provisional.findIndex((item) => item.id === row.id);
+          if (index < 0) provisional.push(row);
+          else provisional[index] = row;
+        }
+        publishRows();
+      }
     } else if (event.type === "completed") {
       const completion = event as unknown as CodingRunState["completion"];
       if (!completion) throw new Error("Invalid native completion.");
@@ -410,7 +445,7 @@ export function createCodingRun(
     if (
       (event.type === "start" ||
         event.type === "reset" ||
-        event.type === "checkpoint") &&
+        (event.type === "checkpoint" && !event.child)) &&
       state.connection === "connected" &&
       !state.recovering
     ) {
@@ -423,6 +458,7 @@ export function createCodingRun(
     if (reconnectTimer !== null) clearTimeout(reconnectTimer);
     reconnectTimer = null;
     abort?.abort();
+    childView.setConnected(false);
     const current = ++incarnation;
     const configurationCut = configurationEpoch;
     const controller = new AbortController();
@@ -448,6 +484,7 @@ export function createCodingRun(
       .catch((reason: unknown) => {
         if (controller.signal.aborted || current !== incarnation) return;
         controller.abort();
+        childView.setConnected(false);
         update({
           connection: "disconnected",
           disconnected: true,
@@ -464,7 +501,11 @@ export function createCodingRun(
         reconnectTimer = setTimeout(connect, delay);
       });
   }
-  async function submit(input: CodingInput, key: string): Promise<boolean> {
+  async function submit(
+    input: CodingInput,
+    key: string,
+    overlapConfirmed = false,
+  ): Promise<boolean> {
     if (
       state.connection !== "connected" ||
       state.recovering ||
@@ -514,7 +555,7 @@ export function createCodingRun(
     });
     try {
       const { text, ...extras } = input;
-      const result = await api.submit(id, key, text, extras);
+      const result = await api.submit(id, key, text, extras, overlapConfirmed);
       if (
         result.conversation_id !== id ||
         result.submission_key !== key ||
@@ -529,13 +570,23 @@ export function createCodingRun(
       return true;
     } catch (reason) {
       if (state.acceptedSubmissionKey === key) return true;
-      if (
+      if (reason instanceof CodingOverlapError) {
+        clearPending(key, false);
+        update({
+          overlapWarning: { key, ...input, overlap: reason.overlap },
+          error: null,
+        });
+      } else if (
         reason instanceof Error &&
         "admissionRejected" in reason &&
         reason.admissionRejected === true
       ) {
         clearPending(key, false);
-        update({ rejectedSubmission: input, error: errorText(reason) });
+        update({
+          rejectedSubmission: input,
+          error: errorText(reason),
+          unsentDraft: input.text,
+        });
       } else if (state.uncertainSubmission?.key === key) {
         update({
           error: `${errorText(reason)} Delivery is unconfirmed; do not send a new copy. Reconnect or retry the same submission identity.`,
@@ -547,6 +598,7 @@ export function createCodingRun(
     }
   }
   return {
+    childView,
     getSnapshot: () => state,
     subscribe(listener: () => void) {
       listeners.add(listener);
@@ -594,6 +646,7 @@ export function createCodingRun(
       reconnectTimer = null;
       abort?.abort();
       abort = null;
+      childView.detach();
     },
     async send(text: string, extras: CodingInputExtras = {}) {
       if (!text.trim()) return false;
@@ -601,9 +654,88 @@ export function createCodingRun(
         throw new Error(
           "Reconcile the unconfirmed submission before sending new input.",
         );
-      // Snapshot the complete input once. Later edits/removals never change an
-      // uncertain delivery retry, including its image bytes and mention ranges.
-      return await submit(structuredClone({ text, ...extras }), makeKey());
+      if (
+        state.overlapWarning ||
+        state.submitting ||
+        state.stopping ||
+        state.reconcilingAction ||
+        state.storageError ||
+        state.recovering ||
+        state.connection !== "connected"
+      )
+        throw new Error(
+          "Wait for a connected, reconstructed native view and resolve the current warning before sending.",
+        );
+      // Freeze rich input before preflight and retain it through confirmation/retry.
+      const input = structuredClone({ text, ...extras });
+      const key = makeKey();
+      const current = incarnation;
+      update({ submitting: true, error: null, unsentDraft: null });
+      let overlap: ProjectOverlap;
+      try {
+        overlap = await api.checkOverlap(id);
+      } catch (reason) {
+        update({
+          submitting: false,
+          error:
+            current === incarnation
+              ? `Project overlap check failed. No prompt was sent. ${errorText(reason)}`
+              : state.error,
+          unsentDraft: input.text,
+          rejectedSubmission: input,
+        });
+        return false;
+      }
+      if (
+        current !== incarnation ||
+        state.connection !== "connected" ||
+        state.recovering ||
+        state.stopping ||
+        state.reconcilingAction
+      ) {
+        update({
+          submitting: false,
+          unsentDraft: input.text,
+          rejectedSubmission: input,
+        });
+        return false; // Reconnect/detach invalidated preflight, not permission to send.
+      }
+      update({ submitting: false });
+      if (overlap.conversations.length) {
+        update({ overlapWarning: { key, ...input, overlap } });
+        return false;
+      }
+      return await submit(input, key);
+    },
+    async continueOverlap() {
+      const warning = state.overlapWarning;
+      if (
+        !warning ||
+        state.connection !== "connected" ||
+        state.recovering ||
+        state.submitting ||
+        state.configuring ||
+        state.configurationUncertain ||
+        state.stopping ||
+        state.reconcilingAction ||
+        state.storageError
+      )
+        return false;
+      const { key, overlap: _overlap, ...input } = warning;
+      update({ overlapWarning: null });
+      return await submit(input, key, true);
+    },
+    cancelOverlap() {
+      const warning = state.overlapWarning;
+      if (!warning) return;
+      const { key: _key, overlap: _overlap, ...input } = warning;
+      // Only abandon this known-unadmitted draft; never cancel another request.
+      update({
+        overlapWarning: null,
+        unsentDraft: input.text,
+        rejectedSubmission: input,
+        error: null,
+      });
     },
     async retrySubmission() {
       const pending = state.uncertainSubmission;

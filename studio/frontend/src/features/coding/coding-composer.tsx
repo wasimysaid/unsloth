@@ -28,6 +28,7 @@ export function CodingComposer({
   draft,
   canSend,
   children,
+  inputRef,
 }: {
   conversationId: string | null;
   run: CodingRun | null;
@@ -35,9 +36,10 @@ export function CodingComposer({
   draft: CodingInputDraft;
   canSend: boolean;
   children?: React.ReactNode;
+  inputRef: React.RefObject<HTMLTextAreaElement | null>;
 }) {
   const composer = useComposerRuntime();
-  const input = useRef<HTMLTextAreaElement>(null);
+  const input = inputRef;
   const files = useRef<HTMLInputElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const model = useSyncExternalStore(draft.subscribe, draft.getSnapshot);

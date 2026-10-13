@@ -4,7 +4,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type * as Coding from "../src/features/coding/api.ts";
-import { CodingHttpError } from "../src/features/coding/errors.ts";
+import * as codingErrors from "../src/features/coding/errors.ts";
+import {
+  CodingHttpError,
+  CodingOverlapError,
+} from "../src/features/coding/errors.ts";
 import { consumeCodingEvents } from "../src/features/coding/events.ts";
 import * as fastApiError from "../src/lib/format-fastapi-error.ts";
 import { loadWithStubs } from "./helpers/module-stubs.ts";
@@ -26,7 +30,7 @@ function client(response: () => Response) {
       },
       "@/lib/format-fastapi-error": fastApiError,
       "./events": { consumeCodingEvents },
-      "./errors": { CodingHttpError },
+      "./errors": codingErrors,
     },
   );
   return { api, requests };
@@ -198,6 +202,51 @@ test("run and Stop carry exact native identities without implicit transport retr
     assert.deepEqual(request.options, { retryNetworkErrors: false });
 });
 
+test("child inspection carries exact attempt and immutable child journal through authenticated read-only APIs", async () => {
+  const detail = {
+    child: null,
+    outcome: {
+      handle: "agent-native",
+      attempt: 7,
+      status: "failed",
+      result: null,
+      error: "Retained failure",
+    },
+  };
+  const c = client(() => Response.json(detail));
+  const abort = new AbortController();
+  assert.deepEqual(
+    await c.api.codingRunApi.readChild(
+      "conversation/id?",
+      "agent-native",
+      7,
+      abort.signal,
+    ),
+    detail,
+  );
+  assert.equal(
+    c.requests[0].path,
+    "/api/coding/conversations/conversation%2Fid%3F/children/agent-native/attempts/7",
+  );
+  assert.equal(c.requests[0].init?.signal, abort.signal);
+  assert.equal(c.requests[0].init?.body, undefined);
+  const cut = { journal: { child: "agent-native" }, leaf: "child-cut" };
+  await c.api.codingRunApi.readEntries(
+    "conversation/id?",
+    cut,
+    "latest",
+    abort.signal,
+  );
+  assert.deepEqual(JSON.parse(String(c.requests[1].init?.body)), {
+    cut,
+    anchor: "latest",
+    max_entries: 100,
+    max_bytes: 262144,
+  });
+  for (const request of c.requests)
+    assert.deepEqual(request.options, { retryNetworkErrors: false });
+});
+
 test("effective skills and rich prompt inputs use authenticated exact-ID transport without replay", async () => {
   const discovered = {
     skills: [
@@ -354,4 +403,74 @@ test("coding request preserves abort and non-transport authentication errors", a
     );
     assert.equal(c.requests.length, 1);
   }
+});
+
+test("overlap preflight authenticates exact identity and confirmation is explicit", async () => {
+  const overlap = {
+    cwd: "/canonical/project",
+    conversations: [{ id: "other" }],
+  };
+  const c = client(() => Response.json(overlap));
+  assert.deepEqual(await c.api.codingRunApi.checkOverlap("native/id"), overlap);
+  assert.equal(
+    c.requests[0].path,
+    "/api/coding/conversations/native%2Fid/overlap",
+  );
+  await c.api.codingRunApi.submit("native/id", "key", "warned draft", undefined, true);
+  assert.deepEqual(JSON.parse(String(c.requests[1].init?.body)), {
+    submission_key: "key",
+    text: "warned draft",
+    overlap_confirmed: true,
+  });
+  assert.deepEqual(c.requests[0].options, { retryNetworkErrors: false });
+});
+
+test("structured overlap refusal is distinct from native busy/capacity and malformed preflight fails closed", async () => {
+  const overlap = {
+    cwd: "/canonical/project",
+    conversations: [{ id: "other" }],
+  };
+  const c = client(() =>
+    Response.json(
+      {
+        detail: {
+          code: "overlap_required",
+          message: "Review overlap",
+          overlap,
+        },
+      },
+      { status: 409 },
+    ),
+  );
+  await assert.rejects(
+    c.api.codingRunApi.submit("id", "key", "draft"),
+    (error: unknown) => {
+      assert.ok(error instanceof CodingOverlapError);
+      assert.deepEqual(error.overlap, overlap);
+      return true;
+    },
+  );
+  for (const status of [409, 429]) {
+    const busy = client(() =>
+      Response.json(
+        { detail: "Wait for native capacity or close its owner." },
+        { status },
+      ),
+    );
+    await assert.rejects(
+      busy.api.codingRunApi.submit("id", "key", "draft"),
+      (error: unknown) => {
+        assert.ok(error instanceof CodingHttpError);
+        assert.equal(error.admissionRejected, true);
+        return true;
+      },
+    );
+  }
+  const malformed = client(() =>
+    Response.json({ cwd: "/alias", conversations: [{ id: null }] }),
+  );
+  await assert.rejects(
+    malformed.api.codingRunApi.checkOverlap("id"),
+    /could not be confirmed.*No prompt was sent/,
+  );
 });

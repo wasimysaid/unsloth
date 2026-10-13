@@ -49,7 +49,8 @@ async def test_effective_skill_discovery_is_authenticated_and_exact_conversation
 
 
 @pytest.mark.asyncio
-async def test_rich_input_crosses_transport_without_rewriting_exact_key_ranges_or_bytes(coding_app):
+@pytest.mark.parametrize("overlap_confirmed", [None, False, True])
+async def test_rich_input_crosses_transport_without_rewriting_exact_key_ranges_or_bytes(coding_app, overlap_confirmed):
     app, headers = coding_app
     calls = []
     class Runtime:
@@ -58,12 +59,14 @@ async def test_rich_input_crosses_transport_without_rewriting_exact_key_ranges_o
             return {"conversation_id": params["conversation_id"], "submission_key": params["submission_key"], "request_id": "native"}
     app.state.coding_runtime = Runtime()
     payload = {"submission_key": "same-key", "text": "😀 @plugin:alpha:review inspect", "skill_mentions": [{"name": "plugin:alpha:review", "path": "/effective/project/review/SKILL.md", "start": 5, "end": 25}], "images": [{"mime_type": "image/png", "data": PNG}]}
+    if overlap_confirmed is not None:
+        payload["overlap_confirmed"] = overlap_confirmed
     async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
         for _ in range(2):
             response = await client.post("/api/coding/conversations/exact/prompts", json = payload)
             assert response.status_code == 202
             assert response.json()["submission_key"] == "same-key"
-    assert calls == [("prompt", {"conversation_id": "exact", **payload})] * 2
+    assert calls == [("prompt", {"conversation_id": "exact", **payload, "overlap_confirmed": overlap_confirmed or False})] * 2
 
 
 @pytest.mark.asyncio

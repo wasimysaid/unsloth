@@ -18,10 +18,12 @@ import {
   useSyncExternalStore,
 } from "react";
 import { codingRunApi } from "./api";
+import { ChildActivityRows, ChildInspector } from "./child-inspector";
 import { CodingComposer } from "./coding-composer";
 import { createInputDraft } from "./input";
 import { CodingModelPicker } from "./model-configuration-popover";
 import { nativeMessageRow } from "./presentation";
+import { ProjectOverlapDialog } from "./project-overlap-dialog";
 import { codingRunAdapter } from "./run-runtime";
 import {
   codingRunCompletion,
@@ -34,7 +36,7 @@ import { CodingUnsentDraft } from "./unsent-draft";
 function NativeMessage() {
   const message = useMessage();
   const row = nativeMessageRow(message);
-  if (!row) return null;
+  if (!row || row.child || row.tool?.subagent?.attempt) return null;
   const tool = row.tool;
   const tools = row.grouped ?? [row];
   const visible = tools.filter(
@@ -134,6 +136,8 @@ export function CodingSurface({
   const [draft] = useState(createInputDraft);
   const runtime = useExternalStoreRuntime(codingRunAdapter(state, run, draft));
   const viewport = useRef<HTMLDivElement>(null);
+  const promptInput = useRef<HTMLTextAreaElement>(null);
+  const statusFocus = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const [away, setAway] = useState(false);
   useEffect(() => {
@@ -156,14 +160,42 @@ export function CodingSurface({
       !state.configurationUncertain &&
       !state.uncertainSubmission &&
       !state.storageError &&
-      !state.reconcilingAction,
+      !state.reconcilingAction &&
+      !state.overlapWarning,
   );
   return (
     <AssistantRuntimeProvider runtime={runtime}>
+      <ProjectOverlapDialog
+        overlap={state?.overlapWarning?.overlap ?? null}
+        disabled={Boolean(
+          !state ||
+            state.connection !== "connected" ||
+            state.recovering ||
+            state.submitting ||
+            state.configuring ||
+            state.configurationUncertain ||
+            state.stopping ||
+            state.reconcilingAction ||
+            state.storageError,
+        )}
+        onContinue={() => void run?.continueOverlap()}
+        onCancel={() => run?.cancelOverlap()}
+        onCloseFocus={() =>
+          requestAnimationFrame(() => {
+            const input = promptInput.current;
+            if (input && !input.disabled) input.focus({ preventScroll: true });
+            else statusFocus.current?.focus({ preventScroll: true });
+          })
+        }
+      />
       <ThreadPrimitive.Root className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
         {state && (
           <div
-            className="space-y-2 rounded-xl border border-border/60 px-3 py-2 text-xs"
+            ref={statusFocus}
+            role="region"
+            aria-label="Coding request status"
+            tabIndex={-1}
+            className="space-y-2 rounded-xl border border-border/60 px-3 py-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             data-testid="coding-event-status"
           >
             <output
@@ -233,28 +265,33 @@ export function CodingSurface({
               </p>
             )}
             {state.disconnected && (
-              <p
-                role="status"
+              <output
                 data-testid="coding-disconnect-banner"
-                className="break-words font-medium"
+                className="block break-words font-medium"
               >
                 {state.reopenRequired
                   ? "Disconnected · work may still be running. The native view closed; deliberately reopen the saved conversation."
                   : "Disconnected · work may still be running. Reconnecting automatically; this warning stays until native history is rebuilt."}
-              </p>
+              </output>
             )}
             {(state.reconcilingAction || state.retryStop) && (
-              <p role="status" data-testid="coding-action-reconciliation">
+              <output
+                className="block"
+                data-testid="coding-action-reconciliation"
+              >
                 {state.reconcilingAction
                   ? "Inspecting a fresh native view before another action; cancellation was not replayed."
                   : "Fresh native view inspected. Explicit retry targets only the same active request; cancellation is not exactly-once."}
-              </p>
+              </output>
             )}
             {state.deliveryRecovered && (
-              <p role="status" data-testid="coding-submission-recovered">
+              <output
+                className="block"
+                data-testid="coding-submission-recovered"
+              >
                 Native prompt acceptance confirmed. Delivery recovery does not
                 start a new continuation.
-              </p>
+              </output>
             )}
             {!state.reopenRequired &&
               (state.disconnected || state.configurationUncertain) && (
@@ -300,47 +337,51 @@ export function CodingSurface({
             )}
           </div>
         )}
-        <div
-          ref={viewport}
-          className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto"
-          data-testid="coding-transcript"
-          aria-label="Coding transcript"
-          aria-busy={state?.connection === "loading" || state?.recovering}
-          onScroll={() => {
-            const node = viewport.current;
-            if (!node) return;
-            follow.current =
-              node.scrollHeight - node.scrollTop - node.clientHeight < 48;
-            setAway(!follow.current);
-          }}
-        >
-          {state?.older && (
-            <div className="text-center text-xs text-muted-foreground">
-              <p>Earlier history is not shown in this bounded view.</p>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={state.loadingEarlier}
-                onClick={() => {
-                  follow.current = false;
-                  void run
-                    ?.loadEarlier()
-                    .then(() => viewport.current?.scrollTo({ top: 0 }));
-                }}
-              >
-                {state.loadingEarlier
-                  ? "Loading earlier history…"
-                  : "Load earlier history"}
-              </Button>
-            </div>
-          )}
-          {state?.viewingEarlier && (
-            <p className="text-center text-xs text-muted-foreground">
-              Historical page · newer messages and live activity are not shown.
-              Native work may still be running.
-            </p>
-          )}
-          <ThreadPrimitive.Messages components={messageComponents} />
+        <div className="relative flex min-h-0 min-w-0 flex-1 gap-3">
+          <div
+            ref={viewport}
+            className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto"
+            data-testid="coding-transcript"
+            aria-label="Coding transcript"
+            aria-busy={state?.connection === "loading" || state?.recovering}
+            onScroll={() => {
+              const node = viewport.current;
+              if (!node) return;
+              follow.current =
+                node.scrollHeight - node.scrollTop - node.clientHeight < 48;
+              setAway(!follow.current);
+            }}
+          >
+            {state?.older && (
+              <div className="text-center text-xs text-muted-foreground">
+                <p>Earlier history is not shown in this bounded view.</p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={state.loadingEarlier}
+                  onClick={() => {
+                    follow.current = false;
+                    void run
+                      ?.loadEarlier()
+                      .then(() => viewport.current?.scrollTo({ top: 0 }));
+                  }}
+                >
+                  {state.loadingEarlier
+                    ? "Loading earlier history…"
+                    : "Load earlier history"}
+                </Button>
+              </div>
+            )}
+            {state?.viewingEarlier && (
+              <p className="text-center text-xs text-muted-foreground">
+                Historical page · newer messages and live activity are not
+                shown. Native work may still be running.
+              </p>
+            )}
+            <ThreadPrimitive.Messages components={messageComponents} />
+            {run && <ChildActivityRows view={run.childView} />}
+          </div>
+          {run && <ChildInspector view={run.childView} />}
         </div>
         {(away || state?.viewingEarlier) && (
           <Button
@@ -371,6 +412,7 @@ export function CodingSurface({
             state={state}
             draft={draft}
             canSend={canSend}
+            inputRef={promptInput}
           >
             <CodingModelPicker
               cwd={state?.native?.info.cwd ?? null}
