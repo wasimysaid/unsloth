@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import anyio
+import base64
+import binascii
 import json
 import os
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import APIRouter, Depends, HTTPException, Path as ApiPath, Query, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.routing import APIRoute
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from auth.authentication import get_current_subject
 from core.coding_runtime import CodingRuntimeError, runtime_for
@@ -40,10 +44,64 @@ class ProjectSelection(BaseModel):
     cwd: str = Field(min_length = 1, max_length = 32768)
 
 
+MAX_IMAGE_BYTES = 512 * 1024
+
+
+class SkillMention(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    name: str = Field(min_length = 1, max_length = 512)
+    path: str | None = Field(default = None, min_length = 1, max_length = 32768)
+    start: int = Field(ge = 0, strict = True)
+    end: int = Field(gt = 0, strict = True)
+
+
+class PromptImage(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    mime_type: Literal["image/png", "image/jpeg", "image/webp", "image/gif"]
+    data: str = Field(min_length = 1, max_length = ((MAX_IMAGE_BYTES + 2) // 3) * 4)
+
+
 class PromptSubmission(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     submission_key: str = Field(min_length = 1, max_length = 128)
     text: str = Field(min_length = 1, max_length = 65536)
+    overlap_confirmed: bool = Field(default = False, strict = True)
+    skill_mentions: list[SkillMention] = Field(default_factory = list, max_length = 64)
+    images: list[PromptImage] = Field(default_factory = list, max_length = 4)
+
+    @model_validator(mode = "after")
+    def validate_input(self):
+        if not self.text.strip():
+            raise ValueError("Include a nonempty coding text prompt.")
+        encoded = self.text.encode("utf-8")
+        if len(encoded) > 65536:
+            raise ValueError("Coding prompt text must be at most 65536 UTF-8 bytes.")
+        previous_end = 0
+        for mention in self.skill_mentions:
+            if mention.start < previous_end or mention.end <= mention.start or mention.end > len(encoded):
+                raise ValueError("Skill mention ranges must be ordered, non-overlapping UTF-8 byte ranges in the exact text.")
+            if encoded[mention.start:mention.end] != ("@" + mention.name).encode("utf-8"):
+                raise ValueError("A skill mention range must match its exact qualified @name.")
+            previous_end = mention.end
+        total = 0
+        for image in self.images:
+            try:
+                raw = base64.b64decode(image.data, validate = True)
+            except (ValueError, binascii.Error) as exc:
+                raise ValueError("Image data must be valid base64, not a URL or host file path.") from exc
+            total += len(raw)
+            if not raw or total > MAX_IMAGE_BYTES:
+                raise ValueError("Coding images must be nonempty and total at most 512 KiB.")
+            signatures = {
+                "image/png": raw.startswith(b"\x89PNG\r\n\x1a\n"),
+                "image/jpeg": raw.startswith(b"\xff\xd8\xff"),
+                "image/gif": raw.startswith((b"GIF87a", b"GIF89a")),
+                "image/webp": raw.startswith(b"RIFF") and raw[8:12] == b"WEBP",
+            }
+            if not signatures[image.mime_type]:
+                raise ValueError("Image bytes do not match the declared supported MIME type.")
+        # Decode/content/provider validation is authoritative in native Mimir.
+        return self
 
 
 class QuestionAnswer(BaseModel):
@@ -59,9 +117,29 @@ class AnswerSubmission(BaseModel):
     answers: list[QuestionAnswer] = Field(min_length = 1, max_length = 3)
 
 
-class RootCut(BaseModel):
+class CommandInvocation(BaseModel):
     model_config = ConfigDict(extra = "forbid")
-    journal: Literal["root"]
+    operation_id: str = Field(min_length = 1, max_length = 128)
+    name: str = Field(min_length = 1, max_length = 256, pattern = r"^[^\s/]+$")
+    tail: str = Field(default = "", max_length = 16384)
+
+
+class ModelConfiguration(BaseModel):
+    """Exact native identity/effort only; credential and provider setup stay external."""
+    model_config = ConfigDict(extra = "forbid")
+    provider: str | None = Field(default = None, min_length = 1, max_length = 1024)
+    model: str | None = Field(default = None, min_length = 1, max_length = 1024)
+    reasoning: str | None = Field(default = None, min_length = 1, max_length = 1024)
+
+
+class ChildJournal(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    child: str = Field(min_length = 1, max_length = 128, pattern = r"^[^\x00]+$")
+
+
+class JournalCut(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    journal: Literal["root"] | ChildJournal
     leaf: str | None = Field(max_length = 128)
 
 
@@ -78,18 +156,23 @@ class AfterEntry(BaseModel):
 class HistorySelection(BaseModel):
     """An immutable native view cut, never an independently moving snapshot."""
     model_config = ConfigDict(extra = "forbid")
-    cut: RootCut
+    cut: JournalCut
     anchor: Literal["latest"] | BeforeEntry | AfterEntry = "latest"
     max_entries: int = Field(default = 100, ge = 1, le = 128)
     max_bytes: int = Field(default = 262144, ge = 1024, le = 262144)
 
 
 def _http_error(exc: CodingRuntimeError) -> HTTPException:
+    if exc.code == "overlap_required":
+        return HTTPException(status_code = 409, detail = {
+            "code": exc.code, "message": exc.message, "overlap": exc.overlap,
+        })
     status = {"invalid": 400, "not_found": 404, "denied": 403,
               "busy": 409, "conflict": 409, "trust_conflict": 409,
               "unavailable": 503, "disconnected": 503, "uncertain": 504,
               "limit": 429, "failed": 502}.get(exc.code, 400)
-    return HTTPException(status_code = status, detail = exc.message)
+    return HTTPException(status_code = status, detail = exc.message,
+                         headers = {"Cache-Control": "no-store"})
 
 
 async def _command(request: Request, method: str, params: dict | None = None):
@@ -142,6 +225,32 @@ async def browse_projects(path: str | None = Query(default = None, max_length = 
     return await asyncio.to_thread(_browse, path)
 
 
+@router.get("/diagnostics")
+async def diagnostics(request: Request):
+    # Does not launch Mimir. This is transport state, not a second execution owner.
+    return runtime_for(request.app).diagnostics()
+
+
+@router.get("/conversations/{conversation_id}/extensions")
+async def extensions(conversation_id: str, request: Request,
+                     operation_id: str | None = Query(default = None, min_length = 1, max_length = 128, pattern = r"^[A-Za-z0-9_-]+$")):
+    params = {"conversation_id": conversation_id}
+    if operation_id is not None:
+        params["operation_id"] = operation_id
+    return await _command(request, "extensions.inspect", params)
+
+
+class PluginReload(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    operation_id: str = Field(min_length = 1, max_length = 128, pattern = r"^[A-Za-z0-9_-]+$")
+
+
+@router.post("/conversations/{conversation_id}/plugins/reload")
+async def reload_plugins(conversation_id: str, body: PluginReload, request: Request):
+    # No retry, cancellation, MCP apply, catalog refresh or frontend replacement.
+    return await _command(request, "plugins.reload", {"conversation_id": conversation_id, **body.model_dump()})
+
+
 @router.get("/catalog")
 async def catalog(request: Request, cwd: str = Query(min_length = 1, max_length = 32768)):
     return await _command(request, "catalog", {"cwd": cwd})
@@ -165,10 +274,36 @@ async def open_conversation(conversation_id: str, request: Request):
     return state["info"]
 
 
+@router.post("/conversations/{conversation_id}/configuration")
+async def configure_model(conversation_id: str, body: ModelConfiguration, request: Request):
+    # No Studio scheduler/config store. Mimir orders selection against dequeue and
+    # keeps running work frozen; prompts deliberately carry no model configuration.
+    return await _command(request, "configure", {
+        "conversation_id": conversation_id,
+        "configuration": body.model_dump(exclude_unset = True),
+    })
+
+
+@router.get("/conversations/{conversation_id}/overlap")
+async def project_overlap(conversation_id: str, request: Request):
+    # A read-only native preflight; never implicitly opens or retargets an owner.
+    return await _command(request, "overlap", {"conversation_id": conversation_id})
+
+
+@router.get("/conversations/{conversation_id}/skills")
+async def conversation_skills(conversation_id: str, request: Request):
+    # Discover the retained native controller's effective project metadata only.
+    # This does not load skill bodies or implicitly open/grant another owner.
+    return await _command(request, "skills", {"conversation_id": conversation_id})
+
+
 @router.post("/conversations/{conversation_id}/prompts", status_code = 202)
 async def submit_prompt(conversation_id: str, body: PromptSubmission, request: Request):
+    # Slash attempts never bypass native command handling, including recovered drafts.
+    if body.text.lstrip().startswith("/"):
+        raise HTTPException(400, "Slash commands must use native command dispatch; no model prompt was submitted.")
     # Mimir admits/deduplicates the submission and owns scheduling and saved input.
-    return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump()})
+    return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump(exclude_unset = True), "overlap_confirmed": body.overlap_confirmed})
 
 
 @router.post("/conversations/{conversation_id}/requests/{request_id}/cancel")
@@ -188,9 +323,43 @@ async def answer_questions(conversation_id: str, request_id: str, user_request_i
                           **body.model_dump()})
 
 
+@router.get("/conversations/{conversation_id}/commands")
+async def discover_commands(conversation_id: str, request: Request):
+    return await _command(request, "commands", {"conversation_id": conversation_id})
+
+
+@router.post("/conversations/{conversation_id}/commands")
+async def invoke_command(conversation_id: str, body: CommandInvocation, request: Request):
+    # Not prompt delivery: the browser reconciles a lost reply before another action.
+    return await _command(request, "command", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+@router.get("/conversations/{conversation_id}/commands/{operation_id}")
+async def inspect_command_receipt(conversation_id: str, operation_id: str, request: Request):
+    # Read an already-delivered operation. This never invokes/replays a command.
+    return await _command(request, "command_receipt", {"conversation_id": conversation_id, "operation_id": operation_id})
+
+
+@router.get("/conversations/{conversation_id}/diagnostics/{kind}")
+async def inspect_diagnostics(conversation_id: str, kind: Literal["context", "tokens", "retry", "execution"], request: Request):
+    # Native plugin returns an allowlisted bounded projection, never raw logs/config.
+    return await _command(request, "diagnostics", {"conversation_id": conversation_id, "kind": kind})
+
+
 @router.post("/conversations/{conversation_id}/entries")
 async def read_entries(conversation_id: str, body: HistorySelection, request: Request):
     return await _command(request, "read_entries", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+@router.get("/conversations/{conversation_id}/children/{handle}/attempts/{attempt}")
+async def child_detail(conversation_id: str, request: Request,
+                       handle: str = ApiPath(min_length = 1, max_length = 128, pattern = r"^[^\x00]+$"),
+                       attempt: int = ApiPath(ge = 1, le = 4294967295)):
+    # SDK inspection never claims the terminal completion owed to Mimir's parent.
+    # A current child's newer attempt is not relabeled as the selected old one.
+    return await _command(request, "child_detail", {
+        "conversation_id": conversation_id, "handle": handle, "attempt": attempt,
+    })
 
 
 @router.get("/conversations/{conversation_id}/events")
@@ -219,3 +388,67 @@ async def conversation_events(conversation_id: str, request: Request):
 
     # Only this view is released on disconnect; native conversation owners survive.
     return NativeViewResponse(events(), runtime, subscription)
+
+
+class McpSettingsRoute(APIRoute):
+    """Do not echo raw MCP definitions in FastAPI's validation diagnostics."""
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def sanitized(request: Request):
+            try:
+                response = await handler(request)
+            except RequestValidationError:
+                response = JSONResponse(
+                    status_code = 422,
+                    content = {"detail": "Invalid MCP Settings request. Check the source, server name, edit identity, revision and definition size. Your draft was not saved."},
+                )
+            response.headers["Cache-Control"] = "no-store"
+            return response
+
+        return sanitized
+
+
+class McpEditRequest(BaseModel):
+    model_config = ConfigDict(extra = "forbid", strict = True)
+    source: str = Field(min_length = 1, max_length = 256)
+    name: str = Field(min_length = 1, max_length = 256)
+
+
+class McpEditIdentity(BaseModel):
+    model_config = ConfigDict(extra = "forbid", strict = True)
+    edit_id: str = Field(min_length = 1, max_length = 256)
+
+
+class McpSaveRequest(McpEditIdentity):
+    revision: str = Field(min_length = 1, max_length = 256)
+    definition_json: str = Field(alias = "json", max_length = 524288)
+
+
+mcp_router = APIRouter(route_class = McpSettingsRoute)
+
+
+@mcp_router.get("/conversations/{conversation_id}/mcp/inventory")
+async def mcp_inventory(conversation_id: str, request: Request):
+    # Neither a read nor save opens/closes a session, grants trust, or applies changes.
+    return await _command(request, "mcp_inventory", {"conversation_id": conversation_id})
+
+
+@mcp_router.post("/conversations/{conversation_id}/mcp/edit")
+async def mcp_edit(conversation_id: str, body: McpEditRequest, request: Request):
+    # Source is an opaque native identifier, never a Studio-resolved file path.
+    return await _command(request, "mcp_edit", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+@mcp_router.post("/conversations/{conversation_id}/mcp/save")
+async def mcp_save(conversation_id: str, body: McpSaveRequest, request: Request):
+    return await _command(request, "mcp_save", {"conversation_id": conversation_id, **body.model_dump(by_alias = True)})
+
+
+@mcp_router.post("/conversations/{conversation_id}/mcp/release")
+async def mcp_release_edit(conversation_id: str, body: McpEditIdentity, request: Request):
+    # Drop only an obsolete editor handle, never a conversation or MCP attachment.
+    return await _command(request, "mcp_release_edit", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+router.include_router(mcp_router)

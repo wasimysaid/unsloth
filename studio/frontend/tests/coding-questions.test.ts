@@ -25,6 +25,7 @@ const waiting = (id = "question"): NativeState => ({
     reasoning: null,
     mode: "build",
   },
+  running_configuration: null,
   active_request: "request",
   requests: [{ id: "request", status: "running", submission_key: "key" }],
   pending_user_request: true,
@@ -63,6 +64,15 @@ function harness() {
   const calls: { id: string; target: AnswerTarget; answers: NativeAnswer[] }[] =
     [];
   const api: RunApi = {
+    async configure() {
+      throw new Error("Question tests must not configure the conversation");
+    },
+    async checkOverlap() {
+      return { cwd: "/project", conversations: [] };
+    },
+    async readChild() {
+      return { child: null, outcome: null };
+    },
     async answer(id, target, input) {
       calls.push({ id, target, answers: input });
       return await respond(id, target, input);

@@ -1,0 +1,140 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+"""Controlled-clock retirement through authenticated Studio and real native ownership.
+
+The separately compiled acceptance component freezes only the retention clock.
+Native busy admission, close, saved history and project trust are not simulated.
+The error rendering case is explicitly a browser HTTP fault; actual native cleanup
+failure ownership is covered by the native contract fixtures, not this browser fault.
+"""
+from __future__ import annotations
+
+import json
+import time
+
+RETENTION_NS = 30 * 60 * 1_000_000_000
+
+
+def run_retirement_scenarios(page, context, base, provider, first, second_id,
+                             report, scenario, snapshot):
+    from playwright.sync_api import expect
+
+    conversation = page.get_by_test_id("coding-conversation-id").inner_text()
+    headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')")}
+    clock_url = base + "/api/coding-acceptance/retention-clock"
+    evidence = report.setdefault("retirement", {"kind": "controlled-clock-real-native-ownership", "clock_steps": []})
+
+    def clock(advance=0):
+        response = context.request.post(clock_url, data={"advance_ns": advance}, headers=headers, timeout=60000)
+        assert response.ok, f"Acceptance clock command failed: {response.status} {response.text()}"
+        value = response.json()
+        evidence["clock_steps"].append(value)
+        return value
+
+    def owner(value, identifier=conversation):
+        return next((item for item in value["owners"] if item["conversation_id"] == identifier), None)
+
+    def wait_owner(predicate):
+        deadline = time.monotonic() + 60
+        while True:
+            value = clock()
+            item = owner(value)
+            if item is not None and predicate(item):
+                return value
+            assert time.monotonic() < deadline, "Native owner did not reach the expected state"
+            page.wait_for_timeout(50)
+
+    def switch(identifier):
+        button = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text=identifier)
+        if not button.is_visible():
+            page.get_by_role("button", name="Toggle Sidebar", exact=True).click()
+        expect(button).to_be_visible(timeout=60000)
+        button.click()
+        expect(page.get_by_test_id("coding-conversation-id")).to_have_text(identifier, timeout=60000)
+        expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+
+    # Clock controls are authenticated even in the isolated acceptance composition.
+    unauthenticated = context.request.post(clock_url, data={"advance_ns": 0})
+    assert unauthenticated.status in (401, 403)
+    scenario("A6-retention-fixture-auth", "Acceptance-only clock endpoint rejects missing Studio authorization")
+
+    # A quiet inference stream remains native busy after all viewers leave.
+    prompt_url = base + f"/api/coding/conversations/{conversation}/prompts"
+    page.get_by_label("Coding prompt", exact=True).fill("RETIREMENT_HELD_NATIVE_WORK")
+    with page.expect_response(lambda response: response.url == prompt_url and response.request.method == "POST", timeout=60000) as waiting:
+        page.get_by_label("Coding prompt", exact=True).press("Enter")
+    assert waiting.value.status == 202
+    evidence["request"] = waiting.value.json()
+    pending = provider.request()
+    switch(second_id)
+    wait_owner(lambda item: not item["viewed"] and not item["quiescent"])
+    assert owner(clock(RETENTION_NS * 2)) is not None
+    provider.assert_no_request()
+    scenario("A7-retention-busy-exclusion", "Sixty controlled minutes are not inferred from silence: 60 controlled minutes with no viewers and held native request did not release the owner")
+
+    # Perform an actual native file edit, then await native settlement without a
+    # viewer. This is fixture/provider evidence, never live-model acceptance.
+    pending.tool("retirement-write", "write_file", {"path": "retirement.txt", "content": "RETAINED_NATIVE_HISTORY\n"})
+    next_turn = provider.request()
+    assert "retirement.txt" in next_turn.tool_result("retirement-write")
+    next_turn.text("RETIREMENT_NATIVE_COMPLETED")
+    wait_owner(lambda item: not item["viewed"] and item["quiescent"])
+    assert (first / "retirement.txt").read_text() == "RETAINED_NATIVE_HISTORY\n"
+    assert owner(clock(RETENTION_NS - 1)) is not None
+
+    # A new view interrupts the nearly-expired interval. Removing it creates a
+    # fresh interval; age of the conversation or last transcript entry is irrelevant.
+    switch(conversation)
+    wait_owner(lambda item: item["viewed"])
+    clock(RETENTION_NS * 2)
+    switch(second_id)
+    wait_owner(lambda item: not item["viewed"] and item["quiescent"])
+    before_expiry = clock(RETENTION_NS - 1)
+    assert owner(before_expiry) is not None
+    expired = clock(1)
+    assert owner(expired) is None
+    retired = next(item for item in expired["retired"] if item["conversation_id"] == conversation)
+    assert retired["released"] and retired["lease_released"]
+    scenario("A7-retention-exact-duration-view-reset", "Actual view reopened at 30min-1ns interrupts eligibility; after last detach, 30min-1ns retains owner and exact 30min awaits native close and confirms execution lease release")
+
+    listing = context.request.get(base + "/api/coding/conversations", headers=headers)
+    assert listing.ok
+    saved = next(item for item in listing.json()["conversations"] if item["id"] == conversation)
+    assert saved["cwd"] == str(first) and not saved["live"]
+
+    # Deliberate reopen reuses the same history and canonical project despite the
+    # isolated saved ancestor distrust. No prompt or work is replayed.
+    switch(conversation)
+    expect(page.get_by_test_id("coding-reopened")).to_contain_text("no work automatically resumed")
+    expect(page.get_by_test_id("coding-run-status")).to_have_text("Completed", timeout=60000)
+    expect(page.get_by_test_id("coding-transcript")).to_contain_text("RETIREMENT_NATIVE_COMPLETED", timeout=60000)
+    expect(page.get_by_test_id("coding-canonical-cwd")).to_have_text(str(first))
+    expect(page.get_by_test_id("coding-tool-row").filter(has_text="retirement-write")).not_to_contain_text(" · running")
+    provider.assert_no_request()
+    snapshot(page, "retirement-desktop-reopened")
+    page.set_viewport_size({"width": 390, "height": 844})
+    snapshot(page, "retirement-narrow-reopened")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    scenario("A6-retirement-history-trust-reopen", "Same native ID/canonical folder/history and completed file effect restored with non-persisting effective trust; no automatic provider continuation; reopened notice inspected at 1440x1000 and 390x844")
+
+    # Projection-only HTTP failure fixture: never claim it executed native cleanup.
+    # Native failure tests separately prove retained ownership and retry semantics.
+    switch(second_id)
+    failure = "Idle cleanup failed. Resources may still be owned; inspect native diagnostics before retrying."
+    open_url = base + f"/api/coding/conversations/{conversation}/open"
+    page.route(open_url, lambda route: route.fulfill(status=502, content_type="application/json", body=json.dumps({"detail": failure})), times=1)
+    saved_button = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text=conversation)
+    saved_button.focus()
+    saved_button.press("Enter")
+    expect(page.get_by_test_id("coding-opening-error")).to_contain_text(failure, timeout=60000)
+    expect(page.get_by_test_id("coding-conversation-id")).to_have_text(second_id)
+    snapshot(page, "retirement-desktop-cleanup-error")
+    page.set_viewport_size({"width": 390, "height": 844})
+    snapshot(page, "retirement-narrow-cleanup-error")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    expect(saved_button).to_be_enabled(timeout=60000)
+    switch(conversation)
+    expect(page.get_by_test_id("coding-opening-error")).to_have_count(0)
+    provider.assert_no_request()
+    scenario("A7-retirement-error-rendering-http-fixture", "Explicit 502 projection fault retained current identity, showed cleanup uncertainty without claiming release, and allowed inspected deliberate retry; keyboard Enter and desktop/narrow rendering checked. Native cleanup failure is not simulated by this UI fault.")

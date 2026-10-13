@@ -5,13 +5,15 @@ import type {
   ExternalStoreAdapter,
   ThreadMessageLike,
 } from "@assistant-ui/react";
+import type { CodingInputDraft } from "./input.ts";
 import { type PresentationRow, groupCodingRows } from "./presentation.ts";
 import type { CodingRun, CodingRunState } from "./run-session.ts";
 
-/** assistant-ui only projects native rows and forwards text input/control. */
+/** assistant-ui projects native rows; Mimir owns rich input and execution. */
 export function codingRunAdapter(
   state: CodingRunState | null,
   run: CodingRun | null,
+  draft?: CodingInputDraft,
 ): ExternalStoreAdapter<PresentationRow> {
   return {
     isDisabled:
@@ -20,11 +22,16 @@ export function codingRunAdapter(
       state.recovering ||
       state.submitting ||
       state.native?.pending_user_request === true ||
+      state.configuring ||
+      state.configurationUncertain ||
       Boolean(
         state.stopping ||
           state.uncertainSubmission ||
           state.storageError ||
-          state.reconcilingAction,
+          state.reconcilingAction ||
+          state.commandBusy ||
+          state.uncertainCommand ||
+          state.overlapWarning,
       ),
     isLoading: state?.connection === "loading",
     isRunning: Boolean(state?.native?.active_request || state?.stopping),
@@ -49,13 +56,14 @@ export function codingRunAdapter(
         message.content.some((part) => part.type !== "text") ||
         (message.attachments?.length ?? 0)
       )
-        throw new Error("This coding slice accepts text prompts only.");
-      await run.send(
-        message.content
-          .filter((part) => part.type === "text")
-          .map((part) => part.text)
-          .join("\n"),
-      );
+        throw new Error(
+          "Unsupported composer content. Use the coding image attachment control.",
+        );
+      const text = message.content
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join("\n");
+      if (await run.send(text, draft?.input(text))) draft?.clear();
     },
     onCancel: async () => {
       await run?.stop();
