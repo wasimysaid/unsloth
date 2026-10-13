@@ -5,6 +5,12 @@ import { authFetch } from "@/features/auth/api";
 import { readFastApiError } from "@/lib/format-fastapi-error";
 import { consumeCodingEvents } from "./events";
 import type {
+  McpDraft,
+  McpInventory,
+  McpSaveResult,
+  McpSettingsApi,
+} from "./mcp-types";
+import type {
   CodingApi,
   CodingConversation,
   CodingProjectDirectory,
@@ -79,6 +85,59 @@ export const codingApi: CodingApi = {
       signal,
     });
     return (await response.json()) as CodingProjectDirectory;
+  },
+};
+
+/** Explicit Settings access; neither browser nor backend owns configuration files.
+ * Disable caches and transport replay: a lost save reply is an uncertain write,
+ * reconciled by an explicit editor read, not a second submission.
+ */
+export const mcpSettingsApi: McpSettingsApi = {
+  async inventory(id) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/mcp/inventory`,
+      { cache: "no-store" },
+    );
+    return (await response.json()) as McpInventory;
+  },
+  async edit(id, source, name) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/mcp/edit`,
+      {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source, name }),
+      },
+    );
+    return (await response.json()) as McpDraft;
+  },
+  async save(id, draft, json) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/mcp/save`,
+      {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          edit_id: draft.edit_id,
+          revision: draft.revision,
+          json,
+        }),
+      },
+    );
+    return (await response.json()) as McpSaveResult;
+  },
+  async release(id, editId) {
+    await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/mcp/release`,
+      {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ edit_id: editId }),
+      },
+    );
   },
 };
 

@@ -221,9 +221,12 @@ class CodingRuntime:
             delivered = True
             return result
         except TimeoutError as exc:
+            reconciliation = (
+                "load the saved MCP version for comparison before deliberately retrying. Your draft is retained."
+                if method == "mcp_save" else "refresh native state before trying again."
+            )
             raise CodingRuntimeError(
-                "uncertain", "Mimir has not confirmed this operation. It was not retried; "
-                "refresh saved conversations before trying again.",
+                "uncertain", "Mimir has not confirmed this operation. It was not retried; " + reconciliation,
             ) from exc
         except (BrokenPipeError, ConnectionResetError) as exc:
             raise CodingRuntimeError("disconnected", "The coding runtime disconnected; nothing was replayed.") from exc

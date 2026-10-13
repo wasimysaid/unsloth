@@ -1,4 +1,4 @@
-# Coding opening preview
+# Coding opening preview and Mimir Settings
 
 `/coding` uses the existing `requireAuth` route gate and `authFetch` API client.
 It renders a separate coding sidebar and composer, not `AppSidebar`, `ChatPage`,
@@ -73,6 +73,53 @@ as well as new-folder opening; no browser trust override is sent.
 Send, prompt input and keyboard submission are unavailable in this preview.
 Opening a conversation is not evidence that a prompt executed. There is no send
 endpoint, runner/model/tool configuration or cancellation API in the frontend.
+
+## Mimir Settings (#250)
+
+The focused **Mimir Settings** view uses the open native conversation's effective
+trust and project directory to inspect MCP's global/workspace layers. Native source
+identities, configured states, effective field origins and live ownership/status
+are preserved; inventory is redacted. The explicit editor reads raw source JSON
+(including secrets), never expanded/merged transport values for persistence.
+
+Authenticated endpoints under `/api/coding/conversations/{id}/mcp`:
+
+- `GET /inventory`: native scoped documents, source entries, effective values and
+  live connection metadata; does not open an owner or apply changes.
+- `POST /edit` with `{source,name}`: begins an edit of that exact native source.
+  Missing names create a draft. Returns `{edit_id,source,name,revision,json}`.
+- `POST /save` with `{edit_id,revision,json}`: native validation and revision-checked
+  persistence; returns `{draft,configured_state,inventory,inventory_error}` with the
+  actual committed editor revision and configured state at the saved source.
+  Inventory is a separate best-effort observation: if it exceeds transport bounds,
+  `inventory` is null and `inventory_error` explains how to refresh. A completed
+  persistence operation is never reported as failed because observation is unavailable.
+  Raw and normalized editor JSON are bounded to 512 KiB before persistence.
+  It never applies/reconnects connections, attaches transient servers, cancels work,
+  or closes/reopens conversations. Live apply/reconnect belongs to #251.
+- `POST /release` with `{edit_id}`: drops only an obsolete native editor resource
+  after comparison/reconciliation/discard, never its conversation or connections.
+
+No endpoint accepts arbitrary file paths. Responses are `no-store`; raw drafts
+are never logged or included in request-validation diagnostics. The browser
+uses authenticated fetch with transport replay disabled. A lost save reply is
+**uncertain**, not a failed write: compare the saved version before deliberate retry.
+
+`mcp-settings.ts` holds ephemeral forms keyed by native conversation ID, retaining
+draft text and edit revision through errors, conflicts, tab switches and conversation
+changes within this mounted coding page. It does not use browser storage or persist
+secrets. A browser reload/navigation away loses these in-memory unsaved drafts.
+Refresh reads inventory without rebasing edits. Comparison reads a new native draft
+separately; only **Keep draft and use latest revision** or **Replace draft with saved
+version** adopts it. Another intervening writer can still conflict. Discard is
+confirmed; selecting another row never silently replaces a draft. Operations are
+serialized per form, with focused native errors and keyboard-operable reconciliation.
+
+Saved status and native live connection status are separate. The persisted revision
+is an editor revision, not evidence that servers have reconfigured. Native inventory's
+`live_available` explicitly distinguishes unknown observation from known-empty connections;
+unavailable status offers refresh instead of inferring no applied servers. Refresh is a
+read, not an apply mechanism. Extensions/maintenance sections are supplied by #252.
 
 ## Verification
 

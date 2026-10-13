@@ -9,7 +9,9 @@ import os
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
 from auth.authentication import get_current_subject
@@ -44,7 +46,8 @@ def _http_error(exc: CodingRuntimeError) -> HTTPException:
               "busy": 409, "conflict": 409, "trust_conflict": 409,
               "unavailable": 503, "disconnected": 503, "uncertain": 504,
               "limit": 429, "failed": 502}.get(exc.code, 400)
-    return HTTPException(status_code = status, detail = exc.message)
+    return HTTPException(status_code = status, detail = exc.message,
+                         headers = {"Cache-Control": "no-store"})
 
 
 async def _command(request: Request, method: str, params: dict | None = None):
@@ -146,3 +149,67 @@ async def conversation_events(conversation_id: str, request: Request):
 
     # Only this view is released on disconnect; native conversation owners survive.
     return NativeViewResponse(events(), runtime, subscription)
+
+
+class McpSettingsRoute(APIRoute):
+    """Do not echo raw MCP definitions in FastAPI's validation diagnostics."""
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def sanitized(request: Request):
+            try:
+                response = await handler(request)
+            except RequestValidationError:
+                response = JSONResponse(
+                    status_code = 422,
+                    content = {"detail": "Invalid MCP Settings request. Check the source, server name, edit identity, revision and definition size. Your draft was not saved."},
+                )
+            response.headers["Cache-Control"] = "no-store"
+            return response
+
+        return sanitized
+
+
+class McpEditRequest(BaseModel):
+    model_config = ConfigDict(extra = "forbid", strict = True)
+    source: str = Field(min_length = 1, max_length = 256)
+    name: str = Field(min_length = 1, max_length = 256)
+
+
+class McpEditIdentity(BaseModel):
+    model_config = ConfigDict(extra = "forbid", strict = True)
+    edit_id: str = Field(min_length = 1, max_length = 256)
+
+
+class McpSaveRequest(McpEditIdentity):
+    revision: str = Field(min_length = 1, max_length = 256)
+    definition_json: str = Field(alias = "json", max_length = 524288)
+
+
+mcp_router = APIRouter(route_class = McpSettingsRoute)
+
+
+@mcp_router.get("/conversations/{conversation_id}/mcp/inventory")
+async def mcp_inventory(conversation_id: str, request: Request):
+    # Neither a read nor save opens/closes a session, grants trust, or applies changes.
+    return await _command(request, "mcp_inventory", {"conversation_id": conversation_id})
+
+
+@mcp_router.post("/conversations/{conversation_id}/mcp/edit")
+async def mcp_edit(conversation_id: str, body: McpEditRequest, request: Request):
+    # Source is an opaque native identifier, never a Studio-resolved file path.
+    return await _command(request, "mcp_edit", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+@mcp_router.post("/conversations/{conversation_id}/mcp/save")
+async def mcp_save(conversation_id: str, body: McpSaveRequest, request: Request):
+    return await _command(request, "mcp_save", {"conversation_id": conversation_id, **body.model_dump(by_alias = True)})
+
+
+@mcp_router.post("/conversations/{conversation_id}/mcp/release")
+async def mcp_release_edit(conversation_id: str, body: McpEditIdentity, request: Request):
+    # Drop only an obsolete editor handle, never a conversation or MCP attachment.
+    return await _command(request, "mcp_release_edit", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+router.include_router(mcp_router)
