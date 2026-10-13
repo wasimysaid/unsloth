@@ -69,7 +69,7 @@ function CodingSidebar({
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              disabled={state.opening}
+              disabled={state.opening || Boolean(state.openingUncertainty)}
               onClick={(event) => {
                 if (isMobile) setOpenMobile(false);
                 onNew(event.currentTarget);
@@ -125,7 +125,13 @@ function CodingSidebar({
                     aria-current={
                       state.active?.id === conversation.id ? "true" : undefined
                     }
-                    disabled={state.opening}
+                    disabled={
+                      state.opening ||
+                      Boolean(
+                        state.openingUncertainty &&
+                          !state.openingUncertainty.inspected,
+                      )
+                    }
                     onClick={async () => {
                       if (await session.openConversation(conversation.id)) {
                         if (isMobile) setOpenMobile(false);
@@ -186,6 +192,7 @@ export function CodingPage() {
     return () => session.cancelBrowse();
   }, [session]);
   const chooseFolder = (invoker: HTMLElement) => {
+    if (state.opening || state.openingUncertainty) return;
     folderInvoker.current = invoker;
     session.clearOpeningError();
     setFolderOpen(true);
@@ -272,6 +279,17 @@ export function CodingPage() {
                   Opening native conversation…
                 </output>
               )}
+              {state.openingUncertainty && (
+                <p
+                  role="status"
+                  data-testid="coding-opening-reconciliation"
+                  className="text-sm text-muted-foreground"
+                >
+                  {state.openingUncertainty.inspected
+                    ? "Shared native history inspected. Opening remains unconfirmed; deliberately reopen a saved identity from the sidebar. No create/open command was replayed."
+                    : "Opening is unconfirmed. Inspecting shared native history before offering another action; refresh history if inspection failed."}
+                </p>
+              )}
               {!folderOpen && state.openingError && (
                 <p
                   role="alert"
@@ -294,7 +312,7 @@ export function CodingPage() {
                   ref={projectChooser}
                   type="button"
                   variant="outline"
-                  disabled={state.opening}
+                  disabled={state.opening || Boolean(state.openingUncertainty)}
                   aria-describedby="coding-project-disclosure"
                   onClick={(event) => chooseFolder(event.currentTarget)}
                 >

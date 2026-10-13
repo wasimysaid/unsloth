@@ -1,4 +1,60 @@
-# Coding: trusted-project opening and native run/stop (#234–235)
+# Coding: trusted projects, native run/stop, reopen and reconnect (#234–236)
+
+## Reopen/reconnect slice (#236)
+
+Implementation baselines: Studio `a784d9193d38c640562b5464d5e9c10def6ac82d`
+and private Mimir `7ddec52c566497dd6e0cf572a18272a88d8fa10a`.
+Shared history is authenticated and deliberate reopening retains the exact native
+conversation and saved canonical folder. Missing/inaccessible folders, execution
+leases and incompatible trust remain native refusals, not replacement projects.
+
+Browser navigation and view teardown release only views, never accepted work or
+host owning handles. Transport recovery automatically opens a fresh atomic native
+view and reconstructs its immutable history cut before becoming ready. A persistent
+disconnect banner remains through retry/reconstruction; no Last-Event-ID suffix is
+assumed authoritative. Native recovering state waits for the root checkpoint.
+Bounded earlier pages and clipped/unloaded output remain explicitly incomplete.
+Historical activity is not evidence of a currently running request.
+
+Before prompt HTTP delivery, the browser durably stores one conversation-scoped
+pending submission key and text. A reload/reopen recovers that delivery record,
+not a second transcript. Retry reuses the same key; native persistent deduplication
+returns the original request identity, including after plugin restart. No prompt
+is automatically replayed. Failure to persist recovery identity prevents sending.
+Recovering delivery is distinct from explicitly continuing interrupted work with
+new input after process loss.
+
+For uncertain non-prompt responses, rebuild the authoritative native view before
+allowing another action. Stop is never blindly replayed; cancellation acknowledgment
+is not terminal cleanup. This shared pattern does **not** promise generic
+exactly-once commands. Capability-specific stale question/plan/goal tests remain
+with their feature tickets. Production process restart and idle retirement remain
+#249 and #248 respectively.
+
+Run the actual-browser recovery driver after building the frontend/native package:
+
+```sh
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir /path/to/paired/mimir --plugin-package /path/to/current/package \
+  --workload recovery --browser firefox --evidence-dir /path/to/worker/recovery
+```
+
+The driver exercises actual navigation, refresh, viewing-tab closure and deliberate
+reopen; automatic reconnect; failed bounded-history reads; native tools/checkpoint
+replacement; lost prompt/cancel acknowledgments; durable keys across frontend
+reload; and same-key native deduplication after a clean acceptance-server/plugin
+restart. The reset shim is **acceptance-only transport fault injection**: it
+reuses the real atomic start capture as a recovering reset, remaps positions in
+order, then waits for real native checkpoint evidence. It neither alters saved
+history nor fabricates execution/results. Tests of naturally occurring slow-reader
+resets and native chunk bounds belong to the paired real-process suite.
+
+Task-local browser reports record scenario IDs, source/artifact fingerprints,
+native conversation/request/submission identities, screenshots at 1440×1000 and
+390×844, trust fingerprints and awaited cleanup. Deterministic HTTP-provider/native
+tool and fault evidence is distinct from live-model evidence. This slice does not
+claim external-provider/local-model full-PoC acceptance or implemented-UI human
+review; those remain #255–256.
 
 ## Run/stop slice (#235)
 
@@ -172,15 +228,15 @@ The task-local `worker/ticket-result.json` and browser `report.json` identify ac
 commands/artifacts/results; this tracked matrix intentionally contains no stale
 claim tied to a mutable local HEAD or absent screenshots.
 
-| ID | Implemented #234–235 coverage (see attempt reports for verification) | Remaining capability evidence |
+| ID | Implemented #234–236 coverage (see attempt reports for verification) | Remaining capability evidence |
 |---|---|---|
-| A1 | Native opening/SDK contracts; single supervised product plugin; authenticated HTTP/SSE; exact submission/request/tool identities; atomic ordered public view, checkpoints/reset/recovery and bounded cut reads | Durable reload/reconnect delivery reconciliation (#236) |
+| A1 | Native opening/SDK contracts; single supervised product plugin; authenticated HTTP/SSE; exact submission/request/tool identities; atomic ordered public view, checkpoints/reset/recovery, bounded cut reads and durable reconnect reconciliation (#236) | Cross-feature integration and packaged-consumer regression (#254) |
 | A2 | Native prompt/Stop controls; compact inspectable public tool results/failures and clipping disclosure | Questions, modes, plans/goals, children and diagnostics (#237 onward) |
 | A3 | No diff implementation or fabricated effects | Typed live/historical reported changes (#238) |
 | A4 | No model picker | Model/reasoning interactions (#244) |
 | A5 | Externally configured provider admission; no Studio local-model serving | Local-model requests and whole-request protection (#246/#255) |
 | A6 | Canonical/native validated opening, non-persisting effective trust, saved-policy tests, child inheritance, mismatch/lease refusals, authenticated run/Stop/history access | Concurrent execution/same-folder warning and retirement/recovery (#247–249) |
-| A7 | Exact request cancellation; Stop acknowledgment distinct from cleanup; disconnect never stops owners; typed native failures; no automatic replay; awaited EOF shutdown | Durable submission identity across reload, recovery, clocks and full interruption scenarios (#236/#248/#249) |
+| A7 | Exact request cancellation; Stop acknowledgment distinct from cleanup; disconnect never stops owners; typed native failures; durable submission identity across reload/native restart, automatic authoritative reconnect and non-prompt reconciliation (#236); no automatic work replay; awaited EOF shutdown | Controlled idle clocks and full process-interruption/maintenance scenarios (#248/#249) |
 | A8 | No Settings management surface | Native MCP and headless inventory/settings (#250–252) |
 | A9 | Ordinary-chat store/engine untouched; affected shared/ordinary-chat tests; coding route excludes ordinary model observers and chat execution imports | Real ordinary-chat smoke and cross-feature regression (#254/#255) |
 | A10 | Rendered opening, deterministic provider/native-tool, cancellation/failure, keyboard/narrow, and separate live-provider driver | Full cross-feature execution UI checks and user's implemented-UI review (#255/#256) |
