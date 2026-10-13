@@ -6,8 +6,20 @@ import type {
   ChildDetail,
   ChildPresentation,
 } from "./child-types.ts";
+import type {
+  CodingDiagnostic,
+  CommandCatalog,
+  CommandOutcome,
+  CommandReceipt,
+  DiagnosticKind,
+  SessionUsage,
+} from "./command-types.ts";
 import type { ToolOutputProfile } from "./file-changes.ts";
 import type { CodingInputExtras } from "./input.ts";
+import type {
+  CodingConfiguration,
+  CodingConfigurationChange,
+} from "./model-selection.ts";
 import type { CodingConversation } from "./types.ts";
 
 export type RequestStatus =
@@ -24,15 +36,21 @@ export interface NativeRequest {
 }
 export interface NativeState {
   info: CodingConversation;
-  configuration: {
-    provider: string | null;
-    model: string | null;
-    reasoning: string | null;
-    mode: string;
-  };
+  /** Authoritative choice for the next request, even while another is running. */
+  configuration: CodingConfiguration;
+  running_configuration: CodingConfiguration | null;
   active_request: string | null;
   requests: NativeRequest[];
   pending_user_request: boolean;
+  usage?: SessionUsage | null;
+  compression?: {
+    status: "running" | "completed" | "failed" | "cancelled" | "interrupted";
+    request_id?: string;
+    phase?: string | null;
+    before_tokens?: number;
+    after_tokens?: number;
+    error?: string | null;
+  } | null;
 }
 export interface JournalCut {
   journal: "root" | { child: string };
@@ -80,6 +98,19 @@ export interface ProjectOverlap {
   conversations: { id: string }[];
 }
 export interface RunApi {
+  commands?(id: string): Promise<CommandCatalog>;
+  command?(
+    id: string,
+    name: string,
+    tail: string,
+    operationId: string,
+  ): Promise<CommandOutcome>;
+  commandReceipt?(id: string, operationId: string): Promise<CommandReceipt>;
+  diagnostics?(id: string, kind: DiagnosticKind): Promise<CodingDiagnostic>;
+  configure(
+    id: string,
+    change: CodingConfigurationChange,
+  ): Promise<CodingConfiguration>;
   checkOverlap(id: string): Promise<ProjectOverlap>;
   readChild(
     id: string,

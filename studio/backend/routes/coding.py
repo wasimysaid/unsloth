@@ -104,6 +104,21 @@ class PromptSubmission(BaseModel):
         return self
 
 
+class CommandInvocation(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    operation_id: str = Field(min_length = 1, max_length = 128)
+    name: str = Field(min_length = 1, max_length = 256, pattern = r"^[^\s/]+$")
+    tail: str = Field(default = "", max_length = 16384)
+
+
+class ModelConfiguration(BaseModel):
+    """Exact native identity/effort only; credential and provider setup stay external."""
+    model_config = ConfigDict(extra = "forbid")
+    provider: str | None = Field(default = None, min_length = 1, max_length = 1024)
+    model: str | None = Field(default = None, min_length = 1, max_length = 1024)
+    reasoning: str | None = Field(default = None, min_length = 1, max_length = 1024)
+
+
 class ChildJournal(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     child: str = Field(min_length = 1, max_length = 128, pattern = r"^[^\x00]+$")
@@ -246,6 +261,16 @@ async def open_conversation(conversation_id: str, request: Request):
     return state["info"]
 
 
+@router.post("/conversations/{conversation_id}/configuration")
+async def configure_model(conversation_id: str, body: ModelConfiguration, request: Request):
+    # No Studio scheduler/config store. Mimir orders selection against dequeue and
+    # keeps running work frozen; prompts deliberately carry no model configuration.
+    return await _command(request, "configure", {
+        "conversation_id": conversation_id,
+        "configuration": body.model_dump(exclude_unset = True),
+    })
+
+
 @router.get("/conversations/{conversation_id}/overlap")
 async def project_overlap(conversation_id: str, request: Request):
     # A read-only native preflight; never implicitly opens or retargets an owner.
@@ -261,6 +286,9 @@ async def conversation_skills(conversation_id: str, request: Request):
 
 @router.post("/conversations/{conversation_id}/prompts", status_code = 202)
 async def submit_prompt(conversation_id: str, body: PromptSubmission, request: Request):
+    # Slash attempts never bypass native command handling, including recovered drafts.
+    if body.text.lstrip().startswith("/"):
+        raise HTTPException(400, "Slash commands must use native command dispatch; no model prompt was submitted.")
     # Mimir admits/deduplicates the submission and owns scheduling and saved input.
     return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump(exclude_unset = True), "overlap_confirmed": body.overlap_confirmed})
 
@@ -269,6 +297,29 @@ async def submit_prompt(conversation_id: str, body: PromptSubmission, request: R
 async def cancel_request(conversation_id: str, request_id: str, request: Request):
     # Acceptance is not settlement. The ordered native view confirms completion.
     return await _command(request, "cancel", {"conversation_id": conversation_id, "request_id": request_id})
+
+
+@router.get("/conversations/{conversation_id}/commands")
+async def discover_commands(conversation_id: str, request: Request):
+    return await _command(request, "commands", {"conversation_id": conversation_id})
+
+
+@router.post("/conversations/{conversation_id}/commands")
+async def invoke_command(conversation_id: str, body: CommandInvocation, request: Request):
+    # Not prompt delivery: the browser reconciles a lost reply before another action.
+    return await _command(request, "command", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+@router.get("/conversations/{conversation_id}/commands/{operation_id}")
+async def inspect_command_receipt(conversation_id: str, operation_id: str, request: Request):
+    # Read an already-delivered operation. This never invokes/replays a command.
+    return await _command(request, "command_receipt", {"conversation_id": conversation_id, "operation_id": operation_id})
+
+
+@router.get("/conversations/{conversation_id}/diagnostics/{kind}")
+async def inspect_diagnostics(conversation_id: str, kind: Literal["context", "tokens", "retry", "execution"], request: Request):
+    # Native plugin returns an allowlisted bounded projection, never raw logs/config.
+    return await _command(request, "diagnostics", {"conversation_id": conversation_id, "kind": kind})
 
 
 @router.post("/conversations/{conversation_id}/entries")

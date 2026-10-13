@@ -214,6 +214,36 @@ Stable browser evidence selectors: `coding-disconnect-banner`,
 `coding-submission-recovered`, `coding-submission-storage-error`, `coding-unsent-draft`,
 `coding-action-reconciliation`, and `coding-opening-reconciliation`.
 
+## Native commands and current-session diagnostics (#243)
+
+The Commands dialog queries the live native registry, including effective contributed
+names/aliases, descriptions, optional arguments and native availability. Selecting a
+command does not execute it. Execute and composer slash input both use native command
+handling; unsupported/terminal-only attempts never become model prompts. Prompt HTTP
+also refuses slash input. Native busy/admission guards remain final.
+
+`POST /conversations/{id}/commands` accepts `{operation_id,name,tail}`. Handled,
+transient-display and submitted native request outcomes are presented distinctly;
+none is an optimistic conversation message or proof of terminal completion. Native
+compression is submitted work with real lifecycle/view evidence; public history is
+retained. Transient output is bounded and is not appended to the transcript.
+
+Before dispatch, `pending-command.ts` durably records a conversation-scoped operation
+identity/name, **not arguments**. Reload/reopen retains uncertainty. A fresh atomic
+view must reconstruct before the read-only command receipt lookup can resolve that
+exact outcome. An incomplete/missing receipt (including runtime loss) remains unknown
+and blocks another mutation; Inspect command outcome only reads again. No command is
+replayed and receipt storage does not promise generic exactly-once execution.
+
+The compact indicator uses native current-session prompt/turn observations, labeling
+provider-confirmed, estimated and stale data where supplied. Unavailable metrics stay
+unavailable, never invented zeroes. The diagnostics dialog requests only the selected
+context, tokens, retry or execution category. Native context inspection exposes bounded
+structural roles/counts rather than private message contents; provider payloads,
+credentials, arbitrary error reasons and raw logs are not browser diagnostics.
+Dismissal invalidates pending inspection replies. Model-context diagnostics are not
+public transcript entries or a historical-usage dashboard.
+
 ## Inspection-only reported file changes (#238)
 
 `tool.output_profile` is the product plugin's bounded projection of the native
@@ -286,6 +316,35 @@ is an editor revision, not evidence that servers have reconfigured. Native inven
 `live_available` explicitly distinguishes unknown observation from known-empty connections;
 unavailable status offers refresh instead of inferring no applied servers. Refresh is a
 read, not an apply mechanism. Extensions/maintenance sections are supplied by #252.
+
+## Next-request model picker (#244)
+
+The composer bottom-right trigger opens native model configuration; its heading
+opens the searchable, provider-navigable list in the same popover. Selecting a model
+returns to configuration without dismissal. Shared Studio popover/button/slider
+primitives are presentation only. Keyboard Tab remains ordinary focus navigation;
+Escape returns from search to configuration or dismisses to the trigger.
+
+`GET /catalog?cwd=…` is the only inventory. Exact provider ID + provider-local model
+ID select a model; labels and API-model mapping are display/search metadata, never
+replacement identities. Favorites persist only identity pairs. Reasoning positions
+come only from the selected model's offered native values and disappear when none
+exist. Switching models sends only the identity patch and lets Mimir reset effort
+to its native default; there is no per-model remembered effort.
+
+`POST /conversations/{id}/configuration` accepts only `{provider?,model?,reasoning?}`.
+It is separate from prompts, which still carry only submission key/text. Native
+ordered state exposes next `configuration` and separate `running_configuration`.
+The browser never rewrites active work or installs a potentially stale HTTP reply
+as newer view state. Definite native refusal retains the selection; an uncertain
+configuration response is not retried and requires authoritative reconstruction
+before further configuration or input. Stop remains available during selection.
+
+Catalog presence is not a health/credential check. Missing selected identities
+remain visible without fallback, with catalog retry or replacement. Setup,
+credentials and downloads remain in their existing workflows. Native execution
+boundary preparation/protection and fresh live selectability are implemented by
+subsequent #245–246 slices, not a browser scheduler or compatibility checker.
 
 ## Verification
 

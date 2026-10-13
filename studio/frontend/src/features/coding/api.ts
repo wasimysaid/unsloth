@@ -11,6 +11,7 @@ import type {
   PluginReloadStatus,
   RuntimeDiagnostics,
 } from "./maintenance";
+import type { CodingModelApi } from "./model-selection";
 import type { EntryPage, RunApi } from "./run-types";
 import type {
   McpDraft,
@@ -181,6 +182,16 @@ export const mcpSettingsApi: McpSettingsApi = {
   },
 };
 
+export const codingModelApi: CodingModelApi = {
+  async catalog(cwd, signal) {
+    const response = await codingRequest(
+      `/catalog?${new URLSearchParams({ cwd })}`,
+      { signal },
+    );
+    return await response.json();
+  },
+};
+
 export async function readCodingDiagnostics(): Promise<RuntimeDiagnostics> {
   return (await (
     await codingRequest("/diagnostics")
@@ -221,6 +232,46 @@ export async function discoverCodingSkills(id: string, signal?: AbortSignal) {
 }
 
 export const codingRunApi: RunApi = {
+  async commands(id) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/commands`,
+    );
+    return await response.json();
+  },
+  async commandReceipt(id, operationId) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/commands/${encodeURIComponent(operationId)}`,
+    );
+    return await response.json();
+  },
+  async command(id, name, tail, operationId) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/commands`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, tail, operation_id: operationId }),
+      },
+    );
+    return await response.json();
+  },
+  async configure(id, change) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/configuration`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(change),
+      },
+    );
+    return await response.json();
+  },
+  async diagnostics(id, kind) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/diagnostics/${kind}`,
+    );
+    return await response.json();
+  },
   async checkOverlap(id) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/overlap`,

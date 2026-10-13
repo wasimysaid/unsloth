@@ -27,6 +27,7 @@ export function CodingComposer({
   state,
   draft,
   canSend,
+  children,
   inputRef,
 }: {
   conversationId: string | null;
@@ -34,6 +35,7 @@ export function CodingComposer({
   state: CodingRunState | null;
   draft: CodingInputDraft;
   canSend: boolean;
+  children?: React.ReactNode;
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
 }) {
   const composer = useComposerRuntime();
@@ -347,14 +349,24 @@ export function CodingComposer({
             <Button
               type="button"
               size="icon"
-              aria-label={state?.stopping ? "Stopping…" : state?.retryStop ? "Retry Stop for same request" : "Stop"}
+              aria-label={
+                state?.stopping
+                  ? "Stopping…"
+                  : state?.retryStop
+                    ? "Retry Stop for same request"
+                    : "Stop"
+              }
               title={
                 state?.stopping
                   ? "Waiting for native terminal cleanup"
                   : "Cancel this exact native request"
               }
               disabled={
-                Boolean(state?.stopping || state?.reconcilingAction || state?.recovering) || state?.connection !== "connected"
+                Boolean(
+                  state?.stopping ||
+                    state?.reconcilingAction ||
+                    state?.recovering,
+                ) || state?.connection !== "connected"
               }
               className="mb-1 shrink-0 rounded-full"
               onClick={() => void run?.stop()}
@@ -512,6 +524,14 @@ export function CodingComposer({
               ))}
             </div>
           </section>
+        )}
+        {children && (
+          <div
+            className="mt-2 flex min-w-0 items-center justify-end gap-1"
+            data-testid="coding-composer-controls"
+          >
+            {children}
+          </div>
         )}
       </div>
       <Dialog

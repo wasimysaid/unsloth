@@ -360,6 +360,41 @@ test("MCP Settings reads and saves only native scoped identities, without caches
   );
 });
 
+test("picker reads only authenticated native catalog and sends identity patches separately from prompts", async () => {
+  const c = client(() => Response.json([]));
+  const controller = new AbortController();
+  await c.api.codingModelApi.catalog("/project/a & b", controller.signal);
+  await c.api.codingRunApi.configure("conversation/id", {
+    provider: "provider-id",
+    model: "provider-local-id",
+  });
+  await c.api.codingRunApi.configure("conversation/id", {
+    reasoning: "medium",
+  });
+  assert.equal(
+    c.requests[0].path,
+    "/api/coding/catalog?cwd=%2Fproject%2Fa+%26+b",
+  );
+  assert.equal(c.requests[0].init?.signal, controller.signal);
+  assert.equal(
+    c.requests[1].path,
+    "/api/coding/conversations/conversation%2Fid/configuration",
+  );
+  assert.deepEqual(JSON.parse(String(c.requests[1].init?.body)), {
+    provider: "provider-id",
+    model: "provider-local-id",
+  });
+  assert.deepEqual(JSON.parse(String(c.requests[2].init?.body)), {
+    reasoning: "medium",
+  });
+  assert.ok(
+    c.requests.every(
+      (request) =>
+        JSON.stringify(request.options) === '{"retryNetworkErrors":false}',
+    ),
+  );
+});
+
 test("MCP native errors stay actionable refusals, never successful persistence", async () => {
   const draft = {
     edit_id: "native-edit",
@@ -381,18 +416,34 @@ test("MCP native errors stay actionable refusals, never successful persistence",
 });
 
 test("Settings maintenance encodes exact targets and reconciliation IDs without replay", async () => {
-  const c = client(() => Response.json({ operation_id: "one-op", status: "deferred" }));
+  const c = client(() =>
+    Response.json({ operation_id: "one-op", status: "deferred" }),
+  );
   await c.api.codingMaintenanceApi.inspect("native/id?", "one-op");
-  const result = await c.api.codingMaintenanceApi.reload("native/id?", "one-op");
+  const result = await c.api.codingMaintenanceApi.reload(
+    "native/id?",
+    "one-op",
+  );
   assert.equal(result.status, "deferred");
   await c.api.readCodingDiagnostics();
-  assert.deepEqual(c.requests.map((request) => request.path), [
-    "/api/coding/conversations/native%2Fid%3F/extensions?operation_id=one-op",
-    "/api/coding/conversations/native%2Fid%3F/plugins/reload",
-    "/api/coding/diagnostics",
-  ]);
-  assert.deepEqual(JSON.parse(c.requests[1].init!.body as string), { operation_id: "one-op" });
-  assert.ok(c.requests.every((request) => JSON.stringify(request.options) === JSON.stringify({ retryNetworkErrors: false })));
+  assert.deepEqual(
+    c.requests.map((request) => request.path),
+    [
+      "/api/coding/conversations/native%2Fid%3F/extensions?operation_id=one-op",
+      "/api/coding/conversations/native%2Fid%3F/plugins/reload",
+      "/api/coding/diagnostics",
+    ],
+  );
+  assert.deepEqual(JSON.parse(c.requests[1].init!.body as string), {
+    operation_id: "one-op",
+  });
+  assert.ok(
+    c.requests.every(
+      (request) =>
+        JSON.stringify(request.options) ===
+        JSON.stringify({ retryNetworkErrors: false }),
+    ),
+  );
 });
 
 test("coding transport failure stays unconfirmed without claiming native work died or suggesting relaunch", async () => {
@@ -455,7 +506,13 @@ test("overlap preflight authenticates exact identity and confirmation is explici
     c.requests[0].path,
     "/api/coding/conversations/native%2Fid/overlap",
   );
-  await c.api.codingRunApi.submit("native/id", "key", "warned draft", undefined, true);
+  await c.api.codingRunApi.submit(
+    "native/id",
+    "key",
+    "warned draft",
+    undefined,
+    true,
+  );
   assert.deepEqual(JSON.parse(String(c.requests[1].init?.body)), {
     submission_key: "key",
     text: "warned draft",

@@ -72,7 +72,7 @@ class DeterministicProviderTests(unittest.TestCase):
         responses, failures = [], []
         def external_client():
             try:
-                req = urllib.request.Request(fixture.base_url + "/chat/completions", data=json.dumps({"messages": [], "tools": []}).encode(), headers={"Content-Type": "application/json"})
+                req = urllib.request.Request(fixture.base_url + "/chat/completions", data=json.dumps({"messages": [], "tools": [], "stream": True}).encode(), headers={"Content-Type": "application/json"})
                 with urllib.request.urlopen(req, timeout=10) as response:
                     responses.append((response.status, response.headers["Content-Type"], response.read()))
             except Exception as exc:
@@ -81,7 +81,7 @@ class DeterministicProviderTests(unittest.TestCase):
         try:
             client.start()
             request = fixture.request(timeout=5)
-            self.assertEqual(request.body, {"messages": [], "tools": []})
+            self.assertEqual(request.body, {"messages": [], "tools": [], "stream": True})
             request.text("external protocol evidence")
             client.join(timeout=10)
             self.assertFalse(client.is_alive())
@@ -91,6 +91,13 @@ class DeterministicProviderTests(unittest.TestCase):
         finally:
             fixture.close()
             client.join(timeout=10)
+
+    def test_summary_request_receives_native_nonstreaming_protocol_response(self):
+        request = ProviderRequest({"messages": [], "stream": False})
+        request.text("Native summary evidence")
+        status, content_type, body = request.response.get_nowait()
+        self.assertEqual((status, content_type), (200, "application/json"))
+        self.assertEqual(json.loads(body), {"choices": [{"message": {"role": "assistant", "content": "Native summary evidence"}, "finish_reason": "stop"}]})
 
 
 class ExtensionDriverTests(unittest.TestCase):

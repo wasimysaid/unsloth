@@ -3,9 +3,18 @@
 
 import type { ChildAttempt, ChildIdentity } from "./child-types.ts";
 import { createChildView } from "./child-view.ts";
+import {
+  type CodingCommand,
+  type CodingDiagnostic,
+  type CommandOutcome,
+  type DiagnosticKind,
+  parseCodingCommand,
+} from "./command-types.ts";
 import { CodingOverlapError } from "./errors.ts";
 import { codingRowSize } from "./file-changes.ts";
 import type { CodingInput, CodingInputExtras } from "./input.ts";
+import type { CodingConfigurationChange } from "./model-selection.ts";
+import { type PendingCommand, pendingCommandStore } from "./pending-command.ts";
 import {
   type SubmissionStorage,
   pendingSubmissionStore,
@@ -28,6 +37,8 @@ export interface CodingRunState {
   viewingEarlier: boolean;
   loadingEarlier: boolean;
   submitting: boolean;
+  configuring: boolean;
+  configurationUncertain: boolean;
   stopping: string | null;
   error: string | null;
   completion: {
@@ -45,7 +56,19 @@ export interface CodingRunState {
   reopenRequired: boolean;
   reconcilingAction: string | null;
   retryStop: string | null;
-  overlapWarning: (CodingInput & { key: string; overlap: ProjectOverlap }) | null;
+  commands: CodingCommand[] | null;
+  commandsClipped?: boolean;
+  discoveringCommands: boolean;
+  commandBusy: boolean;
+  commandOutcome: CommandOutcome | null;
+  commandError: string | null;
+  uncertainCommand: (PendingCommand & { reconciled: boolean }) | null;
+  reconcilingCommand: boolean;
+  diagnostic: CodingDiagnostic | null;
+  inspectingDiagnostic: DiagnosticKind | null;
+  overlapWarning:
+    | (CodingInput & { key: string; overlap: ProjectOverlap })
+    | null;
 }
 const MAX_ROWS = 1000;
 const MAX_TEXT = 2 * 1024 * 1024;
@@ -65,6 +88,7 @@ export function createCodingRun(
   } = {},
 ) {
   const pendingStore = pendingSubmissionStore(id, options.storage);
+  const commandStore = pendingCommandStore(id, options.storage);
   const childView = createChildView(id, api);
   let state: CodingRunState = {
     connection: "loading",
@@ -75,6 +99,8 @@ export function createCodingRun(
     viewingEarlier: false,
     loadingEarlier: false,
     submitting: false,
+    configuring: false,
+    configurationUncertain: false,
     stopping: null,
     error: null,
     completion: null,
@@ -86,6 +112,15 @@ export function createCodingRun(
     reopenRequired: false,
     reconcilingAction: null,
     retryStop: null,
+    commands: null,
+    discoveringCommands: false,
+    commandBusy: false,
+    commandOutcome: null,
+    commandError: null,
+    uncertainCommand: null,
+    reconcilingCommand: false,
+    diagnostic: null,
+    inspectingDiagnostic: null,
     overlapWarning: null,
   };
   try {
@@ -93,6 +128,14 @@ export function createCodingRun(
   } catch (reason) {
     state.storageError = `Submission storage unavailable. No prompt was sent. ${errorText(reason)}`;
   }
+  try {
+    const pending = commandStore.load();
+    if (pending) state.uncertainCommand = { ...pending, reconciled: false };
+  } catch (reason) {
+    state.storageError = `Command storage unavailable. No command was replayed. ${errorText(reason)}`;
+  }
+  let attachment = 0;
+  let diagnosticRevision = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
   let saved: CodingRow[] = [];
@@ -104,6 +147,9 @@ export function createCodingRun(
   let position: number | null = null;
   let subscription: string | null = null;
   let incarnation = 0;
+  // Configuration delivery outlives any one stream incarnation. A view opened
+  // before an operation's outcome cannot reconcile that operation's uncertainty.
+  let configurationEpoch = 0;
   let abort: AbortController | null = null;
   const listeners = new Set<() => void>();
   const update = (patch: Partial<CodingRunState>) => {
@@ -285,7 +331,11 @@ export function createCodingRun(
     update({ recovering: false });
     publishRows();
   }
-  async function consume(value: unknown, signal: AbortSignal) {
+  async function consume(
+    value: unknown,
+    signal: AbortSignal,
+    configurationCut: number,
+  ) {
     if (signal.aborted) return;
     const view = value as {
       subscription: string;
@@ -355,6 +405,10 @@ export function createCodingRun(
         );
       update({
         connection: "connected",
+        configurationUncertain:
+          !state.configuring && configurationCut === configurationEpoch
+            ? false
+            : state.configurationUncertain,
         stopping: stopped ? null : state.stopping,
         retryStop:
           state.retryStop === native.active_request ? state.retryStop : null,
@@ -415,6 +469,20 @@ export function createCodingRun(
       });
     }
     if (signal.aborted) return;
+    // Numeric/structural diagnostics travel outside public transcript activity.
+    if (state.native && ("usage" in event || "compression" in event)) {
+      update({
+        native: {
+          ...state.native,
+          ...("usage" in event
+            ? { usage: event.usage as NativeState["usage"] }
+            : {}),
+          ...("compression" in event
+            ? { compression: event.compression as NativeState["compression"] }
+            : {}),
+        },
+      });
+    }
     const accepted =
       state.uncertainSubmission &&
       state.native?.requests.find(
@@ -432,8 +500,15 @@ export function createCodingRun(
       !state.recovering
     ) {
       reconnectAttempt = 0;
-      update({ disconnected: false, reopenRequired: false });
+      update({
+        disconnected: false,
+        reopenRequired: false,
+        uncertainCommand: state.uncertainCommand
+          ? { ...state.uncertainCommand, reconciled: true }
+          : null,
+      });
       reconcileAction();
+      void reconcileCommand();
     }
   }
   function connect() {
@@ -442,6 +517,8 @@ export function createCodingRun(
     abort?.abort();
     childView.setConnected(false);
     const current = ++incarnation;
+    ++diagnosticRevision;
+    const configurationCut = configurationEpoch;
     const controller = new AbortController();
     abort = controller;
     position = null;
@@ -450,13 +527,17 @@ export function createCodingRun(
       connection: "loading",
       error: state.reconcilingAction ? state.error : null,
       loadingEarlier: false,
+      discoveringCommands: false,
+      inspectingDiagnostic: null,
+      diagnostic: null,
+      reconcilingCommand: false,
     });
     void api
       .watch(
         id,
         controller.signal,
         () => {},
-        (view) => consume(view, controller.signal),
+        (view) => consume(view, controller.signal, configurationCut),
       )
       .then(() => {
         if (!controller.signal.aborted)
@@ -482,13 +563,21 @@ export function createCodingRun(
         reconnectTimer = setTimeout(connect, delay);
       });
   }
-  async function submit(input: CodingInput, key: string, overlapConfirmed = false): Promise<boolean> {
+  async function submit(
+    input: CodingInput,
+    key: string,
+    overlapConfirmed = false,
+  ): Promise<boolean> {
     if (
       state.connection !== "connected" ||
       state.recovering ||
       state.submitting ||
+      state.configuring ||
+      state.configurationUncertain ||
       state.stopping ||
       state.reconcilingAction ||
+      state.commandBusy ||
+      state.uncertainCommand ||
       state.storageError
     )
       throw new Error(
@@ -496,9 +585,15 @@ export function createCodingRun(
       );
     try {
       const existing = pendingStore.load();
-      if (existing && (existing.key !== key || existing.text !== input.text ||
-          JSON.stringify(existing.skill_mentions ?? []) !== JSON.stringify(input.skill_mentions ?? []) ||
-          JSON.stringify(existing.images ?? []) !== JSON.stringify(input.images ?? [])))
+      if (
+        existing &&
+        (existing.key !== key ||
+          existing.text !== input.text ||
+          JSON.stringify(existing.skill_mentions ?? []) !==
+            JSON.stringify(input.skill_mentions ?? []) ||
+          JSON.stringify(existing.images ?? []) !==
+            JSON.stringify(input.images ?? []))
+      )
         throw new Error(
           "Another pending submission must be reconciled before sending.",
         );
@@ -551,7 +646,11 @@ export function createCodingRun(
         reason.admissionRejected === true
       ) {
         clearPending(key, false);
-        update({ rejectedSubmission: input, error: errorText(reason), unsentDraft: input.text });
+        update({
+          rejectedSubmission: input,
+          error: errorText(reason),
+          unsentDraft: input.text,
+        });
       } else if (state.uncertainSubmission?.key === key) {
         update({
           error: `${errorText(reason)} Delivery is unconfirmed; do not send a new copy. Reconnect or retry the same submission identity.`,
@@ -562,7 +661,221 @@ export function createCodingRun(
       update({ submitting: false });
     }
   }
+  const readyForCommand = () =>
+    state.connection === "connected" &&
+    !state.recovering &&
+    !state.submitting &&
+    !state.configuring &&
+    !state.configurationUncertain &&
+    !state.stopping &&
+    !state.reconcilingAction &&
+    !state.uncertainSubmission &&
+    !state.commandBusy;
+  async function discoverCommands() {
+    if (
+      !api.commands ||
+      state.discoveringCommands ||
+      state.connection !== "connected" ||
+      state.recovering
+    )
+      return;
+    const current = incarnation;
+    update({ discoveringCommands: true, commandError: null });
+    try {
+      const result = await api.commands(id);
+      if (current !== incarnation) return;
+      if (result.conversation_id !== id || !Array.isArray(result.commands))
+        throw new Error(
+          "Native command catalog identity could not be confirmed.",
+        );
+      update({
+        commands: result.commands,
+        commandsClipped: Boolean(result.clipped),
+      });
+    } catch (reason) {
+      if (current === incarnation) update({ commandError: errorText(reason) });
+    } finally {
+      if (current === incarnation) update({ discoveringCommands: false });
+    }
+  }
+  function verifyCommandOutcome(result: CommandOutcome, operation: string) {
+    if (
+      result.conversation_id !== id ||
+      result.operation_id !== operation ||
+      !["handled", "display", "submitted"].includes(result.outcome) ||
+      (result.outcome === "submitted" && !result.request_id) ||
+      (result.outcome === "display" && typeof result.text !== "string") ||
+      JSON.stringify(result).length > 65536
+    )
+      throw new Error("Native command outcome could not be confirmed.");
+  }
+  function settleCommand(
+    operation: string,
+    outcome: CommandOutcome | null,
+    error: string | null,
+  ) {
+    try {
+      commandStore.clear(operation);
+      update({
+        commandOutcome: outcome,
+        uncertainCommand: null,
+        commandError: error,
+        storageError: null,
+      });
+    } catch (reason) {
+      update({
+        commandOutcome: outcome,
+        storageError: `Command storage unavailable. Sending is disabled. ${errorText(reason)}`,
+      });
+    }
+  }
+  async function reconcileCommand() {
+    const pending = state.uncertainCommand;
+    if (
+      !pending ||
+      !pending.reconciled ||
+      !api.commandReceipt ||
+      state.connection !== "connected" ||
+      state.recovering ||
+      state.reconcilingCommand ||
+      state.commandBusy
+    )
+      return;
+    const current = incarnation;
+    update({ reconcilingCommand: true });
+    try {
+      const receipt = await api.commandReceipt(id, pending.operation_id);
+      if (
+        current !== incarnation ||
+        state.uncertainCommand?.operation_id !== pending.operation_id
+      )
+        return;
+      if (
+        receipt.conversation_id !== id ||
+        receipt.operation_id !== pending.operation_id
+      )
+        throw new Error("Native command receipt identity did not match.");
+      if (receipt.status === "completed" && receipt.result) {
+        verifyCommandOutcome(receipt.result, pending.operation_id);
+        settleCommand(pending.operation_id, receipt.result, null);
+      } else if (receipt.status === "failed" && receipt.error) {
+        settleCommand(pending.operation_id, null, receipt.error.message);
+      } else if (receipt.status === "pending") {
+        update({
+          commandError:
+            "Native command handling is still pending. Inspect its outcome again before another action; no command was replayed.",
+        });
+      } else throw new Error("Native command receipt is incomplete.");
+    } catch (reason) {
+      if (current === incarnation)
+        update({
+          commandError: `${errorText(reason)} Native command outcome remains unknown. Inspect its effects; do not repeat it. No command was replayed.`,
+        });
+    } finally {
+      if (current === incarnation) update({ reconcilingCommand: false });
+    }
+  }
+  async function executeCommand(name: string, tail = "") {
+    if (!readyForCommand() || state.uncertainCommand || state.storageError)
+      throw new Error(
+        "Inspect the reconstructed native state and resolve uncertain commands before another action. No command was replayed.",
+      );
+    if (!name || !api.command) {
+      update({
+        commandError:
+          "Native command dispatch is unavailable or the command name is empty. No model prompt was submitted.",
+      });
+      return;
+    }
+    const operation = makeKey();
+    const pending = { name, operation_id: operation, reconciled: false };
+    const lifetime = attachment;
+    try {
+      if (commandStore.load())
+        throw new Error("Another command outcome must be reconciled first.");
+      commandStore.save(pending); // BEFORE HTTP; identity only, no arguments.
+    } catch (reason) {
+      update({
+        storageError: `Command storage unavailable. No command was sent. ${errorText(reason)}`,
+      });
+      return;
+    }
+    // Native admission is final. No optimistic public turn or completion.
+    update({
+      commandBusy: true,
+      commandOutcome: null,
+      commandError: null,
+      uncertainCommand: pending,
+    });
+    try {
+      const result = await api.command(id, name, tail, operation);
+      if (lifetime !== attachment) return; // Detached views cannot resurrect a watcher.
+      verifyCommandOutcome(result, operation);
+      settleCommand(operation, result, null);
+    } catch (reason) {
+      if (lifetime !== attachment) return;
+      const rejected =
+        reason instanceof Error &&
+        "admissionRejected" in reason &&
+        reason.admissionRejected === true;
+      if (rejected) settleCommand(operation, null, errorText(reason));
+      else {
+        update({
+          commandError: `${errorText(reason)} Command outcome is unknown. Inspecting a fresh native view and exact receipt; no retry was issued.`,
+        });
+        connect();
+      }
+    } finally {
+      if (lifetime === attachment) {
+        update({ commandBusy: false });
+        void reconcileCommand();
+      }
+    }
+  }
+  async function inspectDiagnostic(kind: DiagnosticKind) {
+    if (
+      !api.diagnostics ||
+      state.connection !== "connected" ||
+      state.recovering ||
+      state.inspectingDiagnostic
+    )
+      return;
+    const current = incarnation;
+    const inspection = ++diagnosticRevision;
+    update({
+      inspectingDiagnostic: kind,
+      diagnostic: null,
+      commandError: null,
+    });
+    try {
+      const result = await api.diagnostics(id, kind);
+      if (current !== incarnation || inspection !== diagnosticRevision) return;
+      if (
+        result.conversation_id !== id ||
+        result.kind !== kind ||
+        JSON.stringify(result).length > 65536
+      )
+        throw new Error(
+          "Native diagnostics exceeded their bound or did not match this conversation.",
+        );
+      update({ diagnostic: result });
+    } catch (reason) {
+      if (current === incarnation && inspection === diagnosticRevision)
+        update({ commandError: errorText(reason) });
+    } finally {
+      if (current === incarnation && inspection === diagnosticRevision)
+        update({ inspectingDiagnostic: null });
+    }
+  }
   return {
+    discoverCommands,
+    executeCommand,
+    reconcileCommand,
+    inspectDiagnostic,
+    clearDiagnostic() {
+      ++diagnosticRevision;
+      update({ diagnostic: null, inspectingDiagnostic: null });
+    },
     childView,
     getSnapshot: () => state,
     subscribe(listener: () => void) {
@@ -572,8 +885,45 @@ export function createCodingRun(
       };
     },
     connect,
+    async configure(change: CodingConfigurationChange) {
+      if (
+        state.connection !== "connected" ||
+        state.recovering ||
+        state.configuring ||
+        state.configurationUncertain ||
+        state.commandBusy ||
+        state.uncertainCommand
+      )
+        throw new Error(
+          "Wait for a connected, reconstructed native view before changing configuration.",
+        );
+      ++configurationEpoch;
+      update({ configuring: true, error: null });
+      try {
+        await api.configure(id, change);
+        // Never install the HTTP response as a newer view state: a later ordered
+        // native item may already have arrived. No active or queued prompt is edited.
+      } catch (reason) {
+        const rejected =
+          reason instanceof Error &&
+          "admissionRejected" in reason &&
+          reason.admissionRejected === true;
+        update({
+          configurationUncertain: !rejected,
+          error: rejected
+            ? errorText(reason)
+            : `${errorText(reason)} Configuration is unconfirmed; reconnect to reconstruct before changing it again. It was not retried.`,
+        });
+        throw reason;
+      } finally {
+        ++configurationEpoch;
+        update({ configuring: false });
+      }
+    },
     detach() {
       ++incarnation;
+      ++attachment;
+      ++diagnosticRevision;
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       reconnectTimer = null;
       abort?.abort();
@@ -582,6 +932,12 @@ export function createCodingRun(
     },
     async send(text: string, extras: CodingInputExtras = {}) {
       if (!text.trim()) return false;
+      const command = parseCodingCommand(text);
+      if (command) return executeCommand(command.name, command.tail);
+      if (state.commandBusy || state.uncertainCommand)
+        throw new Error(
+          "Resolve the uncertain native command before sending another action.",
+        );
       if (state.uncertainSubmission)
         throw new Error(
           "Reconcile the unconfirmed submission before sending new input.",
@@ -625,7 +981,11 @@ export function createCodingRun(
         state.stopping ||
         state.reconcilingAction
       ) {
-        update({ submitting: false, unsentDraft: input.text, rejectedSubmission: input });
+        update({
+          submitting: false,
+          unsentDraft: input.text,
+          rejectedSubmission: input,
+        });
         return false; // Reconnect/detach invalidated preflight, not permission to send.
       }
       update({ submitting: false });
@@ -642,8 +1002,12 @@ export function createCodingRun(
         state.connection !== "connected" ||
         state.recovering ||
         state.submitting ||
+        state.configuring ||
+        state.configurationUncertain ||
         state.stopping ||
         state.reconcilingAction ||
+        state.commandBusy ||
+        state.uncertainCommand ||
         state.storageError
       )
         return false;
@@ -656,7 +1020,12 @@ export function createCodingRun(
       if (!warning) return;
       const { key: _key, overlap: _overlap, ...input } = warning;
       // Only abandon this known-unadmitted draft; never cancel another request.
-      update({ overlapWarning: null, unsentDraft: input.text, rejectedSubmission: input, error: null });
+      update({
+        overlapWarning: null,
+        unsentDraft: input.text,
+        rejectedSubmission: input,
+        error: null,
+      });
     },
     async retrySubmission() {
       const pending = state.uncertainSubmission;

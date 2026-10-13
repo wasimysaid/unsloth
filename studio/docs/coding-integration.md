@@ -230,6 +230,50 @@ Completed full-feature provider and Studio-local-model workloads,
 full ordinary-chat smoke and human implemented-UI review remain separate acceptance
 responsibilities (#255–256), not claims implied by these deterministic checks.
 
+## Commands and current-session context (#243)
+
+Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`
+and paired Mimir `91b975adae2df627d7c67c6bcede6d910a592a7d`.
+This slice reuses native Session Control command discovery/handling, context
+snapshots and observations; it adds no SDK version, harness or history owner.
+See the coding feature README and product plugin PROTOCOL for exact shapes.
+
+Effective contributed commands, aliases, descriptions, optional arguments and
+native availability are discovered from the live conversation. Terminal-only and
+unknown names fail explicitly and slash input never becomes a prompt. Handled,
+transient-display and submitted-request outcomes remain distinct; submitted work
+is completed only by native lifecycle evidence. Compression is native asynchronous
+work and retains public history.
+
+Before command delivery the browser durably retains only an operation identity/name
+(no arguments). Uncertain delivery first reconstructs the atomic native view, then
+reads the exact command receipt without replay. Reload/reopen preserves the pending
+identity. Native receipts are volatile and bounded; missing outcomes after process
+loss remain unknown and mutations blocked rather than silently retried.
+
+Current-session usage is nullable native observation data, with confirmed/estimated
+and stale labels. On-demand context/token/retry/execution diagnostics are bounded,
+metadata-only projections separate from public transcript rows. No raw logs, model
+message content, provider payloads, credential/configuration fields or arbitrary
+retry reasons are browser diagnostics. Closing inspection invalidates late replies.
+
+Reproduce the rendered route with a freshly built production package and current
+SDK command contribution fixture:
+
+```sh
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir /path/to/current/mimir --plugin-package /path/to/current/product-package \
+  --commands-package /path/to/current/test.commands-package \
+  --workload commands --browser chromium --evidence-dir /path/to/worker/commands
+```
+
+This CPU-only suite uses authenticated production coding/auth routes and real
+Mimir/production Wasm with a deterministic HTTP provider. It checks effective
+contributions and all outcome kinds, unsupported/busy admission, uncertain response
+receipt recovery through reload, bounded diagnostics, native compression/history,
+and rendered keyboard/focus controls at 1440×1000 and 390×844. Reports distinguish
+fixture evidence from live-model/full-PoC acceptance, which remains #255–256.
+
 ## Reopen/reconnect slice (#236)
 
 Implementation baselines: Studio `a784d9193d38c640562b5464d5e9c10def6ac82d`
@@ -343,6 +387,39 @@ scenarios, and a separate externally configured live-provider workload. Fixture
 success is not live-model evidence. Task-local reports record native identities,
 filesystem effects, exact desktop/narrow sizes, cleanup, and concrete external
 blockers. Human/full-PoC review and Studio-local-model acceptance remain #255–256.
+
+## Next-request model and reasoning slice (#244)
+
+Implementation baselines are Studio `a784d9193d38c640562b5464d5e9c10def6ac82d`
+and paired private Mimir `7ddec52c566497dd6e0cf572a18272a88d8fa10a`.
+The coding composer uses the native catalog only; IDs remain independent of labels
+and native API mappings. The authenticated configuration command contains no
+provider setup, credentials or model administration, and prompts still contain
+only their native submission key and text.
+
+Mimir publishes next-request configuration separately from pinned running
+configuration. Its serialized `prepare_execution` boundary resolves the latest
+choice for direct and already-queued native requests, retaining selection ordering
+through start. That is the host integration point for #246 preparation/protection;
+this ticket does not load Studio local models or reserve them. Configure errors
+leave active work and selection unchanged; there is no compatibility admission
+check or fallback. SDK session-control@11 adds native defaults/API mapping and the
+separate running configuration; generated bindings, carrier fixtures and packaged
+consumers are updated together rather than a competing old catalog projection.
+
+The Studio-styled popover supports configuration/list/Back, search, provider
+navigation, identity-pair favorites, and a discrete slider over native offered
+values. Model-switch patches omit reasoning so Mimir chooses the new default.
+Uncertain configuration delivery is not replayed: a view opened before that
+operation's outcome cannot clear its uncertainty. A later reconstruction is
+required before further selection or input; native Stop stays available.
+
+Run the existing browser driver with `--workload picker` for deterministic HTTP
+provider selection, real native tool continuation, rendered desktop/narrow
+interactions and running-versus-next assertions. Task reports distinguish that
+fixture workload from live provider/local inference and human PoC acceptance.
+Fresh catalog/live selectability (#245), local-model protection (#246), and final
+live/human acceptance (#255–256) remain separate slices.
 
 ## Historical #234 boundary and source audit
 
@@ -494,7 +571,7 @@ claim tied to a mutable local HEAD or absent screenshots.
 | A1 | Native opening/SDK contracts; single supervised product plugin; authenticated HTTP/SSE; exact submission/request/tool identities; atomic ordered public view, checkpoints/reset/recovery, bounded cut reads and durable reconnect reconciliation (#236) | Cross-feature integration and packaged-consumer regression (#254) |
 | A2 | Native prompt/Stop controls; compact inspectable public tool results/failures and clipping disclosure; exact child-attempt inspector with non-consuming outcomes, public historical completion records, bounded child views and real native-delegation route driver (#241) | Questions, modes, plans/goals and diagnostics (respective tickets); cross-feature/live-model acceptance (#254/#255) |
 | A3 | Shared typed live/historical reported changes; collapsed inspection-only rows, bounded unified hunks, optional counts and incomplete/binary labels (#238) | See task-local file-change browser and SDK reports; cross-feature/live acceptance (#254/#255) |
-| A4 | No model picker | Model/reasoning interactions (#244) |
+| A4 | #244 next-request picker: native catalog/identity, stepped reasoning/default reset, provider search/navigation/favorites, separate running/next state, configuration/dequeue races | Live catalog refresh (#245) and cross-feature integration (#254) |
 | A5 | Externally configured provider admission; no Studio local-model serving | Local-model requests and whole-request protection (#246/#255) |
 | A6 | Canonical/native validated opening, non-persisting effective trust, saved-policy tests, child inheritance, mismatch/lease refusals, authenticated run/Stop/history access; independent concurrent native workloads and canonical-folder warning/admission (#247); same-identity trusted history reopening after idle retirement (#248) | Process-loss recovery (#249) and cross-feature acceptance (#254–255) |
 | A7 | Exact request cancellation; Stop acknowledgment distinct from cleanup; disconnect never stops owners; typed native failures; durable submission identity across reload/native restart, automatic authoritative reconnect and non-prompt reconciliation (#236); no automatic work replay; awaited EOF shutdown; continuous unviewed/native-quiescent retention, controlled clocks, atomic native retirement and failure-safe cleanup retry (#248) | Full process-interruption/maintenance scenarios (#249) and cross-feature live-model acceptance (#254–255) |
