@@ -39,7 +39,8 @@ function NativeMessage() {
     (item) =>
       !item.tool?.quiet ||
       item.tool?.status === "failed" ||
-      item.tool?.semantic_content,
+      item.tool?.semantic_content ||
+      item.tool?.output_profile?.kind === "file_change",
   );
   const quiet = tools.filter((item) => !visible.includes(item));
   const reports = (

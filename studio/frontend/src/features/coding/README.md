@@ -1,4 +1,4 @@
-# Coding native run/stop and delivery recovery (#234–236)
+# Coding native run/stop, delivery recovery and reported changes (#234–238)
 
 `/coding` keeps Studio’s authenticated route gate, sidebar primitives and composer
 CSS, without importing ordinary chat execution, tool orchestration, model loading
@@ -117,6 +117,32 @@ Stable browser evidence selectors: `coding-disconnect-banner`,
 `coding-delivery-recovery` (with `data-submission-key`), `coding-retry-submission`,
 `coding-submission-recovered`, `coding-submission-storage-error`, `coding-unsent-draft`,
 `coding-action-reconciliation`, and `coding-opening-reconciliation`.
+
+## Inspection-only reported file changes (#238)
+
+`tool.output_profile` is the product plugin's bounded projection of the native
+public typed profile, shared by live observations and persisted tool results.
+Studio never decodes saved `details` or reads current files to reconstruct a diff.
+`FileChangeReport` renders supplied file paths, optional added/removed counts and
+reported hunks beneath their originating tool result. Supplied EOF-newline changes
+remain distinguishable; truncated lines never assert missing EOF terminators.
+Rows start collapsed; native
+`details`/`summary` supports keyboard activation and visible focus, and expanded
+unified diffs have a bounded, keyboard-scrollable viewport. Text prefixes, status
+labels and unavailable-count text do not depend on color.
+
+Repeated edits stay separate in chronological invocation order, even when native
+activity grouping shares a key. There is no cumulative workspace patch, approval,
+Apply or Revert. Reopened rows explicitly say **Historical** and **not current
+filesystem state**. Binary profiles show metadata only; partial, unavailable and
+truncated content remain labeled. Generic/no-profile tools retain their actual
+public output without claiming no files changed. Structured effects count toward
+the same ephemeral transcript memory budget; no diff database is added.
+
+Browser defence-in-depth bounds are 64 files, 400 rendered diff lines and 16 Ki
+characters per expanded diff; plugin bounds apply first. Omission is disclosed,
+not treated as complete output. Existing scroll handling is not triggered by
+expansion alone; it continues to follow only readers already at the bottom.
 
 ## Verification
 
