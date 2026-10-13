@@ -14,9 +14,9 @@ import {
 import type { RunApi } from "../src/features/coding/run-types.ts";
 import { memorySubmissionStorage } from "./coding-storage-fixture.ts";
 import {
+  type StubElement,
   loadWithStubs,
   stubJsxRuntime,
-  type StubElement,
 } from "./helpers/module-stubs.ts";
 
 const source = (path: string) =>
@@ -139,6 +139,15 @@ test("installed runtime upcoming assistant placeholder is not a native transcrip
     reopenRequired: false,
     reconcilingAction: null,
     retryStop: null,
+    commands: null,
+    discoveringCommands: false,
+    commandBusy: false,
+    commandOutcome: null,
+    commandError: null,
+    uncertainCommand: null,
+    reconcilingCommand: false,
+    diagnostic: null,
+    inspectingDiagnostic: null,
     native: {
       info: { id: "conversation", cwd: "/project", title: null },
       configuration: {

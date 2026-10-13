@@ -36,6 +36,7 @@ import urllib.request
 from coding_provider_fixture import ProviderFixture
 from coding_run_scenarios import run_scenarios
 from coding_recovery_scenarios import run_recovery_scenarios
+from coding_command_scenarios import run_command_scenarios
 
 
 def shared_trust_path() -> Path:
@@ -50,12 +51,15 @@ def main() -> None:
     runtime_input.add_argument("--mimir", type = Path)
     runtime_input.add_argument("--mimir-source", type = Path, help = "Build the current paired source and product package before acceptance")
     parser.add_argument("--plugin-package", type = Path)
+    parser.add_argument("--commands-package", type = Path, help = "Current packaged SDK test.commands contribution fixture (commands workload only)")
     parser.add_argument("--evidence-dir", type = Path, required = True)
-    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "live"), default = "deterministic",
+    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "commands", "live"), default = "deterministic",
                         help = "Live uses the existing native provider/credential profile; never copies credentials")
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
     parser.add_argument("--chrome", default = "/usr/bin/google-chrome", help = "Chromium executable; ignored for Firefox")
     args = parser.parse_args()
+    if args.workload == "commands" and args.commands_package is None:
+        parser.error("--commands-package is required for contributed command acceptance")
     root = Path(__file__).resolve().parents[2]
     evidence = args.evidence_dir.resolve()
     if evidence.is_relative_to(root):
@@ -79,7 +83,7 @@ def main() -> None:
     live = args.workload == "live"
     native = shared_trust_path().parent if live else state_root / "mimir-home"
     native.mkdir(exist_ok = True)
-    provider = ProviderFixture() if args.workload in ("deterministic", "recovery") else None
+    provider = ProviderFixture() if args.workload in ("deterministic", "recovery", "commands") else None
     if provider:
         provider.configure(native)
     projects = state_root / "projects"
@@ -138,6 +142,11 @@ def main() -> None:
     with (evidence / "plugin-install.log").open("w") as output:
         subprocess.run([str(args.mimir.resolve()), "plugin", "install", str(args.plugin_package.resolve())],
                        env = env, stdout = output, stderr = subprocess.STDOUT, check = True, timeout = 240)
+    if args.workload == "commands":
+        with (evidence / "commands-install.log").open("w") as output:
+            subprocess.run([str(args.mimir.resolve()), "plugin", "install", str(args.commands_package.resolve())],
+                           env = env, stdout = output, stderr = subprocess.STDOUT, check = True, timeout = 240)
+        report["commands_fixture_sha256"] = fingerprint(args.commands_package.resolve() / "plugin.wasm")
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -319,6 +328,9 @@ def main() -> None:
                                    if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
                         assert len(product) == 1
                         report["supervised_pid"] = product[0].pid
+                    elif args.workload == "commands":
+                        run_command_scenarios(page, context, base, provider, first,
+                                              report, scenario, snapshot)
                     else:
                         run_scenarios(page, context, base, provider, first, second_id,
                                       report, scenario, snapshot, live = live)

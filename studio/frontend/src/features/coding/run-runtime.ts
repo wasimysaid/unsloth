@@ -23,7 +23,9 @@ export function codingRunAdapter(
         state.stopping ||
           state.uncertainSubmission ||
           state.storageError ||
-          state.reconcilingAction,
+          state.reconcilingAction ||
+          state.commandBusy ||
+          state.uncertainCommand,
       ),
     isLoading: state?.connection === "loading",
     isRunning: Boolean(state?.native?.active_request || state?.stopping),

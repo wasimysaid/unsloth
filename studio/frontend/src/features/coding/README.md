@@ -118,6 +118,36 @@ Stable browser evidence selectors: `coding-disconnect-banner`,
 `coding-submission-recovered`, `coding-submission-storage-error`, `coding-unsent-draft`,
 `coding-action-reconciliation`, and `coding-opening-reconciliation`.
 
+## Native commands and current-session diagnostics (#243)
+
+The Commands dialog queries the live native registry, including effective contributed
+names/aliases, descriptions, optional arguments and native availability. Selecting a
+command does not execute it. Execute and composer slash input both use native command
+handling; unsupported/terminal-only attempts never become model prompts. Prompt HTTP
+also refuses slash input. Native busy/admission guards remain final.
+
+`POST /conversations/{id}/commands` accepts `{operation_id,name,tail}`. Handled,
+transient-display and submitted native request outcomes are presented distinctly;
+none is an optimistic conversation message or proof of terminal completion. Native
+compression is submitted work with real lifecycle/view evidence; public history is
+retained. Transient output is bounded and is not appended to the transcript.
+
+Before dispatch, `pending-command.ts` durably records a conversation-scoped operation
+identity/name, **not arguments**. Reload/reopen retains uncertainty. A fresh atomic
+view must reconstruct before the read-only command receipt lookup can resolve that
+exact outcome. An incomplete/missing receipt (including runtime loss) remains unknown
+and blocks another mutation; Inspect command outcome only reads again. No command is
+replayed and receipt storage does not promise generic exactly-once execution.
+
+The compact indicator uses native current-session prompt/turn observations, labeling
+provider-confirmed, estimated and stale data where supplied. Unavailable metrics stay
+unavailable, never invented zeroes. The diagnostics dialog requests only the selected
+context, tokens, retry or execution category. Native context inspection exposes bounded
+structural roles/counts rather than private message contents; provider payloads,
+credentials, arbitrary error reasons and raw logs are not browser diagnostics.
+Dismissal invalidates pending inspection replies. Model-context diagnostics are not
+public transcript entries or a historical-usage dashboard.
+
 ## Verification
 
 ```sh

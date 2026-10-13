@@ -19,6 +19,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { codingRunApi } from "./api";
+import { CodingCommandControls } from "./command-controls";
 import { nativeMessageRow } from "./presentation";
 import { codingRunAdapter } from "./run-runtime";
 import {
@@ -143,7 +144,9 @@ export function CodingSurface({
       !state.submitting &&
       !state.uncertainSubmission &&
       !state.storageError &&
-      !state.reconcilingAction,
+      !state.reconcilingAction &&
+      !state.commandBusy &&
+      !state.uncertainCommand,
   );
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -332,6 +335,7 @@ export function CodingSurface({
           className="shrink-0 space-y-3"
           aria-label="Coding project and prompt"
         >
+          {state && run && <CodingCommandControls run={run} state={state} />}
           {state?.unsentDraft && <CodingUnsentDraft text={state.unsentDraft} />}
           <ComposerPrimitive.Root
             className="aui-composer-root relative w-full"

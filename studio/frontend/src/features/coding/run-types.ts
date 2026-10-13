@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import type {
+  CodingDiagnostic,
+  CommandCatalog,
+  CommandOutcome,
+  CommandReceipt,
+  DiagnosticKind,
+  SessionUsage,
+} from "./command-types.ts";
 import type { CodingConversation } from "./types.ts";
 
 export type RequestStatus =
@@ -26,6 +34,15 @@ export interface NativeState {
   active_request: string | null;
   requests: NativeRequest[];
   pending_user_request: boolean;
+  usage?: SessionUsage | null;
+  compression?: {
+    status: "running" | "completed" | "failed" | "cancelled" | "interrupted";
+    request_id?: string;
+    phase?: string | null;
+    before_tokens?: number;
+    after_tokens?: number;
+    error?: string | null;
+  } | null;
 }
 export interface JournalCut {
   journal: "root";
@@ -64,6 +81,15 @@ export interface EntryPage {
   last_id: string | null;
 }
 export interface RunApi {
+  commands?(id: string): Promise<CommandCatalog>;
+  command?(
+    id: string,
+    name: string,
+    tail: string,
+    operationId: string,
+  ): Promise<CommandOutcome>;
+  commandReceipt?(id: string, operationId: string): Promise<CommandReceipt>;
+  diagnostics?(id: string, kind: DiagnosticKind): Promise<CodingDiagnostic>;
   submit(
     id: string,
     submissionKey: string,

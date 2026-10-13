@@ -1,5 +1,49 @@
 # Coding: trusted projects, native run/stop, reopen and reconnect (#234–236)
 
+## Commands and current-session context (#243)
+
+Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`
+and paired Mimir `91b975adae2df627d7c67c6bcede6d910a592a7d`.
+This slice reuses native Session Control command discovery/handling, context
+snapshots and observations; it adds no SDK version, harness or history owner.
+See the coding feature README and product plugin PROTOCOL for exact shapes.
+
+Effective contributed commands, aliases, descriptions, optional arguments and
+native availability are discovered from the live conversation. Terminal-only and
+unknown names fail explicitly and slash input never becomes a prompt. Handled,
+transient-display and submitted-request outcomes remain distinct; submitted work
+is completed only by native lifecycle evidence. Compression is native asynchronous
+work and retains public history.
+
+Before command delivery the browser durably retains only an operation identity/name
+(no arguments). Uncertain delivery first reconstructs the atomic native view, then
+reads the exact command receipt without replay. Reload/reopen preserves the pending
+identity. Native receipts are volatile and bounded; missing outcomes after process
+loss remain unknown and mutations blocked rather than silently retried.
+
+Current-session usage is nullable native observation data, with confirmed/estimated
+and stale labels. On-demand context/token/retry/execution diagnostics are bounded,
+metadata-only projections separate from public transcript rows. No raw logs, model
+message content, provider payloads, credential/configuration fields or arbitrary
+retry reasons are browser diagnostics. Closing inspection invalidates late replies.
+
+Reproduce the rendered route with a freshly built production package and current
+SDK command contribution fixture:
+
+```sh
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir /path/to/current/mimir --plugin-package /path/to/current/product-package \
+  --commands-package /path/to/current/test.commands-package \
+  --workload commands --browser chromium --evidence-dir /path/to/worker/commands
+```
+
+This CPU-only suite uses authenticated production coding/auth routes and real
+Mimir/production Wasm with a deterministic HTTP provider. It checks effective
+contributions and all outcome kinds, unsupported/busy admission, uncertain response
+receipt recovery through reload, bounded diagnostics, native compression/history,
+and rendered keyboard/focus controls at 1440×1000 and 390×844. Reports distinguish
+fixture evidence from live-model/full-PoC acceptance, which remains #255–256.
+
 ## Reopen/reconnect slice (#236)
 
 Implementation baselines: Studio `a784d9193d38c640562b5464d5e9c10def6ac82d`

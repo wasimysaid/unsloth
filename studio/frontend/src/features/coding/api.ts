@@ -103,6 +103,35 @@ export const codingApi: CodingApi = {
 };
 
 export const codingRunApi: RunApi = {
+  async commands(id) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/commands`,
+    );
+    return await response.json();
+  },
+  async commandReceipt(id, operationId) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/commands/${encodeURIComponent(operationId)}`,
+    );
+    return await response.json();
+  },
+  async command(id, name, tail, operationId) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/commands`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, tail, operation_id: operationId }),
+      },
+    );
+    return await response.json();
+  },
+  async diagnostics(id, kind) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/diagnostics/${kind}`,
+    );
+    return await response.json();
+  },
   async submit(id, submissionKey, text) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/prompts`,

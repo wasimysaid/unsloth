@@ -32,7 +32,13 @@ class ProviderRequest:
         self.response = queue.Queue(maxsize=1)
 
     def text(self, text: str) -> None:
-        self.response.put((200, "text/event-stream", text_completion(text)))
+        if self.body.get("stream", False):
+            self.response.put((200, "text/event-stream", text_completion(text)))
+        else:
+            # Native context summarization uses the same real HTTP provider's
+            # non-streaming surface. Do not fabricate the compaction itself.
+            body = {"choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}]}
+            self.response.put((200, "application/json", json.dumps(body).encode()))
 
     def tool(self, identifier: str, name: str, arguments: dict) -> None:
         assert any(tool.get("function", {}).get("name") == name for tool in self.body.get("tools", [])), f"Native provider did not advertise {name}"
