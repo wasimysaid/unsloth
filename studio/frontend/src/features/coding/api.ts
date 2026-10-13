@@ -243,6 +243,17 @@ export const codingRunApi: RunApi = {
     );
     return await response.json();
   },
+  async answer(id, target, answers) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/requests/${encodeURIComponent(target.request_id)}/questions/${encodeURIComponent(target.user_request_id)}/answers`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscription: target.subscription, answers }),
+      },
+    );
+    return await response.json();
+  },
   async commands(id) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/commands`,

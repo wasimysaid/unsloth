@@ -510,6 +510,50 @@ test("coding transport failure stays unconfirmed without claiming native work di
   );
 });
 
+test("answers address exact conversation, request, question and live view without transport replay", async () => {
+  const target = {
+    subscription: "live-view",
+    request_id: "request/id?",
+    user_request_id: "question/id?",
+  };
+  const answers = [
+    {
+      question_id: "choice",
+      selected_options: ["Native label"],
+      freeform_text: "Custom answer",
+    },
+  ];
+  const result = {
+    conversation_id: "conversation/id?",
+    ...target,
+    accepted: true,
+  };
+  const c = client(() => Response.json(result));
+  assert.deepEqual(
+    await c.api.codingRunApi.answer(result.conversation_id, target, answers),
+    result,
+  );
+  assert.deepEqual(c.requests, [
+    {
+      path: "/api/coding/conversations/conversation%2Fid%3F/requests/request%2Fid%3F/questions/question%2Fid%3F/answers",
+      init: {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscription: target.subscription, answers }),
+      },
+      options: { retryNetworkErrors: false },
+    },
+  ]);
+  const loss = client(() => {
+    throw new Error("Lost answer acknowledgement");
+  });
+  await assert.rejects(
+    loss.api.codingRunApi.answer(result.conversation_id, target, answers),
+    /Lost answer/,
+  );
+  assert.equal(loss.requests.length, 1);
+});
+
 test("coding request preserves abort and non-transport authentication errors", async () => {
   for (const original of [
     new DOMException("Detached", "AbortError"),

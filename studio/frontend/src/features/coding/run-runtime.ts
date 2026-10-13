@@ -21,6 +21,7 @@ export function codingRunAdapter(
       state.connection !== "connected" ||
       state.recovering ||
       state.submitting ||
+      state.native?.pending_user_request === true ||
       state.configuring ||
       state.configurationUncertain ||
       Boolean(

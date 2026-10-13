@@ -15,6 +15,8 @@ fixture and real native tools, not a live model. --workload live uses the existi
 native provider/credential profile directly; history remains Mimir-owned there.
 Disposable projects, Studio auth and evidence stay in evidence-dir. Use a distinct
 evidence directory for each run. --workload opening runs the previous opening suite.
+--workload questions covers keyboard answers, durable history, stale targets,
+pre/post-delivery ACK loss, reconnect/reopen and Stop while native ask_user waits.
 --workload picker adds ticket-244 rendered model/reasoning/favorites/layout checks
 and a held real native provider call to distinguish running from next selection.
 --extensions adds focused ticket-252 Settings scenarios before the execution suite;
@@ -50,6 +52,7 @@ from coding_extension_scenarios import prepare_extension_fixtures, run_extension
 from coding_input_scenarios import prepare_input_project, input_scenarios, live_input_scenario
 from coding_recovery_scenarios import run_recovery_scenarios
 from coding_goal_scenarios import run_goal_scenarios
+from coding_question_scenarios import run_question_scenarios
 from coding_command_scenarios import run_command_scenarios
 from coding_retirement_scenarios import run_retirement_scenarios
 from coding_concurrency_scenarios import run_concurrency_scenarios
@@ -71,7 +74,7 @@ def main() -> None:
     parser.add_argument("--plugin-package", type = Path)
     parser.add_argument("--commands-package", type = Path, help = "Current packaged SDK test.commands contribution fixture (commands workload only)")
     parser.add_argument("--evidence-dir", type = Path, required = True)
-    parser.add_argument("--workload", choices = ("opening", "deterministic", "picker", "recovery", "goals", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live"), default = "deterministic",
+    parser.add_argument("--workload", choices = ("opening", "deterministic", "picker", "recovery", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live"), default = "deterministic",
                         help = "Live uses the existing native provider/credential profile; never copies credentials")
     parser.add_argument("--extensions", action = "store_true", help = "Run ticket-252 Settings inventory and scoped reload scenarios (requires deterministic workload)")
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
@@ -105,7 +108,7 @@ def main() -> None:
     live = args.workload in ("live", "inputs-live", "file-changes-live")
     native = shared_trust_path().parent if live else state_root / "mimir-home"
     native.mkdir(exist_ok = True)
-    provider = ProviderFixture() if args.workload in ("deterministic", "picker", "recovery", "goals", "commands", "retirement", "concurrency", "children", "inputs", "file-changes") else None
+    provider = ProviderFixture() if args.workload in ("deterministic", "picker", "recovery", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "file-changes") else None
     if provider:
         provider.configure(native, picker = args.workload == "picker", images = args.workload == "inputs")
     extension_packages = prepare_extension_fixtures(state_root, native, args.plugin_package.resolve()) if args.extensions else []
@@ -282,10 +285,15 @@ def main() -> None:
             scenario("A10-layout", "1440x1000: chooser beneath composer, Send disabled before selection")
 
             def browse(path):
+                expect(page.get_by_role("button", name = "Browse", exact = True)).to_be_enabled(timeout = 60000)
                 page.get_by_label("Host folder path", exact = True).fill(str(path))
+                expect(page.get_by_label("Host folder path", exact = True)).to_have_value(str(path))
                 page.get_by_role("button", name = "Browse", exact = True).click()
             def open_project(path):
                 page.get_by_role("button", name = "Choose another project" if page.get_by_test_id("coding-opened-conversation").count() else "Choose project folder", exact = True).click()
+                # The chooser starts an initial OS browse. Await its rendered path
+                # before filling so that initialization is not typing into the field.
+                expect(page.get_by_test_id("coding-browsed-path")).to_be_visible(timeout = 60000)
                 browse(path)
                 expect(page.get_by_test_id("coding-browsed-path")).to_have_text(str(Path(path).resolve()))
                 with page.expect_response(lambda response: response.url == base + "/api/coding/conversations" and response.request.method == "POST", timeout = 60000) as created:
@@ -400,6 +408,9 @@ def main() -> None:
                                    if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
                         assert len(product) == 1
                         report["supervised_pid"] = product[0].pid
+                    elif args.workload == "questions":
+                        run_question_scenarios(page, context, base, provider, first, second_id,
+                                               report, scenario, snapshot)
                     elif args.workload == "commands":
                         run_command_scenarios(page, context, base, provider, first,
                                               report, scenario, snapshot)

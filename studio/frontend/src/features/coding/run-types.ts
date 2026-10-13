@@ -62,6 +62,26 @@ export interface GoalChange {
   objective?: string;
   duration_seconds?: number;
 }
+export interface NativeQuestion {
+  id: string;
+  prompt: string;
+  allow_multiple: boolean;
+  options: { label: string; description: string }[];
+}
+export interface NativeUserRequest {
+  id: string;
+  questions: NativeQuestion[];
+}
+export interface NativeAnswer {
+  question_id: string;
+  selected_options: string[];
+  freeform_text: string | null;
+}
+export interface AnswerTarget {
+  subscription: string;
+  request_id: string;
+  user_request_id: string;
+}
 export interface NativeState {
   info: CodingConversation;
   /** Authoritative choice for the next request, even while another is running. */
@@ -72,6 +92,7 @@ export interface NativeState {
   pending_user_request: boolean;
   goal?: NativeGoal | null;
   goal_controls?: GoalControls;
+  user_request: NativeUserRequest | null;
   usage?: SessionUsage | null;
   compression?: {
     status: "running" | "completed" | "failed" | "cancelled" | "interrupted";
@@ -96,6 +117,11 @@ export interface CodingRow {
   request_id?: string | null;
   clipped?: boolean;
   historical?: boolean;
+  answer?: {
+    request_id: string;
+    user_request_id: string;
+    answers: NativeAnswer[];
+  };
   image_count?: number;
   tool?: {
     invocation_id: string | null;
@@ -135,6 +161,11 @@ export interface RunApi {
     conversation_id: string;
     request_id: string | null;
   }>;
+  answer(
+    id: string,
+    target: AnswerTarget,
+    answers: NativeAnswer[],
+  ): Promise<AnswerTarget & { conversation_id: string; accepted: boolean }>;
   commands?(id: string): Promise<CommandCatalog>;
   command?(
     id: string,

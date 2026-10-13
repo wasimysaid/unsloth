@@ -43,6 +43,7 @@ function native(
     active_request: "request",
     requests: [{ id: "request", status: "running", submission_key: null }],
     pending_user_request: false,
+    user_request: null,
     goal: value,
     goal_controls: {
       revision,
@@ -72,6 +73,9 @@ function harness() {
     | (() => Promise<{ conversation_id: string; request_id: null }>)
     | null = null;
   const api: RunApi = {
+    async answer() {
+      throw new Error("Goal tests must not answer questions");
+    },
     async configure() {
       return native().configuration;
     },

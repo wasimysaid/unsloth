@@ -29,6 +29,9 @@ function harness(storage = memorySubmissionStorage()) {
   let failure: Error | null = null;
   let largeDiagnostic = false;
   const api: RunApi = {
+    async answer() {
+      throw new Error("Command tests must not answer a question");
+    },
     async configure() {
       return {
         provider: "fixture",
@@ -118,6 +121,7 @@ function harness(storage = memorySubmissionStorage()) {
         ? [{ id: active, status: "running", submission_key: null }]
         : [],
       pending_user_request: false,
+      user_request: null,
     };
     await deliver({
       subscription: `view-${views}`,
