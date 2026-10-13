@@ -8,6 +8,8 @@ import {
   type DiagnosticKind,
   parseCodingCommand,
 } from "./command-types.ts";
+import { codingRowSize } from "./file-changes.ts";
+import type { CodingInput, CodingInputExtras } from "./input.ts";
 import { type PendingCommand, pendingCommandStore } from "./pending-command.ts";
 import {
   type SubmissionStorage,
@@ -37,7 +39,9 @@ export interface CodingRunState {
     stop_reason: string;
     error: string | null;
   } | null;
-  uncertainSubmission: { key: string; text: string } | null;
+  uncertainSubmission: (CodingInput & { key: string }) | null;
+  rejectedSubmission?: CodingInput | null;
+  acceptedSubmissionKey?: string;
   storageError: string | null;
   unsentDraft: string | null;
   deliveryRecovered: boolean;
@@ -199,16 +203,12 @@ export function createCodingRun(
   };
   const publishRows = () => {
     const rows = mergeRows([...saved, ...provisional]);
-    let bytes = rows.reduce(
-      (size, row) =>
-        size + (row.text?.length ?? 0) + (row.tool?.output.length ?? 0),
-      0,
-    );
+    let bytes = rows.reduce((size, row) => size + codingRowSize(row), 0);
     let omitted = false;
     while (rows.length > MAX_ROWS || (bytes > MAX_TEXT && rows.length > 1)) {
       const row = rows.shift();
       if (!row) break;
-      bytes -= (row.text?.length ?? 0) + (row.tool?.output.length ?? 0);
+      bytes -= codingRowSize(row);
       const keep = (item: CodingRow) =>
         item.id !== row.id &&
         !(row.entry_id && item.entry_id === row.entry_id) &&
@@ -221,8 +221,7 @@ export function createCodingRun(
       for (let i = rows.length - 1; i >= 0; i--) {
         if (!keep(rows[i])) {
           const removed = rows.splice(i, 1)[0];
-          bytes -=
-            (removed.text?.length ?? 0) + (removed.tool?.output.length ?? 0);
+          bytes -= codingRowSize(removed);
         }
       }
       omitted = true;
@@ -438,8 +437,10 @@ export function createCodingRun(
       state.native?.requests.find(
         (request) => request.submission_key === state.uncertainSubmission?.key,
       );
-    if (accepted && !state.recovering && state.connection === "connected")
+    if (accepted && !state.recovering && state.connection === "connected") {
+      update({ acceptedSubmissionKey: accepted.submission_key!, error: null });
       clearPending(accepted.submission_key!, true);
+    }
     if (
       (event.type === "start" ||
         event.type === "reset" ||
@@ -508,7 +509,7 @@ export function createCodingRun(
         reconnectTimer = setTimeout(connect, delay);
       });
   }
-  async function submit(text: string, key: string) {
+  async function submit(input: CodingInput, key: string): Promise<boolean> {
     if (
       state.connection !== "connected" ||
       state.recovering ||
@@ -524,29 +525,41 @@ export function createCodingRun(
       );
     try {
       const existing = pendingStore.load();
-      if (existing && (existing.key !== key || existing.text !== text))
+      if (
+        existing &&
+        (existing.key !== key ||
+          existing.text !== input.text ||
+          JSON.stringify(existing.skill_mentions ?? []) !==
+            JSON.stringify(input.skill_mentions ?? []) ||
+          JSON.stringify(existing.images ?? []) !==
+            JSON.stringify(input.images ?? []))
+      )
         throw new Error(
           "Another pending submission must be reconciled before sending.",
         );
-      pendingStore.save({ key, text }); // Durable BEFORE the first HTTP byte.
+      pendingStore.save({ key, ...input }); // Complete input durable BEFORE HTTP.
     } catch (reason) {
       // The shipped composer clears its text before onNew. Keep this known-unsent
       // draft separately from uncertain delivery and native transcript rows.
       update({
         storageError: `Submission storage unavailable. No prompt was sent. ${errorText(reason)}`,
-        unsentDraft: text,
+        unsentDraft: input.text,
+        rejectedSubmission: input,
       });
-      return;
+      return false;
     }
     update({
       submitting: true,
       error: null,
+      uncertainSubmission: { key, ...input },
+      rejectedSubmission: null,
+      acceptedSubmissionKey: undefined,
       unsentDraft: null,
       deliveryRecovered: false,
-      uncertainSubmission: { key, text },
     });
     try {
-      const result = await api.submit(id, key, text);
+      const { text, ...extras } = input;
+      const result = await api.submit(id, key, text, extras);
       if (
         result.conversation_id !== id ||
         result.submission_key !== key ||
@@ -555,21 +568,25 @@ export function createCodingRun(
         throw new Error(
           "The native acceptance identity could not be confirmed.",
         );
+      update({ acceptedSubmissionKey: key });
       clearPending(key, true);
       // No optimistic transcript or running state: both come from the view.
+      return true;
     } catch (reason) {
+      if (state.acceptedSubmissionKey === key) return true;
       if (
         reason instanceof Error &&
         "admissionRejected" in reason &&
         reason.admissionRejected === true
       ) {
         clearPending(key, false);
-        update({ error: errorText(reason) });
+        update({ rejectedSubmission: input, error: errorText(reason) });
       } else if (state.uncertainSubmission?.key === key) {
         update({
           error: `${errorText(reason)} Delivery is unconfirmed; do not send a new copy. Reconnect or retry the same submission identity.`,
         });
       }
+      return false;
     } finally {
       update({ submitting: false });
     }
@@ -804,8 +821,8 @@ export function createCodingRun(
       abort?.abort();
       abort = null;
     },
-    async send(text: string) {
-      if (!text.trim()) return;
+    async send(text: string, extras: CodingInputExtras = {}) {
+      if (!text.trim()) return false;
       const command = parseCodingCommand(text);
       if (command) return executeCommand(command.name, command.tail);
       if (state.commandBusy || state.uncertainCommand)
@@ -816,11 +833,20 @@ export function createCodingRun(
         throw new Error(
           "Reconcile the unconfirmed submission before sending new input.",
         );
-      await submit(text, makeKey());
+      // Snapshot the complete input once. Later edits/removals never change an
+      // uncertain delivery retry, including its image bytes and mention ranges.
+      return await submit(structuredClone({ text, ...extras }), makeKey());
     },
     async retrySubmission() {
       const pending = state.uncertainSubmission;
-      if (pending) await submit(pending.text, pending.key);
+      if (pending) {
+        const { key, ...input } = pending;
+        return await submit(input, key);
+      }
+      return false;
+    },
+    clearRejectedSubmission() {
+      update({ rejectedSubmission: null });
     },
     async stop() {
       const request = state.native?.active_request;
@@ -902,11 +928,8 @@ export function createCodingRun(
           );
         if (
           page.rows.length > MAX_ROWS ||
-          page.rows.reduce(
-            (size, row) =>
-              size + (row.text?.length ?? 0) + (row.tool?.output.length ?? 0),
-            0,
-          ) > MAX_TEXT
+          page.rows.reduce((size, row) => size + codingRowSize(row), 0) >
+            MAX_TEXT
         )
           throw new Error(
             "Earlier history is incomplete: the native page exceeded the presentation bound. Reconnect for a fresh bounded capture.",

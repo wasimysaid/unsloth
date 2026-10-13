@@ -9,6 +9,8 @@ import type {
   DiagnosticKind,
   SessionUsage,
 } from "./command-types.ts";
+import type { ToolOutputProfile } from "./file-changes.ts";
+import type { CodingInputExtras } from "./input.ts";
 import type { CodingConversation } from "./types.ts";
 
 export type RequestStatus =
@@ -57,6 +59,7 @@ export interface CodingRow {
   request_id?: string | null;
   clipped?: boolean;
   historical?: boolean;
+  image_count?: number;
   tool?: {
     invocation_id: string | null;
     call_id: string;
@@ -70,6 +73,8 @@ export interface CodingRow {
     row_group: { key: string; label: string; item: string } | null;
     semantic_content?: unknown;
     display_kind?: string | null;
+    output_profile?: ToolOutputProfile | null;
+    historical?: boolean;
   };
 }
 export interface EntryPage {
@@ -94,6 +99,7 @@ export interface RunApi {
     id: string,
     submissionKey: string,
     text: string,
+    extras?: CodingInputExtras,
   ): Promise<{
     conversation_id: string;
     request_id: string;

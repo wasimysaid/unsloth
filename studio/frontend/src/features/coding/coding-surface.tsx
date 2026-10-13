@@ -4,13 +4,12 @@
 import { Button } from "@/components/ui/button";
 import {
   AssistantRuntimeProvider,
-  ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
   useExternalStoreRuntime,
   useMessage,
 } from "@assistant-ui/react";
-import { ArrowDown, ArrowUp, Square } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -19,7 +18,9 @@ import {
   useSyncExternalStore,
 } from "react";
 import { codingRunApi } from "./api";
+import { CodingComposer } from "./coding-composer";
 import { CodingCommandControls } from "./command-controls";
+import { createInputDraft } from "./input";
 import { nativeMessageRow } from "./presentation";
 import { codingRunAdapter } from "./run-runtime";
 import {
@@ -40,7 +41,8 @@ function NativeMessage() {
     (item) =>
       !item.tool?.quiet ||
       item.tool?.status === "failed" ||
-      item.tool?.semantic_content,
+      item.tool?.semantic_content ||
+      item.tool?.output_profile?.kind === "file_change",
   );
   const quiet = tools.filter((item) => !visible.includes(item));
   const reports = (
@@ -95,6 +97,13 @@ function NativeMessage() {
           <div className="whitespace-pre-wrap text-sm leading-relaxed">
             {row.text}
           </div>
+          {row.kind === "user" && (row.image_count ?? 0) > 0 && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Native saved input · {row.image_count}{" "}
+              {row.image_count === 1 ? "image" : "images"} · request outcome
+              shown separately
+            </p>
+          )}
           {row.clipped && (
             <p className="mt-2 text-xs font-medium">
               Content clipped to the presentation bound.
@@ -122,7 +131,8 @@ export function CodingSurface({
     run?.subscribe ?? (() => () => {}),
     run?.getSnapshot ?? (() => null),
   );
-  const runtime = useExternalStoreRuntime(codingRunAdapter(state, run));
+  const [draft] = useState(createInputDraft);
+  const runtime = useExternalStoreRuntime(codingRunAdapter(state, run, draft));
   const viewport = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const [away, setAway] = useState(false);
@@ -337,71 +347,13 @@ export function CodingSurface({
         >
           {state && run && <CodingCommandControls run={run} state={state} />}
           {state?.unsentDraft && <CodingUnsentDraft text={state.unsentDraft} />}
-          <ComposerPrimitive.Root
-            className="aui-composer-root relative w-full"
-            aria-label="Coding composer"
-          >
-            <div className="unsloth-composer-surface">
-              <div className="flex min-w-0 items-end gap-2">
-                <ComposerPrimitive.Input
-                  className="unsloth-composer-input disabled:cursor-not-allowed"
-                  aria-label="Coding prompt"
-                  aria-describedby="coding-send-explanation"
-                  placeholder="What would you like to build?"
-                  submitMode="enter"
-                  disabled={!canSend}
-                  minRows={2}
-                  maxRows={5}
-                  addAttachmentOnPaste={false}
-                  unstable_focusOnThreadSwitched={false}
-                  unstable_focusOnRunStart={false}
-                  unstable_focusOnScrollToBottom={false}
-                />
-                {active || state?.stopping ? (
-                  <Button
-                    type="button"
-                    size="icon"
-                    aria-label={
-                      state?.stopping
-                        ? "Stopping…"
-                        : state?.retryStop
-                          ? "Retry Stop for same request"
-                          : "Stop"
-                    }
-                    title={
-                      state?.stopping
-                        ? "Waiting for native terminal cleanup"
-                        : "Cancel this exact native request"
-                    }
-                    disabled={
-                      Boolean(
-                        state?.stopping ||
-                          state?.reconcilingAction ||
-                          state?.recovering,
-                      ) || state?.connection !== "connected"
-                    }
-                    className="mb-1 shrink-0 rounded-full"
-                    onClick={() => void run?.stop()}
-                  >
-                    <Square className="size-4" aria-hidden="true" />
-                  </Button>
-                ) : (
-                  <ComposerPrimitive.Send asChild={true}>
-                    <Button
-                      type="submit"
-                      size="icon"
-                      aria-label="Send"
-                      disabled={!canSend}
-                      aria-describedby="coding-send-explanation"
-                      className="mb-1 shrink-0 rounded-full"
-                    >
-                      <ArrowUp className="size-5" aria-hidden="true" />
-                    </Button>
-                  </ComposerPrimitive.Send>
-                )}
-              </div>
-            </div>
-          </ComposerPrimitive.Root>
+          <CodingComposer
+            conversationId={conversationId}
+            run={run}
+            state={state}
+            draft={draft}
+            canSend={canSend}
+          />
           {children}
           <p
             id="coding-send-explanation"
