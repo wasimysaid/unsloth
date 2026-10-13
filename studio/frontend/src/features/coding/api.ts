@@ -16,6 +16,8 @@ import type { EntryPage, RunApi } from "./run-types";
 import type {
   McpDraft,
   McpInventory,
+  McpOperation,
+  McpOperationInspection,
   McpSaveResult,
   McpSettingsApi,
 } from "./mcp-types";
@@ -134,6 +136,43 @@ export const codingApi: CodingApi = {
  * reconciled by an explicit editor read, not a second submission.
  */
 export const mcpSettingsApi: McpSettingsApi = {
+  async apply(id, operationId) {
+    return (await (
+      await codingRequest(
+        `/conversations/${encodeURIComponent(id)}/mcp/apply`,
+        {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ operation_id: operationId }),
+        },
+      )
+    ).json()) as McpOperation;
+  },
+  async reconnect(id, operationId, name) {
+    return (await (
+      await codingRequest(
+        `/conversations/${encodeURIComponent(id)}/mcp/reconnect`,
+        {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            operation_id: operationId,
+            name: name ?? null,
+          }),
+        },
+      )
+    ).json()) as McpOperation;
+  },
+  async inspectOperation(id, operationId) {
+    return (await (
+      await codingRequest(
+        `/conversations/${encodeURIComponent(id)}/mcp/operations/${encodeURIComponent(operationId)}`,
+        { cache: "no-store" },
+      )
+    ).json()) as McpOperationInspection;
+  },
   async inventory(id) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/mcp/inventory`,

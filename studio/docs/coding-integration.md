@@ -1,5 +1,58 @@
 # Coding: trusted projects, run/stop, recovery, reported file changes, rich inputs, concurrency, idle retirement and focused Settings
 
+## Native MCP apply/reconnect (#251)
+
+Implementation baselines: Studio `be0a051ae00f35935c3babb76e8c6e03626464d6`
+and paired private Mimir `f5364ce6a0c1d8cc4d5bc5f6c05e26ef3ce787f5`.
+Mimir Settings now exposes three distinct operations: **Save configuration**
+persists an exact native editor revision; **Apply saved MCP configuration**
+reconciles the saved native layers for the selected live conversation; and
+**Reconnect configured servers** replaces only that conversation's configured
+connections using their currently applied definitions. Neither runtime operation
+saves an unsaved draft, reloads plugins, recreates a session or restarts Mimir.
+Native safe-idle admission refuses active requests, queues, questions, children,
+tools and MCP/configuration activity instead of cancelling them to force changes.
+Configured connections remain session-owned; transient SDK grants are not Settings
+entries and retain their explicit owning resource and awaited cleanup.
+
+The authenticated bridge forwards `mcp_apply`, `mcp_reconnect` and read-only
+`mcp_inspect_operation` to the existing product frontend/Session Control owners.
+Every runtime command carries a fresh operation UUID. Settings reports native
+running/completed/failed outcomes separately from connection success, plus saved
+effective versus actually applied revision, pending changes, connection errors and
+observed configured tool counts. The editor's persistence revision identifies its
+retained native edit; it is not the effective/applied runtime revision. A saved
+file, accepted command or matching revision alone is not evidence of connected
+tools. Partial/error outcomes leave current native evidence visible.
+
+Lost responses are reconciled against the exact retained native operation, never
+replayed. Only operation identity/kind/optional server name is stored as browser
+per-tab sessionStorage transport correlation, not definitions, credentials or drafts.
+Another tab cannot overwrite or clear the submitting tab's unresolved identity;
+native admission still orders separate tab commands. Unknown/evicted
+status blocks another apply/reconnect; it does not mean unadmitted or failed.
+A mounted Settings view observes pending native state for at most one minute,
+then retains explicit **Reconcile MCP operation** and **Refresh inventory**.
+Navigation/reload cannot cancel native work or erase an unresolved identity.
+Drafts stay in page memory across Settings/conversation navigation and failures;
+raw secret-bearing drafts are deliberately not persisted across a page reload.
+
+Verification uses focused native admission/failure/lifetime tests, rebuilt SDK
+consumers, authenticated bridge/frontend state tests and the existing real
+coding-route browser driver with `--apply-reconnect`. Browser scenarios use an
+isolated deterministic HTTP provider and a real stdio MCP server with actual
+native tools/connections; they are not live-model or full-PoC acceptance.
+Desktop and narrow rendering, keyboard/error focus, busy refusals, lost replies,
+saved/applied revisions, connection failures and settled process ownership are
+recorded separately in task evidence. Full live external/local-model acceptance
+and human implemented-UI review remain #255–256.
+
+```sh
+.venv/bin/python studio/tools/coding_mcp_browser_acceptance.py \
+  --mimir /path/to/paired/mimir --plugin-package /path/to/current/package \
+  --apply-reconnect --browser firefox --evidence-dir /path/to/task/evidence
+```
+
 ## Continuous idle retirement (#248)
 
 Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`

@@ -270,7 +270,7 @@ characters per expanded diff; plugin bounds apply first. Omission is disclosed,
 not treated as complete output. Existing scroll handling is not triggered by
 expansion alone; it continues to follow only readers already at the bottom.
 
-## Mimir Settings (#250)
+## Mimir Settings (#250–251)
 
 The focused **Mimir Settings** view uses the open native conversation's effective
 trust and project directory to inspect MCP's global/workspace layers. Native source
@@ -292,7 +292,13 @@ Authenticated endpoints under `/api/coding/conversations/{id}/mcp`:
   persistence operation is never reported as failed because observation is unavailable.
   Raw and normalized editor JSON are bounded to 512 KiB before persistence.
   It never applies/reconnects connections, attaches transient servers, cancels work,
-  or closes/reopens conversations. Live apply/reconnect belongs to #251.
+  or closes/reopens conversations.
+- `POST /apply` with `{operation_id}`: native safe-idle application of saved layers
+  for this conversation, never unsaved editor text.
+- `POST /reconnect` with `{operation_id,name?}`: safe-idle reconnect of configured
+  connections using applied definitions. No transient SDK attachments are replaced.
+- `GET /operations/{operation_id}`: read-only exact native outcome plus current
+  inventory. Missing/evicted status is unknown, never proof of non-admission.
 - `POST /release` with `{edit_id}`: drops only an obsolete native editor resource
   after comparison/reconciliation/discard, never its conversation or connections.
 
@@ -303,8 +309,17 @@ uses authenticated fetch with transport replay disabled. A lost save reply is
 
 `mcp-settings.ts` holds ephemeral forms keyed by native conversation ID, retaining
 draft text and edit revision through errors, conflicts, tab switches and conversation
-changes within this mounted coding page. It does not use browser storage or persist
-secrets. A browser reload/navigation away loses these in-memory unsaved drafts.
+changes within this mounted coding page. Definitions/drafts are never stored in
+browser storage; a browser reload/navigation away loses these in-memory unsaved
+drafts. Only unresolved runtime-operation ID/kind/name is retained in per-tab
+sessionStorage as transport correlation across reload. Other tabs cannot overwrite
+or clear the submitting tab's unresolved identity; native safe-idle admission
+still orders their distinct commands. Lost apply/reconnect replies are inspected by exact
+identity before another runtime action, never replayed; corrupted/unavailable
+correlation storage blocks sending. Native running/failed/completed outcomes and
+saved effective/applied revision and actual configured tool evidence are separate
+from persistence acknowledgment. A mounted Settings view observes unresolved
+outcomes for at most one minute, then retains explicit refresh/reconciliation.
 Refresh reads inventory without rebasing edits. Comparison reads a new native draft
 separately; only **Keep draft and use latest revision** or **Replace draft with saved
 version** adopts it. Another intervening writer can still conflict. Discard is

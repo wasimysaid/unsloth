@@ -157,7 +157,7 @@ def _http_error(exc: CodingRuntimeError) -> HTTPException:
     status = {"invalid": 400, "not_found": 404, "denied": 403,
               "busy": 409, "conflict": 409, "trust_conflict": 409,
               "unavailable": 503, "disconnected": 503, "uncertain": 504,
-              "limit": 429, "failed": 502}.get(exc.code, 400)
+              "limit": 429, "failed": 502, "protocol": 502}.get(exc.code, 502)
     return HTTPException(status_code = status, detail = exc.message,
                          headers = {"Cache-Control": "no-store"})
 
@@ -425,6 +425,34 @@ async def mcp_save(conversation_id: str, body: McpSaveRequest, request: Request)
 async def mcp_release_edit(conversation_id: str, body: McpEditIdentity, request: Request):
     # Drop only an obsolete editor handle, never a conversation or MCP attachment.
     return await _command(request, "mcp_release_edit", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+class McpOperationRequest(BaseModel):
+    model_config = ConfigDict(extra = "forbid", strict = True)
+    operation_id: str = Field(min_length = 1, max_length = 128)
+
+
+class McpReconnectRequest(McpOperationRequest):
+    name: str | None = Field(default = None, min_length = 1, max_length = 256)
+
+
+@mcp_router.post("/conversations/{conversation_id}/mcp/apply")
+async def mcp_apply(conversation_id: str, body: McpOperationRequest, request: Request):
+    # Native admission refuses active work; no Stop, reload, restart or transport retry.
+    return await _command(request, "mcp_apply", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+@mcp_router.post("/conversations/{conversation_id}/mcp/reconnect")
+async def mcp_reconnect(conversation_id: str, body: McpReconnectRequest, request: Request):
+    # Configured connections retain their session owner, never transient SDK grants.
+    return await _command(request, "mcp_reconnect", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+@mcp_router.get("/conversations/{conversation_id}/mcp/operations/{operation_id}")
+async def mcp_inspect_operation(conversation_id: str, request: Request,
+                                operation_id: str = ApiPath(min_length = 1, max_length = 128)):
+    # Read-only reconciliation of this exact operation. Absence is unknown, not failure.
+    return await _command(request, "mcp_inspect_operation", {"conversation_id": conversation_id, "operation_id": operation_id})
 
 
 router.include_router(mcp_router)

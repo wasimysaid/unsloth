@@ -11,6 +11,9 @@ import type {
 } from "../src/features/coding/mcp-types.ts";
 
 const inventory: McpInventory = {
+  saved_revision: "native-saved-r1",
+  applied_revision: "native-applied-r0",
+  configured_tools: 0,
   documents: [],
   entries: [],
   effective: [],
@@ -28,6 +31,13 @@ const draft = (revision = "native-r1"): McpDraft => ({
 function fixture(overrides: Partial<McpSettingsApi> = {}) {
   const writes: { id: string; draft: McpDraft; text: string }[] = [];
   const api: McpSettingsApi = {
+    apply: async () => {
+      throw new Error("Not used in persistence tests");
+    },
+    reconnect: async () => {
+      throw new Error("Not used in persistence tests");
+    },
+    inspectOperation: async () => ({ operation: null, inventory }),
     inventory: async () => inventory,
     edit: async () => draft(),
     save: async (id, selected, text) => {
