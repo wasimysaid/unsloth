@@ -34,6 +34,9 @@ function harness() {
   let position = 0;
   const cancellations: unknown[] = [];
   const api: RunApi = {
+    async checkOverlap() {
+      throw new Error("Child inspection must not submit work");
+    },
     async readEntries(_id, cut) {
       return {
         cut,
