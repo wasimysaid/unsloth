@@ -15,14 +15,14 @@ export function CodingUnsentDraft({ text }: { text: string }) {
         aria-label="Unsent coding prompt"
         data-testid="coding-unsent-draft"
         className="max-h-40 w-full resize-y rounded-lg border border-border bg-background p-2 text-sm"
-        readOnly
+        readOnly={true}
         rows={3}
         value={text}
       />
       <p className="text-muted-foreground">
         Copy this draft before reopening or leaving this view. It is only
-        retained in memory because browser storage failed; restore storage
-        before sending. Nothing will be sent automatically.
+        retained in memory, not saved history. Resolve any reported error before
+        sending. Nothing will be sent automatically.
       </p>
     </section>
   );

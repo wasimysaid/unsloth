@@ -29,6 +29,7 @@ const native = (): NativeState => ({
     reasoning: null,
     mode: "plan",
   },
+  running_configuration: null,
   active_request: null,
   requests: [],
   pending_user_request: false,
@@ -40,6 +41,15 @@ function harness() {
   let position = 0;
   const calls: unknown[] = [];
   const api: RunApi = {
+    async configure() {
+      return native().configuration;
+    },
+    async checkOverlap() {
+      return { cwd: "/project", conversations: [] };
+    },
+    async readChild() {
+      return { child: null, outcome: null };
+    },
     async setMode(id, mode) {
       calls.push({ id, mode });
       return { conversation_id: id, mode };
@@ -313,5 +323,85 @@ test("definite native rejection is displayed and reconciled without retry or con
   await h.start();
   assert.equal(h.run.getSnapshot().planControl, null);
   assert.equal(h.run.getSnapshot().native?.plan?.markdown, plan.markdown);
+  h.run.detach();
+});
+
+test("configuration and command uncertainty guard plan and mode admission", async () => {
+  const h = harness();
+  await h.start();
+  let finish!: () => void;
+  h.api.configure = async () => {
+    await new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    return native().configuration;
+  };
+  const changing = h.run.configure({ model: "other" });
+  await h.run.setMode("build");
+  await h.run.decidePlan(plan, "implement");
+  assert.deepEqual(
+    h.calls,
+    [],
+    "no plan/mode action during configuration delivery",
+  );
+  finish();
+  await changing;
+  h.api.command = async () => {
+    throw new Error("Lost command acknowledgment");
+  };
+  await h.run.executeCommand("native-command");
+  await h.start();
+  assert.ok(h.run.getSnapshot().uncertainCommand);
+  await h.run.setMode("build");
+  await h.run.decidePlan(plan, "implement");
+  assert.deepEqual(
+    h.calls,
+    [],
+    "fresh capture does not settle an unknown command receipt",
+  );
+  h.run.detach();
+});
+
+test("plan reconstruction guards model selection and slash dispatch", async () => {
+  const h = harness();
+  await h.start();
+  let finish!: () => void;
+  h.api.setMode = async (id, mode) => {
+    h.calls.push({ id, mode });
+    await new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    return { conversation_id: id, mode };
+  };
+  const changing = h.run.setMode("build");
+  await h.start(); // A fresh view cannot supersede an operation still awaiting acknowledgment.
+  await assert.rejects(h.run.configure({ model: "other" }), /reconstructed/);
+  await assert.rejects(h.run.send("/native-command"), /reconstructed/);
+  assert.deepEqual(h.calls, [{ id: "conversation", mode: "build" }]);
+  finish();
+  await changing;
+  await h.start();
+  await h.run.configure({ model: "other" });
+  h.run.detach();
+});
+
+test("pending questions and overlap drafts cannot be bypassed by plan decisions", async () => {
+  const h = harness();
+  const waiting = native();
+  waiting.pending_user_request = true;
+  await h.start(waiting);
+  await h.run.decidePlan(plan, "implement");
+  assert.deepEqual(h.calls, []);
+  await h.start();
+  h.api.checkOverlap = async () => ({
+    cwd: "/project",
+    conversations: [{ id: "other-owner" }],
+  });
+  await h.run.send("Retain the warned draft");
+  const warning = h.run.getSnapshot().overlapWarning;
+  await h.run.decidePlan(plan, "implement");
+  await h.run.setMode("build");
+  assert.deepEqual(h.calls, []);
+  assert.deepEqual(h.run.getSnapshot().overlapWarning, warning);
   h.run.detach();
 });

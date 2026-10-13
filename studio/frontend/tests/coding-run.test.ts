@@ -16,6 +16,10 @@ import type {
 } from "../src/features/coding/run-types.ts";
 
 import {
+  CodingHttpError,
+  CodingOverlapError,
+} from "../src/features/coding/errors.ts";
+import {
   type SubmissionStorage,
   pendingSubmissionStorageKey,
 } from "../src/features/coding/pending-submission.ts";
@@ -29,6 +33,9 @@ const native = (active: string | null = null): NativeState => ({
     reasoning: null,
     mode: "build",
   },
+  running_configuration: active
+    ? { provider: "external", model: "model", reasoning: null, mode: "build" }
+    : null,
   active_request: active,
   requests: active
     ? [{ id: active, status: "running", submission_key: "key" }]
@@ -62,8 +69,23 @@ function harness(
         request_id: null,
       };
     },
-    async submit(id, key, text) {
-      submissions.push({ id, key, text });
+    async configure() {
+      return native().configuration;
+    },
+    async checkOverlap() {
+      return { cwd: "/project", conversations: [] };
+    },
+    async readChild() {
+      return { child: null, outcome: null };
+    },
+    async submit(id, key, text, extras, overlapConfirmed) {
+      submissions.push({
+        id,
+        key,
+        text,
+        ...extras,
+        ...(overlapConfirmed ? { overlapConfirmed } : {}),
+      });
       if (submitError) throw submitError;
       return {
         conversation_id: id,
@@ -485,6 +507,199 @@ test("bounded history navigation anchors the retained entry and shows an earlier
   h.run.detach();
 });
 
+test("next-request configuration never mutates active work or snapshots choice in prompt payloads", async () => {
+  const h = harness();
+  await h.start(native("request"));
+  const running = h.run.getSnapshot().native?.running_configuration;
+  const changes: unknown[] = [];
+  h.api.configure = async (id, change) => {
+    changes.push({ id, change });
+    await h.event({
+      type: "state",
+      state: {
+        ...native("request"),
+        configuration: {
+          provider: "other",
+          model: "new-model",
+          reasoning: "medium",
+          mode: "build",
+        },
+      },
+    });
+    // A late HTTP reply must not overwrite an ordered native configuration.
+    return native().configuration;
+  };
+  await h.run.configure({ provider: "other", model: "new-model" });
+  assert.deepEqual(changes, [
+    { id: "conversation", change: { provider: "other", model: "new-model" } },
+  ]);
+  assert.equal(h.run.getSnapshot().native?.configuration.model, "new-model");
+  assert.deepEqual(h.run.getSnapshot().native?.running_configuration, running);
+  await h.run.send("Queued input without model options");
+  assert.deepEqual(h.submissions, [
+    {
+      id: "conversation",
+      key: "key",
+      text: "Queued input without model options",
+    },
+  ]);
+  h.run.detach();
+});
+
+test("native configuration refusals retain selection, and uncertain errors require reconstruction without replay", async () => {
+  const h = harness();
+  await h.start(native("request"));
+  const before = structuredClone(h.run.getSnapshot().native);
+  let calls = 0;
+  h.api.configure = async () => {
+    calls++;
+    throw Object.assign(new Error("Native model unavailable"), {
+      admissionRejected: true,
+    });
+  };
+  await assert.rejects(
+    h.run.configure({ provider: "missing", model: "missing" }),
+    /unavailable/,
+  );
+  assert.deepEqual(h.run.getSnapshot().native, before);
+  assert.equal(h.run.getSnapshot().configurationUncertain, false);
+  h.api.configure = async () => {
+    calls++;
+    throw new Error("Transport response lost");
+  };
+  await assert.rejects(h.run.configure({ reasoning: "high" }), /response lost/);
+  assert.equal(h.run.getSnapshot().configurationUncertain, true);
+  assert.deepEqual(h.run.getSnapshot().native, before);
+  await assert.rejects(h.run.configure({ reasoning: "low" }), /reconstructed/);
+  await assert.rejects(
+    h.run.send("Do not run with unconfirmed configuration"),
+    /reconstructed/,
+  );
+  assert.equal(calls, 2);
+  h.run.connect();
+  await h.start(native("request"));
+  assert.equal(h.run.getSnapshot().configurationUncertain, false);
+  assert.equal(calls, 2, "reconnect must not replay configure");
+  h.run.detach();
+});
+
+test("overlap continuation retains rich input while model configuration is pending or unconfirmed", async () => {
+  const h = harness();
+  const overlap = { cwd: "/project", conversations: [{ id: "other-native" }] };
+  const input = {
+    text: "@review inspect",
+    skill_mentions: [
+      { name: "review", path: "/project/review/SKILL.md", start: 0, end: 7 },
+    ],
+    images: [{ mime_type: "image/png", data: "original-base64" }],
+  };
+  h.api.checkOverlap = async () => overlap;
+  await h.start();
+  const { text, ...extras } = input;
+  await h.run.send(text, extras);
+  const warning = structuredClone(h.run.getSnapshot().overlapWarning);
+  let rejectConfiguration!: (reason: Error) => void;
+  h.api.configure = async () =>
+    await new Promise((_resolve, reject) => {
+      rejectConfiguration = reject;
+    });
+  const configuration = h.run.configure({ reasoning: "high" });
+  const failedConfiguration = assert.rejects(
+    configuration,
+    /Configuration reply lost/,
+  );
+  try {
+    assert.equal(await h.run.continueOverlap(), false);
+    assert.deepEqual(h.run.getSnapshot().overlapWarning, warning);
+    rejectConfiguration(new Error("Configuration reply lost"));
+    await failedConfiguration;
+    assert.equal(h.run.getSnapshot().configurationUncertain, true);
+    assert.equal(await h.run.continueOverlap(), false);
+    assert.deepEqual(h.run.getSnapshot().overlapWarning, warning);
+    assert.deepEqual(h.submissions, []);
+    h.run.connect();
+    await h.start();
+    assert.equal(await h.run.continueOverlap(), true);
+    assert.deepEqual(h.submissions, [
+      { id: "conversation", key: "key", ...input, overlapConfirmed: true },
+    ]);
+  } finally {
+    rejectConfiguration(new Error("Configuration reply lost"));
+    await failedConfiguration;
+    h.run.detach();
+  }
+});
+
+test("configuration submissions are serialized while active native work remains usable", async () => {
+  const h = harness();
+  await h.start(native("request"));
+  let settle!: () => void;
+  h.api.configure = async () => {
+    await new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    return native().configuration;
+  };
+  const pending = h.run.configure({ reasoning: "medium" });
+  assert.equal(h.run.getSnapshot().configuring, true);
+  await assert.rejects(h.run.configure({ reasoning: "high" }), /reconstructed/);
+  await h.run.stop();
+  assert.equal(
+    h.cancellations.length,
+    1,
+    "selection must never block exact cancellation",
+  );
+  settle();
+  await pending;
+  assert.equal(h.run.getSnapshot().configuring, false);
+  assert.equal(h.run.getSnapshot().native?.active_request, "request");
+  h.run.detach();
+});
+
+test("a reconnect overlapping configure cannot erase a later uncertain outcome", async () => {
+  for (const failureBeforeCapture of [false, true]) {
+    const h = harness();
+    await h.start(native("request"));
+    let rejectConfiguration!: (reason: Error) => void;
+    let calls = 0;
+    h.api.configure = async () => {
+      calls++;
+      await new Promise<void>((_resolve, reject) => {
+        rejectConfiguration = reject;
+      });
+      return native().configuration;
+    };
+    const pending = h.run.configure({ provider: "other", model: "next" });
+    const rejected = assert.rejects(pending, /Lost configuration response/);
+    h.run.connect();
+    if (!failureBeforeCapture) await h.start(native("request"));
+    rejectConfiguration(new Error("Lost configuration response"));
+    await rejected;
+    if (failureBeforeCapture) await h.start(native("request"));
+    assert.equal(h.run.getSnapshot().connection, "connected");
+    assert.equal(
+      h.run.getSnapshot().configurationUncertain,
+      true,
+      "a capture begun before the configure outcome cannot reconcile it",
+    );
+    await assert.rejects(
+      h.run.send("Do not use an uncertain selection"),
+      /reconstructed/,
+    );
+    await assert.rejects(
+      h.run.configure({ reasoning: "low" }),
+      /reconstructed/,
+    );
+    assert.equal(calls, 1);
+    // Only a reconstruction started after that outcome permits further input.
+    h.run.connect();
+    await h.start(native("request"));
+    assert.equal(h.run.getSnapshot().configurationUncertain, false);
+    assert.equal(calls, 1);
+    h.run.detach();
+  }
+});
+
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 const storageName = pendingSubmissionStorageKey("conversation");
 
@@ -492,7 +707,9 @@ test("delivery identity is durable before HTTP and survives reload without autom
   const h = harness();
   await h.start();
   h.api.submit = async (_id, key, text) => {
-    assert.deepEqual(JSON.parse(h.storage.getItem(storageName)!), {
+    const record = h.storage.getItem(storageName);
+    assert.ok(record);
+    assert.deepEqual(JSON.parse(record), {
       version: 1,
       conversation_id: "conversation",
       key,
@@ -911,6 +1128,70 @@ test("oversized older page remains actionable incomplete history instead of exce
   h.run.detach();
 });
 
+test("structured diffs cannot bypass the earlier-history presentation budget", async () => {
+  const h = harness();
+  const large: CodingRow = {
+    id: "large",
+    kind: "tool",
+    tool: {
+      invocation_id: "large-invocation",
+      call_id: "large-call",
+      request_id: null,
+      name: "edit_file",
+      title: "Edit",
+      status: "saved",
+      output: "Public",
+      clipped: false,
+      quiet: false,
+      row_group: null,
+      output_profile: {
+        kind: "file_change",
+        truncated: true,
+        files: [
+          {
+            path: "large.txt",
+            status: "updated",
+            additions: null,
+            deletions: null,
+            binary: false,
+            partial: true,
+            truncated: true,
+            hunks: [
+              {
+                lines: [
+                  {
+                    old_line: null,
+                    new_line: 1,
+                    kind: "added",
+                    content: "x".repeat(2 * 1024 * 1024),
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    },
+  };
+  h.api.readEntries = async (_id, cut, anchor) => ({
+    cut,
+    rows:
+      anchor === "latest"
+        ? [{ id: "saved", kind: "assistant", text: "Saved" }]
+        : [large],
+    older: true,
+    newer: anchor !== "latest",
+    first_id: "saved",
+    last_id: "saved",
+  });
+  await h.start();
+  await h.run.loadEarlier();
+  assert.equal(h.run.getSnapshot().viewingEarlier, false);
+  assert.equal(h.run.getSnapshot().rows[0].text, "Saved");
+  assert.match(h.run.getSnapshot().error ?? "", /incomplete/);
+  h.run.detach();
+});
+
 test("uncertain Stop does not offer retry while terminal request still holds cleanup admission", async () => {
   const h = harness();
   await h.start(native("exact"));
@@ -932,6 +1213,93 @@ test("uncertain Stop does not offer retry while terminal request still holds cle
   });
   assert.equal(h.run.getSnapshot().stopping, null);
   assert.equal(h.run.getSnapshot().error, null);
+  h.run.detach();
+});
+
+test("typed repeated file effects preserve invocation, call and file identities across captured replay", async () => {
+  const h = harness();
+  const edits: CodingRow[] = ["first", "second"].map((id) => ({
+    id: `entry-${id}`,
+    entry_id: `entry-${id}`,
+    request_id: "exact-request",
+    kind: "tool",
+    tool: {
+      invocation_id: `invocation-${id}`,
+      call_id: `call-${id}`,
+      request_id: "exact-request",
+      name: "edit_file",
+      title: "Edit file",
+      status: "completed",
+      output: `Actual ${id} output`,
+      clipped: false,
+      quiet: false,
+      row_group: null,
+      historical: true,
+      output_profile: {
+        kind: "file_change",
+        truncated: false,
+        files: [
+          {
+            path: "same.txt",
+            status: "updated",
+            additions: null,
+            deletions: 1,
+            binary: false,
+            partial: true,
+            truncated: false,
+            unavailable: false,
+            hunks: [
+              {
+                lines: [
+                  { old_line: null, new_line: 1, kind: "added", content: id },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    },
+  }));
+  await h.start(native("exact-request"));
+  await h.event({
+    type: "activity",
+    rows: edits.map((row) => ({
+      ...row,
+      entry_id: null,
+      tool: { ...row.tool, historical: false },
+    })),
+  });
+  assert.deepEqual(
+    h.run.getSnapshot().rows.map((row) => row.tool?.call_id),
+    ["call-first", "call-second"],
+  );
+  h.setRows(edits);
+  await h.event({
+    type: "checkpoint",
+    cut: { journal: "root", leaf: "cut2" },
+    live_invocations: [],
+  });
+  assert.equal(h.run.getSnapshot().rows.length, 2);
+  const profiles = h.run
+    .getSnapshot()
+    .rows.map((row) => row.tool?.output_profile);
+  await h.event({
+    type: "reset",
+    state: native(),
+    recovering: false,
+    root: { cut: { journal: "root", leaf: "cut2" }, live_invocations: [] },
+  });
+  assert.deepEqual(
+    h.run.getSnapshot().rows.map((row) => row.tool?.output_profile),
+    profiles,
+  );
+  assert.deepEqual(
+    h.run.getSnapshot().rows.map((row) => row.tool?.invocation_id),
+    ["invocation-first", "invocation-second"],
+  );
+  assert.ok(h.run.getSnapshot().rows.every((row) => row.historical));
+  assert.equal(h.run.getSnapshot().native?.active_request, null);
+  assert.equal(codingRunLabel(h.run.getSnapshot()), "Ready");
   h.run.detach();
 });
 
@@ -983,3 +1351,206 @@ for (const rejected of [false, true]) {
     }
   });
 }
+
+const overlap = {
+  cwd: "/canonical/project",
+  conversations: [{ id: "other-native-owner" }],
+};
+
+test("canonical overlap warning precedes prompt submission and durable pending identity; cancellation isolates other work", async () => {
+  const h = harness();
+  h.api.checkOverlap = async () => overlap;
+  await h.start();
+  await h.run.send("overlapping draft");
+  assert.deepEqual(h.run.getSnapshot().overlapWarning, {
+    key: "key",
+    text: "overlapping draft",
+    overlap,
+  });
+  assert.equal(h.run.getSnapshot().uncertainSubmission, null);
+  assert.equal(
+    h.storage.getItem(pendingSubmissionStorageKey("conversation")),
+    null,
+  );
+  assert.deepEqual(h.submissions, []);
+  await assert.rejects(h.run.send("second draft"), /warning/);
+  h.run.cancelOverlap();
+  assert.equal(h.run.getSnapshot().overlapWarning, null);
+  assert.equal(h.run.getSnapshot().unsentDraft, "overlapping draft");
+  assert.deepEqual(h.submissions, []);
+  assert.deepEqual(h.cancellations, []);
+  h.run.detach();
+});
+
+test("explicit overlap continuation submits the same warned text/key once, without an optimistic transcript", async () => {
+  const h = harness();
+  h.api.checkOverlap = async () => overlap;
+  await h.start();
+  await h.run.send("intentional overlap");
+  await Promise.all([h.run.continueOverlap(), h.run.continueOverlap()]);
+  assert.deepEqual(h.submissions, [
+    {
+      id: "conversation",
+      key: "key",
+      text: "intentional overlap",
+      overlapConfirmed: true,
+    },
+  ]);
+  assert.equal(h.run.getSnapshot().overlapWarning, null);
+  assert.deepEqual(h.run.getSnapshot().rows, []);
+  assert.equal(h.run.getSnapshot().uncertainSubmission, null);
+  h.run.detach();
+});
+
+test("host pre-admission race refusal shows the warning, clears pending delivery, and preserves the original key", async () => {
+  const h = harness();
+  await h.start();
+  h.setSubmitError(new CodingOverlapError(overlap));
+  await h.run.send("race draft");
+  assert.equal(h.run.getSnapshot().uncertainSubmission, null);
+  assert.equal(
+    h.storage.getItem(pendingSubmissionStorageKey("conversation")),
+    null,
+  );
+  assert.equal(h.run.getSnapshot().overlapWarning?.text, "race draft");
+  h.setSubmitError(null);
+  await h.run.continueOverlap();
+  assert.deepEqual(h.submissions, [
+    { id: "conversation", key: "key", text: "race draft" },
+    {
+      id: "conversation",
+      key: "key",
+      text: "race draft",
+      overlapConfirmed: true,
+    },
+  ]);
+  h.run.detach();
+});
+
+test("failed or superseded preflight never sends a prompt and keeps a known-unsent draft", async () => {
+  for (const failure of [true, false]) {
+    const h = harness();
+    await h.start();
+    let resolve!: (value: typeof overlap) => void;
+    h.api.checkOverlap = failure
+      ? async () => {
+          throw new Error("native check unavailable");
+        }
+      : () =>
+          new Promise((done) => {
+            resolve = done;
+          });
+    const sending = h.run.send("do not lose draft");
+    if (!failure) {
+      h.run.detach();
+      resolve(overlap);
+    }
+    await sending;
+    assert.deepEqual(h.submissions, []);
+    assert.equal(h.run.getSnapshot().unsentDraft, "do not lose draft");
+    assert.equal(h.run.getSnapshot().submitting, false);
+    assert.equal(h.run.getSnapshot().overlapWarning, null);
+    h.run.detach();
+  }
+});
+
+test("uncertain prompt retries preserve deduplication without a fresh preflight or persisted overlap authority", async () => {
+  const h = harness();
+  await h.start();
+  h.api.checkOverlap = async () => overlap;
+  await h.run.send("warned uncertain input");
+  h.setSubmitError(new Error("lost acknowledgement"));
+  await h.run.continueOverlap();
+  h.api.checkOverlap = async () => {
+    throw new Error("retry must reach native keyed deduplication");
+  };
+  h.setSubmitError(null);
+  await h.run.retrySubmission();
+  assert.deepEqual(h.submissions, [
+    {
+      id: "conversation",
+      key: "key",
+      text: "warned uncertain input",
+      overlapConfirmed: true,
+    },
+    { id: "conversation", key: "key", text: "warned uncertain input" },
+  ]);
+  assert.equal(h.run.getSnapshot().uncertainSubmission, null);
+  h.run.detach();
+});
+
+test("rich overlap confirmation and uncertain retry retain one exact input snapshot without persisting authority", async () => {
+  const h = harness();
+  h.api.checkOverlap = async () => overlap;
+  await h.start();
+  const extras = {
+    skill_mentions: [
+      { name: "review", path: "/project/review/SKILL.md", start: 0, end: 7 },
+    ],
+    images: [{ mime_type: "image/png", data: "original-base64" }],
+  };
+  const input = structuredClone({ text: "@review inspect", ...extras });
+  assert.equal(await h.run.send(input.text, extras), false);
+  extras.images[0].data = "edited-preview";
+  extras.skill_mentions[0].path = "/changed/SKILL.md";
+  assert.deepEqual(h.run.getSnapshot().overlapWarning, {
+    key: "key",
+    ...input,
+    overlap,
+  });
+  h.setSubmitError(new Error("lost acknowledgement"));
+  await h.run.continueOverlap();
+  assert.deepEqual(h.run.getSnapshot().uncertainSubmission, {
+    key: "key",
+    ...input,
+  });
+  h.api.checkOverlap = async () => {
+    throw new Error("retry must deduplicate natively");
+  };
+  h.setSubmitError(null);
+  assert.equal(await h.run.retrySubmission(), true);
+  assert.deepEqual(h.submissions, [
+    { id: "conversation", key: "key", ...input, overlapConfirmed: true },
+    { id: "conversation", key: "key", ...input },
+  ]);
+  h.run.detach();
+
+  const cancelled = harness();
+  cancelled.api.checkOverlap = async () => overlap;
+  await cancelled.start();
+  await cancelled.run.send(input.text, input);
+  cancelled.run.cancelOverlap();
+  assert.deepEqual(cancelled.run.getSnapshot().rejectedSubmission, input);
+  assert.deepEqual(cancelled.submissions, []);
+  cancelled.run.detach();
+});
+
+test("native capacity rejection after overlap continuation preserves the known-unsent prompt without replay", async () => {
+  for (const status of [409, 429]) {
+    const h = harness();
+    await h.start();
+    h.api.checkOverlap = async () => overlap;
+    await h.run.send("retain this capacity-refused draft");
+    h.setSubmitError(
+      new CodingHttpError(
+        status,
+        "Native capacity is busy. Wait before retrying.",
+      ),
+    );
+    await h.run.continueOverlap();
+    assert.equal(
+      h.run.getSnapshot().unsentDraft,
+      "retain this capacity-refused draft",
+    );
+    assert.match(h.run.getSnapshot().error ?? "", /capacity.*Wait/);
+    assert.equal(h.run.getSnapshot().overlapWarning, null);
+    assert.equal(h.run.getSnapshot().uncertainSubmission, null);
+    assert.equal(
+      h.storage.getItem(pendingSubmissionStorageKey("conversation")),
+      null,
+    );
+    assert.equal(h.submissions.length, 1);
+    assert.equal(h.cancellations.length, 0);
+    h.run.detach();
+  }
+});

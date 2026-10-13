@@ -7,6 +7,25 @@ import type {
   PlanActionResult,
   PlanDecision,
 } from "./plan-types.ts";
+import type {
+  ChildAttempt,
+  ChildDetail,
+  ChildPresentation,
+} from "./child-types.ts";
+import type {
+  CodingDiagnostic,
+  CommandCatalog,
+  CommandOutcome,
+  CommandReceipt,
+  DiagnosticKind,
+  SessionUsage,
+} from "./command-types.ts";
+import type { ToolOutputProfile } from "./file-changes.ts";
+import type { CodingInputExtras } from "./input.ts";
+import type {
+  CodingConfiguration,
+  CodingConfigurationChange,
+} from "./model-selection.ts";
 import type { CodingConversation } from "./types.ts";
 
 export type RequestStatus =
@@ -23,32 +42,40 @@ export interface NativeRequest {
 }
 export interface NativeState {
   info: CodingConversation;
-  configuration: {
-    provider: string | null;
-    model: string | null;
-    reasoning: string | null;
-    mode: string;
-  };
+  /** Authoritative choice for the next request, even while another is running. */
+  configuration: CodingConfiguration;
+  running_configuration: CodingConfiguration | null;
   active_request: string | null;
   requests: NativeRequest[];
   pending_user_request: boolean;
   plan: NativePlan | null;
   action_disabled_reason: string | null;
+  usage?: SessionUsage | null;
+  compression?: {
+    status: "running" | "completed" | "failed" | "cancelled" | "interrupted";
+    request_id?: string;
+    phase?: string | null;
+    before_tokens?: number;
+    after_tokens?: number;
+    error?: string | null;
+  } | null;
 }
 export interface JournalCut {
-  journal: "root";
+  journal: "root" | { child: string };
   leaf: string | null;
 }
 export type EntryAnchor = "latest" | { before: string } | { after: string };
 export interface CodingRow {
   id: string;
-  kind: "user" | "assistant" | "tool" | "notice" | "plan";
+  kind: "user" | "assistant" | "tool" | "notice" | "plan" | "child";
+  child?: ChildAttempt;
   text?: string;
   entry_id?: string | null;
   request_id?: string | null;
   clipped?: boolean;
   historical?: boolean;
   plan?: NativePlan;
+  image_count?: number;
   tool?: {
     invocation_id: string | null;
     call_id: string;
@@ -62,6 +89,9 @@ export interface CodingRow {
     row_group: { key: string; label: string; item: string } | null;
     semantic_content?: unknown;
     display_kind?: string | null;
+    subagent?: ChildPresentation | null;
+    output_profile?: ToolOutputProfile | null;
+    historical?: boolean;
   };
 }
 export interface EntryPage {
@@ -71,6 +101,10 @@ export interface EntryPage {
   newer: boolean;
   first_id: string | null;
   last_id: string | null;
+}
+export interface ProjectOverlap {
+  cwd: string;
+  conversations: { id: string }[];
 }
 export interface RunApi {
   setMode(
@@ -82,10 +116,32 @@ export interface RunApi {
     plan: NativePlan,
     decision: PlanDecision,
   ): Promise<PlanActionResult>;
+  commands?(id: string): Promise<CommandCatalog>;
+  command?(
+    id: string,
+    name: string,
+    tail: string,
+    operationId: string,
+  ): Promise<CommandOutcome>;
+  commandReceipt?(id: string, operationId: string): Promise<CommandReceipt>;
+  diagnostics?(id: string, kind: DiagnosticKind): Promise<CodingDiagnostic>;
+  configure(
+    id: string,
+    change: CodingConfigurationChange,
+  ): Promise<CodingConfiguration>;
+  checkOverlap(id: string): Promise<ProjectOverlap>;
+  readChild(
+    id: string,
+    handle: string,
+    attempt: number,
+    signal?: AbortSignal,
+  ): Promise<ChildDetail>;
   submit(
     id: string,
     submissionKey: string,
     text: string,
+    extras?: CodingInputExtras,
+    overlapConfirmed?: boolean,
   ): Promise<{
     conversation_id: string;
     request_id: string;

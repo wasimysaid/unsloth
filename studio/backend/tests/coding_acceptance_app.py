@@ -11,16 +11,22 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from auth.authentication import get_current_subject
 from auth.storage import create_initial_user, get_user_record
 from .coding_transport_faults import CodingTransportFaults
-from core.coding_runtime import close_coding_runtime
+from core.coding_runtime import close_coding_runtime, runtime_for
 from routes.auth import router as auth_router
 from routes.coding import router as coding_router
+
+
+class RetentionClock(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    advance_ns: int = Field(default = 0, ge = 0, le = 9_007_199_254_740_991)
 
 
 def create_app() -> FastAPI:
@@ -51,6 +57,13 @@ def create_app() -> FastAPI:
         # saved history are not changed; only the next browser transport is.
         faults["reset_conversation"] = conversation_id
         return {"configured": True}
+
+    if os.environ.get("CODING_ACCEPTANCE_RETIREMENT_FIXTURES") == "1":
+        @app.post("/api/coding-acceptance/retention-clock", dependencies = [Depends(get_current_subject)])
+        async def retention_clock(body: RetentionClock, request: Request):
+            # Only an explicitly built acceptance component implements this command.
+            # Production routers and the default component have no clock controls.
+            return await runtime_for(request.app).command("retention_fixture", body.model_dump())
 
     @app.get("/api/{path:path}")
     async def unavailable(path: str):
