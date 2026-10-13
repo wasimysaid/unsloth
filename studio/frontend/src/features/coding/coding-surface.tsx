@@ -22,6 +22,7 @@ import { ChildActivityRows, ChildInspector } from "./child-inspector";
 import { CodingComposer } from "./coding-composer";
 import { createInputDraft } from "./input";
 import { nativeMessageRow } from "./presentation";
+import { ProjectOverlapDialog } from "./project-overlap-dialog";
 import { codingRunAdapter } from "./run-runtime";
 import {
   codingRunCompletion,
@@ -134,6 +135,8 @@ export function CodingSurface({
   const [draft] = useState(createInputDraft);
   const runtime = useExternalStoreRuntime(codingRunAdapter(state, run, draft));
   const viewport = useRef<HTMLDivElement>(null);
+  const promptInput = useRef<HTMLTextAreaElement>(null);
+  const statusFocus = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const [away, setAway] = useState(false);
   useEffect(() => {
@@ -154,14 +157,40 @@ export function CodingSurface({
       !state.submitting &&
       !state.uncertainSubmission &&
       !state.storageError &&
-      !state.reconcilingAction,
+      !state.reconcilingAction &&
+      !state.overlapWarning,
   );
   return (
     <AssistantRuntimeProvider runtime={runtime}>
+      <ProjectOverlapDialog
+        overlap={state?.overlapWarning?.overlap ?? null}
+        disabled={Boolean(
+          !state ||
+            state.connection !== "connected" ||
+            state.recovering ||
+            state.submitting ||
+            state.stopping ||
+            state.reconcilingAction ||
+            state.storageError,
+        )}
+        onContinue={() => void run?.continueOverlap()}
+        onCancel={() => run?.cancelOverlap()}
+        onCloseFocus={() =>
+          requestAnimationFrame(() => {
+            const input = promptInput.current;
+            if (input && !input.disabled) input.focus({ preventScroll: true });
+            else statusFocus.current?.focus({ preventScroll: true });
+          })
+        }
+      />
       <ThreadPrimitive.Root className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
         {state && (
           <div
-            className="space-y-2 rounded-xl border border-border/60 px-3 py-2 text-xs"
+            ref={statusFocus}
+            role="region"
+            aria-label="Coding request status"
+            tabIndex={-1}
+            className="space-y-2 rounded-xl border border-border/60 px-3 py-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             data-testid="coding-event-status"
           >
             <output
@@ -359,6 +388,7 @@ export function CodingSurface({
             state={state}
             draft={draft}
             canSend={canSend}
+            inputRef={promptInput}
           />
           {children}
           <p

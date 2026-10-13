@@ -63,6 +63,7 @@ class PromptSubmission(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     submission_key: str = Field(min_length = 1, max_length = 128)
     text: str = Field(min_length = 1, max_length = 65536)
+    overlap_confirmed: bool = Field(default = False, strict = True)
     skill_mentions: list[SkillMention] = Field(default_factory = list, max_length = 64)
     images: list[PromptImage] = Field(default_factory = list, max_length = 4)
 
@@ -132,6 +133,10 @@ class HistorySelection(BaseModel):
 
 
 def _http_error(exc: CodingRuntimeError) -> HTTPException:
+    if exc.code == "overlap_required":
+        return HTTPException(status_code = 409, detail = {
+            "code": exc.code, "message": exc.message, "overlap": exc.overlap,
+        })
     status = {"invalid": 400, "not_found": 404, "denied": 403,
               "busy": 409, "conflict": 409, "trust_conflict": 409,
               "unavailable": 503, "disconnected": 503, "uncertain": 504,
@@ -212,6 +217,12 @@ async def open_conversation(conversation_id: str, request: Request):
     return state["info"]
 
 
+@router.get("/conversations/{conversation_id}/overlap")
+async def project_overlap(conversation_id: str, request: Request):
+    # A read-only native preflight; never implicitly opens or retargets an owner.
+    return await _command(request, "overlap", {"conversation_id": conversation_id})
+
+
 @router.get("/conversations/{conversation_id}/skills")
 async def conversation_skills(conversation_id: str, request: Request):
     # Discover the retained native controller's effective project metadata only.
@@ -222,7 +233,7 @@ async def conversation_skills(conversation_id: str, request: Request):
 @router.post("/conversations/{conversation_id}/prompts", status_code = 202)
 async def submit_prompt(conversation_id: str, body: PromptSubmission, request: Request):
     # Mimir admits/deduplicates the submission and owns scheduling and saved input.
-    return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump(exclude_unset = True)})
+    return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump(exclude_unset = True), "overlap_confirmed": body.overlap_confirmed})
 
 
 @router.post("/conversations/{conversation_id}/requests/{request_id}/cancel")
