@@ -3,7 +3,9 @@
 
 import { authFetch } from "@/features/auth/api";
 import { readFastApiError } from "@/lib/format-fastapi-error";
+import { CodingHttpError } from "./errors";
 import { consumeCodingEvents } from "./events";
+import type { EntryPage, RunApi } from "./run-types";
 import type {
   McpDraft,
   McpInventory,
@@ -20,12 +22,30 @@ async function codingRequest(
   path: string,
   init?: RequestInit,
 ): Promise<Response> {
-  const response = await authFetch(`/api/coding${path}`, init, {
-    // A transport failure may follow a committed native creation. Never replay it.
-    retryNetworkErrors: false,
-  });
+  let response: Response;
+  try {
+    response = await authFetch(`/api/coding${path}`, init, {
+      // A transport failure may follow a committed native creation. Never replay it.
+      retryNetworkErrors: false,
+    });
+  } catch (reason) {
+    if (
+      reason instanceof Error &&
+      "unslothTransportFailure" in reason &&
+      reason.unslothTransportFailure === true
+    )
+      throw new Error(
+        "Coding response unconfirmed; work may still be running. Reconnect or inspect native history before another action. No coding request was replayed.",
+        { cause: reason },
+      );
+    // Aborts and account/authentication policy errors retain their own identity.
+    throw reason;
+  }
   if (!response.ok) {
-    throw new Error(await readFastApiError(response, "Coding request failed"));
+    throw new CodingHttpError(
+      response.status,
+      await readFastApiError(response, "Coding request failed"),
+    );
   }
   return response;
 }
@@ -141,11 +161,63 @@ export const mcpSettingsApi: McpSettingsApi = {
   },
 };
 
+export async function discoverCodingSkills(id: string, signal?: AbortSignal) {
+  const response = await codingRequest(
+    `/conversations/${encodeURIComponent(id)}/skills`,
+    { signal },
+  );
+  return (await response.json()) as { skills: import("./input").CodingSkill[] };
+}
+
+export const codingRunApi: RunApi = {
+  async submit(id, submissionKey, text, extras) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/prompts`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          submission_key: submissionKey,
+          text,
+          ...extras,
+        }),
+      },
+    );
+    return await response.json();
+  },
+  async cancel(id, requestId) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/requests/${encodeURIComponent(requestId)}/cancel`,
+      { method: "POST" },
+    );
+    return await response.json();
+  },
+  async readEntries(id, cut, anchor, signal) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/entries`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal,
+        body: JSON.stringify({
+          cut,
+          anchor,
+          max_entries: 100,
+          max_bytes: 262144,
+        }),
+      },
+    );
+    return (await response.json()) as EntryPage;
+  },
+  watch: watchCodingConversation,
+};
+
 /** Consume the native view stream without building a browser-owned message history. */
 export async function watchCodingConversation(
   id: string,
   signal: AbortSignal,
   onConnected: () => void,
+  onView?: (view: unknown) => Promise<void> | void,
 ): Promise<void> {
   const response = await codingRequest(
     `/conversations/${encodeURIComponent(id)}/events`,
@@ -157,7 +229,5 @@ export async function watchCodingConversation(
   if (!response.body)
     throw new Error("The native event stream is unavailable.");
   if (!signal.aborted) onConnected();
-  // Opening is acknowledged by the native HTTP result. Disconnection is not
-  // hidden by a continuing heartbeat; message projection belongs to a later slice.
-  await consumeCodingEvents(response.body, signal);
+  await consumeCodingEvents(response.body, signal, onView);
 }

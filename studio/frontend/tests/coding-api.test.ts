@@ -3,10 +3,11 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadWithStubs } from "./helpers/module-stubs.ts";
-import * as fastApiError from "../src/lib/format-fastapi-error.ts";
-import { consumeCodingEvents } from "../src/features/coding/events.ts";
 import type * as Coding from "../src/features/coding/api.ts";
+import { CodingHttpError } from "../src/features/coding/errors.ts";
+import { consumeCodingEvents } from "../src/features/coding/events.ts";
+import * as fastApiError from "../src/lib/format-fastapi-error.ts";
+import { loadWithStubs } from "./helpers/module-stubs.ts";
 
 function client(response: () => Response) {
   const requests: { path: string; init?: RequestInit; options: unknown }[] = [];
@@ -25,6 +26,7 @@ function client(response: () => Response) {
       },
       "@/lib/format-fastapi-error": fastApiError,
       "./events": { consumeCodingEvents },
+      "./errors": { CodingHttpError },
     },
   );
   return { api, requests };
@@ -129,8 +131,10 @@ test("an endless or repeated catalog fails explicitly rather than showing incomp
 });
 
 test("missing or malformed native page cursors cannot silently mean complete history", async () => {
-  for (const next_cursor of [undefined, "", 42]) {
-    const c = client(() => Response.json({ conversations: [], next_cursor }));
+  for (const nextCursor of [undefined, "", 42]) {
+    const c = client(() =>
+      Response.json({ conversations: [], next_cursor: nextCursor }),
+    );
     await assert.rejects(
       c.api.codingApi.listConversations(),
       /invalid page cursor/,
@@ -153,6 +157,84 @@ test("native auth/validation/availability errors remain errors, not successful o
     c.api.codingApi.openConversation("saved"),
     /Coding request failed \(502\)/,
   );
+});
+
+test("run and Stop carry exact native identities without implicit transport retries", async () => {
+  const c = client(() =>
+    Response.json({
+      conversation_id: "conversation/id",
+      request_id: "request/id",
+      submission_key: "same-key",
+      cancel_requested: true,
+    }),
+  );
+  await c.api.codingRunApi.submit("conversation/id", "same-key", "Work once");
+  await c.api.codingRunApi.cancel("conversation/id", "request/id");
+  await c.api.codingRunApi.readEntries(
+    "conversation/id",
+    { journal: "root", leaf: "captured-leaf" },
+    { after: "previous-leaf" },
+  );
+  assert.deepEqual(
+    c.requests.map((request) => request.path),
+    [
+      "/api/coding/conversations/conversation%2Fid/prompts",
+      "/api/coding/conversations/conversation%2Fid/requests/request%2Fid/cancel",
+      "/api/coding/conversations/conversation%2Fid/entries",
+    ],
+  );
+  assert.deepEqual(JSON.parse(String(c.requests[0].init?.body)), {
+    submission_key: "same-key",
+    text: "Work once",
+  });
+  assert.equal(c.requests[1].init?.body, undefined);
+  assert.deepEqual(JSON.parse(String(c.requests[2].init?.body)), {
+    cut: { journal: "root", leaf: "captured-leaf" },
+    anchor: { after: "previous-leaf" },
+    max_entries: 100,
+    max_bytes: 262144,
+  });
+  for (const request of c.requests)
+    assert.deepEqual(request.options, { retryNetworkErrors: false });
+});
+
+test("effective skills and rich prompt inputs use authenticated exact-ID transport without replay", async () => {
+  const discovered = {
+    skills: [
+      {
+        name: "review",
+        qualified_name: "plugin:alpha:review",
+        description: "Metadata only",
+      },
+    ],
+  };
+  const c = client(() => Response.json(discovered));
+  const abort = new AbortController();
+  assert.deepEqual(
+    await c.api.discoverCodingSkills("native/id", abort.signal),
+    discovered,
+  );
+  assert.equal(
+    c.requests[0].path,
+    "/api/coding/conversations/native%2Fid/skills",
+  );
+  assert.equal(c.requests[0].init?.signal, abort.signal);
+  const extras = {
+    skill_mentions: [{ name: "plugin:alpha:review", start: 0, end: 20 }],
+    images: [{ mime_type: "image/png", data: "exact-base64" }],
+  };
+  await c.api.codingRunApi.submit(
+    "native/id",
+    "same-key",
+    "@plugin:alpha:review",
+    extras,
+  );
+  assert.deepEqual(JSON.parse(String(c.requests[1].init?.body)), {
+    submission_key: "same-key",
+    text: "@plugin:alpha:review",
+    ...extras,
+  });
+  assert.deepEqual(c.requests[1].options, { retryNetworkErrors: false });
 });
 
 test("event stream uses authenticated fetch, exposes a disconnect event and is cancellable", async () => {
@@ -244,6 +326,55 @@ test("MCP native errors stay actionable refusals, never successful persistence",
     await assert.rejects(
       c.api.mcpSettingsApi.save("native-id", draft, "my draft"),
       /Native refusal; draft retained/,
+    );
+    assert.equal(c.requests.length, 1);
+  }
+});
+
+test("coding transport failure stays unconfirmed without claiming native work died or suggesting relaunch", async () => {
+  const transport = Object.assign(
+    new Error("Unsloth isn't running -- please relaunch it."),
+    { unslothTransportFailure: true },
+  );
+  const c = client(() => {
+    throw transport;
+  });
+  await assert.rejects(
+    c.api.codingRunApi.readEntries(
+      "conversation",
+      { journal: "root", leaf: "captured" },
+      "latest",
+    ),
+    (reason: unknown) => {
+      assert.ok(reason instanceof Error);
+      assert.match(
+        reason.message,
+        /Coding response unconfirmed.*work may still be running/,
+      );
+      assert.doesNotMatch(reason.message, /relaunch|isn't running/);
+      assert.equal(reason.cause, transport);
+      assert.equal("admissionRejected" in reason, false);
+      return true;
+    },
+  );
+  assert.equal(
+    c.requests.length,
+    1,
+    "transport loss must not replay a coding request",
+  );
+});
+
+test("coding request preserves abort and non-transport authentication errors", async () => {
+  for (const original of [
+    new DOMException("Detached", "AbortError"),
+    new Error("Another tab is switching accounts; this tab will reload."),
+  ]) {
+    const c = client(() => {
+      throw original;
+    });
+    await assert.rejects(
+      c.api.codingApi.openConversation("saved"),
+      (reason: unknown) => reason === original,
     );
     assert.equal(c.requests.length, 1);
   }

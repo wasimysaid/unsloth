@@ -39,6 +39,9 @@ def coding_app(monkeypatch, tmp_path):
     ("POST", "/conversations/known-id/mcp/edit", {"source": "native-source", "name": "server"}),
     ("POST", "/conversations/known-id/mcp/save", {"edit_id": "edit-1", "revision": "r1", "json": "{}"}),
     ("POST", "/conversations/known-id/mcp/release", {"edit_id": "edit-1"}),
+    ("POST", "/conversations/known-id/prompts", {"submission_key": "exact-key", "text": "work"}),
+    ("POST", "/conversations/known-id/requests/exact-request/cancel", None),
+    ("POST", "/conversations/known-id/entries", {"cut": {"journal": "root", "leaf": None}}),
 ])
 async def test_every_surface_requires_existing_studio_auth(coding_app, method, path, body):
     app, _ = coding_app
@@ -113,6 +116,39 @@ async def test_stream_id_does_not_implicitly_open_or_grant_trust(coding_app):
     async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
         response = await client.get("/api/coding/conversations/not-open/events")
         assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_run_stop_and_history_preserve_exact_native_identities(coding_app):
+    app, headers = coding_app
+    calls = []
+    class RecordingRuntime:
+        async def command(self, method, params):
+            calls.append((method, params))
+            if method == "prompt":
+                return {"request_id": "native-request", "submission_key": params["submission_key"]}
+            if method == "cancel":
+                return {"conversation_id": params["conversation_id"], "request_id": params["request_id"], "cancel_requested": True}
+            return {"cut": params["cut"], "entries": [], "older": False, "newer": False}
+    app.state.coding_runtime = RecordingRuntime()
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        response = await client.post("/api/coding/conversations/exact-conversation/prompts", json = {"submission_key": "same-key", "text": "Please work"})
+        assert response.status_code == 202
+        assert response.json()["request_id"] == "native-request"
+        response = await client.post("/api/coding/conversations/exact-conversation/requests/native-request/cancel")
+        assert response.status_code == 200
+        assert response.json() == {"conversation_id": "exact-conversation", "request_id": "native-request", "cancel_requested": True}, "cancel acceptance must not fabricate terminal settlement"
+        cut = {"journal": "root", "leaf": "captured-leaf"}
+        response = await client.post("/api/coding/conversations/exact-conversation/entries", json = {"cut": cut})
+        assert response.status_code == 200
+        assert response.json()["cut"] == cut
+        invalid = await client.post("/api/coding/conversations/exact-conversation/prompts", json = {"submission_key": "same-key", "text": "work", "api_key": "must-not-pass"})
+        assert invalid.status_code == 422
+    assert calls == [
+        ("prompt", {"conversation_id": "exact-conversation", "submission_key": "same-key", "text": "Please work"}),
+        ("cancel", {"conversation_id": "exact-conversation", "request_id": "native-request"}),
+        ("read_entries", {"conversation_id": "exact-conversation", "cut": cut, "anchor": "latest", "max_entries": 100, "max_bytes": 262144}),
+    ]
 
 
 @pytest.mark.asyncio

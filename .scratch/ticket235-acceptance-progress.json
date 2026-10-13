@@ -1,0 +1,49 @@
+{
+  "phase": "Delegated driver implementation and both required browser workloads completed; parent-owned visual follow-up and explicit coverage gaps remain",
+  "python": "/mnt/disks/unslothai/mugi/mimir-ticket-runner/studio-233/attempts/235/1/studio/.venv/bin/python",
+  "browser": "Firefox 155.0, software rendering; system Chrome crashes SIGTRAP",
+  "active_runs": [],
+  "terminal_results": [
+    {"kind":"deterministic", "session":6004, "exit_code":0, "run_id":"state-3251007e", "status":"passed", "scenario_count":25, "screenshot_count":20, "report":"../worker/browser-deterministic-03/report.json", "log":"../worker/browser-deterministic-03-driver.log", "native_process_settled":true, "server_port_closed":true},
+    {"kind":"live", "session":17296, "exit_code":0, "run_id":"state-2ddf4e0f", "status":"passed", "scenario_count":17, "screenshot_count":11, "report":"../worker/browser-live-02/report.json", "log":"../worker/browser-live-02-driver.log", "native_process_settled":true, "server_port_closed":true, "request_id":"prompt-2026-10-13T03-44-18-050Z_6ff2e781-abef-476b-9034-994ce9b61510", "terminal_status":"Completed", "public_alerts":[]}
+  ],
+  "prior_terminal_results": [
+    {"kind":"deterministic-01", "exit_code":1, "run_id":"state-b872316b", "report":"../worker/browser-deterministic-01/report.json", "failure":"HTTP202 accepted prompt, then frontend error boundary; cleanup confirmed"},
+    {"kind":"deterministic-diagnostic-02", "exit_code":1, "run_id":"state-6ac6d26c", "report":"../worker/browser-deterministic-02/report.json", "screenshot":"../worker/browser-deterministic-02/failed-workload.png", "browser_error":"can't access property \"tool\", e is undefined", "provider_request_received":true, "native_cleanup":true, "server_port_closed":true},
+    {"kind":"live-01", "exit_code":1, "report":"../worker/browser-live-01/report.json", "failure":"Legacy default 5-second reopen assertion before model request; cleanup confirmed"}
+  ],
+  "driver_readiness_fix": "Create/open await actual 201/200 native identity response and committed view, and refresh readiness. Native control deadlines unchanged.",
+  "tool_tests":{"status":"passed", "count":6, "latest_duration_seconds":1.08, "artifact":"../worker/browser-tool-tests.txt"},
+  "compile_and_diff_check":"passed",
+  "frozen_native":{
+    "binary":"../worker/native-235-final/mimir",
+    "package":"../worker/native-235-final/package",
+    "binary_sha256":"a83ede16e543e01ade276af79c019831f93617dd6b41872176cbaa541d3b8bfc",
+    "plugin_sha256":"b7ae9cfbe9ee9a6f88c3da1fea0c5503b31ba0bd2b9962e2ecf151acd19d1610",
+    "frontend_index_sha256":"13dd3c8e41bc5f4460c2896ec5c9f86b8f6a58856c0305321d34a404b4264f15",
+    "hashes_rechecked_after_both_runs":true,
+    "install_setup_timeout_seconds":240
+  },
+  "live_configuration":{"native_profile":"/home/mugi/.mimir/agent", "provider":"chatgpt", "model":"gpt-6.1-sol", "auth_present":true, "credentials_printed_or_copied":false},
+  "live_host_file":"../worker/browser-live-02/state-2ddf4e0f/projects/first-project/studio-live-evidence.txt",
+  "live_host_file_exact_content":"STUDIO_LIVE_FILE_EVIDENCE\n",
+  "visual_evidence":{
+    "contact_sheets":["../worker/browser-deterministic-03/capture-contact-sheet.png", "../worker/browser-live-02/capture-contact-sheet.png"],
+    "all_captures_inspected_in_contact_sheets":true,
+    "representative_full_size_captures_inspected":["desktop-tools-public-output.png", "desktop-stopping.png", "desktop-cancelled-cleanup.png", "narrow-tool-inspection.png", "narrow-picker.png", "live-terminal.png"],
+    "live_main_pane_copies":"../worker/browser-live-02/main-pane-captures/",
+    "privacy_note":"Original live desktop captures contain unrelated shared native-history sidebar titles. Prefer main-pane copies for sharing; originals are preserved."
+  },
+  "frontend_follow_up":{
+    "finding":"Prior provider-failure completion.error remains visible under a later request's Stopping status and identity until that later request completes",
+    "screenshot":"../worker/browser-deterministic-03/desktop-stopping.png",
+    "source_evidence":["studio/frontend/src/features/coding/run-session.ts:260-283", "studio/frontend/src/features/coding/run-session.ts:322-337", "studio/frontend/src/features/coding/coding-surface.tsx:176-179"],
+    "recommendation":"Parent should scope displayed completion error to the relevant native request identity and add a cross-request regression; do not erase evidence optimistically before native admission.",
+    "frontend_modified_by_this_worker":false
+  },
+  "coverage_gaps":[
+    "Real native cleanup failure was not deliberately induced. Actual successful shell cancellation, exact PID settlement and supervisor teardown were checked. Provider/tool failure is not cleanup-failure coverage.",
+    "CPU-only composition mounts production coding/auth routers and built Studio UI, not unrelated ML/training routers. No concurrent ordinary model workload was loaded. Observer isolation was measured, not live GPU coexistence."
+  ],
+  "next":"Parent integration: review stale cross-request error display; retain terminal reports and isolated screenshot copies. If frontend is rebuilt after fixing this finding, rerun deterministic browser acceptance against that build."
+}

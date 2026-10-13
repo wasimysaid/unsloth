@@ -223,7 +223,9 @@ class CodingRuntime:
         except TimeoutError as exc:
             reconciliation = (
                 "load the saved MCP version for comparison before deliberately retrying. Your draft is retained."
-                if method == "mcp_save" else "refresh native state before trying again."
+                if method == "mcp_save" else
+                "reconnect the native view to reconcile its state. Prompt retries must reuse "
+                "the original submission identity; do not blindly retry other commands."
             )
             raise CodingRuntimeError(
                 "uncertain", "Mimir has not confirmed this operation. It was not retried; " + reconciliation,
