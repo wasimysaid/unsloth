@@ -22,8 +22,11 @@ async function checkFrame(
   if (event === "view") {
     const view = JSON.parse(data) as { event?: { type?: string } };
     if (view.event?.type === "closed")
-      throw new Error(
-        "The native conversation view closed. Reopen the saved conversation to continue.",
+      throw Object.assign(
+        new Error(
+          "The native conversation view closed. Reopen the saved conversation to continue.",
+        ),
+        { requiresReopen: true },
       );
     await onView?.(view);
     return;

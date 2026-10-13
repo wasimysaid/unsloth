@@ -19,7 +19,12 @@ export function codingRunAdapter(
       state.connection !== "connected" ||
       state.recovering ||
       state.submitting ||
-      Boolean(state.stopping || state.uncertainSubmission),
+      Boolean(
+        state.stopping ||
+          state.uncertainSubmission ||
+          state.storageError ||
+          state.reconcilingAction,
+      ),
     isLoading: state?.connection === "loading",
     isRunning: Boolean(state?.native?.active_request || state?.stopping),
     messages: groupCodingRows(state?.rows ?? []),

@@ -1,4 +1,4 @@
-# Coding native run/stop projection (#234–235)
+# Coding native run/stop and delivery recovery (#234–236)
 
 `/coding` keeps Studio’s authenticated route gate, sidebar primitives and composer
 CSS, without importing ordinary chat execution, tool orchestration, model loading
@@ -61,17 +61,62 @@ Apply/Revert controls or tool-selection pills.
 ## Delivery and lifetime
 
 Before project selection or complete capture, the composer is disabled. Enter and
-Send forward text; queued requests remain native. An unconfirmed prompt retains its
-original key for explicit same-submission retry and is reconciled against native
-request state. Durable retry across reload/restart is #236, not promised here.
+Send forward text; queued requests remain native. Before **any** prompt HTTP send,
+`pending-submission.ts` writes and verifies one conversation-scoped delivery record
+in localStorage under `unsloth:coding:pending-submission:${encodeURIComponent(id)}`:
+`{version:1, conversation_id:id, key, text}`. It is not a transcript store. The record
+is removed only after confirmed acceptance/native request identity or explicit
+pre-admission rejection; read/write/readback/cleanup failures disable sending.
+If storage fails before HTTP, the eagerly-cleared assistant-ui composer text is
+retained separately as a **known-unsent draft**, not a transcript row or uncertain
+submission. A selectable, read-only `coding-unsent-draft` field lets the user copy it
+before leaving/reopening. This draft is in-memory only because storage failed;
+nothing is sent or retried automatically.
+
+Reload/reopen restores pending metadata, never automatically replays the prompt,
+and blocks new input. Only after a reconstructed, non-recovering native view may
+**Retry same submission** send the original key/text. A matching native request
+clears pending metadata even after frontend/plugin restart and lost acknowledgement.
+An interrupted accepted request is delivery-confirmed, not continued: continuation
+requires deliberate new input, never reuse of delivery recovery as a process restart.
+Clear browser storage only deliberately: deleting the pending record loses the
+browser's ability to identify uncertain delivery.
 
 Stop captures the active native request, remains **Stopping…** through its matching
 terminal completion/cleanup, and exposes native cleanup failure as failure. A
 reconnected atomic capture may settle that request only when its native terminal
 status and released active-request admission agree. Other queued or conversation
-requests are never substituted. Disconnect stays visible and never means stopped;
-detach closes only the view, not the conversation owner. No automatic process restart
-or command replay is added. Full recovery/retirement is handled by later tickets.
+requests are never substituted. Uncertain non-prompt acknowledgements use the shared
+**inspect fresh native captured view → reconcile exact target → explicitly offer an
+appropriate action** pattern, demonstrated by Stop. Stop is not automatically
+replayed and this is not a generic exactly-once guarantee. A still-active target can
+be explicitly retried only after capture/recovery; a terminal, released target settles
+without cancelling the next request. Unresolved cleanup remains unconfirmed.
+Create/open transport uncertainty likewise inspects the authoritative shared catalog
+without replay, preserves any previously active identity/canonical folder, and does
+not infer success by matching a folder. Until catalog inspection succeeds all new
+openings are blocked; afterward only deliberate saved-identity reopen is offered,
+not another creation. Failed inspection remains actionable through history refresh.
+Explicit pre-admission folder/lease/trust errors remain normal actionable refusals.
+
+Transport loss automatically reconnects with 500 ms exponential backoff capped at
+15 seconds. Every attempt reconstructs a new authoritative capture; no Last-Event-ID
+or arbitrary last-event replay is sent. The persistent disconnect banner survives
+HTTP connection, unfinished entry reads and recovering resets until capture/checkpoint
+is complete. A native closed view instead requires deliberate reopen, preserving
+native lease/folder/trust errors. Detach aborts only watching and reconnect timers,
+not accepted work or the conversation owner. Late Stop replies are gated by the
+captured lifecycle generation, so neither cancellation refusal nor transport failure
+can reconnect a detached or superseded view. No process restart or command replay
+is added. Nonprogressing/oversized older pages stay visibly incomplete and actionable.
+Coding-specific transport messages explicitly leave delivery/work unconfirmed rather
+than inferring host death or suggesting relaunch; native HTTP refusals and aborts
+retain their original errors.
+
+Stable browser evidence selectors: `coding-disconnect-banner`,
+`coding-delivery-recovery` (with `data-submission-key`), `coding-retry-submission`,
+`coding-submission-recovered`, `coding-submission-storage-error`, `coding-unsent-draft`,
+`coding-action-reconciliation`, and `coding-opening-reconciliation`.
 
 ## Verification
 

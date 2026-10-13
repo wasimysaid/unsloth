@@ -35,6 +35,7 @@ import urllib.request
 
 from coding_provider_fixture import ProviderFixture
 from coding_run_scenarios import run_scenarios
+from coding_recovery_scenarios import run_recovery_scenarios
 
 
 def shared_trust_path() -> Path:
@@ -50,7 +51,7 @@ def main() -> None:
     runtime_input.add_argument("--mimir-source", type = Path, help = "Build the current paired source and product package before acceptance")
     parser.add_argument("--plugin-package", type = Path)
     parser.add_argument("--evidence-dir", type = Path, required = True)
-    parser.add_argument("--workload", choices = ("opening", "deterministic", "live"), default = "deterministic",
+    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "live"), default = "deterministic",
                         help = "Live uses the existing native provider/credential profile; never copies credentials")
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
     parser.add_argument("--chrome", default = "/usr/bin/google-chrome", help = "Chromium executable; ignored for Firefox")
@@ -78,7 +79,7 @@ def main() -> None:
     live = args.workload == "live"
     native = shared_trust_path().parent if live else state_root / "mimir-home"
     native.mkdir(exist_ok = True)
-    provider = ProviderFixture() if args.workload == "deterministic" else None
+    provider = ProviderFixture() if args.workload in ("deterministic", "recovery") else None
     if provider:
         provider.configure(native)
     projects = state_root / "projects"
@@ -142,9 +143,33 @@ def main() -> None:
         port = sock.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
     output = (evidence / "server.log").open("w")
-    server = subprocess.Popen([sys.executable, "-m", "uvicorn", "tests.coding_acceptance_app:create_app", "--factory",
-                               "--host", "127.0.0.1", "--port", str(port)],
-                              cwd = root / "studio" / "backend", env = env, stdout = output, stderr = subprocess.STDOUT)
+    server_args = [sys.executable, "-m", "uvicorn", "tests.coding_acceptance_app:create_app", "--factory",
+                   "--host", "127.0.0.1", "--port", str(port)]
+    server = subprocess.Popen(server_args, cwd = root / "studio" / "backend", env = env,
+                              stdout = output, stderr = subprocess.STDOUT)
+
+    def restart_server():
+        nonlocal server
+        import psutil
+        children = [child for child in psutil.Process(server.pid).children()
+                    if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
+        assert len(children) == 1
+        before = children[0].pid
+        server.terminate()
+        assert server.wait(timeout = 45) in (0, -15)
+        assert not children[0].is_running(), "Clean acceptance restart did not await native cleanup"
+        report.setdefault("runtime_generations", []).append({"pid": before, "native_settled": True})
+        server = subprocess.Popen(server_args, cwd = root / "studio" / "backend", env = env,
+                                  stdout = output, stderr = subprocess.STDOUT)
+        for _ in range(100):
+            assert server.poll() is None, "Restarted acceptance server exited"
+            try:
+                urllib.request.urlopen(base + "/api/auth/status", timeout = 1).close()
+                return
+            except (urllib.error.URLError, TimeoutError):
+                time.sleep(0.1)
+        raise AssertionError("Restarted acceptance server did not become ready")
+
     try:
         for _ in range(100):
             if server.poll() is not None:
@@ -268,10 +293,35 @@ def main() -> None:
             expect(page.get_by_test_id("coding-canonical-cwd")).to_have_text(str(first))
             expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout = 60000)
             scenario("A6-change-reopen", "Different project creates a different native identity; deliberate reopen preserves first ID and cwd")
+            if args.workload == "recovery":
+                saved_second = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text = second_id)
+                for failure, expected_error in (("denied", "denies access"), ("missing", "does not exist")):
+                    if failure == "denied":
+                        second.chmod(0)
+                    else:
+                        second.rmdir()  # This empty disposable folder was created above by this run.
+                    try:
+                        saved_second.click()
+                        expect(page.get_by_role("alert").filter(has_text = expected_error)).to_be_visible(timeout = 60000)
+                        expect(page.get_by_test_id("coding-conversation-id")).to_have_text(first_id)
+                        snapshot(page, "recovery-saved-folder-" + failure)
+                    finally:
+                        if failure == "missing":
+                            second.mkdir()
+                        second.chmod(0o700)
+                scenario("A6-saved-folder-reopen-errors", "Missing and OS-denied saved folders were refused on deliberate reopen even with retained native ownership; current conversation identity stayed unchanged, no replacement folder or fork")
             if args.workload != "opening":
                 try:
-                    run_scenarios(page, context, base, provider, first, second_id,
-                                  report, scenario, snapshot, live = live)
+                    if args.workload == "recovery":
+                        run_recovery_scenarios(page, context, base, provider, first, second_id,
+                                               report, scenario, snapshot, restart_server)
+                        product = [child for child in psutil.Process(server.pid).children()
+                                   if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
+                        assert len(product) == 1
+                        report["supervised_pid"] = product[0].pid
+                    else:
+                        run_scenarios(page, context, base, provider, first, second_id,
+                                      report, scenario, snapshot, live = live)
                 except Exception:
                     show_error = page.get_by_role("button", name = "Show Error", exact = True)
                     if show_error.count():
@@ -366,7 +416,7 @@ def main() -> None:
                 ("post", f"/api/coding/conversations/{first_id}/open", {}),
                 ("get", f"/api/coding/conversations/{first_id}/events", {}),
                 ("post", f"/api/coding/conversations/{first_id}/prompts", {"data": {"submission_key": "unauthenticated-valid-key", "text": "Must not execute"}}),
-                ("post", f"/api/coding/conversations/{first_id}/requests/{report.get('workload', {}).get('requests', [{}])[0].get('request_id', 'known-request')}/cancel", {}),
+                ("post", f"/api/coding/conversations/{first_id}/requests/{report.get('workload', report.get('recovery', {})).get('requests', [{}])[0].get('request_id', 'known-request')}/cancel", {}),
                 ("post", f"/api/coding/conversations/{first_id}/entries", {"data": {"cut": {}, "anchor": "latest", "max_entries": 10, "max_bytes": 1024}}),
             ):
                 response = getattr(unauth, method)(path, **kwargs)
