@@ -182,6 +182,36 @@ tool and fault evidence is distinct from live-model evidence. This slice does no
 claim external-provider/local-model full-PoC acceptance or implemented-UI human
 review; those remain #255–256.
 
+## Subagent inspection slice (#241)
+
+Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`
+and private Mimir `91b975adae2df627d7c67c6bcede6d910a592a7d`.
+The product bridge consumes existing native child view captures, exact child/attempt
+activity, checkpoints, bounded child-journal reads, and non-consuming retained
+outcomes. The authenticated child-inspection endpoint exposes no delegation controls.
+Mimir remains the delegation and completion-delivery owner.
+
+The browser presents compact agent-icon rows and a right-hand inspector, expanded
+only on demand. The narrow layout covers the transcript width while leaving native
+connection feedback and main-session Stop available. Inspecting another attempt or
+dismissing the panel aborts only obsolete inspection reads. Historical attempts and
+outcomes keep their exact identities; historical reports cannot turn old work live
+and launch acceptance never fabricates completion. Native outcome reads do not
+claim the parent’s pending completion. Missing old transcript cuts are explicitly
+unavailable, never replaced with the newer attempt’s journal. Public oversized
+entry/detail/result prefixes stay bounded with truthful incomplete-content labels.
+
+Run the same actual coding-route driver with `--workload children --browser firefox`.
+It uses a deterministic HTTP provider with **actual native delegation** and native
+read-file work, including a continued attempt and terminal failure. Scenario reports
+preserve `(child handle, attempt)` outcome identities, ordered view positions,
+captured cuts, parent completion debt/delivery, desktop 1440×1000 and narrow 390×844
+keyboard/navigation/dismissal captures, disconnect/reopen, and awaited cleanup.
+Focused browser-driver, projection and native view-contract tests complement this
+route seam; fixture success is not live-model or human acceptance. See the task-local
+reports for checks actually completed. Full external/local-model PoC acceptance
+and implemented-UI human review remain #255–256, not claims of this feature slice.
+
 ## Run/stop slice (#235)
 
 Implementation baselines are Studio `1ca8b10f3f3c43fddf3e510cf90aa5c65b79d9bd`
@@ -355,10 +385,10 @@ The task-local `worker/ticket-result.json` and browser `report.json` identify ac
 commands/artifacts/results; this tracked matrix intentionally contains no stale
 claim tied to a mutable local HEAD or absent screenshots.
 
-| ID | Implemented #234–236 coverage (see attempt reports for verification) | Remaining capability evidence |
+| ID | Implemented #234–236 and #241 coverage (see attempt reports for verification) | Remaining capability evidence |
 |---|---|---|
 | A1 | Native opening/SDK contracts; single supervised product plugin; authenticated HTTP/SSE; exact submission/request/tool identities; atomic ordered public view, checkpoints/reset/recovery, bounded cut reads and durable reconnect reconciliation (#236) | Cross-feature integration and packaged-consumer regression (#254) |
-| A2 | Native prompt/Stop controls; compact inspectable public tool results/failures and clipping disclosure | Questions, modes, plans/goals, children and diagnostics (#237 onward) |
+| A2 | Native prompt/Stop controls; compact inspectable public tool results/failures and clipping disclosure; exact child-attempt inspector with non-consuming outcomes, public historical completion records, bounded child views and real native-delegation route driver (#241) | Questions, modes, plans/goals and diagnostics (respective tickets); cross-feature/live-model acceptance (#254/#255) |
 | A3 | Shared typed live/historical reported changes; collapsed inspection-only rows, bounded unified hunks, optional counts and incomplete/binary labels (#238) | See task-local file-change browser and SDK reports; cross-feature/live acceptance (#254/#255) |
 | A4 | No model picker | Model/reasoning interactions (#244) |
 | A5 | Externally configured provider admission; no Studio local-model serving | Local-model requests and whole-request protection (#246/#255) |

@@ -38,6 +38,7 @@ def coding_app(monkeypatch, tmp_path):
     ("POST", "/conversations/known-id/prompts", {"submission_key": "exact-key", "text": "work"}),
     ("POST", "/conversations/known-id/requests/exact-request/cancel", None),
     ("POST", "/conversations/known-id/entries", {"cut": {"journal": "root", "leaf": None}}),
+    ("GET", "/conversations/known-id/children/agent-exact/attempts/1", None),
 ])
 async def test_every_surface_requires_existing_studio_auth(coding_app, method, path, body):
     app, _ = coding_app
@@ -160,6 +161,48 @@ async def test_run_stop_and_history_preserve_exact_native_identities(coding_app)
         ("prompt", {"conversation_id": "exact-conversation", "submission_key": "same-key", "text": "Please work"}),
         ("cancel", {"conversation_id": "exact-conversation", "request_id": "native-request"}),
         ("read_entries", {"conversation_id": "exact-conversation", "cut": cut, "anchor": "latest", "max_entries": 100, "max_bytes": 262144}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_child_inspection_forwards_exact_attempt_and_native_cut_without_controls(coding_app):
+    app, headers = coding_app
+    calls = []
+    outcome = {"handle": "agent-exact", "attempt": 1, "status": "completed", "result": "earlier result", "error": None}
+    class RecordingRuntime:
+        async def command(self, method, params):
+            calls.append((method, params))
+            if method == "child_detail":
+                if params["attempt"] == 3:
+                    raise CodingRuntimeError("not_found", "Attempt was not found.")
+                # Native children is on attempt 2; don't invent an old child/cut.
+                return {"child": None, "outcome": outcome}
+            return {"cut": params["cut"], "rows": [], "older": False, "newer": False}
+    app.state.coding_runtime = RecordingRuntime()
+    prefix = "/api/coding/conversations/exact-conversation"
+    cut = {"journal": {"child": "agent-exact"}, "leaf": "captured-child-leaf"}
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        response = await client.get(prefix + "/children/agent-exact/attempts/1")
+        assert response.status_code == 200
+        assert response.json() == {"child": None, "outcome": outcome}
+        response = await client.post(prefix + "/entries", json = {"cut": cut})
+        assert response.status_code == 200
+        assert response.json()["cut"] == cut
+        response = await client.get(prefix + "/children/agent-exact/attempts/3")
+        assert response.status_code == 404
+        for attempt in ["0", "-1", "4294967296", "not-an-attempt"]:
+            response = await client.get(prefix + "/children/agent-exact/attempts/" + attempt)
+            assert response.status_code == 422
+        for journal in ["child", {"child": ""}, {"child": "agent-exact", "private": True}, {"child": "x" * 129}]:
+            response = await client.post(prefix + "/entries", json = {"cut": {"journal": journal, "leaf": None}})
+            assert response.status_code == 422
+        for action in ["launch", "continue", "steer", "stop"]:
+            response = await client.post(prefix + "/children/agent-exact/attempts/1/" + action)
+            assert response.status_code == 404
+    assert calls == [
+        ("child_detail", {"conversation_id": "exact-conversation", "handle": "agent-exact", "attempt": 1}),
+        ("read_entries", {"conversation_id": "exact-conversation", "cut": cut, "anchor": "latest", "max_entries": 100, "max_bytes": 262144}),
+        ("child_detail", {"conversation_id": "exact-conversation", "handle": "agent-exact", "attempt": 3}),
     ]
 
 
