@@ -1,4 +1,48 @@
-# Coding: trusted-project opening and native run/stop (#234–235)
+# Coding: trusted-project opening, native execution and focused Settings
+
+## Extension inspection and maintenance (#252)
+
+Implementation baselines: Studio `a784d9193d38c640562b5464d5e9c10def6ac82d`
+and paired Mimir `7ddec52c566497dd6e0cf572a18272a88d8fa10a`.
+The Mimir Settings tab composes native effective skill discovery, structured
+installed/selected/enabled/live plugin inventory, and bounded supervisor
+connection facts. Opening Settings is not project selection or a trust grant:
+extension commands require an already retained native conversation owner.
+Installed packages are not implicitly enabled or live. Runtime frontend
+activation is identified separately from session plugin activation. Inventory rows
+are identified by plugin ID and native lifetime: changing an installed package's
+lifetime can leave a retained live owner alongside the new installed row. Plugin
+reload refreshes the native effective-skill projection before reporting completion,
+without executing a prompt.
+
+`GET /api/coding/diagnostics` does not start/restart the process and exposes
+only allowlisted connection/protocol/count/transport-bound facts. It never
+returns environment, executable/package paths, raw errors, stderr, configuration
+or credentials. Like every coding route, all Settings endpoints retain Studio's
+existing authentication dependency. Inventory and skill instructions/configuration
+stay native; the browser receives bounded overview metadata only.
+
+`Refresh view and inventory` re-reads the view; it does not execute reload.
+`Reload plugins for this conversation` sends one explicitly identified operation
+to the existing native reconciliation owner. This reconciles shared runtime
+plugins and exactly the selected conversation's session plugins, not other
+session activations or the selected process frontend. Busy native reload remains Deferred
+until native state confirms application. Lost replies remain Unconfirmed and are
+reconciled by exact operation ID via read-only inspection, never transport replay.
+A mounted Settings view re-reads pending outcomes for at most one minute, after
+which explicit refresh remains available. Switching tabs, targets or disconnecting
+does not cancel reload, close owners, or create another execution/persistence owner.
+
+Reload does not replace unrelated sessions or the runtime `studio.frontend`
+activation. Model catalog refresh (#245), MCP save/apply/reconnect (#250–251),
+and whole-runtime restart/frontend replacement (#249) remain separately owned
+operations; their controls are not implemented by this ticket or disguised as
+plugin reload. The MCP section can compose into this same tab when those owning
+tickets land; there is no second Studio MCP store or direct configuration editor.
+
+Focused Settings browser scenarios extend the existing coding-route driver.
+Fixture/fault-injected results are distinct from live-model/full-PoC acceptance;
+this ticket does not claim #255 live workloads or #256 human UI review complete.
 
 ## Run/stop slice (#235)
 
@@ -172,7 +216,7 @@ The task-local `worker/ticket-result.json` and browser `report.json` identify ac
 commands/artifacts/results; this tracked matrix intentionally contains no stale
 claim tied to a mutable local HEAD or absent screenshots.
 
-| ID | Implemented #234–235 coverage (see attempt reports for verification) | Remaining capability evidence |
+| ID | Implemented #234–235/#252 coverage (see attempt reports for verification) | Remaining capability evidence |
 |---|---|---|
 | A1 | Native opening/SDK contracts; single supervised product plugin; authenticated HTTP/SSE; exact submission/request/tool identities; atomic ordered public view, checkpoints/reset/recovery and bounded cut reads | Durable reload/reconnect delivery reconciliation (#236) |
 | A2 | Native prompt/Stop controls; compact inspectable public tool results/failures and clipping disclosure | Questions, modes, plans/goals, children and diagnostics (#237 onward) |
@@ -181,7 +225,7 @@ claim tied to a mutable local HEAD or absent screenshots.
 | A5 | Externally configured provider admission; no Studio local-model serving | Local-model requests and whole-request protection (#246/#255) |
 | A6 | Canonical/native validated opening, non-persisting effective trust, saved-policy tests, child inheritance, mismatch/lease refusals, authenticated run/Stop/history access | Concurrent execution/same-folder warning and retirement/recovery (#247–249) |
 | A7 | Exact request cancellation; Stop acknowledgment distinct from cleanup; disconnect never stops owners; typed native failures; no automatic replay; awaited EOF shutdown | Durable submission identity across reload, recovery, clocks and full interruption scenarios (#236/#248/#249) |
-| A8 | No Settings management surface | Native MCP and headless inventory/settings (#250–252) |
+| A8 | Focused Mimir Settings; native headless installed/enabled/selected/live inventory, effective skills, bounded diagnostics, exact scoped reload and uncertain-outcome reconciliation (#252) | MCP save/apply/reconnect (#250–251) and separately owned runtime restart (#249) |
 | A9 | Ordinary-chat store/engine untouched; affected shared/ordinary-chat tests; coding route excludes ordinary model observers and chat execution imports | Real ordinary-chat smoke and cross-feature regression (#254/#255) |
 | A10 | Rendered opening, deterministic provider/native-tool, cancellation/failure, keyboard/narrow, and separate live-provider driver | Full cross-feature execution UI checks and user's implemented-UI review (#255/#256) |
 
