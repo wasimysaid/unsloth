@@ -50,6 +50,9 @@ test("installed external runtime projects native state and forwards exact submis
   const calls: unknown[] = [];
   let deliver!: (view: unknown) => Promise<void>;
   const api: RunApi = {
+    async answer(id, target) {
+      return { conversation_id: id, ...target, accepted: true };
+    },
     async configure() {
       return {
         provider: "provider",
@@ -111,6 +114,7 @@ test("installed external runtime projects native state and forwards exact submis
         active_request: null,
         requests: [],
         pending_user_request: false,
+        user_request: null,
       },
       root: { cut: { journal: "root", leaf: "leaf" }, live_invocations: [] },
     },
@@ -155,6 +159,8 @@ test("installed runtime upcoming assistant placeholder is not a native transcrip
     reopenRequired: false,
     reconcilingAction: null,
     retryStop: null,
+    answerTarget: null,
+    answerForms: [],
     commands: null,
     discoveringCommands: false,
     commandBusy: false,
@@ -181,6 +187,7 @@ test("installed runtime upcoming assistant placeholder is not a native transcrip
       },
       active_request: "request",
       pending_user_request: false,
+      user_request: null,
       requests: [
         { id: "request", status: "running", submission_key: "submission" },
       ],
@@ -269,6 +276,9 @@ test("installed composer.send retains a recoverable unsent draft when submission
     throw new Error("Storage quota exceeded");
   };
   const api: RunApi = {
+    async answer(id, target) {
+      return { conversation_id: id, ...target, accepted: true };
+    },
     async configure() {
       throw new Error("Unexpected configuration change in composer test");
     },
@@ -329,6 +339,7 @@ test("installed composer.send retains a recoverable unsent draft when submission
           active_request: null,
           requests: [],
           pending_user_request: false,
+          user_request: null,
         },
         root: { cut: { journal: "root", leaf: null }, live_invocations: [] },
       },
