@@ -33,6 +33,7 @@ const native = (): NativeState => ({
   active_request: null,
   requests: [],
   pending_user_request: false,
+  user_request: null,
   plan,
   action_disabled_reason: null,
 });
@@ -41,6 +42,9 @@ function harness() {
   let position = 0;
   const calls: unknown[] = [];
   const api: RunApi = {
+    async answer() {
+      throw new Error("Plan actions must never answer a native question.");
+    },
     async configure() {
       return native().configuration;
     },

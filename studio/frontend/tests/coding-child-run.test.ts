@@ -23,6 +23,7 @@ const native: NativeState = {
   pending_user_request: false,
   plan: null,
   action_disabled_reason: null,
+  user_request: null,
 };
 const child: ChildAttempt = {
   handle: "agent-native",
@@ -42,6 +43,9 @@ function harness() {
     },
     async decidePlan() {
       throw new Error("Child inspection must not decide a native plan");
+    },
+    async answer() {
+      throw new Error("Child inspection must not answer a parent question");
     },
     async configure() {
       throw new Error("Child inspection must not configure the parent");

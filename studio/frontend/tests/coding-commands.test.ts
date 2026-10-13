@@ -37,6 +37,9 @@ function harness(storage = memorySubmissionStorage()) {
     async decidePlan() {
       throw new Error("Command dispatch must not decide plans through Studio");
     },
+    async answer() {
+      throw new Error("Command tests must not answer a question");
+    },
     async configure() {
       return {
         provider: "fixture",
@@ -128,6 +131,7 @@ function harness(storage = memorySubmissionStorage()) {
       pending_user_request: false,
       plan: null,
       action_disabled_reason: null,
+      user_request: null,
     };
     await deliver({
       subscription: `view-${views}`,

@@ -116,6 +116,19 @@ class PlanSelection(BaseModel):
     decision: Literal["implement", "implement_fresh", "save_and_stop"]
 
 
+class QuestionAnswer(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    question_id: str = Field(min_length = 1, max_length = 128)
+    selected_options: list[str] = Field(max_length = 4)
+    freeform_text: str | None = Field(default = None, max_length = 65536)
+
+
+class AnswerSubmission(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    subscription: str = Field(min_length = 1, max_length = 128)
+    answers: list[QuestionAnswer] = Field(min_length = 1, max_length = 3)
+
+
 class CommandInvocation(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     operation_id: str = Field(min_length = 1, max_length = 128)
@@ -321,6 +334,19 @@ async def select_mode(conversation_id: str, body: ModeSelection, request: Reques
 async def decide_plan(conversation_id: str, body: PlanSelection, request: Request):
     # Exact current identity/revision is validated at the native operation boundary.
     return await _command(request, "decide_plan", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+@router.post("/conversations/{conversation_id}/requests/{request_id}/questions/{user_request_id}/answers")
+async def answer_questions(conversation_id: str, request_id: str, user_request_id: str,
+                           body: AnswerSubmission, request: Request):
+    # Native admission validates the current request/question/view before accepting
+    # the waiter. Public answer history and terminal cleanup are separate evidence;
+    # uncertain delivery must be reconciled through the native view, never replayed.
+    return await _command(request, "answer", {"conversation_id": conversation_id,
+                          "request_id": request_id, "user_request_id": user_request_id,
+                          **body.model_dump()})
+
+
 @router.get("/conversations/{conversation_id}/commands")
 async def discover_commands(conversation_id: str, request: Request):
     return await _command(request, "commands", {"conversation_id": conversation_id})

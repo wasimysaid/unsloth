@@ -1,4 +1,4 @@
-# Coding native run/stop, recovery, reported changes, rich inputs, concurrency and Mimir Settings
+# Coding native run/stop, recovery, questions, reported changes, rich inputs, concurrency and Mimir Settings
 
 `/coding` keeps Studio’s authenticated route gate, sidebar primitives and composer
 CSS, without importing ordinary chat execution, tool orchestration, model loading
@@ -91,6 +91,38 @@ native stale validation is still required for races after browser checks.
 
 Stable selectors: `coding-current-plan`, `coding-historical-plan`,
 `coding-plan-content`, `coding-plan-mode`, `coding-plan-reconciliation`.
+
+## Native question cards (#237)
+
+The authoritative `state.user_request` supplies question IDs, prompts, native option
+labels/descriptions, and single/multiple selection. Expanded inline cards render
+those controls separately from the disabled ordinary composer. HTML radio groups,
+checkboxes, freeform textareas and Submit support keyboard operation and wrap at
+narrow widths. A new card focuses its heading only while following latest activity;
+reconnect does not steal focus from an existing draft or earlier reading.
+
+`POST /conversations/{id}/requests/{request_id}/questions/{user_request_id}/answers`
+uses `{subscription, answers:[{question_id,selected_options,freeform_text}]}`. Every
+answer captures the exact current live view, running request and pending native
+question identity. Browser guards invalidate old controls on Stop, replacement,
+completion, reconnect and detach; host/native validation is the final authority.
+A command being sent is **Submitting**, never accepted. Only a matching native
+acceptance or typed saved public answer evidence can confirm **Accepted**. The
+transcript displays native accepted answer rows, including after history restoration.
+
+A lost acknowledgement never triggers automatic replay. A fresh atomic view and
+captured-cut history reconcile the exact answer. If the native question is still
+waiting, the retained draft is actionable only through explicit resubmission using
+the new live view. If it is gone with no available accepted evidence, its outcome
+stays unconfirmed and the old draft cannot answer a replacement. Transport loss
+neither cancels the question nor releases the host owner. Native errors remain
+visible with their draft. Up to eight form drafts are ephemeral, not saved public
+history; a full browser reload drops unsent drafts but never replays an answer.
+
+Evidence selectors: `coding-question-card` (native `data-question-id`,
+`data-request-id`, `data-subscription`), `coding-answer-status`, and
+`coding-submit-answer`. Cards disappear from latest activity when their accepted
+native transcript row is visible; no optimistic or duplicate answer row is added.
 
 ## Concurrent conversations and overlap (#247)
 

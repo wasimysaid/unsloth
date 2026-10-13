@@ -61,6 +61,9 @@ test("installed external runtime projects native state and forwards exact submis
         request_id: null,
       };
     },
+    async answer(id, target) {
+      return { conversation_id: id, ...target, accepted: true };
+    },
     async configure() {
       return {
         provider: "provider",
@@ -122,6 +125,7 @@ test("installed external runtime projects native state and forwards exact submis
         active_request: null,
         requests: [],
         pending_user_request: false,
+        user_request: null,
       },
       root: { cut: { journal: "root", leaf: "leaf" }, live_invocations: [] },
     },
@@ -171,6 +175,8 @@ test("installed runtime upcoming assistant placeholder is not a native transcrip
     planControlUncertain: false,
     planControlNotice: null,
     planControlError: null,
+    answerTarget: null,
+    answerForms: [],
     commands: null,
     discoveringCommands: false,
     commandBusy: false,
@@ -199,6 +205,7 @@ test("installed runtime upcoming assistant placeholder is not a native transcrip
       pending_user_request: false,
       plan: null,
       action_disabled_reason: null,
+      user_request: null,
       requests: [
         { id: "request", status: "running", submission_key: "submission" },
       ],
@@ -298,6 +305,9 @@ test("installed composer.send retains a recoverable unsent draft when submission
         request_id: null,
       };
     },
+    async answer(id, target) {
+      return { conversation_id: id, ...target, accepted: true };
+    },
     async configure() {
       throw new Error("Unexpected configuration change in composer test");
     },
@@ -358,6 +368,7 @@ test("installed composer.send retains a recoverable unsent draft when submission
           active_request: null,
           requests: [],
           pending_user_request: false,
+          user_request: null,
         },
         root: { cut: { journal: "root", leaf: null }, live_invocations: [] },
       },

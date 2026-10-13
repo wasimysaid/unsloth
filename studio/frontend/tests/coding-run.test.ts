@@ -43,6 +43,7 @@ const native = (active: string | null = null): NativeState => ({
   pending_user_request: false,
   plan: null,
   action_disabled_reason: null,
+  user_request: null,
 });
 function harness(
   storage: SubmissionStorage = memorySubmissionStorage(),
@@ -68,6 +69,9 @@ function harness(
         decision,
         request_id: null,
       };
+    },
+    async answer(id, target) {
+      return { conversation_id: id, ...target, accepted: true };
     },
     async configure() {
       return native().configuration;

@@ -16,6 +16,8 @@ native provider/credential profile directly; history remains Mimir-owned there.
 Disposable projects, Studio auth and evidence stay in evidence-dir. Use a distinct
 evidence directory for each run. --workload opening runs the previous opening suite;
 --workload plan exercises native Plan refusal, each action, history and lost-ACK recovery.
+--workload questions covers keyboard answers, durable history, stale targets,
+pre/post-delivery ACK loss, reconnect/reopen and Stop while native ask_user waits.
 --workload picker adds ticket-244 rendered model/reasoning/favorites/layout checks
 and a held real native provider call to distinguish running from next selection.
 --extensions adds focused ticket-252 Settings scenarios before the execution suite;
@@ -51,8 +53,7 @@ from coding_extension_scenarios import prepare_extension_fixtures, run_extension
 from coding_input_scenarios import prepare_input_project, input_scenarios, live_input_scenario
 from coding_recovery_scenarios import run_recovery_scenarios
 from coding_plan_scenarios import run_plan_scenarios
-
-
+from coding_question_scenarios import run_question_scenarios
 from coding_command_scenarios import run_command_scenarios
 from coding_retirement_scenarios import run_retirement_scenarios
 from coding_concurrency_scenarios import run_concurrency_scenarios
@@ -60,8 +61,8 @@ from coding_child_scenarios import CHILD_EVENT_CAPTURE, run_child_scenarios
 from coding_file_change_scenarios import LIVE_PROFILE_OBSERVER, run_file_change_scenarios
 
 
-WORKLOADS = ("opening", "deterministic", "picker", "recovery", "plan", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live")
-FIXTURE_WORKLOADS = ("deterministic", "picker", "recovery", "plan", "commands", "retirement", "concurrency", "children", "inputs", "file-changes")
+WORKLOADS = ("opening", "deterministic", "picker", "recovery", "plan", "questions", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live")
+FIXTURE_WORKLOADS = ("deterministic", "picker", "recovery", "plan", "questions", "commands", "retirement", "concurrency", "children", "inputs", "file-changes")
 
 
 def shared_trust_path() -> Path:
@@ -282,10 +283,15 @@ def main() -> None:
             scenario("A10-layout", "1440x1000: chooser beneath composer, Send disabled before selection")
 
             def browse(path):
+                expect(page.get_by_role("button", name = "Browse", exact = True)).to_be_enabled(timeout = 60000)
                 page.get_by_label("Host folder path", exact = True).fill(str(path))
+                expect(page.get_by_label("Host folder path", exact = True)).to_have_value(str(path))
                 page.get_by_role("button", name = "Browse", exact = True).click()
             def open_project(path):
                 page.get_by_role("button", name = "Choose another project" if page.get_by_test_id("coding-opened-conversation").count() else "Choose project folder", exact = True).click()
+                # The chooser starts an initial OS browse. Await its rendered path
+                # before filling so that initialization is not typing into the field.
+                expect(page.get_by_test_id("coding-browsed-path")).to_be_visible(timeout = 60000)
                 browse(path)
                 expect(page.get_by_test_id("coding-browsed-path")).to_have_text(str(Path(path).resolve()))
                 with page.expect_response(lambda response: response.url == base + "/api/coding/conversations" and response.request.method == "POST", timeout = 60000) as created:
@@ -396,6 +402,9 @@ def main() -> None:
                     elif args.workload == "plan":
                         run_plan_scenarios(page, context, base, provider, first, second_id,
                                            report, scenario, snapshot)
+                    elif args.workload == "questions":
+                        run_question_scenarios(page, context, base, provider, first, second_id,
+                                               report, scenario, snapshot)
                     elif args.workload == "commands":
                         run_command_scenarios(page, context, base, provider, first,
                                               report, scenario, snapshot)
