@@ -40,6 +40,37 @@ function client(
   return { api, requests };
 }
 
+test("goal changes carry exact native revision and action without transport replay or fabricated completion", async () => {
+  const result = { conversation_id: "native/id?", request_id: null };
+  const c = client(() => Response.json(result));
+  const change = {
+    action: "pause" as const,
+    revision: "native-owner-goal-revision",
+  };
+  assert.deepEqual(
+    await c.api.createCodingRunApi(7).changeGoal!(result.conversation_id, change),
+    result,
+  );
+  assert.deepEqual(c.requests, [
+    {
+      path: "/api/coding/conversations/native%2Fid%3F/goal",
+      init: {
+        method: "POST",
+        headers: { "X-Mimir-Runtime-Generation": "7", "Content-Type": "application/json" },
+        body: JSON.stringify(change),
+      },
+      options: { retryNetworkErrors: false },
+    },
+  ]);
+  const stale = client(() =>
+    Response.json({ detail: "Goal controls are stale" }, { status: 409 }),
+  );
+  await assert.rejects(
+    stale.api.createCodingRunApi(7).changeGoal!("id", change),
+    /stale/,
+  );
+});
+
 test("browse uses authenticated host API with query encoding and cancellation", async () => {
   const directory = {
     path: "/canonical",

@@ -342,6 +342,8 @@ test("rendered interrupted control never auto-submits and explicit click is disa
   assert.match(text(rendered), /new keyed prompt.*not Retry same submission/);
   (button.props.onClick as () => void)();
   assert.equal(continued, 1);
+  assert.equal(codingCanContinue({ ...state, goalChanging: "pause" }), false);
+  assert.equal(codingCanContinue({ ...state, reconcilingGoal: "pause" }), false);
   const uncertain = recovery.CodingRecoveryControls({
     state: {
       ...state,
@@ -572,6 +574,7 @@ for (const ownerGeneration of [1, 2, 100]) {
       "./presentation": {},
       "./answer-focus": answerFocus,
       "./question-card": { QuestionCard: "question-card" },
+      "./goal-summary": { GoalSummary: "goal-summary" },
       "./run-runtime": { codingRunAdapter: () => ({}) },
       "./run-session": {
         createCodingRun: (

@@ -109,6 +109,26 @@ class PromptSubmission(BaseModel):
         return self
 
 
+class GoalChange(BaseModel):
+    """Native admission identity, not a Studio lifecycle or completion claim."""
+    model_config = ConfigDict(extra = "forbid")
+    revision: str = Field(min_length = 1, max_length = 1024)
+    action: Literal["start", "edit", "pause", "resume", "clear"]
+    objective: str | None = Field(default = None, min_length = 1, max_length = 65536)
+    duration_seconds: int | None = Field(default = None, ge = 1800, le = 9007199254740991, strict = True)
+
+    @model_validator(mode = "after")
+    def valid_action_fields(self):
+        if self.action in ("start", "edit"):
+            if not self.objective or not self.objective.strip():
+                raise ValueError("Start and edit require a non-empty goal objective.")
+        elif "objective" in self.model_fields_set:
+            raise ValueError("Only start and edit accept an objective.")
+        if self.action not in ("start", "resume") and "duration_seconds" in self.model_fields_set:
+            raise ValueError("Only start and resume accept a duration.")
+        return self
+
+
 class QuestionAnswer(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     question_id: str = Field(min_length = 1, max_length = 128)
@@ -173,7 +193,7 @@ def _http_error(exc: CodingRuntimeError) -> HTTPException:
             "code": exc.code, "message": exc.message, "overlap": exc.overlap,
         })
     status = {"invalid": 400, "not_found": 404, "denied": 403,
-              "busy": 409, "conflict": 409, "trust_conflict": 409, "runtime_changed": 409,
+              "busy": 409, "conflict": 409, "trust_conflict": 409, "runtime_changed": 409, "stale_goal": 409,
               "unavailable": 503, "disconnected": 503, "uncertain": 504,
               "limit": 429, "failed": 502, "cleanup_failed": 502}.get(exc.code, 400)
     headers = {"Cache-Control": "no-store"}
@@ -337,6 +357,15 @@ async def cancel_request(conversation_id: str, request_id: str, request: Request
                          generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
     # Acceptance is not settlement. The ordered native view confirms completion.
     return await _command(request, "cancel", {"conversation_id": conversation_id, "request_id": request_id}, generation = generation)
+
+
+@router.post("/conversations/{conversation_id}/goal")
+async def change_goal(conversation_id: str, body: GoalChange, request: Request,
+                      generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
+    # Native owner validates revision and admission atomically; the opening's
+    # generation prevents delivery to a replacement owner. Never infer completion.
+    return await _command(request, "change_goal", {"conversation_id": conversation_id,
+                                                  **body.model_dump(exclude_unset = True)}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/requests/{request_id}/questions/{user_request_id}/answers")

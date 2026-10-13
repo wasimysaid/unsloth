@@ -34,6 +34,34 @@ export interface NativeRequest {
   status: RequestStatus;
   submission_key: string | null;
 }
+export type GoalAction = "start" | "edit" | "pause" | "resume" | "clear";
+export interface NativeGoal {
+  id: string;
+  objective: string;
+  phase: "active" | "paused" | "blocked" | "complete" | "cleared";
+  cause: string;
+  reason: string | null;
+  review_gap: string | null;
+  work_turns: number;
+  started_at: string;
+  display_clipped?: boolean;
+  completion: {
+    checklist: { requirement: string; evidence: string }[];
+    limitations: string | null;
+    completed_at: string;
+    omitted_checklist_entries?: number;
+  } | null;
+}
+export interface GoalControls {
+  revision: string;
+  actions: { action: GoalAction; admitted: boolean; reason: string | null }[];
+}
+export interface GoalChange {
+  revision: string;
+  action: GoalAction;
+  objective?: string;
+  duration_seconds?: number;
+}
 export interface NativeQuestion {
   id: string;
   prompt: string;
@@ -62,6 +90,8 @@ export interface NativeState {
   active_request: string | null;
   requests: NativeRequest[];
   pending_user_request: boolean;
+  goal?: NativeGoal | null;
+  goal_controls?: GoalControls;
   user_request: NativeUserRequest | null;
   usage?: SessionUsage | null;
   compression?: {
@@ -124,6 +154,13 @@ export interface ProjectOverlap {
   conversations: { id: string }[];
 }
 export interface RunApi {
+  changeGoal?(
+    id: string,
+    change: GoalChange,
+  ): Promise<{
+    conversation_id: string;
+    request_id: string | null;
+  }>;
   answer(
     id: string,
     target: AnswerTarget,

@@ -1,4 +1,4 @@
-# Coding native run/stop, recovery, questions, reported changes, rich inputs, concurrency and Mimir Settings
+# Coding native execution, recovery, questions, goals, reported changes, rich inputs, concurrency and Mimir Settings
 
 `/coding` keeps Studio’s authenticated route gate, sidebar primitives and composer
 CSS, without importing ordinary chat execution, tool orchestration, model loading
@@ -245,6 +245,31 @@ Stable browser evidence selectors: `coding-disconnect-banner`,
 `coding-delivery-recovery` (with `data-submission-key`), `coding-retry-submission`,
 `coding-submission-recovered`, `coding-submission-storage-error`, `coding-unsent-draft`,
 `coding-action-reconciliation`, and `coding-opening-reconciliation`.
+
+## Autonomous goals (#240)
+
+`GoalSummary` is a compact keyboard-operable disclosure above the transcript. The
+native goal objective, phase/cause/reason, independent review gap and accepted
+completion checklist remain separate from ordinary request status. Only a native
+`complete` goal with its independent completion evidence is labeled verified;
+ordinary turns, model claims and HTTP acknowledgments do not establish completion.
+The expanded content is bounded/scrollable and controls wrap on narrow screens.
+
+`POST /conversations/{id}/goal` forwards native `{revision, action, objective?,
+duration_seconds?}` to `change_goal`. The native owner projects admitted actions
+and explanations in `goal_controls` and atomically rejects stale admission identities.
+Studio does not infer busy support or weaken native guards to enable a button.
+Start/edit drafts capture their original revision and remain visibly stale after a
+state change; they cannot submit against a different incarnation. All goal actions
+are disabled during incomplete reconstruction or uncertain delivery. A fresh captured
+view reconciles uncertain commands without replay. Late replies cannot revive a
+detached/superseded watcher. Main-session Stop remains separately available while a
+goal command is pending and retains its existing awaited-cleanup semantics.
+
+Pause is not Stop, clear is not history deletion, and reopening never resumes work.
+A native `restart` cause is shown as interrupted requiring explicit resume.
+The `--workload goals` coding-route browser driver exercises this product path with
+deterministic external provider/reviewer replies, not a real-model workload claim.
 
 ## Native commands and current-session diagnostics (#243)
 

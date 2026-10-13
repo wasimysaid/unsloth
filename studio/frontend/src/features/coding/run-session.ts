@@ -23,6 +23,8 @@ import type {
   AnswerTarget,
   CodingRow,
   EntryPage,
+  GoalAction,
+  GoalChange,
   JournalCut,
   NativeAnswer,
   NativeState,
@@ -73,6 +75,9 @@ export interface CodingRunState {
   reconcilingAction: string | null;
   retryStop: string | null;
   continuationRequested: string | null;
+  goalChanging: GoalAction | null;
+  reconcilingGoal: GoalAction | null;
+  goalNotice: string | null;
   answerTarget: AnswerTarget | null;
   answerForms: QuestionAnswerForm[];
   commands: CodingCommand[] | null;
@@ -137,6 +142,9 @@ export function createCodingRun(
     reconcilingAction: null,
     retryStop: null,
     continuationRequested: null,
+    goalChanging: null,
+    reconcilingGoal: null,
+    goalNotice: null,
     answerTarget: null,
     answerForms: [],
     commands: null,
@@ -175,6 +183,9 @@ export function createCodingRun(
   let position: number | null = null;
   let subscription: string | null = null;
   let incarnation = 0;
+  // A fresh watcher does not supersede an outstanding exact cancellation.
+  // Only detach, a newer Stop attempt, or native settlement does that.
+  let stopAttempt = 0;
   let answersAwaitCapture = false;
   // Configuration delivery outlives any one stream incarnation. A view opened
   // before an operation's outcome cannot reconcile that operation's uncertainty.
@@ -636,6 +647,15 @@ export function createCodingRun(
       !state.recovering
     ) {
       reconnectAttempt = 0;
+      update({ disconnected: false, reopenRequired: false });
+      if (state.reconcilingGoal) {
+        update({
+          reconcilingGoal: null,
+          goalChanging: null,
+          goalNotice:
+            "Fresh native goal state inspected. Check its phase, cause and objective before choosing another action. No goal action was replayed; command acceptance is not verified completion.",
+        });
+      }
       update({
         disconnected: false,
         reopenRequired: false,
@@ -684,6 +704,7 @@ export function createCodingRun(
       answerTarget: null,
       error: state.reconcilingAction ? state.error : null,
       loadingEarlier: false,
+      reconcilingGoal: state.reconcilingGoal ?? state.goalChanging,
       discoveringCommands: false,
       inspectingDiagnostic: null,
       diagnostic: null,
@@ -737,6 +758,8 @@ export function createCodingRun(
       state.configurationUncertain ||
       state.stopping ||
       state.reconcilingAction ||
+      state.goalChanging ||
+      state.reconcilingGoal ||
       state.commandBusy ||
       state.uncertainCommand ||
       state.storageError
@@ -834,6 +857,8 @@ export function createCodingRun(
     !state.submitting &&
     !state.configuring &&
     !state.configurationUncertain &&
+    !state.goalChanging &&
+    !state.reconcilingGoal &&
     !state.stopping &&
     !state.reconcilingAction &&
     !state.uncertainSubmission &&
@@ -1139,6 +1164,8 @@ export function createCodingRun(
         state.recovering ||
         state.configuring ||
         state.configurationUncertain ||
+        state.goalChanging ||
+        state.reconcilingGoal ||
         state.commandBusy ||
         state.uncertainCommand
       )
@@ -1168,8 +1195,8 @@ export function createCodingRun(
       }
     },
     detach() {
-      ++incarnation;
       ++attachment;
+      ++incarnation;
       ++diagnosticRevision;
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -1177,6 +1204,87 @@ export function createCodingRun(
       abort = null;
       update({ answerTarget: null });
       childView.detach();
+    },
+    async changeGoal(change: GoalChange) {
+      const controls = state.native?.goal_controls;
+      const admission = controls?.actions.find(
+        (item) => item.action === change.action,
+      );
+      if (
+        state.connection !== "connected" ||
+        state.recovering ||
+        state.goalChanging ||
+        state.reconcilingGoal ||
+        state.stopping ||
+        state.reconcilingAction ||
+        state.submitting ||
+        state.uncertainSubmission ||
+        state.configuring ||
+        state.configurationUncertain ||
+        state.commandBusy ||
+        state.uncertainCommand ||
+        state.storageError ||
+        state.overlapWarning
+      ) {
+        update({
+          goalNotice:
+            "Wait for a connected, reconstructed native view and settled action before changing the goal. Main-session Stop remains available.",
+        });
+        return false;
+      }
+      if (
+        !controls ||
+        controls.revision !== change.revision ||
+        !admission?.admitted ||
+        !api.changeGoal
+      ) {
+        update({
+          goalNotice:
+            controls?.revision !== change.revision
+              ? "These goal controls are stale. Inspect the current native state and choose the action again."
+              : (admission?.reason ??
+                "Native goal management is not available."),
+        });
+        return false;
+      }
+      const current = incarnation;
+      update({ goalChanging: change.action, goalNotice: null });
+      try {
+        const result = await api.changeGoal(id, change);
+        if (current !== incarnation) return false;
+        if (
+          result.conversation_id !== id ||
+          !(result.request_id === null || typeof result.request_id === "string")
+        )
+          throw new Error(
+            "The native goal action identity could not be confirmed.",
+          );
+        update({
+          goalChanging: null,
+          goalNotice:
+            "Native goal command accepted. Its phase and independent verification come only from native state, not this acknowledgment.",
+        });
+        if (state.native?.goal_controls?.revision === change.revision) {
+          update({ reconcilingGoal: change.action });
+          connect();
+        }
+        return true;
+      } catch (reason) {
+        if (current !== incarnation) return false;
+        // Reconstruct stale/busy refusals, but never retarget a lost owner or
+        // automatically retry a non-idempotent goal command.
+        const requiresReopen = needsReopen(reason);
+        update({
+          goalChanging: null,
+          reconcilingGoal: change.action,
+          goalNotice: requiresReopen
+            ? `${errorText(reason)} Deliberately reopen saved history before another goal action; no action was replayed.`
+            : `${errorText(reason)} Inspecting a fresh native view before another goal action; no action was replayed.`,
+        });
+        if (requiresReopen) requireRuntimeReopen();
+        else connect();
+        return false;
+      }
     },
     async send(text: string, extras: CodingInputExtras = {}) {
       if (!text.trim()) return false;
@@ -1193,6 +1301,10 @@ export function createCodingRun(
       if (
         state.overlapWarning ||
         state.submitting ||
+        state.configuring ||
+        state.configurationUncertain ||
+        state.goalChanging ||
+        state.reconcilingGoal ||
         state.stopping ||
         state.reconcilingAction ||
         state.storageError ||
@@ -1254,6 +1366,8 @@ export function createCodingRun(
         state.configurationUncertain ||
         state.stopping ||
         state.reconcilingAction ||
+        state.goalChanging ||
+        state.reconcilingGoal ||
         state.commandBusy ||
         state.uncertainCommand ||
         state.storageError
@@ -1296,17 +1410,19 @@ export function createCodingRun(
         state.connection !== "connected"
       )
         return;
-      const current = incarnation;
-      update({
-        stopping: request,
-        retryStop: null,
-        error: null,
-        answerTarget: null,
-      });
+      const current = attachment;
+      const attempt = ++stopAttempt;
+      update({ stopping: request, retryStop: null, error: null, answerTarget: null });
       try {
         const result = await api.cancel(id, request);
-        // Detach/reconnect and terminal native evidence supersede late replies.
-        if (current !== incarnation || state.stopping !== request) return;
+        // Watcher reconstruction (including goal reconciliation) leaves this
+        // exact Stop pending. Detach, a later attempt and settlement supersede it.
+        if (
+          current !== attachment ||
+          attempt !== stopAttempt ||
+          state.stopping !== request
+        )
+          return;
         if (result.conversation_id !== id || result.request_id !== request)
           throw new Error(
             "The native cancellation identity could not be confirmed.",
@@ -1320,7 +1436,12 @@ export function createCodingRun(
           connect();
         }
       } catch (reason) {
-        if (current !== incarnation || state.stopping !== request) return;
+        if (
+          current !== attachment ||
+          attempt !== stopAttempt ||
+          state.stopping !== request
+        )
+          return;
         if (needsReopen(reason)) {
           requireRuntimeReopen();
           update({
@@ -1418,6 +1539,8 @@ export function codingCanContinue(state: CodingRunState | null): boolean {
         (item) => item.status === "queued" || item.status === "running",
       ) &&
       !state.submitting &&
+      !state.goalChanging &&
+      !state.reconcilingGoal &&
       !state.stopping &&
       !state.reconcilingAction &&
       !state.uncertainSubmission &&

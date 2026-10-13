@@ -49,6 +49,7 @@ def coding_app(monkeypatch, tmp_path):
     ("POST", "/conversations/known-id/requests/exact-request/questions/exact-question/answers", {
         "subscription": "live-view", "answers": [{"question_id": "choice", "selected_options": ["One"], "freeform_text": None}]}),
     ("POST", "/conversations/known-id/entries", {"cut": {"journal": "root", "leaf": None}}),
+    ("POST", "/conversations/known-id/goal", {"revision": "native-revision", "action": "pause"}),
     ("GET", "/conversations/known-id/commands", None),
     ("POST", "/conversations/known-id/commands", {"operation_id": "command-op", "name": "compress", "tail": ""}),
     ("GET", "/conversations/known-id/commands/command-op", None),
@@ -180,6 +181,51 @@ async def test_run_stop_and_history_preserve_exact_native_identities(coding_app)
         ("cancel", {"conversation_id": "exact-conversation", "request_id": "native-request"}),
         ("read_entries", {"conversation_id": "exact-conversation", "cut": cut, "anchor": "latest", "max_entries": 100, "max_bytes": 262144}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_goal_commands_preserve_native_admission_identity_and_refusals(coding_app):
+    app, headers = coding_app
+    calls = []
+    class RecordingRuntime:
+        async def command(self, method, params, *, expected_generation=None):
+            assert expected_generation == 1
+            calls.append((method, params))
+            if params["revision"] == "stale-owner":
+                raise CodingRuntimeError("stale_goal", "Goal controls are stale; inspect a fresh native view.")
+            if params["revision"] == "busy-owner":
+                raise CodingRuntimeError("busy", "Wait for unrelated native work to settle.")
+            return {"conversation_id": params["conversation_id"], "request_id": "goal-request" if params["action"] in ("start", "resume") else None}
+    app.state.coding_runtime = RecordingRuntime()
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        for action in ("start", "edit", "pause", "resume", "clear"):
+            body = {"revision": "exact-native-owner-goal-revision", "action": action}
+            if action in ("start", "edit"):
+                body["objective"] = "Native goal objective"
+            if action in ("start", "resume"):
+                body["duration_seconds"] = 1800
+            result = await client.post("/api/coding/conversations/exact-conversation/goal", json = body)
+            assert result.status_code == 200
+            assert result.json() == {"conversation_id": "exact-conversation", "request_id": "goal-request" if action in ("start", "resume") else None}
+            assert calls[-1] == ("change_goal", {"conversation_id": "exact-conversation", **body})
+        for revision, message in (("stale-owner", "stale"), ("busy-owner", "unrelated")):
+            result = await client.post("/api/coding/conversations/exact-conversation/goal", json = {"revision": revision, "action": "pause"})
+            assert result.status_code == 409
+            assert message in result.json()["detail"]
+        before = len(calls)
+        for invalid in (
+            {"action": "pause"},
+            {"revision": "r", "action": "complete"},
+            {"revision": "r", "action": "start", "objective": " "},
+            {"revision": "r", "action": "edit"},
+            {"revision": "r", "action": "pause", "objective": "not allowed"},
+            {"revision": "r", "action": "resume", "duration_seconds": 5},
+            {"revision": "r", "action": "start", "objective": "work", "duration_seconds": True},
+            {"revision": "r", "action": "clear", "force": True},
+        ):
+            result = await client.post("/api/coding/conversations/exact-conversation/goal", json = invalid)
+            assert result.status_code == 422, invalid
+        assert len(calls) == before, "Invalid input must not launch or force native work"
 
 
 @pytest.mark.asyncio

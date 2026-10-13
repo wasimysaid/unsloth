@@ -392,6 +392,7 @@ async def test_owner_http_calls_are_fenced_before_delivery_even_after_other_tab_
         for method, path, body in (
             ("POST", "/conversations/same-saved-id/prompts", {"submission_key": "old-tab-new-key", "text": "must not run"}),
             ("POST", "/conversations/same-saved-id/commands", {"operation_id": "old-tab-command", "name": "compress", "tail": ""}),
+            ("POST", "/conversations/same-saved-id/goal", {"revision": "old-owner-goal", "action": "pause"}),
             ("POST", "/conversations/same-saved-id/requests/exact/questions/question/answers", {"subscription": "view-1", "answers": [{"question_id": "choice", "selected_options": ["One"]}]}),
             ("POST", "/conversations/same-saved-id/requests/exact/cancel", None),
             ("POST", "/conversations/same-saved-id/entries", {"cut": {"journal": "root", "leaf": None}}),

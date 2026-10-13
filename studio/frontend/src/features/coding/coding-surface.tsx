@@ -21,6 +21,7 @@ import {
 } from "react";
 import { restoreAnswerFocus, watchAnswerFocus } from "./answer-focus";
 import { createCodingRunApi } from "./api";
+import { GoalSummary } from "./goal-summary";
 import { ChildActivityRows, ChildInspector } from "./child-inspector";
 import { CodingComposer } from "./coding-composer";
 import { CodingCommandControls } from "./command-controls";
@@ -246,6 +247,8 @@ export function CodingSurface({
       !state.uncertainSubmission &&
       !state.storageError &&
       !state.reconcilingAction &&
+      !state.goalChanging &&
+      !state.reconcilingGoal &&
       !state.native?.pending_user_request &&
       !state.commandBusy &&
       !state.uncertainCommand &&
@@ -264,6 +267,8 @@ export function CodingSurface({
             state.configurationUncertain ||
             state.stopping ||
             state.reconcilingAction ||
+            state.goalChanging ||
+            state.reconcilingGoal ||
             state.commandBusy ||
             state.uncertainCommand ||
             state.storageError,
@@ -435,6 +440,7 @@ export function CodingSurface({
             )}
           </div>
         )}
+        {state && run && <GoalSummary state={state} run={run} />}
         <div className="relative flex min-h-0 min-w-0 flex-1 gap-3">
         <div
           ref={viewport}
@@ -566,6 +572,8 @@ export function CodingSurface({
                 Boolean(
                   state?.recovering ||
                     state?.configurationUncertain ||
+                    state?.goalChanging ||
+                    state?.reconcilingGoal ||
                     state?.commandBusy ||
                     state?.uncertainCommand,
                 )
