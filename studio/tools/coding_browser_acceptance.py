@@ -41,6 +41,7 @@ from coding_run_scenarios import run_scenarios
 from coding_input_scenarios import prepare_input_project, input_scenarios, live_input_scenario
 from coding_recovery_scenarios import run_recovery_scenarios
 from coding_concurrency_scenarios import run_concurrency_scenarios
+from coding_child_scenarios import CHILD_EVENT_CAPTURE, run_child_scenarios
 from coding_file_change_scenarios import LIVE_PROFILE_OBSERVER, run_file_change_scenarios
 
 
@@ -57,7 +58,7 @@ def main() -> None:
     runtime_input.add_argument("--mimir-source", type = Path, help = "Build the current paired source and product package before acceptance")
     parser.add_argument("--plugin-package", type = Path)
     parser.add_argument("--evidence-dir", type = Path, required = True)
-    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "concurrency", "inputs", "live", "inputs-live", "file-changes", "file-changes-live"), default = "deterministic",
+    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live"), default = "deterministic",
                         help = "Live uses the existing native provider/credential profile; never copies credentials")
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
     parser.add_argument("--chrome", default = "/usr/bin/google-chrome", help = "Chromium executable; ignored for Firefox")
@@ -85,7 +86,7 @@ def main() -> None:
     live = args.workload in ("live", "inputs-live", "file-changes-live")
     native = shared_trust_path().parent if live else state_root / "mimir-home"
     native.mkdir(exist_ok = True)
-    provider = ProviderFixture() if args.workload in ("deterministic", "recovery", "concurrency", "inputs", "file-changes") else None
+    provider = ProviderFixture() if args.workload in ("deterministic", "recovery", "concurrency", "children", "inputs", "file-changes") else None
     if provider:
         provider.configure(native, images = args.workload == "inputs")
     projects = state_root / "projects"
@@ -211,6 +212,8 @@ def main() -> None:
             if args.workload == "concurrency":
                 from coding_recovery_scenarios import VIEW_FAULT_SCRIPT
                 context.add_init_script(VIEW_FAULT_SCRIPT)
+            if args.workload == "children":
+                context.add_init_script(CHILD_EVENT_CAPTURE)
             if args.workload in ("file-changes", "file-changes-live"):
                 context.add_init_script(LIVE_PROFILE_OBSERVER)
             page = context.new_page()
@@ -345,6 +348,9 @@ def main() -> None:
                     elif args.workload == "concurrency":
                         run_concurrency_scenarios(page, context, base, provider, first, second, second_id,
                                                   alias, report, scenario, snapshot)
+                    elif args.workload == "children":
+                        run_child_scenarios(page, context, base, provider, first, second_id,
+                                            report, scenario, snapshot)
                     elif args.workload in ("file-changes", "file-changes-live"):
                         run_file_change_scenarios(page, context, base, provider, first, second_id,
                                                   report, scenario, snapshot, live = live)
@@ -447,12 +453,18 @@ def main() -> None:
                 ("get", f"/api/coding/conversations/{first_id}/overlap", {}),
                 ("get", f"/api/coding/conversations/{first_id}/skills", {}),
                 ("post", f"/api/coding/conversations/{first_id}/prompts", {"data": {"submission_key": "unauthenticated-valid-key", "text": "Must not execute"}}),
-                ("post", f"/api/coding/conversations/{first_id}/requests/{report.get('workload', report.get('recovery', report.get('file_changes', {}))).get('requests', [{}])[0].get('request_id', 'known-request')}/cancel", {}),
+                ("post", f"/api/coding/conversations/{first_id}/requests/{report.get('workload', report.get('recovery', report.get('children', report.get('file_changes', {})))).get('requests', [{}])[0].get('request_id', 'known-request')}/cancel", {}),
                 ("post", f"/api/coding/conversations/{first_id}/entries", {"data": {"cut": {}, "anchor": "latest", "max_entries": 10, "max_bytes": 1024}}),
             ):
                 response = getattr(unauth, method)(path, **kwargs)
                 assert response.status in (401, 403), (method, path, response.status)
                 denied_requests.append({"method": method, "path": path, "status": response.status})
+            if args.workload == "children":
+                for attempt in report["children"]["attempts"]:
+                    path = f"/api/coding/conversations/{first_id}/children/{report['children']['handle']}/attempts/{attempt}"
+                    response = unauth.get(path)
+                    assert response.status in (401, 403), (path, response.status)
+                    denied_requests.append({"method": "get", "path": path, "status": response.status})
             unauth.dispose()
             if provider:
                 provider.assert_no_request()
@@ -498,7 +510,8 @@ def main() -> None:
         with socket.socket() as probe:
             port_closed = probe.connect_ex(("127.0.0.1", port)) != 0
         report["cleanup"] = {"native_process_settled": native_settled,
-                             "server_port_closed": port_closed}
+                             "server_port_closed": port_closed,
+                             "provider_thread_settled": not provider.thread.is_alive() if provider else None}
         cleanup_failed = report.get("status") == "passed" and not (
             native_settled and port_closed and server.returncode in (0, -15)
         )

@@ -56,6 +56,9 @@ function harness(
     async checkOverlap() {
       return { cwd: "/project", conversations: [] };
     },
+    async readChild() {
+      return { child: null, outcome: null };
+    },
     async submit(id, key, text, extras, overlapConfirmed) {
       submissions.push({
         id,
@@ -492,9 +495,9 @@ test("delivery identity is durable before HTTP and survives reload without autom
   const h = harness();
   await h.start();
   h.api.submit = async (_id, key, text) => {
-    const stored = h.storage.getItem(storageName);
-    assert.ok(stored);
-    assert.deepEqual(JSON.parse(stored), {
+    const record = h.storage.getItem(storageName);
+    assert.ok(record);
+    assert.deepEqual(JSON.parse(record), {
       version: 1,
       conversation_id: "conversation",
       key,

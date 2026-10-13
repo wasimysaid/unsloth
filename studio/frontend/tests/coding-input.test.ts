@@ -207,6 +207,9 @@ async function harness(storage = memorySubmissionStorage()) {
     async checkOverlap() {
       return { cwd: "/project", conversations: [] };
     },
+    async readChild() {
+      throw new Error("Input submission must not inspect child attempts");
+    },
     async submit(id, key, text, extras) {
       calls.push(structuredClone({ id, key, text, ...extras }));
       if (failure) throw failure;

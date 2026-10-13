@@ -53,6 +53,9 @@ test("installed external runtime projects native state and forwards exact submis
     async checkOverlap() {
       return { cwd: "/project", conversations: [] };
     },
+    async readChild() {
+      return { child: null, outcome: null };
+    },
     async submit(id, submissionKey, text) {
       calls.push({ id, submission_key: submissionKey, text });
       return {
@@ -242,6 +245,9 @@ test("installed composer.send retains a recoverable unsent draft when submission
   const api: RunApi = {
     async checkOverlap() {
       return { cwd: "/project", conversations: [] };
+    },
+    async readChild() {
+      return { child: null, outcome: null };
     },
     async submit(id, key, text) {
       calls.push({ id, key, text });
