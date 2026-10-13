@@ -36,6 +36,7 @@ import urllib.request
 from coding_provider_fixture import ProviderFixture
 from coding_run_scenarios import run_scenarios
 from coding_recovery_scenarios import run_recovery_scenarios
+from coding_concurrency_scenarios import run_concurrency_scenarios
 
 
 def shared_trust_path() -> Path:
@@ -51,7 +52,7 @@ def main() -> None:
     runtime_input.add_argument("--mimir-source", type = Path, help = "Build the current paired source and product package before acceptance")
     parser.add_argument("--plugin-package", type = Path)
     parser.add_argument("--evidence-dir", type = Path, required = True)
-    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "live"), default = "deterministic",
+    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "concurrency", "live"), default = "deterministic",
                         help = "Live uses the existing native provider/credential profile; never copies credentials")
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
     parser.add_argument("--chrome", default = "/usr/bin/google-chrome", help = "Chromium executable; ignored for Firefox")
@@ -79,7 +80,7 @@ def main() -> None:
     live = args.workload == "live"
     native = shared_trust_path().parent if live else state_root / "mimir-home"
     native.mkdir(exist_ok = True)
-    provider = ProviderFixture() if args.workload in ("deterministic", "recovery") else None
+    provider = ProviderFixture() if args.workload in ("deterministic", "recovery", "concurrency") else None
     if provider:
         provider.configure(native)
     projects = state_root / "projects"
@@ -161,7 +162,8 @@ def main() -> None:
         report.setdefault("runtime_generations", []).append({"pid": before, "native_settled": True})
         server = subprocess.Popen(server_args, cwd = root / "studio" / "backend", env = env,
                                   stdout = output, stderr = subprocess.STDOUT)
-        for _ in range(100):
+        startup_deadline = time.monotonic() + 60
+        while time.monotonic() < startup_deadline:
             assert server.poll() is None, "Restarted acceptance server exited"
             try:
                 urllib.request.urlopen(base + "/api/auth/status", timeout = 1).close()
@@ -171,7 +173,12 @@ def main() -> None:
         raise AssertionError("Restarted acceptance server did not become ready")
 
     try:
-        for _ in range(100):
+        # Cold imports on this shared host can exceed the former 10-second
+        # connection-refusal loop. Bound setup by a recorded wall-clock deadline;
+        # native protocol, behavioral assertions and cleanup deadlines are unchanged.
+        report["server_startup_deadline_seconds"] = 60
+        startup_deadline = time.monotonic() + 60
+        while time.monotonic() < startup_deadline:
             if server.poll() is not None:
                 raise RuntimeError("Acceptance server exited; inspect server.log")
             try:
@@ -194,6 +201,9 @@ def main() -> None:
                                  "rendering": "hardware acceleration disabled"}
             context = browser.new_context(viewport = {"width": 1440, "height": 1000})
             context.add_init_script("localStorage.setItem('unsloth_show_loaded_models_indicator', 'true')")
+            if args.workload == "concurrency":
+                from coding_recovery_scenarios import VIEW_FAULT_SCRIPT
+                context.add_init_script(VIEW_FAULT_SCRIPT)
             page = context.new_page()
             page.on("pageerror", lambda error: report.setdefault("page_errors", []).append(str(error)))
             ordinary_status_requests = []
@@ -319,6 +329,9 @@ def main() -> None:
                                    if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
                         assert len(product) == 1
                         report["supervised_pid"] = product[0].pid
+                    elif args.workload == "concurrency":
+                        run_concurrency_scenarios(page, context, base, provider, first, second, second_id,
+                                                  alias, report, scenario, snapshot)
                     else:
                         run_scenarios(page, context, base, provider, first, second_id,
                                       report, scenario, snapshot, live = live)
@@ -391,7 +404,7 @@ def main() -> None:
             product = [child for child in children if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
             assert len(product) == 1, "Studio must supervise one product process across conversations"
             assert report["supervised_pid"] == product[0].pid, "Studio replaced the native owner during browser scenarios"
-            scenario("A1-one-runtime", "Three native conversations retained in one Studio-supervised product process")
+            scenario("A1-one-runtime", f"{len(report['conversation_ids'])} native conversations retained in one Studio-supervised product process; PID unchanged")
             page.set_viewport_size({"width": 390, "height": 844})
             expect(page.get_by_test_id("coding-project-chooser")).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
@@ -415,6 +428,7 @@ def main() -> None:
                 ("post", "/api/coding/conversations", {"data": {"cwd": str(first)}}),
                 ("post", f"/api/coding/conversations/{first_id}/open", {}),
                 ("get", f"/api/coding/conversations/{first_id}/events", {}),
+                ("get", f"/api/coding/conversations/{first_id}/overlap", {}),
                 ("post", f"/api/coding/conversations/{first_id}/prompts", {"data": {"submission_key": "unauthenticated-valid-key", "text": "Must not execute"}}),
                 ("post", f"/api/coding/conversations/{first_id}/requests/{report.get('workload', report.get('recovery', {})).get('requests', [{}])[0].get('request_id', 'known-request')}/cancel", {}),
                 ("post", f"/api/coding/conversations/{first_id}/entries", {"data": {"cut": {}, "anchor": "latest", "max_entries": 10, "max_bytes": 1024}}),
@@ -426,7 +440,7 @@ def main() -> None:
             if provider:
                 provider.assert_no_request()
             report["unauthenticated_requests"] = denied_requests
-            scenario("A6-known-id-auth", "All nine coding surfaces (browse/catalog/history/create/open/SSE/prompt/cancel/bounded entries), including real conversation/request IDs, refused unauthenticated requests")
+            scenario("A6-known-id-auth", "All ten coding surfaces (browse/catalog/history/create/open/SSE/overlap/prompt/cancel/bounded entries), including real conversation/request IDs, refused unauthenticated requests")
             # Measure over more than two ordinary indicator polling intervals.
             # No ordinary-model status response is mocked and no model is loaded.
             page.wait_for_timeout(11000)

@@ -16,8 +16,12 @@ import type {
 } from "../src/features/coding/run-types.ts";
 
 import {
-  pendingSubmissionStorageKey,
+  CodingHttpError,
+  CodingOverlapError,
+} from "../src/features/coding/errors.ts";
+import {
   type SubmissionStorage,
+  pendingSubmissionStorageKey,
 } from "../src/features/coding/pending-submission.ts";
 import { memorySubmissionStorage } from "./coding-storage-fixture.ts";
 
@@ -49,8 +53,16 @@ function harness(
   let rows: CodingRow[] = [];
   let submitError: Error | null = null;
   const api: RunApi = {
-    async submit(id, key, text) {
-      submissions.push({ id, key, text });
+    async checkOverlap() {
+      return { cwd: "/project", conversations: [] };
+    },
+    async submit(id, key, text, overlapConfirmed) {
+      submissions.push({
+        id,
+        key,
+        text,
+        ...(overlapConfirmed ? { overlapConfirmed } : {}),
+      });
       if (submitError) throw submitError;
       return {
         conversation_id: id,
@@ -970,3 +982,160 @@ for (const rejected of [false, true]) {
     }
   });
 }
+
+const overlap = {
+  cwd: "/canonical/project",
+  conversations: [{ id: "other-native-owner" }],
+};
+
+test("canonical overlap warning precedes prompt submission and durable pending identity; cancellation isolates other work", async () => {
+  const h = harness();
+  h.api.checkOverlap = async () => overlap;
+  await h.start();
+  await h.run.send("overlapping draft");
+  assert.deepEqual(h.run.getSnapshot().overlapWarning, {
+    key: "key",
+    text: "overlapping draft",
+    overlap,
+  });
+  assert.equal(h.run.getSnapshot().uncertainSubmission, null);
+  assert.equal(
+    h.storage.getItem(pendingSubmissionStorageKey("conversation")),
+    null,
+  );
+  assert.deepEqual(h.submissions, []);
+  await assert.rejects(h.run.send("second draft"), /warning/);
+  h.run.cancelOverlap();
+  assert.equal(h.run.getSnapshot().overlapWarning, null);
+  assert.equal(h.run.getSnapshot().unsentDraft, "overlapping draft");
+  assert.deepEqual(h.submissions, []);
+  assert.deepEqual(h.cancellations, []);
+  h.run.detach();
+});
+
+test("explicit overlap continuation submits the same warned text/key once, without an optimistic transcript", async () => {
+  const h = harness();
+  h.api.checkOverlap = async () => overlap;
+  await h.start();
+  await h.run.send("intentional overlap");
+  await Promise.all([h.run.continueOverlap(), h.run.continueOverlap()]);
+  assert.deepEqual(h.submissions, [
+    {
+      id: "conversation",
+      key: "key",
+      text: "intentional overlap",
+      overlapConfirmed: true,
+    },
+  ]);
+  assert.equal(h.run.getSnapshot().overlapWarning, null);
+  assert.deepEqual(h.run.getSnapshot().rows, []);
+  assert.equal(h.run.getSnapshot().uncertainSubmission, null);
+  h.run.detach();
+});
+
+test("host pre-admission race refusal shows the warning, clears pending delivery, and preserves the original key", async () => {
+  const h = harness();
+  await h.start();
+  h.setSubmitError(new CodingOverlapError(overlap));
+  await h.run.send("race draft");
+  assert.equal(h.run.getSnapshot().uncertainSubmission, null);
+  assert.equal(
+    h.storage.getItem(pendingSubmissionStorageKey("conversation")),
+    null,
+  );
+  assert.equal(h.run.getSnapshot().overlapWarning?.text, "race draft");
+  h.setSubmitError(null);
+  await h.run.continueOverlap();
+  assert.deepEqual(h.submissions, [
+    { id: "conversation", key: "key", text: "race draft" },
+    {
+      id: "conversation",
+      key: "key",
+      text: "race draft",
+      overlapConfirmed: true,
+    },
+  ]);
+  h.run.detach();
+});
+
+test("failed or superseded preflight never sends a prompt and keeps a known-unsent draft", async () => {
+  for (const failure of [true, false]) {
+    const h = harness();
+    await h.start();
+    let resolve!: (value: typeof overlap) => void;
+    h.api.checkOverlap = failure
+      ? async () => {
+          throw new Error("native check unavailable");
+        }
+      : () =>
+          new Promise((done) => {
+            resolve = done;
+          });
+    const sending = h.run.send("do not lose draft");
+    if (!failure) {
+      h.run.detach();
+      resolve(overlap);
+    }
+    await sending;
+    assert.deepEqual(h.submissions, []);
+    assert.equal(h.run.getSnapshot().unsentDraft, "do not lose draft");
+    assert.equal(h.run.getSnapshot().submitting, false);
+    assert.equal(h.run.getSnapshot().overlapWarning, null);
+    h.run.detach();
+  }
+});
+
+test("uncertain prompt retries preserve deduplication without a fresh preflight or persisted overlap authority", async () => {
+  const h = harness();
+  await h.start();
+  h.api.checkOverlap = async () => overlap;
+  await h.run.send("warned uncertain input");
+  h.setSubmitError(new Error("lost acknowledgement"));
+  await h.run.continueOverlap();
+  h.api.checkOverlap = async () => {
+    throw new Error("retry must reach native keyed deduplication");
+  };
+  h.setSubmitError(null);
+  await h.run.retrySubmission();
+  assert.deepEqual(h.submissions, [
+    {
+      id: "conversation",
+      key: "key",
+      text: "warned uncertain input",
+      overlapConfirmed: true,
+    },
+    { id: "conversation", key: "key", text: "warned uncertain input" },
+  ]);
+  assert.equal(h.run.getSnapshot().uncertainSubmission, null);
+  h.run.detach();
+});
+
+test("native capacity rejection after overlap continuation preserves the known-unsent prompt without replay", async () => {
+  for (const status of [409, 429]) {
+    const h = harness();
+    await h.start();
+    h.api.checkOverlap = async () => overlap;
+    await h.run.send("retain this capacity-refused draft");
+    h.setSubmitError(
+      new CodingHttpError(
+        status,
+        "Native capacity is busy. Wait before retrying.",
+      ),
+    );
+    await h.run.continueOverlap();
+    assert.equal(
+      h.run.getSnapshot().unsentDraft,
+      "retain this capacity-refused draft",
+    );
+    assert.match(h.run.getSnapshot().error ?? "", /capacity.*Wait/);
+    assert.equal(h.run.getSnapshot().overlapWarning, null);
+    assert.equal(h.run.getSnapshot().uncertainSubmission, null);
+    assert.equal(
+      h.storage.getItem(pendingSubmissionStorageKey("conversation")),
+      null,
+    );
+    assert.equal(h.submissions.length, 1);
+    assert.equal(h.cancellations.length, 0);
+    h.run.detach();
+  }
+});

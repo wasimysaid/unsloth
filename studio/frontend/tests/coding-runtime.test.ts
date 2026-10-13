@@ -14,9 +14,9 @@ import {
 import type { RunApi } from "../src/features/coding/run-types.ts";
 import { memorySubmissionStorage } from "./coding-storage-fixture.ts";
 import {
+  type StubElement,
   loadWithStubs,
   stubJsxRuntime,
-  type StubElement,
 } from "./helpers/module-stubs.ts";
 
 const source = (path: string) =>
@@ -50,6 +50,9 @@ test("installed external runtime projects native state and forwards exact submis
   const calls: unknown[] = [];
   let deliver!: (view: unknown) => Promise<void>;
   const api: RunApi = {
+    async checkOverlap() {
+      return { cwd: "/project", conversations: [] };
+    },
     async submit(id, submissionKey, text) {
       calls.push({ id, submission_key: submissionKey, text });
       return {
@@ -139,6 +142,7 @@ test("installed runtime upcoming assistant placeholder is not a native transcrip
     reopenRequired: false,
     reconcilingAction: null,
     retryStop: null,
+    overlapWarning: null,
     native: {
       info: { id: "conversation", cwd: "/project", title: null },
       configuration: {
@@ -236,6 +240,9 @@ test("installed composer.send retains a recoverable unsent draft when submission
     throw new Error("Storage quota exceeded");
   };
   const api: RunApi = {
+    async checkOverlap() {
+      return { cwd: "/project", conversations: [] };
+    },
     async submit(id, key, text) {
       calls.push({ id, key, text });
       return {

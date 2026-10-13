@@ -44,6 +44,7 @@ class PromptSubmission(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     submission_key: str = Field(min_length = 1, max_length = 128)
     text: str = Field(min_length = 1, max_length = 65536)
+    overlap_confirmed: bool = Field(default = False, strict = True)
 
 
 class RootCut(BaseModel):
@@ -72,6 +73,10 @@ class HistorySelection(BaseModel):
 
 
 def _http_error(exc: CodingRuntimeError) -> HTTPException:
+    if exc.code == "overlap_required":
+        return HTTPException(status_code = 409, detail = {
+            "code": exc.code, "message": exc.message, "overlap": exc.overlap,
+        })
     status = {"invalid": 400, "not_found": 404, "denied": 403,
               "busy": 409, "conflict": 409, "trust_conflict": 409,
               "unavailable": 503, "disconnected": 503, "uncertain": 504,
@@ -150,6 +155,12 @@ async def create_conversation(body: ProjectSelection, request: Request):
 async def open_conversation(conversation_id: str, request: Request):
     state = await _command(request, "open", {"conversation_id": conversation_id})
     return state["info"]
+
+
+@router.get("/conversations/{conversation_id}/overlap")
+async def project_overlap(conversation_id: str, request: Request):
+    # A read-only native preflight; never implicitly opens or retargets an owner.
+    return await _command(request, "overlap", {"conversation_id": conversation_id})
 
 
 @router.post("/conversations/{conversation_id}/prompts", status_code = 202)

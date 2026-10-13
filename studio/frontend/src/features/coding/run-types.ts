@@ -63,11 +63,17 @@ export interface EntryPage {
   first_id: string | null;
   last_id: string | null;
 }
+export interface ProjectOverlap {
+  cwd: string;
+  conversations: { id: string }[];
+}
 export interface RunApi {
+  checkOverlap(id: string): Promise<ProjectOverlap>;
   submit(
     id: string,
     submissionKey: string,
     text: string,
+    overlapConfirmed?: boolean,
   ): Promise<{
     conversation_id: string;
     request_id: string;
