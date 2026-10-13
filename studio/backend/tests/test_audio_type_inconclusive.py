@@ -156,9 +156,21 @@ def test_the_stubs_do_not_outlive_this_module():
     from utils.hardware import hardware as hw
 
     for name in _STUBBED:
-        assert name not in sys.modules, name
+        # Later collection may load the real package (e.g. chat_templates via
+        # test_chat_prompt_bos). It is a spec-less fixture stub that must never
+        # survive, not a legitimate module with its normal import metadata.
+        module = sys.modules.get(name)
+        assert module is None or getattr(module, "__spec__", None) is not None, name
     if _STUBBED:
         assert hw._shared_policy() is not None, "the stub is still hiding the policy module"
+
+
+def test_the_stub_lifetime_guard_still_rejects_a_collection_stub(monkeypatch):
+    name = "_collection_stub_lifetime_regression"
+    monkeypatch.setattr(sys.modules[__name__], "_STUBBED", [name])
+    monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    with pytest.raises(AssertionError, match = name):
+        test_the_stubs_do_not_outlive_this_module()
 
 
 def test_an_inconclusive_probe_on_an_audio_dataset_is_refused(monkeypatch):

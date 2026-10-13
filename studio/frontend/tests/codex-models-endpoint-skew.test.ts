@@ -35,7 +35,11 @@ const CURATED = ["gpt-5.4", "gpt-5.5"];
 const SAVED = ["gpt-5.4", "gpt-5.7-nova"];
 
 before(async () => {
-  vite = await createServer({ appType: "custom", server: { middlewareMode: true } });
+  vite = await createServer({
+    appType: "custom",
+    optimizeDeps: { noDiscovery: true },
+    server: { middlewareMode: true, hmr: false, watch: null },
+  });
   const api = await vite.ssrLoadModule("/src/features/chat/api/providers-api.ts");
   fetchCodexSubscriptionModels = api.fetchCodexSubscriptionModels as Fetch;
   const dialog = await vite.ssrLoadModule("/src/features/chat/chat-providers-dialog.tsx");

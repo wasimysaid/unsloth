@@ -350,7 +350,7 @@ test("the workspace chords land where the guard lets them", async () => {
   );
   assert.match(
     SRC__ROOT,
-    /const routeShortcutEnabled = !isAuthFlowRoute && !settingsDialogOpen;/,
+    /const routeShortcutEnabled = !parked && !isAuthFlowRoute && !settingsDialogOpen;/,
   );
   assert.match(
     SRC__ROOT,

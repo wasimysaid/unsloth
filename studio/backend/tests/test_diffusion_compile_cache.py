@@ -441,6 +441,13 @@ def test_two_models_under_an_unparseable_root_do_not_share_one_inductor_cache(
     """The isolation the per-key directory exists for has to survive the substitution."""
     import os
 
+    from utils.paths import storage_roots
+
+    # This is the per-model key-isolation test, not a host temp-directory
+    # permission test. Shared development trees may have group-writable
+    # ancestors, which the separate storage-root safety tests rightly refuse.
+    # Normalize only that boundary; naming, ownership and write probes stay real.
+    monkeypatch.setattr(storage_roots, "_holding_dir_is_safe", lambda parent: True)
     root = tmp_path / "o'brien"
     monkeypatch.setenv(cc._ENV_MODE, "auto")
     monkeypatch.setenv(cc._ENV_DIR, str(root))
@@ -454,6 +461,22 @@ def test_two_models_under_an_unparseable_root_do_not_share_one_inductor_cache(
 
     assert first.key != second.key
     assert one and two and one != two
+
+
+def test_an_unparseable_root_never_pins_an_unsafe_temp_fallback(
+    monkeypatch, tmp_path, fake_megacache
+):
+    import os
+
+    from utils.paths import storage_roots
+
+    monkeypatch.setattr(storage_roots, "_holding_dir_is_safe", lambda parent: False)
+    monkeypatch.setenv(cc._ENV_MODE, "auto")
+    monkeypatch.setenv(cc._ENV_DIR, str(tmp_path / "o'brien"))
+    monkeypatch.delenv("TORCHINDUCTOR_CACHE_DIR", raising = False)
+    ctx = cc.begin(transformer = _transformer(), **_BEGIN_KW)
+    assert ctx.dir.is_dir()
+    assert "TORCHINDUCTOR_CACHE_DIR" not in os.environ
 
 
 # -------------------------------------------------------------------------- legacy root

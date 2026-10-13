@@ -1,61 +1,43 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
-"""API Routes"""
+"""API route exports, loaded only when requested.
 
-from routes.training import router as training_router
-from routes.models import router as models_router
-from routes.inference import router as inference_router
-from routes.inference import studio_router as inference_studio_router
-from routes.video import router as video_router
-from routes.video import openai_router as video_openai_router
-from routes.datasets import router as datasets_router
-from routes.auth import router as auth_router
-from routes.data_recipe import router as data_recipe_router
-from routes.export import router as export_router
-from routes.training_history import router as training_history_router
-from routes.chat_history import router as chat_history_router
-from routes.external_import import router as external_import_router
-from routes.providers import router as providers_router
+Importing the independent coding/auth boundary must not initialize ordinary-chat
+inference or training. The full application still requests the same routers.
+"""
+from importlib import import_module
 
-from routes.openai_codex_auth import router as openai_codex_auth_router
-from routes.mcp_servers import router as mcp_servers_router
-from routes.skills import router as skills_router
-from routes.rag import router as rag_router
-from routes.research_runs import router as research_runs_router
-from routes.chat_generation_runs import router as chat_generation_runs_router
-from routes.youtube import router as youtube_router
+_EXPORTS = {
+    "training_router": ("training", "router"),
+    "models_router": ("models", "router"),
+    "inference_router": ("inference", "router"),
+    "inference_studio_router": ("inference", "studio_router"),
+    "video_router": ("video", "router"),
+    "video_openai_router": ("video", "openai_router"),
+    "datasets_router": ("datasets", "router"),
+    "auth_router": ("auth", "router"),
+    "data_recipe_router": ("data_recipe", "router"),
+    "export_router": ("export", "router"),
+    "training_history_router": ("training_history", "router"),
+    "chat_history_router": ("chat_history", "router"),
+    "external_import_router": ("external_import", "router"),
+    "providers_router": ("providers", "router"),
+    "openai_codex_auth_router": ("openai_codex_auth", "router"),
+    "mcp_servers_router": ("mcp_servers", "router"),
+    "skills_router": ("skills", "router"),
+    "rag_router": ("rag", "router"),
+    "research_runs_router": ("research_runs", "router"),
+    "chat_generation_runs_router": ("chat_generation_runs", "router"),
+    "youtube_router": ("youtube", "router"),
+}
+__all__ = list(_EXPORTS)
 
-__all__ = [
-    "training_router",
-    "models_router",
-    "inference_router",
-    "inference_studio_router",
-    "video_router",
-    "video_openai_router",
-    "datasets_router",
-    "auth_router",
-    "data_recipe_router",
-    "export_router",
-    "training_history_router",
-    "chat_history_router",
-    "external_import_router",
-    "providers_router",
-    "openai_codex_auth_router",
-    "mcp_servers_router",
-    "skills_router",
-    "rag_router",
-    "research_runs_router",
-    "chat_generation_runs_router",
-    "youtube_router",
-]
 
-# Bind the re-export so the import-hoist verifier counts it as used.
-_ = (
-    rag_router,
-    video_router,
-    video_openai_router,
-    research_runs_router,
-    chat_generation_runs_router,
-    youtube_router,
-)
+def __getattr__(name):
+    if name not in _EXPORTS:
+        raise AttributeError(name)
+    module, attribute = _EXPORTS[name]
+    value = getattr(import_module(f"routes.{module}"), attribute)
+    globals()[name] = value
+    return value

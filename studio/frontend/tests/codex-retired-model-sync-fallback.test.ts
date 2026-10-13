@@ -19,7 +19,11 @@ const RETIRED = "gpt-5.3-codex-spark";
 const SEED = ["gpt-5.4", "gpt-5.5"];
 
 before(async () => {
-  vite = await createServer({ appType: "custom", server: { middlewareMode: true } });
+  vite = await createServer({
+    appType: "custom",
+    optimizeDeps: { noDiscovery: true },
+    server: { middlewareMode: true, hmr: false, watch: null },
+  });
   const loaded = await vite.ssrLoadModule("/src/features/chat/sync-external-providers.ts");
   resolveSyncedModelIds = loaded.resolveSyncedModelIds as Resolve;
 });

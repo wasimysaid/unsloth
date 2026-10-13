@@ -64,20 +64,24 @@ def collect_routes() -> tuple[RouteCase, ...]:
             pkgutil.walk_packages(routes.__path__, prefix = "routes."), key = lambda info: info.name
         )
     )
+    # Resolve the full application's declared exports first, even when routes uses
+    # lazy __getattr__. Composed routers carry parent authentication/account guards;
+    # choosing a bare child router first would exercise a different HTTP boundary.
+    routers = [getattr(routes, name) for name in routes.__all__]
+    routers.extend(value for module in modules for value in vars(module).values())
     seen_routers = set()
-    for module in modules:
-        for router in vars(module).values():
-            if not isinstance(router, APIRouter) or id(router) in seen_routers:
+    for router in routers:
+        if not isinstance(router, APIRouter) or id(router) in seen_routers:
+            continue
+        seen_routers.add(id(router))
+        for path, route in walk_router(router):
+            origin = route.endpoint.__module__
+            if not origin.startswith("routes."):
                 continue
-            seen_routers.add(id(router))
-            for path, route in walk_router(router):
-                origin = route.endpoint.__module__
-                if not origin.startswith("routes."):
-                    continue
-                params = tuple(re.findall(r"\{([^}:]+)(?::[^}]+)?\}", path))
-                for method in sorted(getattr(route, "methods", None) or {"WEBSOCKET"}):
-                    case = RouteCase(origin, path, method, params, router)
-                    found.setdefault(case.key, case)
+            params = tuple(re.findall(r"\{([^}:]+)(?::[^}]+)?\}", path))
+            for method in sorted(getattr(route, "methods", None) or {"WEBSOCKET"}):
+                case = RouteCase(origin, path, method, params, router)
+                found.setdefault(case.key, case)
     return tuple(found[key] for key in sorted(found))
 
 

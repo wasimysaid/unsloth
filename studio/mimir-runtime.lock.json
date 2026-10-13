@@ -1,8 +1,35 @@
 {
-  "version": 1,
+  "frontend": {
+    "artifacts": {
+      "mimir-plugin.toml": "43f29a1dbb2dc30edc7ddd0c604c90c47d2cf8daedfe449565287b6efcff7d1c",
+      "plugin.wasm": "a3ed9d4c38fb131ac6b45d1e4defd582dc505ca36f7e58db1e319a40ec01fda3"
+    },
+    "build": [
+      {
+        "argv": [
+          "python3",
+          "plugins/studio-frontend/build.py",
+          "--output",
+          "target/studio-frontend-package"
+        ],
+        "cwd": ".",
+        "repo": "mimir",
+        "timeout": 1000
+      }
+    ],
+    "environment": {
+      "UNSLOTH_MIMIR_EXECUTABLE": "{mimir_binary}",
+      "UNSLOTH_MIMIR_PLUGIN_PACKAGE": "{plugin_package}"
+    },
+    "package": {
+      "path": "target/studio-frontend-package",
+      "repo": "mimir"
+    },
+    "plugin_id": "studio.frontend"
+  },
   "mimir": {
     "repository": "wasimysaid/mimir",
-    "revision": "fe821251db6d8327fb59fde5f5a2cad9de0c231c"
+    "revision": "1fd0ca7275f25a3bde6507a17535983e2aeec5ee"
   },
-  "frontend": null
+  "version": 1
 }

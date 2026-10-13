@@ -110,6 +110,42 @@ def _studio_home_root(tmp_path_factory):
 _studio_home_counter = itertools.count()
 
 
+@pytest.fixture(autouse = True)
+def _own_test_llama_backends():
+    """Test-created process owners live through assertions, not through the entire suite.
+
+    Production registers cleanup at interpreter exit. A serial suite constructs thousands
+    of independent owners, and tests which stub Popen still open real attempt logs. Keeping
+    those owners until exit exhausted 1024 descriptors halfway through the suite. Preserve
+    the real registration and cleanup, but end each test's ownership at fixture teardown.
+    Collection-time singletons and other atexit callbacks are not owned by this fixture.
+    """
+    import atexit
+
+    callbacks = []
+    register = atexit.register
+
+    def owned_register(callback, *args, **kwargs):
+        owner = getattr(callback, "__self__", None)
+        if (
+            type(owner).__module__ == "core.inference.llama_cpp"
+            and getattr(callback, "__name__", None) == "_cleanup"
+        ):
+            callbacks.append((callback, args, kwargs))
+        return register(callback, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(atexit, "register", owned_register)
+        try:
+            yield
+        finally:
+            for callback, args, kwargs in reversed(callbacks):
+                atexit.unregister(callback)
+                callback(*args, **kwargs)
+                # A test may stub _kill_process; the real log still belongs to it.
+                callback.__self__._close_attempt_log(reason = "test teardown")
+
+
 @pytest.fixture(scope = "session")
 def _skills_home_root(tmp_path_factory):
     # One mktemp per session; see _studio_home_root for why a per-test mktemp is quadratic.
@@ -763,6 +799,40 @@ class _RealSocketCalls:
         self.getaddrinfo = getaddrinfo
 
 
+@pytest.fixture(autouse = True)
+def _short_generated_private_ipc_addresses(monkeypatch):
+    """Keep real process-pool IPC usable in deeply nested task checkouts.
+
+    Linux limits Unix socket addresses to 107 bytes. The task's private TMPDIR
+    can already consume most of that before multiprocess adds its socket name.
+    A shorter relative spelling reaches the same private directory; neither
+    explicit socket addresses nor the datasets/process-pool execution change.
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    from multiprocessing import connection
+
+    modules = [connection]
+    try:
+        from multiprocess import connection as pool_connection
+    except ImportError:
+        pass
+    else:
+        modules.append(pool_connection)
+    for module in modules:
+        original = module.arbitrary_address
+
+        def address(family, _original = original):
+            result = _original(family)
+            if family == "AF_UNIX" and len(os.fsencode(result)) > 107:
+                relative = os.path.relpath(result)
+                if len(os.fsencode(relative)) <= 107:
+                    return relative
+            return result
+
+        monkeypatch.setattr(module, "arbitrary_address", address)
+
+
 @pytest.fixture(scope = "session", autouse = True)
 def _outbound_network_guard():
     """Refuse every non-loopback connect, so no test depends on a live Hub.
@@ -968,7 +1038,7 @@ def _hub_reachable_without_probing(monkeypatch):
 
 
 @pytest.fixture(scope = "session")
-def studio_server(request):
+def studio_server(request, tmp_path_factory):
     """Yield ``(base_url, api_key)`` for e2e tests.
 
     Uses ``UNSLOTH_E2E_BASE_URL`` (requires ``UNSLOTH_E2E_API_KEY``) if set,
@@ -987,8 +1057,9 @@ def studio_server(request):
         yield external_url, api_key
         return
 
-    # Lazy import; pytest has already loaded test_studio_api, so this is a cache hit.
-    import test_studio_api as _e2e
+    # Use the test package: root-level pytest imports this module as
+    # studio.backend.tests.test_studio_api, not as a top-level test_studio_api.
+    from . import test_studio_api as _e2e
 
     model = (
         request.config.getoption("--unsloth-model")
@@ -1001,11 +1072,23 @@ def studio_server(request):
         or _e2e.DEFAULT_VARIANT
     )
 
-    proc, api_key = _e2e._start_server(model, variant)
-    try:
-        yield f"http://{_e2e.HOST}:{_e2e.PORT}", api_key
-    finally:
-        _e2e._kill_server(proc)
+    # Managed-server logs are evidence, not source-tree outputs. Keep them in
+    # pytest's task-owned scratch root alongside the isolated session home.
+    with pytest.MonkeyPatch.context() as patch:
+        server_home = tmp_path_factory.mktemp("studio_api")
+        # The CLI resolves its interpreter under the install home. Reuse the
+        # actual test environment without installing into the developer's home.
+        (server_home / "unsloth_studio").symlink_to(sys.prefix, target_is_directory = True)
+        runtime = Path(sys.prefix) / "llama.cpp"
+        if runtime.is_dir():
+            (server_home / "llama.cpp").symlink_to(runtime, target_is_directory = True)
+        patch.setenv("UNSLOTH_STUDIO_HOME", str(server_home))
+        patch.setattr(_e2e, "LOG_FILE", server_home / "server.log")
+        proc, api_key = _e2e._start_server(model, variant)
+        try:
+            yield f"http://{_e2e.HOST}:{_e2e.PORT}", api_key
+        finally:
+            _e2e._kill_server(proc)
 
 
 @pytest.fixture
@@ -1328,6 +1411,45 @@ def _drop_the_settings_memo_between_tests():
         yield
     finally:
         _settings._cache.clear()
+
+
+@pytest.fixture(autouse = True)
+def _own_direct_inference_requests():
+    """Balance test-owned direct route calls which never enter ASGI middleware.
+
+    The real middleware owns admission teardown for HTTP requests. Direct unit
+    calls bypass it, leaving research/streaming scopes admitted after their test
+    ends and making a later preview look busy. Keep the real admission and every
+    counter visible through assertions; release only newly admitted, untracked
+    scopes at teardown. Middleware-owned scopes and pre-existing admissions are
+    untouched, so their lifecycle failures cannot be hidden by this fixture.
+    """
+    from core.inference import llama_keepwarm as keepwarm
+
+    scopes = []
+    admit = keepwarm.note_admitted_inference
+    release = keepwarm.untrack_admitted_inference
+
+    def owned_admit(scope):
+        already_admitted = isinstance(scope, dict) and scope.get(keepwarm._ADMITTED_SCOPE_KEY)
+        result = admit(scope)
+        if (
+            isinstance(scope, dict)
+            and not already_admitted
+            and scope.get(keepwarm._ADMITTED_SCOPE_KEY)
+            and not scope.get(keepwarm._TRACKED_SCOPE_KEY)
+        ):
+            scopes.append(scope)
+        return result
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(keepwarm, "note_admitted_inference", owned_admit)
+        try:
+            yield
+        finally:
+            for scope in reversed(scopes):
+                if not scope.get(keepwarm._TRACKED_SCOPE_KEY):
+                    release(scope)
 
 
 @pytest.fixture(autouse = True)

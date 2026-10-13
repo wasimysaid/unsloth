@@ -1017,6 +1017,10 @@ def test_a_real_card_with_a_declared_arch_is_still_served(stack, monkeypatch):
     must keep working once the silicon is corroborated."""
     monkeypatch.setenv("UNSLOTH_FORCE_ROCM_TORCH", "1")
     monkeypatch.setenv("UNSLOTH_ROCM_GFX_ARCH", "gfx1151")
+    # The probes below simulate a visible card and stop before any install. An
+    # inherited CPU-only mask would deliberately refuse that simulated host.
+    for name in ("CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES"):
+        monkeypatch.delenv(name, raising = False)
     monkeypatch.setattr(stack, "IS_WINDOWS", False)
     monkeypatch.setattr(stack, "IS_MACOS", False)
     monkeypatch.setattr(stack.platform, "machine", lambda: "x86_64")

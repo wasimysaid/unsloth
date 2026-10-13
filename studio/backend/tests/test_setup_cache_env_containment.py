@@ -50,6 +50,28 @@ _HF_ENV = ("HF_HOME", "HF_HUB_CACHE", "HF_XET_CACHE", "HUGGINGFACE_HUB_CACHE")
 
 @pytest.fixture(autouse = True)
 def _clean_env(monkeypatch, tmp_path):
+    if os.name != "nt":
+        # pytest inherits the host umask for this directory; positive controls
+        # require a private root even on group-writable development hosts.
+        tmp_path.chmod(0o700)
+        # These tests own the tree under tmp_path and vary its real permissions.
+        # A shared checkout's unrelated ancestors can otherwise make EVERY
+        # positive control fail before the directory under test is considered.
+        # Normalize only that outer boundary; all test-created directories,
+        # ownership changes, sticky bits and symlink targets are still checked.
+        ancestors = {str(path) for path in (*tmp_path.parents, *tmp_path.resolve().parents)}
+        real_stat = os.stat
+
+        def trusted_host_stat(path, *args, **kwargs):
+            info = real_stat(path, *args, **kwargs)
+            if not isinstance(path, int) and os.path.abspath(os.fsdecode(path)) in ancestors:
+                fields = list(info)
+                fields[0] &= ~(stat.S_IWGRP | stat.S_IWOTH)
+                fields[4] = os.geteuid()
+                return os.stat_result(fields)
+            return info
+
+        monkeypatch.setattr(os, "stat", trusted_host_stat)
     for key in _ALWAYS_PINNED + _PORTABLE_ONLY + _HF_ENV:
         monkeypatch.delenv(key, raising = False)
     for key in ("UNSLOTH_HOME", "UNSLOTH_PORTABLE", "STUDIO_HOME"):
@@ -133,7 +155,7 @@ def _a_temp_root_the_policy_accepts(monkeypatch, tmp_path):
     which keeps everything inside tmp_path and exercises the real rule rather than skipping it.
     """
     root = tmp_path / "Temp"
-    root.mkdir()
+    root.mkdir(mode = 0o700)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(root))
     return root
@@ -450,7 +472,7 @@ def test_the_fallback_it_creates_is_closed_to_everyone_else(monkeypatch, tmp_pat
     refused = tmp_path / "o'brien" / "studio"
     refused.mkdir(parents = True)
     shared = tmp_path / "shared-tmp"
-    shared.mkdir()
+    shared.mkdir(mode = 0o755)
     monkeypatch.setenv("UNSLOTH_STUDIO_HOME", str(refused))
     sr = _load_storage_roots()
     monkeypatch.setattr(sr.tempfile, "gettempdir", lambda: str(shared))

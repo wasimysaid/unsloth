@@ -750,6 +750,10 @@ class TestEmbedLlamaServerPinsTheGatedGpus:
 
     def test_the_launch_env_masks_the_child_to_them(self, monkeypatch):
         self._probes(monkeypatch, gated = [(1, 24000)], everything = [(0, 60000), (1, 24000)])
+        # This is a pure environment-builder probe; nothing is spawned. The spy
+        # deliberately records without changing env, so seed the simulated GPU
+        # host instead of inheriting a CPU-only runner's blank CUDA mask.
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1")
         calls = self._spy_visibility(monkeypatch)
         from core.rag.embed_llama_server import LlamaServerBackend
 

@@ -1,0 +1,191 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
+
+import assert from "node:assert/strict";
+import test from "node:test";
+import { loadWithStubs } from "./helpers/module-stubs.ts";
+import * as fastApiError from "../src/lib/format-fastapi-error.ts";
+import { consumeCodingEvents } from "../src/features/coding/events.ts";
+import type * as Coding from "../src/features/coding/api.ts";
+
+function client(response: () => Response) {
+  const requests: { path: string; init?: RequestInit; options: unknown }[] = [];
+  const api = loadWithStubs<typeof Coding>(
+    new URL("../src/features/coding/api.ts", import.meta.url),
+    {
+      "@/features/auth/api": {
+        authFetch: async (
+          path: string,
+          init?: RequestInit,
+          options?: unknown,
+        ) => {
+          requests.push({ path, init, options });
+          return response();
+        },
+      },
+      "@/lib/format-fastapi-error": fastApiError,
+      "./events": { consumeCodingEvents },
+    },
+  );
+  return { api, requests };
+}
+
+test("browse uses authenticated host API with query encoding and cancellation", async () => {
+  const directory = {
+    path: "/canonical",
+    parent: "/",
+    entries: [{ name: "project", path: "/canonical/project" }],
+    truncated: false,
+  };
+  const c = client(() => Response.json(directory));
+  const abort = new AbortController();
+  assert.deepEqual(
+    await c.api.codingApi.browseProjects("/host/a & b?", abort.signal),
+    directory,
+  );
+  assert.equal(
+    c.requests[0].path,
+    "/api/coding/projects/browse?path=%2Fhost%2Fa+%26+b%3F",
+  );
+  assert.equal(c.requests[0].init?.signal, abort.signal);
+});
+
+test("native creation sends only cwd with no transport replay, prompts, settings or tools", async () => {
+  const native = { id: "native-1", cwd: "/canonical/project" };
+  const c = client(() => Response.json(native));
+  assert.deepEqual(
+    await c.api.codingApi.createConversation("/host/link"),
+    native,
+  );
+  assert.deepEqual(c.requests, [
+    {
+      path: "/api/coding/conversations",
+      init: {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd: "/host/link" }),
+      },
+      options: { retryNetworkErrors: false },
+    },
+  ]);
+});
+
+test("list and explicit reopen consume native records; IDs are encoded as one path segment", async () => {
+  const row = { id: "native/id?", cwd: "/saved" };
+  let listing = true;
+  const c = client(() =>
+    Response.json(listing ? { conversations: [row], next_cursor: null } : row),
+  );
+  assert.deepEqual(await c.api.codingApi.listConversations(), [row]);
+  listing = false;
+  assert.deepEqual(await c.api.codingApi.openConversation(row.id), row);
+  assert.equal(c.requests[0].path, "/api/coding/conversations");
+  assert.equal(
+    c.requests[1].path,
+    "/api/coding/conversations/native%2Fid%3F/open",
+  );
+  assert.deepEqual(c.requests[1].init, { method: "POST" });
+});
+
+test("native pagination is fully followed with encoded cursors", async () => {
+  let page = 0;
+  const c = client(() =>
+    Response.json({
+      conversations: [{ id: `native-${++page}`, cwd: `/project-${page}` }],
+      next_cursor: page === 1 ? "next & page?" : null,
+    }),
+  );
+  assert.deepEqual(
+    (await c.api.codingApi.listConversations()).map((row) => row.id),
+    ["native-1", "native-2"],
+  );
+  assert.deepEqual(
+    c.requests.map((request) => request.path),
+    [
+      "/api/coding/conversations",
+      "/api/coding/conversations?cursor=next+%26+page%3F",
+    ],
+  );
+});
+
+test("an endless or repeated catalog fails explicitly rather than showing incomplete history", async () => {
+  const repeated = client(() =>
+    Response.json({ conversations: [], next_cursor: "same" }),
+  );
+  await assert.rejects(
+    repeated.api.codingApi.listConversations(),
+    /repeated a page cursor/,
+  );
+  assert.equal(repeated.requests.length, 2);
+  let page = 0;
+  const unending = client(() =>
+    Response.json({ conversations: [], next_cursor: String(++page) }),
+  );
+  await assert.rejects(
+    unending.api.codingApi.listConversations(),
+    /exceeded 100 pages.*full history could not be loaded/,
+  );
+  assert.equal(unending.requests.length, 100);
+});
+
+test("missing or malformed native page cursors cannot silently mean complete history", async () => {
+  for (const next_cursor of [undefined, "", 42]) {
+    const c = client(() => Response.json({ conversations: [], next_cursor }));
+    await assert.rejects(
+      c.api.codingApi.listConversations(),
+      /invalid page cursor/,
+    );
+  }
+});
+
+test("native auth/validation/availability errors remain errors, not successful openings", async () => {
+  for (const status of [401, 403, 404, 422, 503]) {
+    const c = client(() =>
+      Response.json({ detail: "Native opening rejected" }, { status }),
+    );
+    await assert.rejects(
+      c.api.codingApi.createConversation("/bad"),
+      /Native opening rejected/,
+    );
+  }
+  const c = client(() => new Response("gateway failed", { status: 502 }));
+  await assert.rejects(
+    c.api.codingApi.openConversation("saved"),
+    /Coding request failed \(502\)/,
+  );
+});
+
+test("event stream uses authenticated fetch, exposes a disconnect event and is cancellable", async () => {
+  const text = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(
+        text.encode(
+          'event:view\ndata:{"native":"view"}\n\nevent:disconnected\ndata:{"detail":"Native frontend stopped"}\n\n: heartbeat\n\n',
+        ),
+      );
+    },
+  });
+  const c = client(
+    () =>
+      new Response(body, { headers: { "Content-Type": "text/event-stream" } }),
+  );
+  const abort = new AbortController();
+  let connected = false;
+  await assert.rejects(
+    c.api.watchCodingConversation("native/id", abort.signal, () => {
+      connected = true;
+    }),
+    /Native frontend stopped/,
+  );
+  assert.equal(connected, true);
+  assert.equal(
+    c.requests[0].path,
+    "/api/coding/conversations/native%2Fid/events",
+  );
+  assert.equal(c.requests[0].init?.signal, abort.signal);
+  assert.deepEqual(c.requests[0].init?.headers, {
+    Accept: "text/event-stream",
+  });
+  assert.deepEqual(c.requests[0].options, { retryNetworkErrors: false });
+});

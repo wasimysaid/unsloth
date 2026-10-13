@@ -811,6 +811,11 @@ def test_health_response_reports_desktop_capability_fields(monkeypatch):
     llama_module.router = APIRouter()
     engines_module = ModuleType("routes.engines")
     engines_module.router = APIRouter()
+    browser_module = ModuleType("routes.browser")
+    browser_module.router = APIRouter()
+    browser_module.BROWSER_FRAME_PATH = "/api/browser/frame"
+    browser_module.BROWSER_PRINT_PATH = "/api/browser/print"
+    browser_module.EXPOSED_HEADERS = ()
     llama_compat_module = ModuleType("routes.llama_compat")
     llama_compat_module.router = APIRouter()
     # main.py imports this name alongside the router and calls it from serve_frontend.
@@ -827,6 +832,8 @@ def test_health_response_reports_desktop_capability_fields(monkeypatch):
     profile_stats_module.router = APIRouter()
     accounts_module = ModuleType("routes.accounts")
     accounts_module.router = APIRouter()
+    coding_module = ModuleType("routes.coding")
+    coding_module.router = APIRouter()
     library_module = ModuleType("routes.library")
     library_module.router = APIRouter()
     sandbox_capability_module = ModuleType("routes.sandbox_capability")
@@ -852,11 +859,13 @@ def test_health_response_reports_desktop_capability_fields(monkeypatch):
         )
     routes_module.settings = settings_module
     routes_module.llama = llama_module
+    routes_module.browser = browser_module
 
     monkeypatch.setitem(sys.modules, "routes", routes_module)
     monkeypatch.setitem(sys.modules, "routes.settings", settings_module)
     monkeypatch.setitem(sys.modules, "routes.llama", llama_module)
     monkeypatch.setitem(sys.modules, "routes.engines", engines_module)
+    monkeypatch.setitem(sys.modules, "routes.browser", browser_module)
     monkeypatch.setitem(sys.modules, "routes.llama_compat", llama_compat_module)
     monkeypatch.setitem(sys.modules, "routes.prompts", prompts_module)
     monkeypatch.setitem(sys.modules, "routes.preview", preview_module)
@@ -864,6 +873,7 @@ def test_health_response_reports_desktop_capability_fields(monkeypatch):
     monkeypatch.setitem(sys.modules, "routes.npu", npu_module)
     monkeypatch.setitem(sys.modules, "routes.profile_stats", profile_stats_module)
     monkeypatch.setitem(sys.modules, "routes.accounts", accounts_module)
+    monkeypatch.setitem(sys.modules, "routes.coding", coding_module)
     monkeypatch.setitem(sys.modules, "routes.library", library_module)
     monkeypatch.setitem(sys.modules, "routes.sandbox_capability", sandbox_capability_module)
     monkeypatch.setitem(sys.modules, "routes.systemone", systemone_module)
@@ -1116,10 +1126,22 @@ def test_the_router_stub_covers_every_router_main_imports():
     backend = Path(__file__).resolve().parent.parent
     imported = _routers_main_imports()
 
+    import ast
+
     init_src = (backend / "routes" / "__init__.py").read_text(encoding = "utf-8")
-    all_block = re.search(r"__all__\s*=\s*\[([^\]]*)\]", init_src, re.S)
-    assert all_block is not None, "routes/__init__.py no longer has a literal __all__"
-    exported = set(re.findall(r'"(\w+_router)"', all_block.group(1)))
+    assignments = {
+        target.id: node.value
+        for node in ast.parse(init_src).body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    # Lazy exports have one literal registry, not a second hand-maintained list.
+    # Keep this check static so it never imports the heavyweight routers.
+    expected_all = ast.parse("list(_EXPORTS)", mode = "eval").body
+    assert "__all__" in assignments, "routes/__init__.py no longer declares __all__"
+    assert ast.dump(assignments["__all__"]) == ast.dump(expected_all)
+    exported = set(ast.literal_eval(assignments["_EXPORTS"]))
     assert exported, "routes/__init__.py's __all__ named no routers; re-derive this"
 
     unknown = sorted(imported - exported)

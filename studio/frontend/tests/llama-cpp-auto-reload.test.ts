@@ -9,7 +9,8 @@ let vite: ViteDevServer;
 before(async () => {
   vite = await createServer({
     appType: "custom",
-    server: { middlewareMode: true, hmr: false },
+    optimizeDeps: { noDiscovery: true },
+    server: { middlewareMode: true, hmr: false, watch: null },
   });
 });
 after(async () => {

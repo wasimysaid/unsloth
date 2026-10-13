@@ -49,7 +49,8 @@ function loadMessageToOpenAI(): typeof messageToOpenAI {
 before(async () => {
   vite = await createServer({
     appType: "custom",
-    server: { middlewareMode: true },
+    optimizeDeps: { noDiscovery: true },
+    server: { middlewareMode: true, hmr: false, watch: null },
   });
   const loaded = await vite.ssrLoadModule(
     "/src/features/chat/utils/chat-import.ts",
