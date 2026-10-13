@@ -44,6 +44,7 @@ const native = (active: string | null = null): NativeState => ({
     ? [{ id: active, status: "running", submission_key: "key" }]
     : [],
   pending_user_request: false,
+  user_request: null,
 });
 function harness(
   storage: SubmissionStorage = memorySubmissionStorage(),
@@ -59,6 +60,9 @@ function harness(
   let rows: CodingRow[] = [];
   let submitError: Error | null = null;
   const api: RunApi = {
+    async answer(id, target) {
+      return { conversation_id: id, ...target, accepted: true };
+    },
     async configure() {
       return native().configuration;
     },

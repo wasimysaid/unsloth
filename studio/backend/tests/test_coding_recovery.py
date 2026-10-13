@@ -19,7 +19,7 @@ from .coding_transport_faults import CodingTransportFaults
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["prompt", "cancel"])
+@pytest.mark.parametrize("operation", ["prompt", "cancel", "answer"])
 async def test_uncertain_command_is_not_replayed_and_late_ack_does_not_poison_reconciliation(monkeypatch, operation):
     import core.coding_runtime as module
     monkeypatch.setattr(module, "COMMAND_TIMEOUT", 0.01)

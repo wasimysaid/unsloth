@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { CodingHttpError } from "../src/features/coding/errors.ts";
 import * as codingInput from "../src/features/coding/input.ts";
+import * as answerFocus from "../src/features/coding/answer-focus.ts";
 import type * as Composer from "../src/features/coding/coding-composer.tsx";
 import type { RunApi } from "../src/features/coding/run-types.ts";
 import { createCodingSession } from "../src/features/coding/session.ts";
@@ -312,6 +313,7 @@ test("rendered interrupted control never auto-submits and explicit click is disa
       active_request: null,
       running_configuration: null,
       pending_user_request: false,
+      user_request: null,
     },
   };
   let continued = 0;
@@ -407,11 +409,25 @@ test("stopping is pending native drain, not stopped, and blocks duplicate mainte
 });
 
 for (const ownerGeneration of [1, 2, 100]) {
-  test(`rendered surface respects owning generation ${ownerGeneration} during first startup/stale reopen and requires deliberate reopen on loss`, async () => {
+  test(`rendered surface respects owning generation ${ownerGeneration} during first startup/stale reopen and requires deliberate reopen on loss`, async (t) => {
+    const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+    const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: Object.assign(new EventTarget(), { body: new EventTarget() }),
+    });
+    Object.defineProperty(globalThis, "window", { configurable: true, value: new EventTarget() });
+    t.after(() => {
+      if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
+      else Reflect.deleteProperty(globalThis, "document");
+      if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+      else Reflect.deleteProperty(globalThis, "window");
+    });
     let deliver!: (value: unknown) => Promise<void>;
     let liveSignal!: AbortSignal;
     const cancelled: string[] = [];
     const api: RunApi = {
+      answer: async () => { throw new Error("No answer should be replayed"); },
       configure: async () => { throw new Error("No configuration should change"); },
       checkOverlap: async () => { throw new Error("No overlap preflight should run"); },
       readChild: async () => { throw new Error("No child inspection should run"); },
@@ -521,6 +537,8 @@ for (const ownerGeneration of [1, 2, 100]) {
       },
       "lucide-react": { ArrowDown: "icon", ArrowUp: "icon", Square: "icon" },
       react: {
+        createContext: (current: unknown) => ({ current, Provider: "answer-focus-provider" }),
+        useContext: (context: { current: unknown }) => context.current,
         useState: (initial: unknown) => {
           const index = stateIndex++;
           if (index >= states.length)
@@ -552,6 +570,8 @@ for (const ownerGeneration of [1, 2, 100]) {
         },
       },
       "./presentation": {},
+      "./answer-focus": answerFocus,
+      "./question-card": { QuestionCard: "question-card" },
       "./run-runtime": { codingRunAdapter: () => ({}) },
       "./run-session": {
         createCodingRun: (
@@ -994,6 +1014,7 @@ test("stream process loss retires cached cleanup and pre-loss reads before expos
   const run = createCodingRun(
     "saved",
     {
+      answer: async () => { throw new Error("No answer replay"); },
       configure: async () => { throw new Error("No configuration replay"); },
       checkOverlap: async () => { throw new Error("No overlap replay"); },
       readChild: async () => { throw new Error("No child inspection replay"); },

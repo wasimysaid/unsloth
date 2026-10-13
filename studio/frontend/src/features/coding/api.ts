@@ -260,12 +260,23 @@ export async function discoverCodingSkills(id: string, signal?: AbortSignal) {
   return (await response.json()) as { skills: import("./input").CodingSkill[] };
 }
 
-/** All owner-bound requests retain the generation confirmed by create/open. */
+/** Owner execution and views retain the generation confirmed by create/open. */
 export function createCodingRunApi(openingGeneration: number): RunApi {
   if (!Number.isSafeInteger(openingGeneration) || openingGeneration < 1)
     throw new Error("A confirmed runtime generation from create/open is required. Deliberately reopen the saved conversation.");
   const generationHeaders = { "X-Mimir-Runtime-Generation": String(openingGeneration) };
   return {
+  async answer(id, target, answers) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/requests/${encodeURIComponent(target.request_id)}/questions/${encodeURIComponent(target.user_request_id)}/answers`,
+      {
+        method: "POST",
+        headers: { ...generationHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ subscription: target.subscription, answers }),
+      },
+    );
+    return await response.json();
+  },
   async commands(id) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/commands`,
