@@ -18,7 +18,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { codingRunApi } from "./api";
+import { createCodingRunApi } from "./api";
 import { nativeMessageRow } from "./presentation";
 import { codingRunAdapter } from "./run-runtime";
 import {
@@ -28,6 +28,8 @@ import {
 } from "./run-session";
 import { ToolReport } from "./tool-report";
 import { CodingUnsentDraft } from "./unsent-draft";
+import { CodingRecoveryControls } from "./recovery-controls";
+import type { CodingRuntimeStatus } from "./runtime-maintenance";
 
 function NativeMessage() {
   const message = useMessage();
@@ -112,11 +114,32 @@ const messageComponents = {
 
 export function CodingSurface({
   conversationId,
+  conversationGeneration,
+  runtimeStatus,
+  onRuntimeLost,
   children,
-}: { conversationId: string | null; children: React.ReactNode }) {
-  const [run] = useState(() =>
-    conversationId ? createCodingRun(conversationId, codingRunApi) : null,
-  );
+}: {
+  conversationId: string | null;
+  conversationGeneration?: number;
+  runtimeStatus: CodingRuntimeStatus | null;
+  onRuntimeLost?: () => void;
+  children: React.ReactNode;
+}) {
+  const [run] = useState(() => {
+    if (
+      !conversationId ||
+      typeof conversationGeneration !== "number" ||
+      !Number.isSafeInteger(conversationGeneration) ||
+      conversationGeneration < 1
+    )
+      return null;
+    return createCodingRun(
+      conversationId,
+      createCodingRunApi(conversationGeneration),
+      undefined,
+      { onRuntimeLost },
+    );
+  });
   const state = useSyncExternalStore(
     run?.subscribe ?? (() => () => {}),
     run?.getSnapshot ?? (() => null),
@@ -129,6 +152,21 @@ export function CodingSurface({
     run?.connect();
     return () => run?.detach();
   }, [run]);
+  useEffect(() => {
+    if (!run || !runtimeStatus || conversationGeneration === undefined) return;
+    // Successful create/open invalidates prior observations before this owner is
+    // published. Fresh epochs are opaque: inequality, not numeric order, is loss.
+    const replaced = runtimeStatus.generation !== conversationGeneration;
+    // Same-generation restart preparation/uncertainty is not proof of process
+    // loss. A refused attempt must leave the connected view and Stop available.
+    if (
+      replaced ||
+      ["disconnected", "stopped", "cleanup_failed"].includes(
+        runtimeStatus.state,
+      )
+    )
+      run.requireRuntimeReopen();
+  }, [runtimeStatus, conversationGeneration, run]);
   useLayoutEffect(() => {
     if (state?.rows.length && follow.current && viewport.current) {
       viewport.current.scrollTop = viewport.current.scrollHeight;
@@ -148,9 +186,16 @@ export function CodingSurface({
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <ThreadPrimitive.Root className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+        {conversationId && !run && (
+          <p role="alert" className="break-words text-sm text-destructive">
+            The saved conversation has no confirmed opening generation.
+            Deliberately reopen it before sending or controlling native work;
+            runtime status cannot supply its owner identity.
+          </p>
+        )}
         {state && (
           <div
-            className="space-y-2 rounded-xl border border-border/60 px-3 py-2 text-xs"
+            className="max-h-[35dvh] shrink-0 space-y-2 overflow-y-auto rounded-xl border border-border/60 px-3 py-2 text-xs"
             data-testid="coding-event-status"
           >
             <output
@@ -214,6 +259,7 @@ export function CodingSurface({
                   : "Disconnected · work may still be running. Reconnecting automatically; this warning stays until native history is rebuilt."}
               </p>
             )}
+            <CodingRecoveryControls state={state} run={run} />
             {(state.reconcilingAction || state.retryStop) && (
               <p role="status" data-testid="coding-action-reconciliation">
                 {state.reconcilingAction

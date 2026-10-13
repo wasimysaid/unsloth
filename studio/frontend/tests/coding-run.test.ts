@@ -2,9 +2,11 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 import assert from "node:assert/strict";
 import test from "node:test";
+import { CodingHttpError } from "../src/features/coding/errors.ts";
 import {
   codingRunCompletion,
   codingRunLabel,
+  codingCanContinue,
   createCodingRun,
 } from "../src/features/coding/run-session.ts";
 import type {
@@ -829,6 +831,14 @@ test("a closed native view requires deliberate reopen instead of automatic owner
   assert.equal(h.run.getSnapshot().reopenRequired, true);
   assert.equal(h.run.getSnapshot().disconnected, true);
   assert.deepEqual(attempts, []);
+  const closedSignal = h.signal();
+  h.run.connect();
+  assert.equal(
+    h.signal(),
+    closedSignal,
+    "manual reconnect cannot repair an owner requiring deliberate reopen",
+  );
+  assert.equal(closedSignal?.aborted, true);
   h.run.detach();
 });
 
@@ -970,3 +980,206 @@ for (const rejected of [false, true]) {
     }
   });
 }
+
+test("restored interrupted request preserves unavailable model identity and only explicit continuation admits a fresh key", async () => {
+  const h = harness();
+  const interrupted = native();
+  interrupted.configuration.provider = "removed-provider";
+  interrupted.configuration.model = "unavailable-saved-model";
+  interrupted.requests = [
+    {
+      id: "original-accepted",
+      status: "interrupted",
+      submission_key: "original-key",
+    },
+  ];
+  h.setRows([{ id: "history", kind: "assistant", text: "Partial saved work" }]);
+  await h.start(interrupted);
+  assert.match(codingRunLabel(h.run.getSnapshot()), /^Interrupted/);
+  assert.equal(codingCanContinue(h.run.getSnapshot()), true);
+  assert.deepEqual(h.submissions, [], "capture does not auto-submit or replay");
+  assert.equal(
+    h.run.getSnapshot().native?.configuration.model,
+    "unavailable-saved-model",
+  );
+  await h.run.continueInterruptedWork();
+  assert.deepEqual(h.submissions, [
+    {
+      id: "conversation",
+      key: "key",
+      text: "Continue the interrupted work from request original-accepted. Review saved history and the current project state first; do not blindly repeat commands or assume prior actions completed.",
+    },
+  ]);
+  assert.notEqual((h.submissions[0] as { key: string }).key, "original-key");
+  await h.run.continueInterruptedWork();
+  assert.equal(
+    h.submissions.length,
+    1,
+    "late native state does not permit a duplicate continuation",
+  );
+  assert.equal(h.run.getSnapshot().rows[0].text, "Partial saved work");
+  h.run.detach();
+});
+
+test("clean stop and incomplete native cleanup never enable interrupted continuation", async () => {
+  const h = harness();
+  const stopped = native();
+  stopped.requests = [
+    { id: "stopped", status: "cancelled", submission_key: "old" },
+  ];
+  await h.start(stopped);
+  await h.run.continueInterruptedWork();
+  assert.match(codingRunLabel(h.run.getSnapshot()), /^Stopped/);
+  assert.equal(codingCanContinue(h.run.getSnapshot()), false);
+  const draining = native("interrupted");
+  draining.requests[0].status = "interrupted";
+  await h.event({ type: "state", state: draining });
+  await h.run.continueInterruptedWork();
+  assert.equal(codingCanContinue(h.run.getSnapshot()), false);
+  assert.deepEqual(h.submissions, []);
+  h.run.detach();
+});
+
+test("same-key uncertain-delivery reconciliation remains distinct from new interrupted continuation", async () => {
+  const h = harness();
+  await h.start();
+  h.setSubmitError(new Error("Lost acknowledgment"));
+  await h.run.send("Original accepted work");
+  await h.run.retrySubmission();
+  assert.deepEqual(h.submissions, [
+    { id: "conversation", key: "key", text: "Original accepted work" },
+    { id: "conversation", key: "key", text: "Original accepted work" },
+  ]);
+  const interrupted = native();
+  interrupted.requests = [
+    { id: "original", status: "interrupted", submission_key: "key" },
+  ];
+  await h.start(interrupted);
+  assert.equal(h.run.getSnapshot().uncertainSubmission, null);
+  assert.equal(h.run.getSnapshot().deliveryRecovered, true);
+  assert.equal(
+    h.submissions.length,
+    2,
+    "accepted interrupted recovery is not continuation",
+  );
+  h.run.detach();
+});
+
+test("runtime invalidation preserves native history and identity but never reconnects or submits until deliberate reopen", async () => {
+  const h = harness();
+  h.setRows([{ id: "saved", kind: "user", text: "Accepted prompt" }]);
+  await h.start(native("accepted"));
+  const previous = h.run.getSnapshot();
+  const signal = h.signal();
+  h.run.requireRuntimeReopen();
+  assert.equal(signal?.aborted, true);
+  assert.equal(h.run.getSnapshot().reopenRequired, true);
+  assert.equal(h.run.getSnapshot().connection, "disconnected");
+  assert.equal(h.run.getSnapshot().native, previous.native);
+  assert.equal(h.run.getSnapshot().rows, previous.rows);
+  assert.equal(
+    h.run.getSnapshot().completion,
+    null,
+    "no fabricated clean completion",
+  );
+  h.run.connect();
+  assert.equal(
+    h.signal(),
+    signal,
+    "replacement does not automatically reopen or reconnect an old owner",
+  );
+  await h.run.continueInterruptedWork();
+  assert.deepEqual(h.submissions, []);
+  await assert.rejects(h.run.send("must deliberately reopen"), /reconstructed/);
+  h.run.detach();
+});
+
+test("stale-generation rejection of same-key retry requires reopen without erasing uncertain original acceptance", async () => {
+  const h = harness();
+  await h.start();
+  h.setSubmitError(new Error("Original acceptance acknowledgment lost"));
+  await h.run.send("Original work");
+  h.setSubmitError(
+    new CodingHttpError(
+      409,
+      "Stale runtime generation; deliberately reopen",
+      true,
+    ),
+  );
+  await h.run.retrySubmission();
+  assert.deepEqual(h.submissions, [
+    { id: "conversation", key: "key", text: "Original work" },
+    { id: "conversation", key: "key", text: "Original work" },
+  ]);
+  assert.equal(h.run.getSnapshot().connection, "disconnected");
+  assert.equal(h.run.getSnapshot().reopenRequired, true);
+  assert.deepEqual(h.run.getSnapshot().uncertainSubmission, {
+    key: "key",
+    text: "Original work",
+  });
+  assert.ok(h.storage.getItem(pendingSubmissionStorageKey("conversation")));
+  assert.match(
+    h.run.getSnapshot().error ?? "",
+    /does not resolve an earlier uncertain acceptance/,
+  );
+  const signal = h.signal();
+  h.run.connect();
+  assert.equal(h.signal(), signal);
+  await assert.rejects(h.run.retrySubmission(), /connected, reconstructed/);
+  assert.equal(
+    h.submissions.length,
+    2,
+    "no accepted prompt was replayed against the replacement",
+  );
+  h.run.detach();
+});
+
+test("loss evidence during cancellation preserves the exact stopping target without automatically watching another owner", async () => {
+  const h = harness();
+  await h.start(native("exact-request"));
+  h.api.cancel = async () => {
+    throw new CodingHttpError(
+      503,
+      "Native process lost; deliberately reopen",
+      true,
+    );
+  };
+  const signal = h.signal();
+  await h.run.stop();
+  assert.equal(h.run.getSnapshot().stopping, "exact-request");
+  assert.equal(h.run.getSnapshot().connection, "disconnected");
+  assert.equal(h.run.getSnapshot().reopenRequired, true);
+  assert.equal(signal?.aborted, true);
+  assert.match(codingRunLabel(h.run.getSnapshot()), /stopping unconfirmed/);
+  h.run.connect();
+  assert.equal(h.signal(), signal);
+  assert.equal(h.run.getSnapshot().completion, null);
+  h.run.detach();
+});
+
+test("stale-generation earlier-history read requires reopen while retaining native history", async () => {
+  const h = harness();
+  h.api.readEntries = async (_id, cut) => ({
+    cut,
+    rows: [{ id: "saved", kind: "user", text: "Native history" }],
+    older: true,
+    newer: false,
+    first_id: "saved",
+    last_id: "saved",
+  });
+  await h.start();
+  const saved = h.run.getSnapshot().rows;
+  h.api.readEntries = async () => {
+    throw new CodingHttpError(
+      409,
+      "Stale view generation; deliberately reopen",
+      true,
+    );
+  };
+  await h.run.loadEarlier();
+  assert.equal(h.run.getSnapshot().reopenRequired, true);
+  assert.equal(h.run.getSnapshot().loadingEarlier, false);
+  assert.equal(h.run.getSnapshot().connection, "disconnected");
+  assert.equal(h.run.getSnapshot().rows, saved);
+  h.run.detach();
+});

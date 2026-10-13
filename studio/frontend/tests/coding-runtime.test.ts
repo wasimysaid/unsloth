@@ -139,6 +139,7 @@ test("installed runtime upcoming assistant placeholder is not a native transcrip
     reopenRequired: false,
     reconcilingAction: null,
     retryStop: null,
+    continuationRequested: null,
     native: {
       info: { id: "conversation", cwd: "/project", title: null },
       configuration: {

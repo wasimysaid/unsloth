@@ -29,13 +29,16 @@ import {
   RefreshCw,
 } from "lucide-react";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
-import { codingApi } from "./api";
+import { codingApi, codingRuntimeApi } from "./api";
+import { createRuntimeMaintenance } from "./runtime-maintenance";
+import { CodingRuntimeControls } from "./runtime-controls";
 import { CodingSurface } from "./coding-surface";
 import { ProjectFolderDialog } from "./project-folder-dialog";
 import { restoreProjectPickerFocus } from "./project-picker-focus";
@@ -177,8 +180,26 @@ function CodingSidebar({
 }
 
 export function CodingPage() {
-  const [session] = useState(() => createCodingSession(codingApi));
+  const [maintenance] = useState(() =>
+    createRuntimeMaintenance(codingRuntimeApi),
+  );
+  const inspectFreshRuntime = useCallback(() => {
+    maintenance.invalidate();
+    void maintenance.refresh();
+  }, [maintenance]);
+  const [session] = useState(() =>
+    createCodingSession(codingApi, { onOpened: inspectFreshRuntime }),
+  );
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
+  const runtime = useSyncExternalStore(
+    maintenance.subscribe,
+    maintenance.getSnapshot,
+  );
+  useEffect(() => {
+    void maintenance.refresh();
+    const timer = setInterval(() => void maintenance.refresh(), 3000);
+    return () => clearInterval(timer);
+  }, [maintenance]);
   const [folderOpen, setFolderOpen] = useState(false);
   const folderInvoker = useRef<HTMLElement | null>(null);
   const projectChooser = useRef<HTMLButtonElement | null>(null);
@@ -215,8 +236,9 @@ export function CodingPage() {
             Mimir coding
           </span>
         </header>
+        <CodingRuntimeControls maintenance={maintenance} state={runtime} />
         <main
-          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 py-4 sm:px-8"
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto px-4 py-4 sm:px-8"
           aria-busy={state.opening}
         >
           <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col gap-4">
@@ -268,6 +290,26 @@ export function CodingPage() {
                   >
                     {state.active.id}
                   </p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-auto whitespace-normal text-left"
+                    data-testid="coding-reopen-saved"
+                    aria-disabled={
+                      state.opening ||
+                      Boolean(
+                        state.openingUncertainty &&
+                          !state.openingUncertainty.inspected,
+                      )
+                    }
+                    aria-describedby="coding-project-disclosure"
+                    onClick={() =>
+                      void session.openConversation(state.active!.id)
+                    }
+                  >
+                    Reopen saved conversation
+                  </Button>
                 </div>
               )}
               {state.opening && (
@@ -302,6 +344,9 @@ export function CodingPage() {
             <CodingSurface
               key={`${state.active?.id ?? "unopened"}:${state.openingGeneration}`}
               conversationId={state.active?.id ?? null}
+              conversationGeneration={state.active?.runtime_generation}
+              runtimeStatus={runtime.status}
+              onRuntimeLost={inspectFreshRuntime}
             >
               {/* The host project chooser intentionally sits beneath the composer, not in its toolbar. */}
               <div

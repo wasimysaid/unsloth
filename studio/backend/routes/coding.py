@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,6 +38,11 @@ class NativeViewResponse(StreamingResponse):
 class ProjectSelection(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     cwd: str = Field(min_length = 1, max_length = 32768)
+
+
+class RuntimeRestart(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    scope: Literal["all_hosted_conversations"]
 
 
 class PromptSubmission(BaseModel):
@@ -73,15 +78,19 @@ class HistorySelection(BaseModel):
 
 def _http_error(exc: CodingRuntimeError) -> HTTPException:
     status = {"invalid": 400, "not_found": 404, "denied": 403,
-              "busy": 409, "conflict": 409, "trust_conflict": 409,
+              "busy": 409, "conflict": 409, "trust_conflict": 409, "runtime_changed": 409,
               "unavailable": 503, "disconnected": 503, "uncertain": 504,
-              "limit": 429, "failed": 502}.get(exc.code, 400)
-    return HTTPException(status_code = status, detail = exc.message)
+              "limit": 429, "failed": 502, "cleanup_failed": 502}.get(exc.code, 400)
+    return HTTPException(status_code = status, detail = exc.message,
+                         headers = {"X-Mimir-Requires-Reopen": "true"} if exc.requires_reopen else None)
 
 
-async def _command(request: Request, method: str, params: dict | None = None):
+async def _command(request: Request, method: str, params: dict | None = None, *, generation: int | None = None):
     try:
-        return await runtime_for(request.app).command(method, params)
+        runtime = runtime_for(request.app)
+        if generation is None:
+            return await runtime.command(method, params)
+        return await runtime.command(method, params, expected_generation = generation)
     except CodingRuntimeError as exc:
         raise _http_error(exc) from exc
 
@@ -124,6 +133,21 @@ def _browse(path: str | None) -> dict:
         raise HTTPException(400, "That host folder cannot be read. Check the path and host permissions.") from exc
 
 
+@router.get("/runtime")
+async def runtime_status(request: Request):
+    return await runtime_for(request.app).inspect_status()
+
+
+@router.post("/runtime/restart")
+async def restart_whole_runtime(body: RuntimeRestart, request: Request):
+    # Explicit all-conversation scope, not plugin hot reload. Native admission
+    # refuses any busy hosted owner; HTTP disconnect never cancels maintenance.
+    try:
+        return await runtime_for(request.app).restart()
+    except CodingRuntimeError as exc:
+        raise _http_error(exc) from exc
+
+
 @router.get("/projects/browse")
 async def browse_projects(path: str | None = Query(default = None, max_length = 32768)):
     return await asyncio.to_thread(_browse, path)
@@ -153,29 +177,33 @@ async def open_conversation(conversation_id: str, request: Request):
 
 
 @router.post("/conversations/{conversation_id}/prompts", status_code = 202)
-async def submit_prompt(conversation_id: str, body: PromptSubmission, request: Request):
+async def submit_prompt(conversation_id: str, body: PromptSubmission, request: Request,
+                        generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
     # Mimir admits/deduplicates the submission and owns scheduling and saved input.
-    return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump()})
+    return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump()}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/requests/{request_id}/cancel")
-async def cancel_request(conversation_id: str, request_id: str, request: Request):
+async def cancel_request(conversation_id: str, request_id: str, request: Request,
+                         generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
     # Acceptance is not settlement. The ordered native view confirms completion.
-    return await _command(request, "cancel", {"conversation_id": conversation_id, "request_id": request_id})
+    return await _command(request, "cancel", {"conversation_id": conversation_id, "request_id": request_id}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/entries")
-async def read_entries(conversation_id: str, body: HistorySelection, request: Request):
-    return await _command(request, "read_entries", {"conversation_id": conversation_id, **body.model_dump()})
+async def read_entries(conversation_id: str, body: HistorySelection, request: Request,
+                       generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
+    return await _command(request, "read_entries", {"conversation_id": conversation_id, **body.model_dump()}, generation = generation)
 
 
 @router.get("/conversations/{conversation_id}/events")
-async def conversation_events(conversation_id: str, request: Request):
+async def conversation_events(conversation_id: str, request: Request,
+                              generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
     # A GET never implicitly opens an owner or grants project trust. The plugin
     # captures its native ordered view; no snapshot-then-subscribe race exists.
     runtime = runtime_for(request.app)
     try:
-        subscription, queue = await runtime.subscribe(conversation_id)
+        subscription, queue = await runtime.subscribe(conversation_id, expected_generation = generation)
     except CodingRuntimeError as exc:
         raise _http_error(exc) from exc
 
@@ -187,7 +215,7 @@ async def conversation_events(conversation_id: str, request: Request):
                 yield ": keepalive\n\n"
                 continue
             if isinstance(item, CodingRuntimeError):
-                yield "event: disconnected\ndata: " + json.dumps({"message": item.message}) + "\n\n"
+                yield "event: disconnected\ndata: " + json.dumps({"message": item.message, "code": item.code, "requires_reopen": item.requires_reopen}) + "\n\n"
                 return
             yield "event: view\ndata: " + json.dumps(item, separators = (",", ":")) + "\n\n"
             if item.get("event", {}).get("type") == "closed":

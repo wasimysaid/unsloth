@@ -30,7 +30,7 @@ def test_active_subjects_share_native_history_without_studio_profiles(
         for username in subjects:
             response = client.request(
                 method, f"/coding/conversations/{CONVERSATION_ID}/{suffix}",
-                headers = bearer(username),
+                headers = {**bearer(username), "X-Mimir-Runtime-Generation": "1"},
             )
             assert response.status_code == 200, response.text
             bodies.append(response.text)

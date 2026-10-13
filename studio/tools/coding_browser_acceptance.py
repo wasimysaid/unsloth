@@ -36,6 +36,7 @@ import urllib.request
 from coding_provider_fixture import ProviderFixture
 from coding_run_scenarios import run_scenarios
 from coding_recovery_scenarios import run_recovery_scenarios
+from coding_maintenance_scenarios import run_maintenance_scenarios, verify_shutdown
 
 
 def shared_trust_path() -> Path:
@@ -51,7 +52,7 @@ def main() -> None:
     runtime_input.add_argument("--mimir-source", type = Path, help = "Build the current paired source and product package before acceptance")
     parser.add_argument("--plugin-package", type = Path)
     parser.add_argument("--evidence-dir", type = Path, required = True)
-    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "live"), default = "deterministic",
+    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "maintenance", "live"), default = "deterministic",
                         help = "Live uses the existing native provider/credential profile; never copies credentials")
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
     parser.add_argument("--chrome", default = "/usr/bin/google-chrome", help = "Chromium executable; ignored for Firefox")
@@ -79,7 +80,7 @@ def main() -> None:
     live = args.workload == "live"
     native = shared_trust_path().parent if live else state_root / "mimir-home"
     native.mkdir(exist_ok = True)
-    provider = ProviderFixture() if args.workload in ("deterministic", "recovery") else None
+    provider = ProviderFixture() if args.workload in ("deterministic", "recovery", "maintenance") else None
     if provider:
         provider.configure(native)
     projects = state_root / "projects"
@@ -319,6 +320,9 @@ def main() -> None:
                                    if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
                         assert len(product) == 1
                         report["supervised_pid"] = product[0].pid
+                    elif args.workload == "maintenance":
+                        run_maintenance_scenarios(page, context, base, provider, first, second_id,
+                                                  report, scenario, snapshot, server.pid)
                     else:
                         run_scenarios(page, context, base, provider, first, second_id,
                                       report, scenario, snapshot, live = live)
@@ -409,6 +413,8 @@ def main() -> None:
             from urllib.parse import urlencode
             denied_requests = []
             for method, path, kwargs in (
+                ("get", "/api/coding/runtime", {}),
+                ("post", "/api/coding/runtime/restart", {"data": {"scope": "all_hosted_conversations"}}),
                 ("get", "/api/coding/projects/browse", {}),
                 ("get", "/api/coding/catalog?" + urlencode({"cwd": str(first)}), {}),
                 ("get", "/api/coding/conversations", {}),
@@ -436,6 +442,8 @@ def main() -> None:
                                                   "minimum_observation_ms": 11000,
                                                   "status_requests": ordinary_status_requests}
             scenario("A9-ordinary-observer-isolation", "Direct coding route with loaded-model preference enabled issued no ordinary inference/media status polls; no ordinary workload was loaded or cancelled")
+            if args.workload == "maintenance":
+                verify_shutdown(page, context, base, provider, report, scenario)
             browser.close()
         assert fingerprint(trust_path) == trust_before, "Isolated saved ancestor distrust was changed"
         assert fingerprint(shared_trust) == shared_before, "Shared saved trust changed during acceptance"

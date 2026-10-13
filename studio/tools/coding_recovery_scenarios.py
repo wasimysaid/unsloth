@@ -57,6 +57,7 @@ def run_recovery_scenarios(page, context, base, provider, first, second_id, repo
 
     conversation = page.get_by_test_id("coding-conversation-id").inner_text()
     headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')")}
+    headers["X-Mimir-Runtime-Generation"] = str(context.request.get(base + "/api/coding/runtime", headers=headers).json()["generation"])
     evidence = report.setdefault("recovery", {"kind": "deterministic-transport-faults-real-native-execution", "requests": []})
     prompt_url = base + f"/api/coding/conversations/{conversation}/prompts"
     event_url = base + f"/api/coding/conversations/{conversation}/events"
@@ -65,7 +66,11 @@ def run_recovery_scenarios(page, context, base, provider, first, second_id, repo
     def reopen(target=page, identifier=conversation):
         saved = target.locator('[aria-label="Saved coding conversations"] button').filter(has_text=identifier)
         expect(saved).to_be_visible(timeout=60000)
-        saved.click()
+        with target.expect_response(lambda response: response.url == base + f"/api/coding/conversations/{identifier}/events" and response.request.method == "GET", timeout=60000) as fresh_view:
+            with target.expect_response(lambda response: response.url == base + f"/api/coding/conversations/{identifier}/open" and response.request.method == "POST", timeout=60000) as opening:
+                saved.click()
+        assert opening.value.ok and fresh_view.value.ok
+        headers["X-Mimir-Runtime-Generation"] = str(opening.value.json()["runtime_generation"])
         expect(target.get_by_test_id("coding-conversation-id")).to_have_text(identifier, timeout=60000)
         expect(target.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
 
@@ -156,7 +161,9 @@ def run_recovery_scenarios(page, context, base, provider, first, second_id, repo
     rows = page.get_by_test_id("coding-tool-row").filter(has_text="recovery-write")
     expect(rows).to_have_count(1)
     expect(page.get_by_test_id("coding-transcript").get_by_text("RECOVERY_NAVIGATION_HELD", exact=True)).to_have_count(1)
-    reopen_button.click()
+    # Await the actual open response before inspecting the same-ID incarnation;
+    # the previous view's Completed label alone can satisfy this assertion early.
+    reopen()
     expect(page.get_by_test_id("coding-run-status")).to_have_text("Completed", timeout=60000)
     expect(rows).to_have_count(1)
     expect(rows).not_to_contain_text(" · running")

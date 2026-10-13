@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from auth.authentication import get_current_subject
 from auth.storage import create_initial_user, get_user_record
 from .coding_transport_faults import CodingTransportFaults
-from core.coding_runtime import close_coding_runtime
+from core.coding_runtime import close_coding_runtime, runtime_for
 from routes.auth import router as auth_router
 from routes.coding import router as coding_router
 
@@ -51,6 +51,13 @@ def create_app() -> FastAPI:
         # saved history are not changed; only the next browser transport is.
         faults["reset_conversation"] = conversation_id
         return {"configured": True}
+
+    @app.post("/api/coding-acceptance/shutdown", dependencies = [Depends(get_current_subject)])
+    async def shutdown_native_runtime():
+        # Test-only exposure of the production lifespan operation, retaining its
+        # terminal cleanup result instead of treating uvicorn exit as proof.
+        await close_coding_runtime(app)
+        return runtime_for(app).status()
 
     @app.get("/api/{path:path}")
     async def unavailable(path: str):

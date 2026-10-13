@@ -48,7 +48,8 @@ class NativeCodingBoundary:
         self.operations.append("open")
         return {"info": {"conversation_id": CONVERSATION_ID, "title": SENTINEL}}
 
-    async def subscribe(self, conversation_id):
+    async def subscribe(self, conversation_id, *, expected_generation):
+        assert expected_generation == 1
         assert conversation_id == CONVERSATION_ID
         self.subjects.append(current_account().username)
         self.operations.append("view")

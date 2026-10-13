@@ -84,6 +84,8 @@ def test_object_route_account_matrix(case, actor, request):
         actor
     )
     headers = bearer(username) if username else {}
+    if case.module == "routes.coding":
+        headers["X-Mimir-Runtime-Generation"] = "1"
     if actor == "deactivated":
         with closing(sqlite3.connect(auth_db.DB_PATH)) as conn:
             conn.execute("UPDATE auth_user SET is_active=0 WHERE username='alice'")
@@ -142,7 +144,7 @@ def test_owner_can_still_use_own_resource(case, accounts, request):
         response = client.request(
             case.method,
             "/matrix" + format_path(case.path, params),
-            headers = bearer("unsloth"),
+            headers = {**bearer("unsloth"), **({"X-Mimir-Runtime-Generation": "1"} if case.module == "routes.coding" else {})},
             params = factory.query,
             json = factory.body,
         )

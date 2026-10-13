@@ -24,7 +24,7 @@ def coding_app(monkeypatch, tmp_path):
     storage.create_initial_user("unsloth", "isolated-test-password", "isolated-signing-secret-234-long-enough")
     app = FastAPI()
     app.include_router(router, prefix = "/api/coding")
-    return app, {"Authorization": "Bearer " + create_access_token("unsloth")}
+    return app, {"Authorization": "Bearer " + create_access_token("unsloth"), "X-Mimir-Runtime-Generation": "1"}
 
 
 @pytest.mark.asyncio
@@ -88,7 +88,7 @@ async def test_browse_symlink_loop_is_an_actionable_invalid_directory(coding_app
 async def test_open_never_accepts_a_replacement_working_directory(coding_app):
     app, headers = coding_app
     class RecordingRuntime:
-        async def command(self, method, params):
+        async def command(self, method, params, *, expected_generation=None):
             assert method == "open"
             assert params == {"conversation_id": "saved-id"}
             raise CodingRuntimeError("busy", "Conversation is in use by another process; close that owner first.")
@@ -105,7 +105,7 @@ async def test_open_never_accepts_a_replacement_working_directory(coding_app):
 async def test_stream_id_does_not_implicitly_open_or_grant_trust(coding_app):
     app, headers = coding_app
     class RecordingRuntime:
-        async def subscribe(self, conversation_id):
+        async def subscribe(self, conversation_id, *, expected_generation=None):
             assert conversation_id == "not-open"
             raise CodingRuntimeError("not_found", "Deliberately reopen this conversation first.")
     app.state.coding_runtime = RecordingRuntime()
@@ -119,7 +119,7 @@ async def test_run_stop_and_history_preserve_exact_native_identities(coding_app)
     app, headers = coding_app
     calls = []
     class RecordingRuntime:
-        async def command(self, method, params):
+        async def command(self, method, params, *, expected_generation=None):
             calls.append((method, params))
             if method == "prompt":
                 return {"request_id": "native-request", "submission_key": params["submission_key"]}
@@ -242,7 +242,7 @@ async def test_disconnect_during_view_admission_releases_view_not_owner():
     reply = asyncio.Event()
     calls = []
     class AdmittedRuntime(CodingRuntime):
-        async def command(self, method, params = None):
+        async def command(self, method, params = None, *, expected_generation=None):
             calls.append((method, params))
             if method == "view":
                 admitted.set()

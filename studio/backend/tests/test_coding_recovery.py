@@ -66,7 +66,7 @@ async def test_last_event_id_does_not_turn_new_view_into_arbitrary_replay(monkey
     released = []
 
     class NativeViews:
-        async def subscribe(self, conversation):
+        async def subscribe(self, conversation, *, expected_generation=None):
             opened.append(conversation)
             queue = asyncio.Queue()
             queue.put_nowait({"subscription": "fresh-view", "position": 100,
@@ -78,7 +78,7 @@ async def test_last_event_id_does_not_turn_new_view_into_arbitrary_replay(monkey
             released.append(subscription)
 
     app.state.coding_runtime = NativeViews()
-    headers = {"Authorization": "Bearer " + create_access_token("unsloth"), "Last-Event-ID": "arbitrary-obsolete-position"}
+    headers = {"Authorization": "Bearer " + create_access_token("unsloth"), "Last-Event-ID": "arbitrary-obsolete-position", "X-Mimir-Runtime-Generation": "1"}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/api/coding/conversations/exact-saved-id/events", headers=headers)
     assert response.status_code == 200
