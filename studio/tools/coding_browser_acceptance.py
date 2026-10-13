@@ -49,6 +49,7 @@ import urllib.request
 from coding_provider_fixture import ProviderFixture
 from coding_run_scenarios import run_scenarios
 from coding_picker_scenarios import run_picker_scenarios
+from coding_catalog_scenarios import run_catalog_scenarios
 from coding_extension_scenarios import prepare_extension_fixtures, run_extension_scenarios
 from coding_input_scenarios import prepare_input_project, input_scenarios, live_input_scenario
 from coding_recovery_scenarios import run_recovery_scenarios
@@ -62,8 +63,8 @@ from coding_child_scenarios import CHILD_EVENT_CAPTURE, run_child_scenarios
 from coding_file_change_scenarios import LIVE_PROFILE_OBSERVER, run_file_change_scenarios
 
 
-WORKLOADS = ("opening", "deterministic", "picker", "recovery", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live")
-FIXTURE_WORKLOADS = ("deterministic", "picker", "recovery", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "file-changes")
+WORKLOADS = ("opening", "deterministic", "picker", "catalog", "recovery", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live")
+FIXTURE_WORKLOADS = ("deterministic", "picker", "catalog", "recovery", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "file-changes")
 
 
 def shared_trust_path() -> Path:
@@ -116,7 +117,7 @@ def main() -> None:
     native.mkdir(exist_ok = True)
     provider = ProviderFixture() if args.workload in FIXTURE_WORKLOADS else None
     if provider:
-        provider.configure(native, picker = args.workload == "picker", images = args.workload == "inputs")
+        provider.configure(native, picker = args.workload in ("picker", "catalog"), images = args.workload == "inputs")
     extension_packages = prepare_extension_fixtures(state_root, native, args.plugin_package.resolve()) if args.extensions else []
     projects = state_root / "projects"
     projects.mkdir(exist_ok = True)
@@ -222,7 +223,7 @@ def main() -> None:
             assert server.poll() is None, "Restarted acceptance server exited"
             try:
                 urllib.request.urlopen(base + "/api/auth/status", timeout = 1).close()
-                return
+                return server.pid
             except (urllib.error.URLError, TimeoutError):
                 time.sleep(0.1)
         raise AssertionError("Restarted acceptance server did not become ready")
@@ -403,6 +404,9 @@ def main() -> None:
                     elif args.workload == "picker":
                         run_picker_scenarios(page, context, base, provider, first,
                                              report, scenario, snapshot)
+                    elif args.workload == "catalog":
+                        run_catalog_scenarios(page, context, base, provider, native, first,
+                                              report, scenario, snapshot, restart_server)
                     elif args.workload == "inputs":
                         input_scenarios(page, context, base, provider, first, report, scenario, snapshot)
                     elif args.workload == "inputs-live":
@@ -536,6 +540,8 @@ def main() -> None:
                 ("post", "/api/coding/conversations", {"data": {"cwd": str(first)}}),
                 ("post", f"/api/coding/conversations/{first_id}/open", {}),
                 ("get", f"/api/coding/conversations/{first_id}/events", {}),
+                ("get", f"/api/coding/conversations/{first_id}/models", {}),
+                ("post", f"/api/coding/conversations/{first_id}/models/refresh", {}),
                 ("get", "/api/coding/diagnostics", {}),
                 ("get", f"/api/coding/conversations/{first_id}/extensions", {}),
                 ("post", f"/api/coding/conversations/{first_id}/plugins/reload", {"data": {"operation_id": "unauthenticated-reload-valid-key"}}),

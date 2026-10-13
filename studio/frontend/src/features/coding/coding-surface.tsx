@@ -304,6 +304,16 @@ export function CodingSurface({
                   ` · ${state.native.configuration.reasoning}`}
               </p>
             )}
+            {state.native?.selection_unavailable && (
+              <output
+                className="block break-words"
+                data-testid="coding-selection-unavailable"
+              >
+                Selected model unavailable: {state.native.selection_unavailable}{" "}
+                History remains readable. Open the model picker to retry or
+                choose a replacement.
+              </output>
+            )}
             {completion?.error && (
               <p role="alert" className="break-words text-destructive">
                 {completion.error}
@@ -536,8 +546,10 @@ export function CodingSurface({
             inputRef={promptInput}
           >
             <CodingModelPicker
-              cwd={state?.native?.info.cwd ?? null}
+              key={conversationId}
+              conversationId={conversationId}
               configuration={state?.native?.configuration ?? null}
+              unavailable={state?.native?.selection_unavailable ?? null}
               disabled={
                 state?.connection !== "connected" ||
                 Boolean(

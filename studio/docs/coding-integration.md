@@ -177,6 +177,50 @@ and human implemented-UI review remain #255–256.
   --apply-reconnect --browser firefox --evidence-dir /path/to/task/evidence
 ```
 
+## Live model catalog refresh (#245)
+
+Implementation baselines: Studio `be0a051ae00f35935c3babb76e8c6e03626464d6`
+and paired private Mimir `f5364ce6a0c1d8cc4d5bc5f6c05e26ef3ce787f5`.
+The picker now reads the retained controller through authenticated
+`GET /api/coding/conversations/{id}/models`, not a fresh folder catalog whose
+choices the already-live controller might not accept. **Refresh model choices**
+uses `POST .../models/refresh` and native Session Control 12.0.0 to update both
+discovery and selectability without process restart, project-context retargeting,
+external provider replacement or disruption of the running coding request.
+Queued input uses the refreshed inventory at the native execution boundary.
+
+Selected/saved unavailable identities remain in authoritative state and visible
+in the composer/picker, with a sanitized native explanation. Reopening retains
+readable public history, not a silently substituted provider/model. **Retry
+selected model** retries that exact identity/effort; **Choose replacement** is a
+separate explicit configuration action. Refresh failure keeps previous inventory
+and selection. A lost browser reply is unconfirmed; reopening reads native
+inventory and never automatically replays refresh. Explicit read/refresh remain
+available. Catalog presence is inventory only: no health, credential verification
+or compatibility certification. Provider onboarding/downloads remain external;
+no credentials or provider configuration are sent in model/status DTOs.
+
+Reproduce focused actual-browser verification with current paired artifacts:
+
+```sh
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir /path/to/current/mimir --plugin-package /path/to/current/package \
+  --workload catalog --browser firefox --evidence-dir /path/to/worker/catalog
+```
+
+The driver changes isolated native discovery inputs while a real request remains
+live, verifies added/removed/changed identities and native selectability, pinned
+native tool continuation, next-boundary execution, explicit refresh failure/retry,
+lost/closed browser delivery reconciliation and unavailable saved-selection
+reopening. The current route refuses concurrent prompt admission; native-contract
+fixtures separately exercise queued requests and dequeue races. It records native
+IDs, unchanged process identity until an explicitly tested reopen restart,
+1440×1000 and 390×844 browser
+evidence and terminal cleanup. Provider responses are deterministic HTTP fixtures,
+not live-model acceptance. Initial Studio local registration/whole-request
+protection remains #246; combined local serving/refresh, live workloads and human
+review remain the integrated #254–256 gates.
+
 ## Continuous idle retirement (#248)
 
 Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`

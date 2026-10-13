@@ -301,7 +301,7 @@ class PlanWorkloadTests(unittest.TestCase):
         self.assertIn("goals", WORKLOADS)
         self.assertIn("goals", FIXTURE_WORKLOADS)
         self.assertEqual(set(FIXTURE_WORKLOADS), {
-            "deterministic", "picker", "recovery", "plan", "goals", "questions", "commands", "retirement",
+            "deterministic", "picker", "catalog", "recovery", "plan", "goals", "questions", "commands", "retirement",
             "concurrency", "children", "inputs", "file-changes",
         })
         self.assertTrue(set(FIXTURE_WORKLOADS).issubset(WORKLOADS))

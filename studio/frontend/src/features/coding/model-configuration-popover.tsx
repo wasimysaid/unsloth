@@ -41,14 +41,16 @@ function initialFavorites() {
 
 /** Selection is native next-request configuration, not a browser prompt option. */
 export function CodingModelPicker({
-  cwd,
+  conversationId,
   configuration,
+  unavailable,
   disabled,
   configuring,
   configure,
 }: {
-  cwd: string | null;
+  conversationId: string | null;
   configuration: CodingConfiguration | null;
+  unavailable: string | null;
   disabled: boolean;
   configuring: boolean;
   configure: (change: CodingConfigurationChange) => Promise<void>;
@@ -59,7 +61,11 @@ export function CodingModelPicker({
   const [loading, setLoading] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const [catalogRead, setCatalogRead] = useState(false);
+  const [request, setRequest] = useState<{ refresh: boolean }>({
+    refresh: false,
+  });
   const [search, setSearch] = useState("");
   const [providerId, setProviderId] = useState<string | null>(null);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
@@ -82,30 +88,49 @@ export function CodingModelPicker({
   const valueIndex = draftIndex ?? effortIndex;
   const blocked = disabled || configuring || loading;
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the explicit catalog retry token, not a request parameter.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: controller identity is the reset trigger, not a value used inside the reset.
   useEffect(() => {
-    if (!open || !cwd) return;
+    // Do not carry a different conversation's inventory into this controller.
+    setCatalog([]);
+    setCatalogRead(false);
+    setProviderId(null);
+  }, [conversationId]);
+  useEffect(() => {
+    if (!open || !conversationId) return;
     const controller = new AbortController();
     setLoading(true);
+    setRefreshing(request.refresh);
     setCatalogError(null);
-    void codingModelApi
-      .catalog(cwd, controller.signal)
+    const operation = request.refresh
+      ? codingModelApi.refresh
+      : codingModelApi.catalog;
+    void operation(conversationId, controller.signal)
       .then((choices) => {
-        if (!controller.signal.aborted) setCatalog(choices);
+        if (!controller.signal.aborted) {
+          setCatalog(choices);
+          setCatalogRead(true);
+          // A removed provider must not leave navigation stuck in an empty group.
+          setProviderId((id) =>
+            choices.some((item) => item.id === id) ? id : null,
+          );
+        }
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted)
           setCatalogError(
-            reason instanceof Error
-              ? reason.message
-              : "Mimir's catalog could not be read.",
+            `${reason instanceof Error ? reason.message : "Mimir's catalog could not be read."} ${request.refresh ? "Refresh was not confirmed. Previous inventory is retained; read it again or explicitly retry refresh." : "Previous inventory and selection have not been replaced."}`,
           );
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       });
+    // Aborting browser delivery does not cancel native work. Next opening reads
+    // the controller to reconcile; it never automatically repeats a refresh.
     return () => controller.abort();
-  }, [open, cwd, attempt]);
+  }, [open, conversationId, request]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: discard only the in-progress slider gesture when authoritative identity/effort changes.
   useEffect(() => {
     setDraftIndex(null);
@@ -163,6 +188,7 @@ export function CodingModelPicker({
         if (value) {
           setPage("configuration");
           setError(null);
+          setRequest({ refresh: false });
         }
       }}
     >
@@ -171,13 +197,14 @@ export function CodingModelPicker({
           type="button"
           variant="ghost"
           size="sm"
-          disabled={!cwd || !configuration}
+          disabled={!conversationId || !configuration}
           aria-label="Configure next coding request"
           title="Model and reasoning for the next native request to begin execution"
           data-testid="coding-model-trigger"
           className="min-w-0 max-w-[min(24rem,calc(100%-3.5rem))] gap-1.5 text-xs"
         >
           <span className="truncate">{modelLabel}</span>
+          {unavailable && <span className="shrink-0">· Unavailable</span>}
           {configuration?.reasoning && (
             <span className="shrink-0 text-muted-foreground">
               · {configuration.reasoning}
@@ -236,14 +263,9 @@ export function CodingModelPicker({
                 API model: {selected.model.api_model}
               </p>
             )}
-            {loading && (
-              <output className="block text-xs">Reading Mimir catalog…</output>
-            )}
-            {!loading && !catalogError && !selected && (
+            {!configuration?.model && (
               <output className="block text-xs">
-                {configuration?.model
-                  ? "This selection is unavailable in Mimir's catalog. It has not been replaced. Choose a replacement or retry the catalog."
-                  : "Choose a model from Mimir's catalog."}
+                Choose a model from Mimir's catalog.
               </output>
             )}
             {levels.length > 0 && (
@@ -452,6 +474,76 @@ export function CodingModelPicker({
             </div>
           </>
         )}
+        {(unavailable ||
+          (catalogRead && !selected && configuration?.model)) && (
+          <div
+            className="space-y-2 rounded-lg border border-border p-2 text-xs"
+            data-testid="coding-model-unavailable"
+          >
+            <p className="font-medium">Selected model unavailable</p>
+            <p className="break-all">
+              {configuration?.provider}/{configuration?.model}
+            </p>
+            <p>
+              {unavailable ??
+                "This identity is absent from the refreshed inventory. It has not been replaced."}
+            </p>
+            <p>
+              History remains readable. No provider or model was substituted.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={blocked}
+                onClick={() => void apply({})}
+              >
+                Retry selected model
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={disabled || configuring}
+                onClick={() => setPage("models")}
+              >
+                Choose replacement
+              </Button>
+            </div>
+          </div>
+        )}
+        {page === "configuration" && selected && !unavailable && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={blocked}
+            onClick={() => void apply({})}
+          >
+            Retry selected model
+          </Button>
+        )}
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          Inventory only, not a health, credentials or compatibility check.
+          Provider setup and downloads stay in their existing workflows.
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={blocked}
+          onClick={() => setRequest({ refresh: true })}
+        >
+          Refresh model choices
+        </Button>
+        {loading && (
+          <output className="block text-xs">
+            {refreshing
+              ? "Refreshing native model choices…"
+              : "Reading Mimir catalog…"}
+          </output>
+        )}
         {catalogError && (
           <div className="space-y-2 text-xs">
             <p role="alert">{catalogError}</p>
@@ -459,9 +551,10 @@ export function CodingModelPicker({
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => setAttempt(attempt + 1)}
+              disabled={blocked}
+              onClick={() => setRequest({ refresh: false })}
             >
-              Retry catalog
+              Read current inventory
             </Button>
           </div>
         )}
