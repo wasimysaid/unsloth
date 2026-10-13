@@ -19,6 +19,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { codingRunApi } from "./api";
+import { GoalSummary } from "./goal-summary";
 import { nativeMessageRow } from "./presentation";
 import { codingRunAdapter } from "./run-runtime";
 import {
@@ -143,7 +144,9 @@ export function CodingSurface({
       !state.submitting &&
       !state.uncertainSubmission &&
       !state.storageError &&
-      !state.reconcilingAction,
+      !state.reconcilingAction &&
+      !state.goalChanging &&
+      !state.reconcilingGoal,
   );
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -268,6 +271,7 @@ export function CodingSurface({
             )}
           </div>
         )}
+        {state && run && <GoalSummary state={state} run={run} />}
         <div
           ref={viewport}
           className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto"

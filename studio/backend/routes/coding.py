@@ -11,7 +11,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from auth.authentication import get_current_subject
 from core.coding_runtime import CodingRuntimeError, runtime_for
@@ -46,6 +46,26 @@ class PromptSubmission(BaseModel):
     text: str = Field(min_length = 1, max_length = 65536)
 
 
+class GoalChange(BaseModel):
+    """Native admission identity, not a Studio lifecycle or completion claim."""
+    model_config = ConfigDict(extra = "forbid")
+    revision: str = Field(min_length = 1, max_length = 1024)
+    action: Literal["start", "edit", "pause", "resume", "clear"]
+    objective: str | None = Field(default = None, min_length = 1, max_length = 65536)
+    duration_seconds: int | None = Field(default = None, ge = 1800, le = 9007199254740991, strict = True)
+
+    @model_validator(mode = "after")
+    def valid_action_fields(self):
+        if self.action in ("start", "edit"):
+            if not self.objective or not self.objective.strip():
+                raise ValueError("Start and edit require a non-empty goal objective.")
+        elif "objective" in self.model_fields_set:
+            raise ValueError("Only start and edit accept an objective.")
+        if self.action not in ("start", "resume") and "duration_seconds" in self.model_fields_set:
+            raise ValueError("Only start and resume accept a duration.")
+        return self
+
+
 class RootCut(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     journal: Literal["root"]
@@ -73,7 +93,7 @@ class HistorySelection(BaseModel):
 
 def _http_error(exc: CodingRuntimeError) -> HTTPException:
     status = {"invalid": 400, "not_found": 404, "denied": 403,
-              "busy": 409, "conflict": 409, "trust_conflict": 409,
+              "busy": 409, "conflict": 409, "trust_conflict": 409, "stale_goal": 409,
               "unavailable": 503, "disconnected": 503, "uncertain": 504,
               "limit": 429, "failed": 502}.get(exc.code, 400)
     return HTTPException(status_code = status, detail = exc.message)
@@ -162,6 +182,14 @@ async def submit_prompt(conversation_id: str, body: PromptSubmission, request: R
 async def cancel_request(conversation_id: str, request_id: str, request: Request):
     # Acceptance is not settlement. The ordered native view confirms completion.
     return await _command(request, "cancel", {"conversation_id": conversation_id, "request_id": request_id})
+
+
+@router.post("/conversations/{conversation_id}/goal")
+async def change_goal(conversation_id: str, body: GoalChange, request: Request):
+    # Native owner validates revision and admission atomically. No retry or
+    # inference from an accepted command to verified completion belongs here.
+    return await _command(request, "change_goal", {"conversation_id": conversation_id,
+                                                  **body.model_dump(exclude_unset = True)})
 
 
 @router.post("/conversations/{conversation_id}/entries")

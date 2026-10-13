@@ -36,6 +36,7 @@ import urllib.request
 from coding_provider_fixture import ProviderFixture
 from coding_run_scenarios import run_scenarios
 from coding_recovery_scenarios import run_recovery_scenarios
+from coding_goal_scenarios import run_goal_scenarios
 
 
 def shared_trust_path() -> Path:
@@ -51,7 +52,7 @@ def main() -> None:
     runtime_input.add_argument("--mimir-source", type = Path, help = "Build the current paired source and product package before acceptance")
     parser.add_argument("--plugin-package", type = Path)
     parser.add_argument("--evidence-dir", type = Path, required = True)
-    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "live"), default = "deterministic",
+    parser.add_argument("--workload", choices = ("opening", "deterministic", "recovery", "goals", "live"), default = "deterministic",
                         help = "Live uses the existing native provider/credential profile; never copies credentials")
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
     parser.add_argument("--chrome", default = "/usr/bin/google-chrome", help = "Chromium executable; ignored for Firefox")
@@ -79,7 +80,7 @@ def main() -> None:
     live = args.workload == "live"
     native = shared_trust_path().parent if live else state_root / "mimir-home"
     native.mkdir(exist_ok = True)
-    provider = ProviderFixture() if args.workload in ("deterministic", "recovery") else None
+    provider = ProviderFixture() if args.workload in ("deterministic", "recovery", "goals") else None
     if provider:
         provider.configure(native)
     projects = state_root / "projects"
@@ -148,17 +149,24 @@ def main() -> None:
     server = subprocess.Popen(server_args, cwd = root / "studio" / "backend", env = env,
                               stdout = output, stderr = subprocess.STDOUT)
 
-    def restart_server():
+    def restart_server(*, native_crash = False):
         nonlocal server
         import psutil
         children = [child for child in psutil.Process(server.pid).children()
                     if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
         assert len(children) == 1
         before = children[0].pid
+        if native_crash:
+            # Fault-inject owner loss only into this acceptance server's verified
+            # product child. A normal clean quit instead records a manual pause.
+            children[0].kill()
+            children[0].wait(timeout = 45)
         server.terminate()
         assert server.wait(timeout = 45) in (0, -15)
-        assert not children[0].is_running(), "Clean acceptance restart did not await native cleanup"
-        report.setdefault("runtime_generations", []).append({"pid": before, "native_settled": True})
+        assert not children[0].is_running(), "Acceptance restart left its native owner running"
+        report.setdefault("runtime_generations", []).append({"pid": before, "native_settled": True,
+            "mode": "abrupt-native-owner-loss" if native_crash else "awaited-clean-shutdown",
+            "request_cleanup_awaited": not native_crash})
         server = subprocess.Popen(server_args, cwd = root / "studio" / "backend", env = env,
                                   stdout = output, stderr = subprocess.STDOUT)
         for _ in range(100):
@@ -312,7 +320,14 @@ def main() -> None:
                 scenario("A6-saved-folder-reopen-errors", "Missing and OS-denied saved folders were refused on deliberate reopen even with retained native ownership; current conversation identity stayed unchanged, no replacement folder or fork")
             if args.workload != "opening":
                 try:
-                    if args.workload == "recovery":
+                    if args.workload == "goals":
+                        run_goal_scenarios(page, context, base, provider, first, report,
+                                           scenario, snapshot, restart_server)
+                        product = [child for child in psutil.Process(server.pid).children()
+                                   if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
+                        assert len(product) == 1
+                        report["supervised_pid"] = product[0].pid
+                    elif args.workload == "recovery":
                         run_recovery_scenarios(page, context, base, provider, first, second_id,
                                                report, scenario, snapshot, restart_server)
                         product = [child for child in psutil.Process(server.pid).children()
@@ -418,6 +433,7 @@ def main() -> None:
                 ("post", f"/api/coding/conversations/{first_id}/prompts", {"data": {"submission_key": "unauthenticated-valid-key", "text": "Must not execute"}}),
                 ("post", f"/api/coding/conversations/{first_id}/requests/{report.get('workload', report.get('recovery', {})).get('requests', [{}])[0].get('request_id', 'known-request')}/cancel", {}),
                 ("post", f"/api/coding/conversations/{first_id}/entries", {"data": {"cut": {}, "anchor": "latest", "max_entries": 10, "max_bytes": 1024}}),
+                ("post", f"/api/coding/conversations/{first_id}/goal", {"data": {"revision": "unauthenticated-native-revision", "action": "pause"}}),
             ):
                 response = getattr(unauth, method)(path, **kwargs)
                 assert response.status in (401, 403), (method, path, response.status)
@@ -426,7 +442,7 @@ def main() -> None:
             if provider:
                 provider.assert_no_request()
             report["unauthenticated_requests"] = denied_requests
-            scenario("A6-known-id-auth", "All nine coding surfaces (browse/catalog/history/create/open/SSE/prompt/cancel/bounded entries), including real conversation/request IDs, refused unauthenticated requests")
+            scenario("A6-known-id-auth", "All ten coding surfaces (browse/catalog/history/create/open/SSE/prompt/cancel/bounded entries/goal), including real conversation/request IDs, refused unauthenticated requests")
             # Measure over more than two ordinary indicator polling intervals.
             # No ordinary-model status response is mocked and no model is loaded.
             page.wait_for_timeout(11000)

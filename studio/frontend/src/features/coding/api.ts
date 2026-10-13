@@ -103,6 +103,17 @@ export const codingApi: CodingApi = {
 };
 
 export const codingRunApi: RunApi = {
+  async changeGoal(id, change) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/goal`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(change),
+      },
+    );
+    return await response.json();
+  },
   async submit(id, submissionKey, text) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/prompts`,
