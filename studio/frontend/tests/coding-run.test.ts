@@ -584,6 +584,68 @@ for (const rejected of [false, true]) {
   });
 }
 
+test("reconnect preserves historical navigation while capture is pending; reset removes it", async () => {
+  const h = harness();
+  h.api.readEntries = async (_id, cut, anchor) => {
+    const entry = anchor === "latest" ? "latest" : "older";
+    return {
+      cut,
+      rows: [{ id: entry, entry_id: entry, kind: "assistant", text: entry }],
+      older: true,
+      newer: anchor !== "latest",
+      first_id: entry,
+      last_id: entry,
+    };
+  };
+  await h.start();
+  await h.run.loadEarlier();
+  const prior = h.run.getSnapshot();
+  assert.equal(prior.older, true);
+  assert.equal(prior.viewingEarlier, true);
+  const read = h.api.readEntries;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  h.api.readEntries = async (...args) => {
+    await gate;
+    return read(...args);
+  };
+  try {
+    h.run.connect();
+    const capturing = h.start();
+    assert.equal(h.run.getSnapshot().connection, "loading");
+    assert.deepEqual(h.run.getSnapshot().rows, prior.rows);
+    assert.equal(h.run.getSnapshot().older, prior.older);
+    assert.equal(h.run.getSnapshot().newer, prior.newer);
+    assert.equal(h.run.getSnapshot().viewingEarlier, prior.viewingEarlier);
+    release();
+    await capturing;
+    assert.equal(h.run.getSnapshot().viewingEarlier, true);
+    h.api.readEntries = async (...args) => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return read(...args);
+    };
+    const resetting = h.event({
+      type: "reset",
+      state: native(),
+      recovering: false,
+      root: { cut: { journal: "other", leaf: "cut3" }, live_invocations: [] },
+    });
+    assert.equal(h.run.getSnapshot().older, false);
+    assert.equal(h.run.getSnapshot().newer, false);
+    assert.equal(h.run.getSnapshot().viewingEarlier, false);
+    assert.deepEqual(h.run.getSnapshot().rows, []);
+    release();
+    await resetting;
+  } finally {
+    release();
+    h.run.detach();
+  }
+});
+
 for (const retained of ["history", "reading"] as const) {
   test(`Jump to latest supersedes retained ${retained} intent during pending reconnect capture without aborting native authority`, async () => {
     const h = harness();

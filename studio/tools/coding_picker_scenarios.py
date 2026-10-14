@@ -134,6 +134,9 @@ def run_picker_scenarios(page, context, base, provider, first, report, scenario,
 
     def layout(label):
         viewport = page.viewport_size
+        # Opening/resize collision positioning is asynchronous; await the same
+        # strict viewport condition before sampling animated coordinates.
+        expect(popover).to_be_in_viewport(ratio=1)
         box = popover.bounding_box()
         assert_viewport_box(box, viewport["width"], viewport["height"], label="picker")
         composer_box = page.locator('[aria-label="Coding composer"]').bounding_box()
@@ -279,6 +282,7 @@ def run_picker_scenarios(page, context, base, provider, first, report, scenario,
     scenario("A5-picker-reasoning-default-reset", "Keyboard Home/ArrowRight/End select only native discrete efforts; model switches restore new native high default rather than old overrides; no slider/control for unsupported model; selection returns without dismissal")
 
     page.set_viewport_size({"width": 390, "height": 844})
+    trigger.scroll_into_view_if_needed()
     layout("picker-narrow-config")
     open_list()
     layout("picker-narrow-list")

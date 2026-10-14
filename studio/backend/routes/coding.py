@@ -209,8 +209,8 @@ def _http_error(exc: CodingRuntimeError) -> HTTPException:
         return HTTPException(status_code = 409, detail = {
             "code": exc.code, "message": exc.message, "overlap": exc.overlap,
         })
-    status = {"invalid": 400, "not_found": 404, "denied": 403,
-              "busy": 409, "conflict": 409, "trust_conflict": 409,
+    status = {"invalid": 400, "invalid_answer": 400, "unsupported_command": 400, "not_found": 404, "denied": 403,
+              "busy": 409, "conflict": 409, "stale_answer": 409, "trust_conflict": 409,
               "runtime_changed": 409, "stale_plan": 409, "stale_goal": 409,
               "unavailable": 503, "disconnected": 503, "uncertain": 504,
               "limit": 429, "failed": 502, "cleanup_failed": 502, "protocol": 502}.get(exc.code, 502)

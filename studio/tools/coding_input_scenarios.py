@@ -54,6 +54,7 @@ def input_scenarios(page, context, base, provider, project, report, scenario, sn
     status = page.get_by_test_id("coding-run-status")
     transcript = page.get_by_test_id("coding-transcript")
     headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')")}
+    headers["X-Mimir-Runtime-Generation"] = str(context.request.get(base + "/api/coding/runtime", headers=headers).json()["generation"])
     prompts = base + f"/api/coding/conversations/{conversation}/prompts"
     evidence = report.setdefault("workload", {"kind": "deterministic-rich-input-native-contract", "requests": []})
     skills_response = context.request.get(base + f"/api/coding/conversations/{conversation}/skills", headers = headers)

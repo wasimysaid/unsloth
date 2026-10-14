@@ -30,10 +30,14 @@ from utils.account_context import bind_account, current_account_id, reset_accoun
 from ..test_diffusion_backend import _FakePipeline
 from ..test_diffusion_backend import fake_runtime as _fake_runtime
 
-# Re-exported under its own name because pytest resolves a fixture by NAME, not by reference: the
-# tests below take `fake_runtime` as a parameter and never load the import, which reads to
-# scripts/verify_import_hoist.py as a hoisted import nothing uses.
-fake_runtime = _fake_runtime
+@pytest.fixture
+def fake_runtime(_fake_runtime, monkeypatch):
+    from utils import hardware
+
+    # The pipeline/torch fixture is CPU-only, so device policy must see that same
+    # host. A real nvidia-smi probe can otherwise consume the entire 10s load
+    # barrier before the fake pipeline is reached on a shared GPU machine.
+    monkeypatch.setattr(hardware, "get_device", lambda: hardware.DeviceType.CPU)
 
 
 def client_for(account):

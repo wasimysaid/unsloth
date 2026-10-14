@@ -125,6 +125,13 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
         expect(status).to_have_text("Completed", timeout=60000)
         expect(page.get_by_role("button", name="Stop", exact=True)).to_have_count(0, timeout=60000)
         if marker:
+            # Inspecting bounded earlier history deliberately suspends live
+            # transcript merging. Explicitly return to the live window before
+            # asserting output from this newly completed native request.
+            latest = page.get_by_role("button", name="Jump to latest", exact=True)
+            if latest.is_visible():
+                latest.focus()
+                latest.press("Enter")
             expect(transcript).to_contain_text(marker, timeout=60000)
         native = state()
         assert native["active_request"] is None, "Rendered completion preceded native settlement"
@@ -180,14 +187,15 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
         return ack
 
     def tool_row(call, name, marker):
-        row = page.get_by_test_id("coding-tool-row").filter(has_text=call).last
-        expect(row).to_contain_text(name, timeout=60000)
-        expect(row).to_contain_text(marker, timeout=60000)
+        row = page.locator(f'[data-testid="coding-tool-row"][data-call-id="{call}"]')
+        expect(row).to_have_count(1, timeout=60000)
         summary = row.locator("summary")
         summary.focus()
         if row.get_attribute("open") is None:
             summary.press("Enter")
         expect(row.locator("pre")).to_be_visible()
+        expect(row).to_contain_text(name, timeout=60000)
+        expect(row).to_contain_text(marker, timeout=60000)
         identity = row.locator("p").first.inner_text()
         assert "call " + call in identity, "Native call identity missing: " + repr(identity)
         assert re.search(r"invocation (?!undefined|null|not supplied)\S+", identity), "Native invocation identity missing: " + repr(identity)

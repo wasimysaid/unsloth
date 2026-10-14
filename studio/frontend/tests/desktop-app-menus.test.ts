@@ -90,7 +90,7 @@ test("the menus and the renderer name the same actions", () => {
 test("Go > Settings lists every Settings page, in the dialog's order", () => {
   const dialog = readSrc("features/settings/settings-dialog.tsx");
   const tabs = [...dialog.slice(dialog.indexOf("const TABS")).matchAll(/id: "([a-z-]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(settingsActions, tabs.slice(0, settingsActions.length).map((tab) => `settings-${tab}`));
+  assert.deepEqual(settingsActions, tabs.map((tab) => `settings-${tab}`));
   const store = readSrc("features/settings/stores/settings-dialog-store.ts");
   const known = [...store.match(/SETTINGS_TABS = \[([\s\S]*?)\]/)![1].matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
   assert.deepEqual([...settingsActions].sort(), known.map((tab) => `settings-${tab}`).sort());

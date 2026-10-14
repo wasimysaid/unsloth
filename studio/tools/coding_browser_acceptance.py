@@ -78,6 +78,16 @@ def shared_trust_path() -> Path:
     return Path(os.environ.get("MIMIR_CODING_AGENT_DIR", Path.home() / ".mimir" / "agent")) / "trust.json"
 
 
+def link_compilation_cache(native: Path, cache: Path) -> Path:
+    """Reuse only native content-keyed compilation, never another run's saved state."""
+    cache = cache.resolve(strict = True)
+    if not cache.is_dir() or cache.stat().st_uid != os.geteuid():
+        raise ValueError("Compilation cache must be a task-owned directory")
+    (native / "cache").mkdir(exist_ok = True)
+    (native / "cache" / "wasmtime").symlink_to(cache, target_is_directory = True)
+    return cache
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description = __doc__)
     runtime_input = parser.add_mutually_exclusive_group(required = True)
@@ -85,6 +95,7 @@ def main() -> None:
     runtime_input.add_argument("--mimir-source", type = Path, help = "Build the current paired source and product package before acceptance")
     parser.add_argument("--plugin-package", type = Path)
     parser.add_argument("--commands-package", type = Path, help = "Current packaged SDK test.commands contribution fixture (commands workload only)")
+    parser.add_argument("--compilation-cache", type = Path, help = "Task-owned content-keyed Wasmtime cache only; never configuration/history/credentials")
     parser.add_argument("--evidence-dir", type = Path, required = True)
     parser.add_argument("--workload", choices = WORKLOADS, default = "deterministic",
                         help = "Fixture workloads use controlled HTTP provider replies with real native execution; live uses the existing native provider/credential profile and never copies credentials")
@@ -118,8 +129,12 @@ def main() -> None:
     state_root.mkdir()
     home = state_root / "studio-home"
     live = args.workload in ("live", "inputs-live", "file-changes-live")
+    if live and args.compilation_cache:
+        parser.error("Compilation cache reuse is restricted to isolated fixture workloads")
     native = shared_trust_path().parent if live else state_root / "mimir-home"
     native.mkdir(exist_ok = True)
+    if args.compilation_cache:
+        args.compilation_cache = link_compilation_cache(native, args.compilation_cache)
     provider = ProviderFixture() if args.workload in FIXTURE_WORKLOADS else None
     if provider:
         provider.configure(native, picker = args.workload in ("picker", "catalog"), images = args.workload == "inputs")
@@ -174,6 +189,8 @@ def main() -> None:
               "provider_workload": args.workload, "run_id": state_root.name,
               "viewports": [[1440, 1000], [390, 844]], "scenarios": [],
               "conversation_ids": [], "artifacts": [], "limitations": ["Unrelated Studio ML/training routers are not mounted by this CPU-only acceptance composition."]}
+    if args.compilation_cache:
+        report["compilation_cache"] = str(args.compilation_cache)
     if args.workload == "retirement":
         report["retention_clock"] = report_clock
     if provider:

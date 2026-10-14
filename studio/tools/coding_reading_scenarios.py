@@ -95,6 +95,11 @@ def history_id(index):
     return f"SYNTHETIC-reading-entry-{index:04d}"
 
 
+def history_response_matches(response, entry_url, anchor):
+    return (response.url == entry_url and response.request.method == "POST"
+            and response.request.post_data_json["anchor"] == anchor)
+
+
 def synthetic_rows():
     """1,664 fixture rows exceed retention; repeated edits keep separate identities."""
     rows = [{"id": history_id(index), "entry_id": history_id(index),
@@ -600,11 +605,19 @@ def _run_synthetic_history(page, base, entry_url, conversation, transcript, evid
     synthetic = evidence["synthetic_history"]
     template = {}
     pending_jump = False
+    reconnect_probe = False
     def intercept(route):
-        nonlocal pending_jump
+        nonlocal pending_jump, reconnect_probe
         payload = route.request.post_data_json
         anchor = payload["anchor"]
         if anchor == "latest":
+            if reconnect_probe:
+                # The native capture is pending here. Reconnecting the same
+                # conversation must not unmount the focused paging control.
+                expect(transcript).to_have_attribute("aria-busy", "true")
+                expect(earlier).to_be_focused()
+                expect(transcript).to_contain_text("Historical reading window")
+                reconnect_probe = False
             response = route.fetch(timeout=60000)
             assert response.ok
             body = response.json()
@@ -637,13 +650,17 @@ def _run_synthetic_history(page, base, entry_url, conversation, transcript, evid
         assert 0 < count <= MAX_RENDERED_ROWS, f"Rendered {count} rows beyond the projection bound"
         return count
 
-    def navigate(button, label):
+    def navigate(button, label, direction="before"):
         expect(button).to_be_enabled(timeout=60000)
         focus(button)
         before = measure(label + "-before")
         chosen = next((item for item in before["rows"] if item["bottom"] > 0 and item["top"] < before["clientHeight"]), None)
         assert chosen
-        with page.expect_response(lambda response: response.url == entry_url and response.request.method == "POST", timeout=60000) as waiting:
+        edge = before["rows"][0 if direction == "before" else -1]["id"]
+        # A concurrent SSE reconnect also reads this URL with anchor="latest".
+        # Await the page requested by this keyboard action, not that capture.
+        anchor = {direction: edge}
+        with page.expect_response(lambda response: history_response_matches(response, entry_url, anchor), timeout=60000) as waiting:
             button.press("Enter")
         assert waiting.value.ok
         supplied = waiting.value.json()["rows"]
@@ -694,6 +711,17 @@ def _run_synthetic_history(page, base, entry_url, conversation, transcript, evid
             for index in range(25):
                 first = transcript.locator("[data-native-entry]").first
                 place(first, 90)
+                if index == 1:
+                    focus(earlier)
+                    before_reconnect = measure(f"reading-SYNTHETIC-{size}-paging-reconnect-before")
+                    reconnect_probe = True
+                    with page.expect_response(lambda response: response.url == entry_url and response.request.post_data_json["anchor"] == "latest", timeout=60000):
+                        page.evaluate("() => { if (!window.codingReadingDisconnectView) throw new Error('No live reading connection'); window.codingReadingDisconnectView(); }")
+                    expect(transcript).to_have_attribute("aria-busy", "false", timeout=60000)
+                    expect(earlier).to_be_focused()
+                    assert not reconnect_probe, "Reconnect never reached the real capture boundary"
+                    preserved(before_reconnect, f"reading-SYNTHETIC-{size}-paging-reconnect-after")
+                    synthetic.setdefault("paging_reconnect", []).append({"viewport": page.viewport_size, "focused_control_retained": True, "reading_window_retained": True})
                 navigate(earlier, f"reading-SYNTHETIC-{size}-older-{index:02d}")
                 expected = history_id(max(0, start - (index + 1) * PAGE_ROWS))
                 expect(transcript.locator("[data-native-entry]").first).to_have_attribute("data-native-entry", expected)
@@ -709,7 +737,7 @@ def _run_synthetic_history(page, base, entry_url, conversation, transcript, evid
             while newer.count() and forward_count < 26:
                 last = transcript.locator("[data-native-entry]").last
                 place(last, 90)
-                navigate(newer, f"reading-SYNTHETIC-{size}-newer-{forward_count:02d}")
+                navigate(newer, f"reading-SYNTHETIC-{size}-newer-{forward_count:02d}", "after")
                 forward_count += 1
             assert forward_count > 0, "Newer bounded content has no supported navigation"
             assert not newer.count(), "Forward navigation did not reach latest within the finite fixture"

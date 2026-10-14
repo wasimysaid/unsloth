@@ -105,6 +105,7 @@ def run_child_scenarios(page, context, base, provider, first, second_id, report,
 
     conversation = page.get_by_test_id("coding-conversation-id").inner_text()
     headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')")}
+    headers["X-Mimir-Runtime-Generation"] = str(context.request.get(base + "/api/coding/runtime", headers=headers).json()["generation"])
     evidence = report.setdefault("children", {"kind": "deterministic-http-provider-real-native-delegation", "requests": [], "outcomes": [], "inspection_reads": [], "events": []})
     prompt_url = base + f"/api/coding/conversations/{conversation}/prompts"
     event_url = base + f"/api/coding/conversations/{conversation}/events"

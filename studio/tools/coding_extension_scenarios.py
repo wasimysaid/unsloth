@@ -133,7 +133,9 @@ def run_extension_scenarios(page, context, base, provider, first_id, second_id,
             toggle.focus()
             toggle.press("Enter")
             expect(page.locator('[data-mobile="true"][data-sidebar="sidebar"]')).to_be_visible()
-        trigger = page.get_by_role("button", name="Mimir Settings", exact=True)
+        # The coding view tab and shared Settings-modal opener intentionally
+        # share their label. This scenario exercises the sidebar's modal opener.
+        trigger = page.locator('[data-sidebar="sidebar"]:visible').get_by_role("button", name="Mimir Settings", exact=True)
         expect(trigger).to_be_visible()
         trigger.focus()
         trigger.press("Enter")
@@ -150,8 +152,9 @@ def run_extension_scenarios(page, context, base, provider, first_id, second_id,
         expect(page.locator('[data-settings-dialog]')).not_to_be_visible()
         # The mobile sidebar closes/unmounts its Settings opener. The header
         # toggle survives both sheet dismissal and desktop→mobile replacement.
-        name = "Toggle coding sidebar" if mobile else "Mimir Settings"
-        expect(page.get_by_role("button", name=name, exact=True)).to_be_focused()
+        trigger = (page.get_by_role("button", name="Toggle coding sidebar", exact=True) if mobile
+                   else page.locator('[data-sidebar="sidebar"]:visible').get_by_role("button", name="Mimir Settings", exact=True))
+        expect(trigger).to_be_focused()
 
     def submit_held(identifier, text):
         select(identifier)

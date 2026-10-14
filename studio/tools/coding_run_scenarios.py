@@ -117,26 +117,29 @@ def run_scenarios(page, context, base, provider, first, second_id, report, scena
     expect(transcript).to_contain_text("ACCEPTANCE_COMPLETE", timeout=60000)
     expect(transcript.get_by_text(initial_prompt, exact=True)).to_have_count(1)
     expect(transcript).not_to_contain_text("Must reject busy without provider replay")
-    public_text = transcript.text_content()
-    chronology = [public_text.index(value) for value in (initial_prompt, "acceptance-write", "acceptance-read", "acceptance-shell", "ACCEPTANCE_COMPLETE")]
-    assert chronology == sorted(chronology), "Rendered native messages/tools are not chronological"
     rows = page.get_by_test_id("coding-tool-row")
     assert rows.count() >= 3
     evidence["tool_identities"] = []
     for call, name, output in (("acceptance-write", "write_file", "evidence.txt"),
                                ("acceptance-read", "read_file", "REAL_NATIVE_TOOL_EVIDENCE"),
                                ("acceptance-shell", "shell", "REAL_NATIVE_TERMINAL_EVIDENCE")):
-        row = rows.filter(has_text=call).last
+        # Identity/output details are intentionally unmounted while collapsed.
+        row = page.locator(f'[data-testid="coding-tool-row"][data-call-id="{call}"]')
+        expect(row).to_have_count(1)
+        summary = row.locator(":scope > summary")
+        summary.focus()
+        summary.press("Enter")
+        expect(row).to_have_attribute("open", "")
         expect(row).to_contain_text(name)
         expect(row.locator("pre")).to_contain_text(output)
         detail = row.locator("p").first.text_content()
         assert re.search(r"invocation (?!undefined|null|not supplied)\S+", detail), "Native invocation identity missing from public tool details"
         evidence["tool_identities"].append({"call_id": call, "name": name, "public_identity": detail})
-    # Expand actual public output with keyboard only.
-    shell_row = rows.filter(has_text="acceptance-shell").last
-    summary = shell_row.locator("summary")
-    summary.focus()
-    summary.press("Enter")
+    public_text = transcript.text_content()
+    chronology = [public_text.index(value) for value in (initial_prompt, "acceptance-write", "acceptance-read", "acceptance-shell", "ACCEPTANCE_COMPLETE")]
+    assert chronology == sorted(chronology), "Rendered native messages/tools are not chronological"
+    # Actual public output was expanded with keyboard only above.
+    shell_row = page.locator('[data-testid="coding-tool-row"][data-call-id="acceptance-shell"]')
     expect(shell_row).to_contain_text("REAL_NATIVE_TERMINAL_EVIDENCE")
     expect(shell_row).to_contain_text("acceptance-shell")
     snapshot(page, "desktop-tools-public-output")
@@ -158,7 +161,7 @@ def run_scenarios(page, context, base, provider, first, second_id, report, scena
     assert "REAL_TOOL_FAILURE" in request.tool_result("acceptance-failed-shell")
     request.text("ACCEPTANCE_FAILURE_EXPLAINED: command failed with exit 7")
     settled()
-    failed_row = rows.filter(has_text="acceptance-failed-shell").last
+    failed_row = page.locator('[data-testid="coding-tool-row"][data-call-id="acceptance-failed-shell"]')
     failed_row.locator("summary").focus()
     failed_row.locator("summary").press("Enter")
     expect(failed_row.locator("summary")).to_contain_text("failed")
@@ -251,7 +254,7 @@ def run_scenarios(page, context, base, provider, first, second_id, report, scena
 
     page.set_viewport_size({"width": 390, "height": 844})
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "Narrow transcript causes horizontal document overflow"
-    narrow_tool = rows.filter(has_text="acceptance-failed-shell").last
+    narrow_tool = page.locator('[data-testid="coding-tool-row"][data-call-id="acceptance-failed-shell"]')
     narrow_tool.locator("summary").focus()
     narrow_tool.locator("summary").press("Enter")
     public_output = narrow_tool.get_by_label("Actual public tool output", exact=True)

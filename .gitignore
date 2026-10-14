@@ -50,6 +50,9 @@ MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 
+# Task-owned verification environments, browser binaries and build/test artifacts
+/.verification/
+
 # Unit test / coverage reports
 htmlcov/
 .tox/

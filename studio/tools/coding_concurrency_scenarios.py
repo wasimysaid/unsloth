@@ -18,6 +18,7 @@ def run_concurrency_scenarios(page, context, base, provider, first, second, seco
 
     first_id = page.get_by_test_id("coding-conversation-id").inner_text()
     headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')")}
+    headers["X-Mimir-Runtime-Generation"] = str(context.request.get(base + "/api/coding/runtime", headers=headers).json()["generation"])
     evidence = report.setdefault("concurrency", {"kind": "deterministic-provider-real-native-tools", "requests": []})
     composer = page.get_by_label("Coding prompt", exact=True)
     status = page.get_by_test_id("coding-run-status")
