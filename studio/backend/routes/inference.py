@@ -9016,6 +9016,9 @@ def _raise_or_cancel_slot_generations(
     action: str = "Unloading this model",
 ) -> int:
     """The primary's 409 for a slot: only the generations this slot serves are in the way."""
+    from core.inference.llama_keepwarm import require_coding_model_unprotected
+
+    require_coding_model_unprotected(slot = slot, action = action)
     events = list(slot.generations)
     if not events:
         return 0
@@ -11966,6 +11969,101 @@ def _claim_slot_for_non_preview(fastapi_request) -> None:
     if _is_preview_path(path or ""):
         return
     _set_preview_resident(None)
+
+
+async def load_model_for_coding(
+    request: LoadRequest,
+    fastapi_request: Request,
+    current_subject: str,
+    protection_token: str,
+):
+    """Non-evicting host admission plus whole-request protection, under the existing gates.
+
+    A resident primary/kept model is borrowed exactly as-is: selection is not a settings
+    update. Otherwise only an empty chat owner may load. The returned CodingModelHold is
+    concrete evidence; its owner token must be explicitly released after native cleanup.
+    """
+    from core.inference.llama_cpp import chat_load_active
+    from core.inference.llama_keepwarm import (
+        coding_model_identity,
+        hold_coding_model,
+        inference_lifecycle_gate,
+        model_load_gate,
+        other_inference_request_count,
+    )
+    from core.inference.gpu_arbiter import CHAT, GpuOwnerBusyError, current_owner
+
+    if account_access.managed_account():
+        await asyncio.to_thread(account_access.require_model_access, request.model_path)
+    account_access.require_live_account()
+    await _require_drafter_access(request)
+    # Neither force nor alongside is coding admission: never mutate another workload.
+    request = request.model_copy(update = {
+        "force_reload": False, "force_cancel_active": False,
+        "alongside": False, "force_alongside": False,
+    })
+    requested = _model_key(request)
+    prior_slot = routed_slot.set(None)
+    try:
+        async with model_load_gate(), inference_lifecycle_gate():
+            _raise_if_sidecar_swap_in_progress()
+            for slot in (None, *model_slots.visible()):
+                if not await asyncio.to_thread(model_slots.in_slot, slot, lambda: _loaded_satisfies(requested)):
+                    continue
+                routed_slot.set(slot)
+                llama = get_llama_cpp_backend()
+                backend = llama if llama.is_loaded else _peek_inference_backend()
+                identity = coding_model_identity(backend)
+                return hold_coding_model(
+                    protection_token, backend, slot = slot, identity = identity
+                )
+
+            def require_empty_chat(*, cancel = False):
+                from core.inference.llama_keepwarm import require_coding_model_unprotected
+
+                require_coding_model_unprotected(action = "Loading a coding model")
+                llama = _llama_cpp_backend
+                backend = _peek_inference_backend()
+                busy = (
+                    (llama is not None and (llama.is_active or llama.is_loaded))
+                    or (backend is not None and (
+                        backend.active_model_name or getattr(backend, "loading_models", None)
+                    ))
+                    or chat_load_active() or model_slots.busy() or model_slots.holds_vram()
+                    or any(s.generations or s.refs for s in model_slots.resident())
+                    or other_inference_request_count(current_request_counted = False, include_pending = False)
+                    or current_owner() not in (None, CHAT)
+                )
+                if busy:
+                    raise HTTPException(status_code = 409, detail = {
+                        "error": "coding_model_busy",
+                        "message": "Studio is serving another workload. Finish it or unload its model, then retry; coding never evicts it.",
+                    })
+
+            require_empty_chat()
+            try:
+                await _run_tracked_load_model_impl(
+                    request, fastapi_request, current_subject,
+                    on_reload_confirmed = require_empty_chat,
+                    allow_gpu_owner_eviction = False,
+                )
+            except GpuOwnerBusyError as exc:
+                raise HTTPException(status_code = 409, detail = {
+                    "error": "coding_model_busy",
+                    "message": "The GPU owner changed while loading. Coding did not evict it; retry after that workload finishes.",
+                }) from exc
+            if not await asyncio.to_thread(_loaded_satisfies, requested):
+                raise HTTPException(status_code = 409, detail = {
+                    "error": "coding_model_changed",
+                    "message": "The selected coding model is not resident after loading. Refresh the available models and retry.",
+                })
+            llama = get_llama_cpp_backend()
+            backend = llama if llama.is_loaded else _peek_inference_backend()
+            return hold_coding_model(
+                protection_token, backend, identity = coding_model_identity(backend)
+            )
+    finally:
+        routed_slot.reset(prior_slot)
 
 
 async def load_model_for_preview(
@@ -17093,7 +17191,15 @@ def _raise_or_cancel_active_generations(
     _load_model_impl).
     """
     from core.inference.gpu_arbiter import require_no_foreign_generations
+    from core.inference.llama_keepwarm import require_coding_model_unprotected
 
+    slot = routed_slot.get()
+    llama = slot.llama if slot is not None else _llama_cpp_backend
+    backend = _peek_inference_backend()
+    if llama is not None:
+        require_coding_model_unprotected(llama, action = action)
+    if backend is not None:
+        require_coding_model_unprotected(backend, action = action)
     scope = account_access.account_scope()
     if scope is not None:
         # Before the count and the cancel: a foreign generation refuses the swap, so cancelling
@@ -17671,6 +17777,7 @@ async def _run_tracked_load_model_impl(
     attempt: Optional[_ScopedLoadAttempt] = None,
     current_request_counted: bool = False,
     on_reload_confirmed = None,
+    allow_gpu_owner_eviction: bool = True,
 ):
     global _running_load_attempt
 
@@ -17691,6 +17798,7 @@ async def _run_tracked_load_model_impl(
                     current_request_counted = current_request_counted,
                     on_reload_confirmed = on_reload_confirmed,
                     load_cancel_event = attempt.cancel_event,
+                    allow_gpu_owner_eviction = allow_gpu_owner_eviction,
                 )
         finally:
             _load_warnings_reach_user.reset(warnings_token)
@@ -20724,6 +20832,14 @@ async def install_latest_transformers_route(
 
         unloaded_chat = {"v": False}
 
+        def _require_sidecar_models_unprotected() -> None:
+            from core.inference.llama_keepwarm import require_coding_model_unprotected
+
+            require_coding_model_unprotected(backend, action = "Installing a new transformers version")
+            for slot in model_slots.resident():
+                if slot.orchestrator.active_model_name or model_slots._worker_alive(slot.orchestrator):
+                    require_coding_model_unprotected(slot = slot, action = "Installing a new transformers version")
+
         def _unload_before_swap() -> None:
             # Runs on the install thread, inside the gate held by _gated_install. Any
             # failure raises so the previous sidecar stays untouched (a worker that did
@@ -20731,6 +20847,7 @@ async def install_latest_transformers_route(
             # FIRST so its failure aborts while the chat model is still loaded;
             # cleanup_memory shuts the subprocess down even when its command fails, so
             # judge by worker liveness, not its return value.
+            _require_sidecar_models_unprotected()
             export_backend.cleanup_memory()
             export_alive = getattr(export_backend, "is_worker_alive", None)
             if callable(export_alive) and export_alive():
@@ -20800,6 +20917,14 @@ async def install_latest_transformers_route(
                             "Retry the install."
                         ),
                     )
+                try:
+                    _require_sidecar_models_unprotected()
+                    if request.force_cancel_active:
+                        from core.inference.llama_keepwarm import require_coding_model_unprotected
+                        require_coding_model_unprotected(action = "Forcing a transformers installation")
+                except HTTPException:
+                    end_sidecar_swap()
+                    raise
                 # Carry a confirmed swap's decision through: the user already accepted the "stop N
                 # chats" prompt, and refusing here would make that answer unactionable (Retry
                 # cannot succeed while the same chats run). Deliberately LAST, after every check

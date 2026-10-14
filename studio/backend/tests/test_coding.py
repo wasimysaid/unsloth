@@ -7,6 +7,7 @@ import json
 import struct
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -14,7 +15,7 @@ from fastapi import FastAPI
 
 from auth import storage
 from auth.authentication import create_access_token
-from core.coding_runtime import CodingRuntime, CodingRuntimeError, MAX_FRAME
+from core.coding_runtime import CodingRuntime, CodingRuntimeError, MAX_FRAME, runtime_for
 from routes.coding import router
 
 
@@ -31,6 +32,12 @@ def coding_app(monkeypatch, tmp_path):
 @pytest.mark.parametrize("method,path,body", [
     ("GET", "/projects/browse", None),
     ("GET", "/catalog?cwd=/", None),
+    ("GET", "/local-models/catalog", None),
+    ("POST", "/local-models/acquire", {"incarnation": "process", "operation_id": "operation", "conversation_id": "session", "request_id": "request", "model_id": "local-model", "api_model": "wire"}),
+    ("POST", "/local-models/inspect", {"incarnation": "process", "operation_id": "operation"}),
+    ("POST", "/local-models/release", {"incarnation": "process", "operation_id": "operation"}),
+    ("GET", "/conversations/known-id/models", None),
+    ("POST", "/conversations/known-id/models/refresh", None),
     ("GET", "/diagnostics", None),
     ("GET", "/conversations/known-id/extensions", None),
     ("POST", "/conversations/known-id/plugins/reload", {"operation_id": "exact-operation"}),
@@ -42,6 +49,9 @@ def coding_app(monkeypatch, tmp_path):
     ("POST", "/conversations/known-id/mcp/edit", {"source": "native-source", "name": "server"}),
     ("POST", "/conversations/known-id/mcp/save", {"edit_id": "edit-1", "revision": "r1", "json": "{}"}),
     ("POST", "/conversations/known-id/mcp/release", {"edit_id": "edit-1"}),
+    ("POST", "/conversations/known-id/mcp/apply", {"operation_id": "exact-apply"}),
+    ("POST", "/conversations/known-id/mcp/reconnect", {"operation_id": "exact-reconnect", "name": "configured"}),
+    ("GET", "/conversations/known-id/mcp/operations/exact-apply", None),
     ("GET", "/conversations/known-id/overlap", None),
     ("POST", "/conversations/known-id/prompts", {"submission_key": "exact-key", "text": "work"}),
     ("POST", "/conversations/known-id/configuration", {"provider": "native-provider", "model": "native-model"}),
@@ -137,6 +147,78 @@ async def test_open_never_accepts_a_replacement_working_directory(coding_app):
         assert "another process" in response.json()["detail"]
         bad = await client.post("/api/coding/conversations", json = {"cwd": "/", "trust": False})
         assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_observation_epoch_is_opaque_stable_and_specific_to_runtime_instance():
+    app = SimpleNamespace(state = SimpleNamespace())
+    runtime = runtime_for(app)
+    epoch = runtime.observation_epoch
+    assert isinstance(epoch, str) and len(epoch) == 32
+    assert all(character in "0123456789abcdef" for character in epoch)
+    assert runtime_for(app) is runtime
+    assert runtime_for(app).observation_epoch == epoch
+    assert runtime.process is None, "Observation metadata must not start Mimir"
+    runtime._fail(CodingRuntimeError("disconnected", "Native observation ended"))
+    with pytest.raises(CodingRuntimeError, match = "Native observation ended"):
+        await runtime.start()
+    assert runtime.observation_epoch == epoch, "Failure must not rotate the observation epoch"
+    await runtime.close()
+    assert runtime.observation_epoch == epoch
+    replacement = CodingRuntime()
+    assert replacement.observation_epoch != epoch
+    assert replacement.process is None
+
+
+@pytest.mark.asyncio
+async def test_sse_observation_epoch_preserves_native_envelopes_across_views_and_runtime_replacement(coding_app, monkeypatch):
+    app, headers = coding_app
+    originals = []
+    released = []
+    def observed_runtime(position):
+        runtime = CodingRuntime()
+        views = []
+        async def subscribe(conversation_id, *, expected_generation=None):
+            assert expected_generation == 1
+            assert conversation_id == "native-conversation"
+            subscription = f"native-view-{position}-{len(views)}"
+            views.append(subscription)
+            items = [
+                {"subscription": subscription, "position": position, "event": {
+                    "type": "activity", "rows": [{"id": "native-row", "kind": "assistant", "text": "Supplied native content"}]}},
+                {"subscription": subscription, "position": position + 1, "event": {"type": "closed"}},
+            ]
+            originals.append((runtime.observation_epoch, items))
+            queue = asyncio.Queue()
+            for item in items:
+                queue.put_nowait(item)
+            return subscription, queue
+        async def unsubscribe(subscription):
+            released.append(subscription)
+        monkeypatch.setattr(runtime, "subscribe", subscribe)
+        monkeypatch.setattr(runtime, "unsubscribe", unsubscribe)
+        return runtime
+    runtime = observed_runtime(100)
+    app.state.coding_runtime = runtime
+    observed = []
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        for _ in range(2):
+            response = await client.get("/api/coding/conversations/native-conversation/events")
+            assert response.status_code == 200
+            observed.append([json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")])
+        # Only an explicit new runtime instance introduces a new observation domain.
+        app.state.coding_runtime = observed_runtime(1)
+        response = await client.get("/api/coding/conversations/native-conversation/events")
+        assert response.status_code == 200
+        observed.append([json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")])
+    for envelopes, (epoch, items) in zip(observed, originals, strict = True):
+        assert envelopes == [{**item, "observation_epoch": epoch} for item in items]
+        assert all("observation_epoch" not in item for item in items), "Native queue items must not be mutated"
+    assert observed[0][0]["observation_epoch"] == observed[1][0]["observation_epoch"] == runtime.observation_epoch
+    assert observed[2][0]["observation_epoch"] != runtime.observation_epoch
+    assert [frames[0]["position"] for frames in observed] == [100, 100, 1]
+    assert released == ["native-view-100-0", "native-view-100-1", "native-view-1-0"]
+    assert runtime.process is None and app.state.coding_runtime.process is None
 
 
 @pytest.mark.asyncio
@@ -304,7 +386,8 @@ async def test_private_framing_rejects_oversized_output_and_settles_pending():
     stream = asyncio.StreamReader()
     stream.feed_data(struct.pack(">I", MAX_FRAME + 1))
     runtime = CodingRuntime()
-    runtime.process = SimpleNamespace(stdout = stream, returncode = 0)
+    runtime.process = SimpleNamespace(stdout = stream, stdin = None, returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     future = asyncio.get_running_loop().create_future()
     runtime._pending[1] = future
     await runtime._read_responses()
@@ -312,6 +395,8 @@ async def test_private_framing_rejects_oversized_output_and_settles_pending():
         await future
     with pytest.raises(CodingRuntimeError, match = "disconnected"):
         await runtime.start()
+    assert runtime._shutdown_task is not None
+    await runtime._shutdown_task
 
 
 @pytest.mark.asyncio
@@ -319,13 +404,16 @@ async def test_private_framing_rejects_oversized_output_and_settles_pending():
 async def test_malformed_error_frame_settles_matching_pending_command(error):
     stream = asyncio.StreamReader()
     runtime = CodingRuntime()
-    runtime.process = SimpleNamespace(stdout = stream, returncode = 0)
+    runtime.process = SimpleNamespace(stdout = stream, stdin = None, returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     future = asyncio.get_running_loop().create_future()
     runtime._pending[1] = future
     data = json.dumps({"id": 1, "error": error}).encode()
     stream.feed_data(struct.pack(">I", len(data)) + data)
     stream.feed_eof()
     await runtime._read_responses()
+    assert runtime._shutdown_task is not None
+    await runtime._shutdown_task
     with pytest.raises(CodingRuntimeError, match = "disconnected"):
         await asyncio.wait_for(future, timeout = 0.1)
     assert not runtime._pending
@@ -335,7 +423,8 @@ async def test_malformed_error_frame_settles_matching_pending_command(error):
 async def test_private_framing_matches_ids_not_arrival_order():
     stream = asyncio.StreamReader()
     runtime = CodingRuntime()
-    runtime.process = SimpleNamespace(stdout = stream, returncode = 0)
+    runtime.process = SimpleNamespace(stdout = stream, stdin = None, returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     futures = [asyncio.get_running_loop().create_future() for _ in range(2)]
     runtime._pending = {1: futures[0], 2: futures[1]}
     for identifier in (2, 1):
@@ -343,6 +432,8 @@ async def test_private_framing_matches_ids_not_arrival_order():
         stream.feed_data(struct.pack(">I", len(data)) + data)
     stream.feed_eof()
     await runtime._read_responses()
+    assert runtime._shutdown_task is not None
+    await runtime._shutdown_task
     assert [await future for future in futures] == [{"conversation_id": "1"}, {"conversation_id": "2"}]
 
 
@@ -350,7 +441,8 @@ async def test_private_framing_matches_ids_not_arrival_order():
 async def test_view_start_in_same_pipe_read_is_not_lost():
     stream = asyncio.StreamReader()
     runtime = CodingRuntime()
-    runtime.process = SimpleNamespace(stdout = stream, returncode = 0)
+    runtime.process = SimpleNamespace(stdout = stream, stdin = None, returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     future = asyncio.get_running_loop().create_future()
     runtime._pending[1] = future
     runtime._opening_views.add(1)
@@ -363,13 +455,16 @@ async def test_view_start_in_same_pipe_read_is_not_lost():
     assert await runtime._subscriptions["view-1"].get() == start
     stream.feed_eof()
     await reader
+    assert runtime._shutdown_task is not None
+    await runtime._shutdown_task
 
 
 @pytest.mark.asyncio
 async def test_slow_view_gets_explicit_reconstruction_error_not_partial_suffix():
     stream = asyncio.StreamReader()
     runtime = CodingRuntime()
-    runtime.process = SimpleNamespace(stdout = stream, returncode = 0)
+    runtime.process = SimpleNamespace(stdout = stream, stdin = None, returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     queue = asyncio.Queue(maxsize = 2)
     runtime._subscriptions["view-1"] = queue
     barrier = asyncio.get_running_loop().create_future()
@@ -387,6 +482,8 @@ async def test_slow_view_gets_explicit_reconstruction_error_not_partial_suffix()
     assert queue.empty()
     stream.feed_eof()
     await reader
+    assert runtime._shutdown_task is not None
+    await runtime._shutdown_task
 
 
 @pytest.mark.asyncio
@@ -452,12 +549,15 @@ async def test_late_view_reply_reconciles_expired_admission(monkeypatch):
             commands.append(json.loads(data[4:]))
         async def drain(self):
             pass
+        def close(self):
+            commands.append({"method": "stdin-close"})
     class LateRuntime(CodingRuntime):
         async def unsubscribe(self, subscription):
             commands.append({"method": "close_view", "params": {"subscription": subscription}})
             closed.set()
     runtime = LateRuntime()
-    runtime.process = SimpleNamespace(stdout = stream, stdin = Writer(), returncode = 0)
+    runtime.process = SimpleNamespace(stdout = stream, stdin = Writer(), returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     with pytest.raises(CodingRuntimeError, match = "not confirmed"):
         await runtime.command("view", {"conversation_id": "saved"})
     assert runtime._abandoned_views == {1}
@@ -471,6 +571,10 @@ async def test_late_view_reply_reconciles_expired_admission(monkeypatch):
     assert not runtime._abandoned_views
     stream.feed_eof()
     await reader
+    assert runtime._shutdown_task is not None
+    await runtime._shutdown_task
+    assert commands[-1] == {"method": "stdin-close"}
+    runtime.process.wait.assert_awaited_once()
     if runtime._cleanup_tasks:
         await asyncio.gather(*tuple(runtime._cleanup_tasks))
 
@@ -717,7 +821,8 @@ async def test_uncertain_mcp_save_is_not_replayed_and_requires_saved_version_com
 async def test_private_overlap_error_retains_structured_warning_and_settles_exact_command():
     stream = asyncio.StreamReader()
     runtime = CodingRuntime()
-    runtime.process = SimpleNamespace(stdout = stream, returncode = 0)
+    runtime.process = SimpleNamespace(stdout = stream, stdin = None, returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     future = asyncio.get_running_loop().create_future()
     runtime._pending[7] = future
     overlap = {"cwd": "/canonical/project", "conversations": [{"id": "native-owner"}]}
@@ -725,6 +830,8 @@ async def test_private_overlap_error_retains_structured_warning_and_settles_exac
     stream.feed_data(struct.pack(">I", len(data)) + data)
     stream.feed_eof()
     await runtime._read_responses()
+    assert runtime._shutdown_task is not None
+    await runtime._shutdown_task
     with pytest.raises(CodingRuntimeError) as error:
         await future
     assert error.value.code == "overlap_required"
@@ -737,13 +844,16 @@ async def test_private_overlap_error_retains_structured_warning_and_settles_exac
 async def test_malformed_overlap_refusal_fails_transport_without_orphaning_command(overlap):
     stream = asyncio.StreamReader()
     runtime = CodingRuntime()
-    runtime.process = SimpleNamespace(stdout = stream, returncode = 0)
+    runtime.process = SimpleNamespace(stdout = stream, stdin = None, returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     future = asyncio.get_running_loop().create_future()
     runtime._pending[1] = future
     data = json.dumps({"id": 1, "error": {"code": "overlap_required", "message": "Review", "overlap": overlap}}).encode()
     stream.feed_data(struct.pack(">I", len(data)) + data)
     stream.feed_eof()
     await runtime._read_responses()
+    assert runtime._shutdown_task is not None
+    await runtime._shutdown_task
     with pytest.raises(CodingRuntimeError, match = "disconnected"):
         await future
     assert not runtime._pending

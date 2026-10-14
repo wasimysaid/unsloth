@@ -58,6 +58,25 @@ function range(
   return `${positions[0]},${positions.length}`;
 }
 
+/** Shared reported hunk formatting: no cumulative patch or invented positions. */
+function* reportedHunkLines(file: FileChangeFile): Generator<string> {
+  for (const hunk of file.hunks) {
+    yield `@@ -${range(hunk.lines, "old_line", file.status === "created")} +${range(hunk.lines, "new_line", file.status === "deleted")} @@`;
+    for (const line of hunk.lines) {
+      const prefix =
+        line.kind === "added" ? "+" : line.kind === "removed" ? "-" : " ";
+      // Preserve native embedded/CRLF endings, without adding blank diff rows.
+      const content = line.content.endsWith("\n")
+        ? line.content.slice(0, -1)
+        : line.content;
+      yield prefix + content;
+      // A native truncated report cannot establish an actual EOF observation.
+      if (!file.truncated && !line.content.endsWith("\n"))
+        yield "\\ No newline at end of file";
+    }
+  }
+}
+
 /** Format the reported hunks; do not reconstruct complete contents or run a diff. */
 export function reportedUnifiedDiff(file: FileChangeFile): {
   text: string;
@@ -82,29 +101,67 @@ export function reportedUnifiedDiff(file: FileChangeFile): {
   };
   append(`--- ${file.status === "created" ? "/dev/null" : file.path}`);
   append(`+++ ${file.status === "deleted" ? "/dev/null" : file.path}`);
-  outer: for (const hunk of file.hunks) {
-    if (
-      !append(
-        `@@ -${range(hunk.lines, "old_line", file.status === "created")} +${range(hunk.lines, "new_line", file.status === "deleted")} @@`,
-      )
-    )
-      break;
-    for (const line of hunk.lines) {
-      const prefix =
-        line.kind === "added" ? "+" : line.kind === "removed" ? "-" : " ";
-      // Native line contents retain their line ending. Do not add blank diff rows.
-      const content = line.content.endsWith("\n")
-        ? line.content.slice(0, -1)
-        : line.content;
-      if (!append(prefix + content)) break outer;
-      // Native line contents preserve EOF-newline information. A clipped record
-      // cannot establish that a missing terminator is an actual EOF observation.
-      if (!file.truncated && !line.content.endsWith("\n")) {
-        if (!append("\\ No newline at end of file")) break outer;
-      }
-    }
+  for (const line of reportedHunkLines(file)) {
+    if (!append(line)) break;
   }
   return { text, clipped };
+}
+
+/**
+ * Lossless sections of the supplied unified output. Join with "" to recover the
+ * report exactly. Only one section is mounted by the renderer. Bound UTF-8 bytes
+ * and physical lines, keeping ordinary reported lines intact where possible;
+ * an oversized line/header continues across sections without fabricated prefixes.
+ */
+export function reportedUnifiedDiffSections(file: FileChangeFile): string[] {
+  if (file.binary || !file.hunks.length) return [];
+  const sections: string[] = [];
+  const encoder = new TextEncoder();
+  let text = "";
+  let bytes = 0;
+  let newlines = 0;
+  const flush = () => {
+    if (text) sections.push(text);
+    text = "";
+    bytes = 0;
+    newlines = 0;
+  };
+  const append = (line: string) => {
+    const value = `${line}\n`;
+    const size = encoder.encode(value).length;
+    const breaks = value.split("\n").length - 1;
+    if (size <= MAX_DIFF_CHARACTERS && breaks < MAX_DIFF_LINES) {
+      if (
+        bytes + size > MAX_DIFF_CHARACTERS ||
+        newlines + breaks >= MAX_DIFF_LINES
+      )
+        flush();
+      text += value;
+      bytes += size;
+      newlines += breaks;
+      return;
+    }
+    // Only oversized individual records need splitting inside a line. Iterating
+    // Unicode scalars avoids displaying half a surrogate pair at section edges.
+    flush();
+    for (const character of value) {
+      const size = encoder.encode(character).length;
+      const breaks = character === "\n" ? 1 : 0;
+      if (
+        bytes + size > MAX_DIFF_CHARACTERS ||
+        newlines + breaks >= MAX_DIFF_LINES
+      )
+        flush();
+      text += character;
+      bytes += size;
+      newlines += breaks;
+    }
+  };
+  append(`--- ${file.status === "created" ? "/dev/null" : file.path}`);
+  append(`+++ ${file.status === "deleted" ? "/dev/null" : file.path}`);
+  for (const line of reportedHunkLines(file)) append(line);
+  flush();
+  return sections;
 }
 
 /** Include structured effects in the existing ephemeral transcript memory budget. */

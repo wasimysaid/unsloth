@@ -9,6 +9,7 @@ ownership, persistence and framing are verified by the coding integration tests.
 
 import asyncio
 import json
+import uuid
 
 from utils.account_context import current_account
 
@@ -37,6 +38,7 @@ def seed_conversation(account) -> dict[str, str]:
 
 class NativeCodingBoundary:
     def __init__(self):
+        self.observation_epoch = uuid.uuid4().hex
         self.subjects = []
         self.operations = []
         self.released = []

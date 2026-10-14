@@ -43,10 +43,10 @@ import { codingApi, codingRuntimeApi, mcpSettingsApi } from "./api";
 import { createRuntimeMaintenance } from "./runtime-maintenance";
 import { CodingRuntimeControls } from "./runtime-controls";
 import { CodingSurface } from "./coding-surface";
+import { createMcpSettings } from "./mcp-settings";
+import { MimirSettings } from "./mimir-settings";
 import { ProjectFolderDialog } from "./project-folder-dialog";
 import { restoreProjectPickerFocus } from "./project-picker-focus";
-import { MimirSettings } from "./mimir-settings";
-import { createMcpSettings } from "./mcp-settings";
 import { createCodingSession } from "./session";
 import type { CodingSession, CodingSessionState } from "./session";
 
@@ -297,7 +297,7 @@ export function CodingPage() {
           aria-busy={state.opening}
           hidden={tab !== "conversation"}
         >
-          <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col gap-4">
+          <div className="mx-auto flex min-h-min w-full max-w-2xl flex-1 flex-col gap-4">
             <section
               className="shrink-0 space-y-2 text-center"
               aria-label="Coding conversation"

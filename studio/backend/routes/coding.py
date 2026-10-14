@@ -17,10 +17,15 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from auth.authentication import get_current_subject
-from core.coding_runtime import CodingRuntimeError, runtime_for
+from auth.authentication import get_current_credential
+from core.coding_runtime import CodingRuntime, CodingRuntimeError, runtime_for
 
-router = APIRouter(dependencies = [Depends(get_current_subject)])
+
+async def _coding_credential(request: Request, credential = Depends(get_current_credential)):
+    request.state.coding_subject, request.state.coding_credential_generation = credential
+
+
+router = APIRouter(dependencies = [Depends(_coding_credential)])
 
 
 class NativeViewResponse(StreamingResponse):
@@ -208,7 +213,7 @@ def _http_error(exc: CodingRuntimeError) -> HTTPException:
               "busy": 409, "conflict": 409, "trust_conflict": 409,
               "runtime_changed": 409, "stale_plan": 409, "stale_goal": 409,
               "unavailable": 503, "disconnected": 503, "uncertain": 504,
-              "limit": 429, "failed": 502, "cleanup_failed": 502}.get(exc.code, 400)
+              "limit": 429, "failed": 502, "cleanup_failed": 502, "protocol": 502}.get(exc.code, 502)
     headers = {"Cache-Control": "no-store"}
     if exc.requires_reopen:
         headers["X-Mimir-Requires-Reopen"] = "true"
@@ -218,9 +223,72 @@ def _http_error(exc: CodingRuntimeError) -> HTTPException:
 async def _command(request: Request, method: str, params: dict | None = None, *, generation: int | None = None):
     try:
         runtime = runtime_for(request.app)
+        if isinstance(runtime, CodingRuntime):
+            await runtime.configure_local_serving(request)
         if generation is None:
             return await runtime.command(method, params)
         return await runtime.command(method, params, expected_generation = generation)
+    except CodingRuntimeError as exc:
+        raise _http_error(exc) from exc
+
+
+class LocalOperationIdentity(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    incarnation: str = Field(min_length=1, max_length=128)
+    operation_id: str = Field(min_length=1, max_length=128)
+
+
+class LocalPreparation(LocalOperationIdentity):
+    conversation_id: str = Field(min_length=1, max_length=128)
+    request_id: str = Field(min_length=1, max_length=128)
+    model_id: str = Field(min_length=1, max_length=1024)
+    api_model: str = Field(min_length=1, max_length=32768)
+
+
+def _local_serving(request: Request, incarnation: str | None = None):
+    import secrets
+
+    runtime = getattr(request.app.state, "coding_runtime", None)
+    serving = getattr(runtime, "local_serving", None)
+    header = request.headers.get("authorization", "")
+    token = header[7:] if header.lower().startswith("bearer ") else ""
+    if (serving is None or serving.closing or not secrets.compare_digest(token.encode(), serving.key.encode())
+            or (incarnation is not None and incarnation != serving.incarnation)):
+        # Established authentication runs first. A valid browser token or another
+        # incarnation's workflow key still has no lifecycle release authority.
+        raise HTTPException(403, "This operation requires the current native serving incarnation.")
+    return serving
+
+
+@router.get("/local-models/catalog")
+async def local_models_catalog(request: Request):
+    _local_serving(request)
+    from core.coding_local_models import local_catalog
+    try:
+        return JSONResponse(await local_catalog(), headers={"Cache-Control": "no-store"})
+    except Exception:
+        raise HTTPException(503, "Studio downloaded model inventory is unavailable. Retry explicitly.") from None
+
+
+@router.post("/local-models/acquire")
+async def acquire_local_model(body: LocalPreparation, request: Request):
+    serving = _local_serving(request, body.incarnation)
+    try:
+        return await serving.acquire(body.model_dump(), request)
+    except CodingRuntimeError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post("/local-models/inspect")
+async def inspect_local_model(body: LocalOperationIdentity, request: Request):
+    return _local_serving(request, body.incarnation).inspect(body.operation_id)
+
+
+@router.post("/local-models/release")
+async def release_local_model(body: LocalOperationIdentity, request: Request):
+    serving = _local_serving(request, body.incarnation)
+    try:
+        return await serving.release(body.operation_id)
     except CodingRuntimeError as exc:
         raise _http_error(exc) from exc
 
@@ -273,7 +341,10 @@ async def restart_whole_runtime(body: RuntimeRestart, request: Request):
     # Explicit all-conversation scope, not plugin hot reload. Native admission
     # refuses any busy hosted owner; HTTP disconnect never cancels maintenance.
     try:
-        return await runtime_for(request.app).restart()
+        runtime = runtime_for(request.app)
+        if isinstance(runtime, CodingRuntime):
+            await runtime.configure_local_serving(request)
+        return await runtime.restart()
     except CodingRuntimeError as exc:
         raise _http_error(exc) from exc
 
@@ -312,6 +383,21 @@ async def reload_plugins(conversation_id: str, body: PluginReload, request: Requ
 @router.get("/catalog")
 async def catalog(request: Request, cwd: str = Query(min_length = 1, max_length = 32768)):
     return await _command(request, "catalog", {"cwd": cwd})
+
+
+@router.get("/conversations/{conversation_id}/models")
+async def conversation_models(conversation_id: str, request: Request):
+    # Read the retained controller's inventory; never implicitly open/grant trust.
+    result = await _command(request, "models", {"conversation_id": conversation_id})
+    return JSONResponse(result, headers = {"Cache-Control": "no-store"})
+
+
+@router.post("/conversations/{conversation_id}/models/refresh")
+async def refresh_models(conversation_id: str, request: Request):
+    # Native refresh owns discovery and selectability. No restart, onboarding,
+    # health probe, provider replacement, prompt replay or Studio inventory.
+    result = await _command(request, "models.refresh", {"conversation_id": conversation_id})
+    return JSONResponse(result, headers = {"Cache-Control": "no-store"})
 
 
 @router.get("/conversations")
@@ -455,7 +541,10 @@ async def conversation_events(conversation_id: str, request: Request,
     # captures its native ordered view; no snapshot-then-subscribe race exists.
     runtime = runtime_for(request.app)
     try:
+        if isinstance(runtime, CodingRuntime):
+            await runtime.configure_local_serving(request)
         subscription, queue = await runtime.subscribe(conversation_id, expected_generation = generation)
+        observation_epoch = runtime.observation_epoch
     except CodingRuntimeError as exc:
         raise _http_error(exc) from exc
 
@@ -469,7 +558,11 @@ async def conversation_events(conversation_id: str, request: Request,
             if isinstance(item, CodingRuntimeError):
                 yield "event: disconnected\ndata: " + json.dumps({"message": item.message, "code": item.code, "requires_reopen": item.requires_reopen}) + "\n\n"
                 return
-            yield "event: view\ndata: " + json.dumps(item, separators = (",", ":")) + "\n\n"
+            # Retained views keep their admitted observation domain even when
+            # the persistent supervisor publishes a replacement process.
+            # Do not rewrite native subscription/position/event or queue items.
+            envelope = {**item, "observation_epoch": observation_epoch}
+            yield "event: view\ndata: " + json.dumps(envelope, separators = (",", ":")) + "\n\n"
             if item.get("event", {}).get("type") == "closed":
                 return
 
@@ -536,6 +629,34 @@ async def mcp_save(conversation_id: str, body: McpSaveRequest, request: Request)
 async def mcp_release_edit(conversation_id: str, body: McpEditIdentity, request: Request):
     # Drop only an obsolete editor handle, never a conversation or MCP attachment.
     return await _command(request, "mcp_release_edit", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+class McpOperationRequest(BaseModel):
+    model_config = ConfigDict(extra = "forbid", strict = True)
+    operation_id: str = Field(min_length = 1, max_length = 128)
+
+
+class McpReconnectRequest(McpOperationRequest):
+    name: str | None = Field(default = None, min_length = 1, max_length = 256)
+
+
+@mcp_router.post("/conversations/{conversation_id}/mcp/apply")
+async def mcp_apply(conversation_id: str, body: McpOperationRequest, request: Request):
+    # Native admission refuses active work; no Stop, reload, restart or transport retry.
+    return await _command(request, "mcp_apply", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+@mcp_router.post("/conversations/{conversation_id}/mcp/reconnect")
+async def mcp_reconnect(conversation_id: str, body: McpReconnectRequest, request: Request):
+    # Configured connections retain their session owner, never transient SDK grants.
+    return await _command(request, "mcp_reconnect", {"conversation_id": conversation_id, **body.model_dump()})
+
+
+@mcp_router.get("/conversations/{conversation_id}/mcp/operations/{operation_id}")
+async def mcp_inspect_operation(conversation_id: str, request: Request,
+                                operation_id: str = ApiPath(min_length = 1, max_length = 128)):
+    # Read-only reconciliation of this exact operation. Absence is unknown, not failure.
+    return await _command(request, "mcp_inspect_operation", {"conversation_id": conversation_id, "operation_id": operation_id})
 
 
 router.include_router(mcp_router)

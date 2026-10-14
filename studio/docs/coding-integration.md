@@ -213,6 +213,103 @@ identities, desktop 1440×1000 and narrow 390×844 viewports, screenshots and co
 terminal cleanup. This is deterministic provider/fault-injected native execution,
 not external-provider/local-model full-PoC or human-review acceptance (#255–256).
 
+## Native MCP apply/reconnect (#251)
+
+Implementation baselines: Studio `be0a051ae00f35935c3babb76e8c6e03626464d6`
+and paired private Mimir `f5364ce6a0c1d8cc4d5bc5f6c05e26ef3ce787f5`.
+Mimir Settings now exposes three distinct operations: **Save configuration**
+persists an exact native editor revision; **Apply saved MCP configuration**
+reconciles the saved native layers for the selected live conversation; and
+**Reconnect configured servers** replaces only that conversation's configured
+connections using their currently applied definitions. Neither runtime operation
+saves an unsaved draft, reloads plugins, recreates a session or restarts Mimir.
+Native safe-idle admission refuses active requests, queues, questions, children,
+tools and MCP/configuration activity instead of cancelling them to force changes.
+Configured connections remain session-owned; transient SDK grants are not Settings
+entries and retain their explicit owning resource and awaited cleanup.
+
+The authenticated bridge forwards `mcp_apply`, `mcp_reconnect` and read-only
+`mcp_inspect_operation` to the existing product frontend/Session Control owners.
+Every runtime command carries a fresh operation UUID. Settings reports native
+running/completed/failed outcomes separately from connection success, plus saved
+effective versus actually applied revision, pending changes, connection errors and
+observed configured tool counts. The editor's persistence revision identifies its
+retained native edit; it is not the effective/applied runtime revision. A saved
+file, accepted command or matching revision alone is not evidence of connected
+tools. Partial/error outcomes leave current native evidence visible.
+
+Lost responses are reconciled against the exact retained native operation, never
+replayed. Only operation identity/kind/optional server name is stored as browser
+per-tab sessionStorage transport correlation, not definitions, credentials or drafts.
+Another tab cannot overwrite or clear the submitting tab's unresolved identity;
+native admission still orders separate tab commands. Unknown/evicted
+status blocks another apply/reconnect; it does not mean unadmitted or failed.
+A mounted Settings view observes pending native state for at most one minute,
+then retains explicit **Reconcile MCP operation** and **Refresh inventory**.
+Navigation/reload cannot cancel native work or erase an unresolved identity.
+Drafts stay in page memory across Settings/conversation navigation and failures;
+raw secret-bearing drafts are deliberately not persisted across a page reload.
+
+Verification uses focused native admission/failure/lifetime tests, rebuilt SDK
+consumers, authenticated bridge/frontend state tests and the existing real
+coding-route browser driver with `--apply-reconnect`. Browser scenarios use an
+isolated deterministic HTTP provider and a real stdio MCP server with actual
+native tools/connections; they are not live-model or full-PoC acceptance.
+Desktop and narrow rendering, keyboard/error focus, busy refusals, lost replies,
+saved/applied revisions, connection failures and settled process ownership are
+recorded separately in task evidence. Full live external/local-model acceptance
+and human implemented-UI review remain #255–256.
+
+```sh
+.venv/bin/python studio/tools/coding_mcp_browser_acceptance.py \
+  --mimir /path/to/paired/mimir --plugin-package /path/to/current/package \
+  --apply-reconnect --browser firefox --evidence-dir /path/to/task/evidence
+```
+
+## Live model catalog refresh (#245)
+
+Implementation baselines: Studio `be0a051ae00f35935c3babb76e8c6e03626464d6`
+and paired private Mimir `f5364ce6a0c1d8cc4d5bc5f6c05e26ef3ce787f5`.
+The picker now reads the retained controller through authenticated
+`GET /api/coding/conversations/{id}/models`, not a fresh folder catalog whose
+choices the already-live controller might not accept. **Refresh model choices**
+uses `POST .../models/refresh` and native Session Control 12.0.0 to update both
+discovery and selectability without process restart, project-context retargeting,
+external provider replacement or disruption of the running coding request.
+Queued input uses the refreshed inventory at the native execution boundary.
+
+Selected/saved unavailable identities remain in authoritative state and visible
+in the composer/picker, with a sanitized native explanation. Reopening retains
+readable public history, not a silently substituted provider/model. **Retry
+selected model** retries that exact identity/effort; **Choose replacement** is a
+separate explicit configuration action. Refresh failure keeps previous inventory
+and selection. A lost browser reply is unconfirmed; reopening reads native
+inventory and never automatically replays refresh. Explicit read/refresh remain
+available. Catalog presence is inventory only: no health, credential verification
+or compatibility certification. Provider onboarding/downloads remain external;
+no credentials or provider configuration are sent in model/status DTOs.
+
+Reproduce focused actual-browser verification with current paired artifacts:
+
+```sh
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir /path/to/current/mimir --plugin-package /path/to/current/package \
+  --workload catalog --browser firefox --evidence-dir /path/to/worker/catalog
+```
+
+The driver changes isolated native discovery inputs while a real request remains
+live, verifies added/removed/changed identities and native selectability, pinned
+native tool continuation, next-boundary execution, explicit refresh failure/retry,
+lost/closed browser delivery reconciliation and unavailable saved-selection
+reopening. The current route refuses concurrent prompt admission; native-contract
+fixtures separately exercise queued requests and dequeue races. It records native
+IDs, unchanged process identity until an explicitly tested reopen restart,
+1440×1000 and 390×844 browser
+evidence and terminal cleanup. Provider responses are deterministic HTTP fixtures,
+not live-model acceptance. Initial Studio local registration/whole-request
+protection remains #246; combined local serving/refresh, live workloads and human
+review remain the integrated #254–256 gates.
+
 ## Continuous idle retirement (#248)
 
 Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`
@@ -796,14 +893,14 @@ these contracts, not reused from an older Wasm artifact.
 |---|---|---|
 | A1 | Native opening/SDK contracts; single supervised product plugin; authenticated HTTP/SSE; exact submission/request/tool identities; atomic ordered public view, checkpoints/reset/recovery, bounded cut reads and durable reconnect reconciliation (#236) | Cross-feature integration and packaged-consumer regression (#254) |
 | A2 | Native prompt/Stop controls; compact inspectable public tool results/failures and clipping disclosure; native inline questions and retained accepted answers (#237); exact child-attempt inspector with non-consuming outcomes, public historical completion records, bounded child views and real native-delegation route driver (#241) | Modes, plans/goals and cross-feature/live-model acceptance (#254/#255) |
-| A3 | Shared typed live/historical reported changes; collapsed inspection-only rows, bounded unified hunks, optional counts and incomplete/binary labels (#238) | See task-local file-change browser and SDK reports; cross-feature/live acceptance (#254/#255) |
+| A3 | Shared typed live/historical reported changes; collapsed inspection-only rows, bounded unified hunks, optional counts and incomplete/binary labels (#238); lossless supplied-content diff sections and stable repeated-invocation reading (#253) | See [reading evidence](coding-reading-253-evidence.md) and task-local file-change/SDK reports; cross-feature/live acceptance (#254/#255) |
 | A4 | #244 next-request picker: native catalog/identity, stepped reasoning/default reset, provider search/navigation/favorites, separate running/next state, configuration/dequeue races | Live catalog refresh (#245) and cross-feature integration (#254) |
-| A5 | Externally configured provider admission; no Studio local-model serving | Local-model requests and whole-request protection (#246/#255) |
+| A5 | Externally configured provider admission; native Studio downloaded-model catalog and authenticated built-in serving, exact execution/dequeue admission and request-owned gated lifecycle protection (#246; evidence in coding-local-serving-ticket246.md) | Combined live catalog refresh/process recovery and cross-feature acceptance (#245/#249/#255) |
 | A6 | Canonical/native validated opening, non-persisting effective trust, saved-policy tests, child inheritance, mismatch/lease refusals, authenticated run/Stop/history access; independent concurrent native workloads and canonical-folder warning/admission (#247); same-identity trusted history reopening after idle retirement (#248) | Process-loss recovery (#249) and cross-feature acceptance (#254–255) |
-| A7 | Exact request cancellation; Stop acknowledgment distinct from cleanup; disconnect never stops owners; typed native failures; durable submission identity across reload/native restart, automatic authoritative reconnect and non-prompt reconciliation (#236); no automatic work replay; awaited EOF shutdown; continuous unviewed/native-quiescent retention, controlled clocks, atomic native retirement and failure-safe cleanup retry (#248) | Full process-interruption/maintenance scenarios (#249) and cross-feature live-model acceptance (#254–255) |
+| A7 | Exact request cancellation; Stop acknowledgment distinct from cleanup; disconnect never stops owners; typed native failures; durable submission identity across reload/native restart, automatic authoritative reconnect and non-prompt reconciliation (#236); no automatic work replay; awaited EOF shutdown; continuous unviewed/native-quiescent retention, controlled clocks, atomic native retirement and failure-safe cleanup retry (#248); independent whole-request local-model holds, tools/questions/child gaps, exact uncertain-admission reconciliation and confirmed cleanup-only release (#246) | Full process-interruption/maintenance scenarios (#249) and cross-feature live-model acceptance (#254–255) |
 | A8 | Focused Mimir Settings; native headless installed/enabled/selected/live inventory, effective skills, bounded diagnostics, exact scoped reload and uncertain-outcome reconciliation (#252); scoped native MCP inventory, revision-checked persistence and draft reconciliation, save-only Settings with configured/applied distinction (#250) | MCP live apply/reconnect (#251) and separately owned runtime restart (#249) |
-| A9 | Ordinary-chat store/engine untouched; affected shared/ordinary-chat tests; coding route excludes ordinary model observers and chat execution imports | Real ordinary-chat smoke and cross-feature regression (#254/#255) |
-| A10 | Rendered opening, deterministic provider/native-tool, cancellation/failure, keyboard/narrow, and separate live-provider driver | Full cross-feature execution UI checks and user's implemented-UI review (#255/#256) |
+| A9 | Ordinary-chat store and execution ownership preserved; coding route excludes ordinary chat stores/observers. Shared lifecycle owners reject destructive management of whole-request coding holds (#246); affected ordinary-chat/model-lifecycle regressions and real authenticated inference smoke are recorded in coding-local-serving-ticket246.md | Cross-feature regression (#254/#255) |
+| A10 | Rendered opening, deterministic provider/native-tool, cancellation/failure, keyboard/narrow, separate live-provider driver; local preparation/cleanup/error/retry and live invocation-start reconciliation (#246); bottom-follow, accessible latest/activity controls, anchored expansion/reconstruction and bounded older/newer navigation (#253) | #246's final real-model driver passed after host recovery; see coding-local-serving-ticket246.md and [reading evidence and its boundaries](coding-reading-253-evidence.md). Full cross-feature UI checks and user's implemented-UI review remain separate (#255/#256) |
 
 ## MCP save-only Settings slice (#250)
 

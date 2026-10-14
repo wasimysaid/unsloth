@@ -11,15 +11,17 @@ import type {
   PluginReloadStatus,
   RuntimeDiagnostics,
 } from "./maintenance";
-import type { CodingModelApi } from "./model-selection";
-import type { EntryPage, RunApi } from "./run-types";
 import type { CodingRuntimeApi } from "./runtime-maintenance";
 import type {
   McpDraft,
   McpInventory,
+  McpOperation,
+  McpOperationInspection,
   McpSaveResult,
   McpSettingsApi,
 } from "./mcp-types";
+import type { CodingModelApi } from "./model-selection";
+import type { EntryPage, RunApi } from "./run-types";
 import type {
   CodingApi,
   CodingConversation,
@@ -163,6 +165,43 @@ export const codingRuntimeApi: CodingRuntimeApi = {
  * reconciled by an explicit editor read, not a second submission.
  */
 export const mcpSettingsApi: McpSettingsApi = {
+  async apply(id, operationId) {
+    return (await (
+      await codingRequest(
+        `/conversations/${encodeURIComponent(id)}/mcp/apply`,
+        {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ operation_id: operationId }),
+        },
+      )
+    ).json()) as McpOperation;
+  },
+  async reconnect(id, operationId, name) {
+    return (await (
+      await codingRequest(
+        `/conversations/${encodeURIComponent(id)}/mcp/reconnect`,
+        {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            operation_id: operationId,
+            name: name ?? null,
+          }),
+        },
+      )
+    ).json()) as McpOperation;
+  },
+  async inspectOperation(id, operationId) {
+    return (await (
+      await codingRequest(
+        `/conversations/${encodeURIComponent(id)}/mcp/operations/${encodeURIComponent(operationId)}`,
+        { cache: "no-store" },
+      )
+    ).json()) as McpOperationInspection;
+  },
   async inventory(id) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/mcp/inventory`,
@@ -212,10 +251,17 @@ export const mcpSettingsApi: McpSettingsApi = {
 };
 
 export const codingModelApi: CodingModelApi = {
-  async catalog(cwd, signal) {
+  async catalog(id, signal) {
     const response = await codingRequest(
-      `/catalog?${new URLSearchParams({ cwd })}`,
-      { signal },
+      `/conversations/${encodeURIComponent(id)}/models`,
+      { signal, cache: "no-store" },
+    );
+    return await response.json();
+  },
+  async refresh(id, signal) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/models/refresh`,
+      { method: "POST", signal, cache: "no-store" },
     );
     return await response.json();
   },

@@ -28,10 +28,43 @@ def tool_completion(identifier: str, name: str, arguments: dict) -> bytes:
             "\n\ndata: [DONE]\n\n").encode()
 
 
+class ProviderStream:
+    """Browser-controlled HTTP SSE chunks, not injected native activity."""
+    def __init__(self):
+        self.chunks = queue.Queue(maxsize=32)
+        self.closed = False
+
+    def text(self, text: str) -> None:
+        assert not self.closed, "Provider stream already finished"
+        frame = {"choices": [{"delta": {"content": text}, "finish_reason": None}]}
+        self.chunks.put(("data: " + json.dumps(frame) + "\n\n").encode(), timeout=10)
+
+    def finish(self) -> None:
+        if not self.closed:
+            self.closed = True
+            self.chunks.put(b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', timeout=10)
+            self.chunks.put(None, timeout=10)
+
+    def __iter__(self):
+        while True:
+            chunk = self.chunks.get(timeout=120)
+            if chunk is None:
+                return
+            yield chunk
+
+
 class ProviderRequest:
     def __init__(self, body: dict):
         self.body = body
         self.response = queue.Queue(maxsize=1)
+        self.stream = None
+
+    def begin_stream(self) -> ProviderStream:
+        assert self.body.get("stream", False), "Native provider request is not streaming"
+        assert self.stream is None, "Provider stream already started"
+        self.stream = ProviderStream()
+        self.response.put((200, "text/event-stream", self.stream))
+        return self.stream
 
     def text(self, text: str) -> None:
         if self.body.get("stream", False):
@@ -152,12 +185,14 @@ class ProviderFixture:
                 try:
                     self.send_response(status)
                     self.send_header("Content-Type", content_type)
-                    self.send_header("Content-Length", str(len(body)))
+                    if isinstance(body, bytes):
+                        self.send_header("Content-Length", str(len(body)))
                     self.send_header("Connection", "close")
                     self.end_headers()
-                    self.wfile.write(body)
-                    self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError):
+                    for chunk in (body,) if isinstance(body, bytes) else body:
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, queue.Empty):
                     pass  # Exact native cancellation closes the external request.
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -198,6 +233,8 @@ class ProviderFixture:
 
     def close(self) -> None:
         for request in self.pending:
+            if request.stream is not None:
+                request.stream.finish()
             try:
                 request.response.put_nowait((503, "text/plain", b"Fixture shutting down"))
             except queue.Full:

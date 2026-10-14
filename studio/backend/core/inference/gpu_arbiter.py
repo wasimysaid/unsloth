@@ -37,6 +37,13 @@ class OwnerChangedError(RuntimeError):
 
 
 def _evict_chat() -> None:
+    from core.inference.llama_keepwarm import coding_model_mutation
+
+    with coding_model_mutation(action = "Evicting chat models for a GPU handoff"):
+        _evict_chat_unprotected()
+
+
+def _evict_chat_unprotected() -> None:
     import time
 
     from core.inference import get_inference_backend
@@ -219,7 +226,15 @@ def acquire_for(
             if busy:
                 raise GpuBusyForAnotherAccountError(_owner, busy)
             logger.info("gpu_arbiter: evicting %s for %s", _owner, owner)
-            _EVICTORS[_owner]()
+            from core.inference.llama_keepwarm import coding_model_mutation
+            from contextlib import nullcontext
+
+            guard = (
+                coding_model_mutation(action = "Transferring the GPU from chat")
+                if _owner == CHAT else nullcontext()
+            )
+            with guard:
+                _EVICTORS[_owner]()
         if owner != VIDEO:
             # A resident H3 sd-server sits outside every owner's teardown.
             _release_idle_video_servers(f"GPU acquired for {owner}")

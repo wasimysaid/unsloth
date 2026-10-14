@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -16,7 +17,7 @@ from core.coding_runtime import CodingRuntime, CodingRuntimeError
 from routes.coding import router
 
 
-async def child_runtime(tmp_path, *, reject=False, confirm=True, exit_code=0, lose_guard=False, admitted=False):
+async def child_runtime(tmp_path, *, reject=False, confirm=True, exit_code=0, lose_guard=False, admitted=False, runtime=None):
     # Actual owned subprocess and real framed transport; the native admission is
     # deliberately fault-injected here. Real native busy coverage is separate.
     code = '''import sys,struct,json
@@ -38,7 +39,7 @@ while True:
     body=json.dumps(response).encode(); sys.stdout.buffer.write(struct.pack('>I',len(body))+body); sys.stdout.buffer.flush()
 sys.exit(int(sys.argv[3]))
 '''
-    runtime = CodingRuntime()
+    runtime = runtime or CodingRuntime()
     runtime.process = await asyncio.create_subprocess_exec(sys.executable, "-c", code, str(reject), str(confirm), str(exit_code), str(lose_guard), str(admitted), str(tmp_path / "native-command-trace"),
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     runtime._reader = asyncio.create_task(runtime._read_responses())
@@ -220,7 +221,10 @@ async def test_open_stamp_uses_delivery_incarnation_not_later_status():
         async def drain(self):
             # A later supervision status does not restamp this admitted owner.
             runtime._generation = 2
-    runtime.process = SimpleNamespace(stdin=Writer(), stdout=stream, returncode=0)
+        def close(self):
+            stream.feed_eof()
+    runtime.process = SimpleNamespace(stdin=Writer(), stdout=stream, returncode=0,
+                                      wait=AsyncMock(return_value=0))
     runtime._generation = 1
     reader = asyncio.create_task(runtime._read_responses())
     result = await runtime.command("open", {"conversation_id": "saved"})
@@ -228,6 +232,8 @@ async def test_open_stamp_uses_delivery_incarnation_not_later_status():
     assert runtime.status()["generation"] == 2
     stream.feed_eof()
     await reader
+    await runtime._shutdown_task
+    runtime.process.wait.assert_awaited_once()
 
 
 @pytest.mark.asyncio

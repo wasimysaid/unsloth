@@ -6,7 +6,11 @@ import type {
   ThreadMessageLike,
 } from "@assistant-ui/react";
 import type { CodingInputDraft } from "./input.ts";
-import { type PresentationRow, groupCodingRows } from "./presentation.ts";
+import {
+  type PresentationRow,
+  groupCodingRows,
+  readingRowKey,
+} from "./presentation.ts";
 import type { CodingRun, CodingRunState } from "./run-session.ts";
 
 /** assistant-ui projects native rows; Mimir owns rich input and execution. */
@@ -41,7 +45,7 @@ export function codingRunAdapter(
     messages: groupCodingRows(state?.rows ?? []),
     convertMessage(row): ThreadMessageLike {
       return {
-        id: row.id,
+        id: row.tool?.invocation_id || row.answer ? readingRowKey(row) : row.id,
         role: row.kind === "user" ? "user" : "assistant",
         content:
           row.text || row.tool?.title || row.tool?.name || "Native activity",

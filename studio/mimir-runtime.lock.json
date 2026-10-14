@@ -2,7 +2,7 @@
   "frontend": {
     "artifacts": {
       "mimir-plugin.toml": "43f29a1dbb2dc30edc7ddd0c604c90c47d2cf8daedfe449565287b6efcff7d1c",
-      "plugin.wasm": "d262fdfd1ef2dfd1e099e3b21bd827a8f9adca8fb656ab16c393b9e0b16fca19"
+      "plugin.wasm": "4812c0e1df15a12f963be5ceb46c2bb82f0646d03bb94f422f5e67d1442af909"
     },
     "build": [
       {
@@ -29,7 +29,7 @@
   },
   "mimir": {
     "repository": "wasimysaid/mimir",
-    "revision": "ff9bf7c757461034949137a75bc9f7d992c895e7"
+    "revision": "8a9dfa17a75c53ef59b7d1150f48cb3b2c54df4e"
   },
   "version": 1
 }

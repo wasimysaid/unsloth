@@ -6,6 +6,8 @@ import test from "node:test";
 import { CodingHttpError } from "../src/features/coding/errors.ts";
 import * as codingInput from "../src/features/coding/input.ts";
 import * as answerFocus from "../src/features/coding/answer-focus.ts";
+import * as boundedContent from "../src/features/coding/bounded-content.ts";
+import * as transcriptReader from "../src/features/coding/transcript-reader.ts";
 import type * as Composer from "../src/features/coding/coding-composer.tsx";
 import type { RunApi } from "../src/features/coding/run-types.ts";
 import { createCodingSession } from "../src/features/coding/session.ts";
@@ -578,6 +580,8 @@ for (const ownerGeneration of [1, 2, 100]) {
       },
       "./presentation": {},
       "./answer-focus": answerFocus,
+      "./bounded-content": boundedContent,
+      "./transcript-reader": transcriptReader,
       "./question-card": { QuestionCard: "question-card" },
       "./plan-card": { PlanCard: "plan-card", CodingModeControl: "mode-control" },
       "./goal-summary": { GoalSummary: "goal-summary" },

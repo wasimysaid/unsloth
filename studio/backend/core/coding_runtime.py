@@ -15,6 +15,7 @@ import logging
 import os
 import secrets
 import struct
+import uuid
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -22,6 +23,9 @@ MAX_FRAME = 1024 * 1024
 COMMAND_TIMEOUT = 60
 DRAIN_TIMEOUT = 30
 TERMINATE_TIMEOUT = 10
+# Cold native component validation/compilation may exceed two minutes on a
+# development build. This setup bound never extends execution-command deadlines.
+INSTALL_TIMEOUT = 600
 PLUGIN_ID = "studio.frontend"
 
 
@@ -36,6 +40,9 @@ class CodingRuntimeError(Exception):
 
 class CodingRuntime:
     def __init__(self, executable: str | None = None):
+        # Native positions are comparable only within one process incarnation.
+        # An opaque random epoch scopes browser observation, not execution authority.
+        self.observation_epoch = uuid.uuid4().hex
         self.executable = executable or os.environ.get("UNSLOTH_MIMIR_EXECUTABLE", "mimir")
         self.package = os.environ.get("UNSLOTH_MIMIR_PLUGIN_PACKAGE")
         self.process: asyncio.subprocess.Process | None = None
@@ -53,6 +60,11 @@ class CodingRuntime:
         self._stderr: asyncio.Task | None = None
         self._failure: CodingRuntimeError | None = None
         self._closing = False
+        self.local_serving = None
+        self._local_key_id: int | None = None
+        self._local_origin: str | None = None
+        self._local_subject: str | None = None
+        self._local_credential_generation: str | None = None
         self._maintaining = False
         self._expected_exit = False
         self._maintenance_lock = asyncio.Lock()
@@ -108,6 +120,115 @@ class CodingRuntime:
                 pass
         return self.status()
 
+    async def configure_local_serving(self, request) -> None:
+        """Configure one native provider over a trusted host socket, never Host headers.
+
+        ASGI unit/CPU-only compositions without a server tuple do not gain local
+        serving. Production uses the real listening socket (or explicit loopback
+        origin). The ephemeral workflow credential stays host-side and is stored
+        only as a hash by the established Studio credential owner.
+        """
+        if os.environ.get("UNSLOTH_MIMIR_LOCAL_SERVING") == "0":
+            return
+        from urllib.parse import urlsplit
+
+        origin = os.environ.get("UNSLOTH_MIMIR_STUDIO_URL")
+        if not origin:
+            server = request.scope.get("server")
+            if not server:
+                return
+            port = server[1]
+            if not isinstance(port, int) or not 1 <= port <= 65535:
+                return
+            origin = f"http://127.0.0.1:{port}"
+        import ipaddress
+
+        try:
+            parsed = urlsplit(origin)
+            loopback = ipaddress.ip_address(parsed.hostname or "").is_loopback
+            port = parsed.port  # Validate malformed/out-of-range ports before minting.
+            valid = (loopback and parsed.scheme == "http"
+                     and (port is None or 1 <= port <= 65535)
+                     and not parsed.username and not parsed.password
+                     and parsed.path in ("", "/") and not parsed.query and not parsed.fragment)
+        except ValueError:
+            valid = False
+        if not valid:
+            # Match native's numeric-loopback HTTP contract, not browser Host/DNS.
+            raise CodingRuntimeError("invalid", "The Studio local serving origin must be a trusted loopback numeric HTTP origin without credentials or a path.")
+        # Setup, process publication and shutdown share one linearization lock.
+        async with self._start_lock:
+            if self._maintaining:
+                raise CodingRuntimeError("busy", "Whole-runtime maintenance is in progress. Wait for it to settle.")
+            if self._closing:
+                raise CodingRuntimeError("unavailable", "The coding runtime is shutting down.")
+            if self.local_serving is not None:
+                if self._local_origin != origin.rstrip("/"):
+                    raise CodingRuntimeError("conflict", "The live Studio serving endpoint changed. Drain work before an explicit runtime restart.")
+                return
+            if self.process is not None:
+                raise CodingRuntimeError("busy", "Local serving was not configured before native startup. Drain work before an explicit runtime restart.")
+            subject = getattr(request.state, "coding_subject", None)
+            if not subject:
+                raise CodingRuntimeError("denied", "Studio authentication is required before local serving setup.")
+            await self._mint_local_serving(origin.rstrip("/"), subject,
+                                           getattr(request.state, "coding_credential_generation", None))
+
+    async def _mint_local_serving(self, origin: str, subject: str, credential_generation: str | None) -> None:
+        # Called under _start_lock for both initial setup and explicit replacement.
+        # Retain the authenticated binding, not the request or its browser token.
+        from auth.storage import CredentialRotated, create_api_key, revoke_internal_api_key
+        from core.coding_local_models import CodingLocalServing
+        if self._local_key_id is not None:
+            # A failed cancellation retirement remains owned. Never overwrite
+            # that receipt with a new mint while its credential may be live.
+            try:
+                await asyncio.to_thread(revoke_internal_api_key, self._local_key_id)
+            except Exception:
+                raise CodingRuntimeError("unavailable", "The previous native workflow credential has not retired. Restore Studio credential storage and explicitly retry; no replacement was created.") from None
+            self._local_key_id = None
+        incarnation = str(uuid.uuid4())
+        mint = asyncio.create_task(asyncio.to_thread(
+            create_api_key, subject, "mimir coding " + incarnation, internal=True,
+            expect_gen=credential_generation,
+        ))
+        try:
+            key, record = await asyncio.shield(mint)
+        except asyncio.CancelledError:
+            # Retain an independent cleanup task: repeated Task.cancel() must
+            # not propagate into mint/revocation while SQLite keeps running.
+            async def retire_mint():
+                try:
+                    _key, minted = await mint
+                except CredentialRotated:
+                    return
+                self._local_key_id = minted["id"]
+                await asyncio.to_thread(revoke_internal_api_key, minted["id"])
+                self._local_key_id = None
+
+            retirement = asyncio.create_task(retire_mint())
+            self._cleanup_tasks.add(retirement)
+            retirement.add_done_callback(self._cleanup_tasks.discard)
+            with anyio.CancelScope(shield=True):
+                while not retirement.done():
+                    try:
+                        await asyncio.shield(retirement)
+                    except asyncio.CancelledError:
+                        continue
+                retirement.result()
+            raise
+        except CredentialRotated:
+            raise CodingRuntimeError("denied", "The Studio credential changed. Sign in again before starting local serving.") from None
+        self._local_key_id = record["id"]
+        if self._closing:
+            with anyio.CancelScope(shield=True):
+                await self._close_local_serving(clean=True)
+            raise CodingRuntimeError("unavailable", "The coding runtime shut down during serving setup.")
+        self._local_origin = origin
+        self._local_subject = subject
+        self._local_credential_generation = credential_generation
+        self.local_serving = CodingLocalServing(incarnation, key, subject)
+
     def diagnostics(self) -> dict[str, Any]:
         """Bounded supervisor facts only; inspecting must not start/restart Mimir.
 
@@ -146,6 +267,11 @@ class CodingRuntime:
             if self.process is not None:
                 return
             try:
+                environment = dict(os.environ)
+                # Neither installer nor native guests inherit an old incarnation.
+                for name in ("MIMIR_STUDIO_LOCAL_URL", "MIMIR_STUDIO_LOCAL_KEY",
+                             "MIMIR_STUDIO_LOCAL_INCARNATION", "MIMIR_STUDIO_LOCAL_FD"):
+                    environment.pop(name, None)
                 if self.package:
                     from pathlib import Path
                     import tomllib
@@ -158,10 +284,10 @@ class CodingRuntime:
                     installer = await asyncio.create_subprocess_exec(
                         self.executable, "plugin", "install", self.package,
                         stdin = asyncio.subprocess.DEVNULL, stdout = asyncio.subprocess.DEVNULL,
-                        stderr = asyncio.subprocess.DEVNULL,
+                        stderr = asyncio.subprocess.DEVNULL, env = environment,
                     )
                     try:
-                        installed = await asyncio.wait_for(installer.wait(), timeout = 120)
+                        installed = await asyncio.wait_for(installer.wait(), timeout = INSTALL_TIMEOUT)
                     except BaseException as exc:
                         with anyio.CancelScope(shield = True):
                             if installer.returncode is None:
@@ -176,19 +302,49 @@ class CodingRuntime:
                         raise
                     if installed != 0:
                         raise CodingRuntimeError("unavailable", "Mimir could not install the configured studio.frontend package. Rebuild it against the pinned SDK.")
-                self.process = await asyncio.create_subprocess_exec(
-                    self.executable, "plugin", "run", PLUGIN_ID,
-                    stdin = asyncio.subprocess.PIPE,
-                    stdout = asyncio.subprocess.PIPE,
-                    stderr = asyncio.subprocess.PIPE,
-                    limit = MAX_FRAME + 4,
-                )
+                read_fd = write_fd = None
+                try:
+                    if self.local_serving is not None:
+                        if os.name != "posix":
+                            raise CodingRuntimeError("unavailable", "Studio local serving requires the native inherited-pipe bootstrap on a supported Unix host.")
+                        bootstrap = json.dumps({
+                            "origin": self._local_origin,
+                            "key": self.local_serving.key,
+                            "incarnation": self.local_serving.incarnation,
+                        }, separators=(",", ":")).encode("utf-8")
+                        read_fd, write_fd = os.pipe()
+                        # Fit an atomic write before spawning; no buffered writer
+                        # or credential-bearing environment survives into Mimir.
+                        if len(bootstrap) > min(4096, os.fpathconf(write_fd, "PC_PIPE_BUF")):
+                            raise CodingRuntimeError("invalid", "Studio local serving bootstrap exceeds its private pipe limit.")
+                        if os.write(write_fd, bootstrap) != len(bootstrap):
+                            raise OSError("Incomplete private bootstrap write")
+                        os.close(write_fd)
+                        write_fd = None
+                        environment["MIMIR_STUDIO_LOCAL_FD"] = str(read_fd)
+                    self.process = await asyncio.create_subprocess_exec(
+                        self.executable, "plugin", "run", PLUGIN_ID,
+                        stdin = asyncio.subprocess.PIPE,
+                        stdout = asyncio.subprocess.PIPE,
+                        stderr = asyncio.subprocess.PIPE,
+                        limit = MAX_FRAME + 4,
+                        env = environment,
+                        pass_fds = (read_fd,) if read_fd is not None else (),
+                    )
+                finally:
+                    # Native consumes/closes its transferred copy before plugins
+                    # or threads start. Parent copies close even on cancellation.
+                    for descriptor in (write_fd, read_fd):
+                        if descriptor is not None:
+                            os.close(descriptor)
             except OSError as exc:
                 raise CodingRuntimeError(
                     "unavailable",
                     "Mimir could not start. Build the pinned runtime and install studio.frontend; "
                     "check UNSLOTH_MIMIR_EXECUTABLE on the Studio host.",
                 ) from exc
+            if self._generation:
+                self.observation_epoch = uuid.uuid4().hex
             self._generation = self._next_generation
             self._next_generation += 1
             self._reader = asyncio.create_task(self._read_responses())
@@ -303,10 +459,7 @@ class CodingRuntime:
             if not self._expected_exit:
                 # EOF is not a successful Stop. Reap our exact supervised process,
                 # retaining unconfirmed cleanup and the failure until explicit restart.
-                if self.process.returncode is None:
-                    self._shutdown_task = asyncio.create_task(self._finish_process(False))
-                else:
-                    self._record_cleanup(False, False, self.process.returncode)
+                self._shutdown_task = asyncio.create_task(self._finish_process(False))
 
     async def command(self, method: str, params: dict[str, Any] | None = None, *, expected_generation: int | None = None) -> Any:
         if expected_generation is not None and expected_generation != self._generation:
@@ -358,6 +511,8 @@ class CodingRuntime:
             reconciliation = (
                 "load the saved MCP version for comparison before deliberately retrying. Your draft is retained."
                 if method == "mcp_save" else
+                "inspect the exact native MCP operation before another apply or reconnect. Saved configuration and drafts are retained."
+                if method in {"mcp_apply", "mcp_reconnect"} else
                 "reconnect the native view to reconcile its state. Prompt retries must reuse "
                 "the original submission identity; do not blindly retry other commands."
             )
@@ -427,24 +582,40 @@ class CodingRuntime:
                         with contextlib.suppress(ProcessLookupError):
                             process.kill()
                         await process.wait()
+            else:
+                await process.wait()
             for task in (self._reader, self._stderr):
                 if task and task is not asyncio.current_task():
                     if not task.done():
                         task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await task
+        exit_code = process.returncode if process else None
+        local_confirmed = True
+        try:
+            # A clean helper exit alone is not native tool/child drain evidence.
+            # Always retire the key, but only confirmed drain can release holds.
+            await self._close_local_serving(clean=native_confirmed and not forced and exit_code == 0)
+            if self.local_serving is not None:
+                local_confirmed = all(operation.state in ("failed", "released")
+                                      for operation in self.local_serving.operations.values())
+        except Exception:
+            local_confirmed = False
+            log.error("Mimir local serving cleanup was not confirmed")
+        if not local_confirmed:
+            self._cleanup_failed = True
         if self._cleanup_tasks:
             await asyncio.gather(*tuple(self._cleanup_tasks), return_exceptions = True)
         self._abandoned_views.clear()
-        return self._record_cleanup(native_confirmed, forced, process.returncode if process else None)
+        return self._record_cleanup(native_confirmed, forced, exit_code, local_confirmed=local_confirmed)
 
-    def _record_cleanup(self, native_confirmed: bool, forced: bool, exit_code: int | None) -> dict[str, Any]:
-        confirmed = native_confirmed and not forced and exit_code == 0
+    def _record_cleanup(self, native_confirmed: bool, forced: bool, exit_code: int | None, *, local_confirmed: bool = True) -> dict[str, Any]:
+        confirmed = native_confirmed and not forced and exit_code == 0 and local_confirmed
         self._cleanup = {
             "confirmed": confirmed, "native_drain_confirmed": native_confirmed,
             "exit_code": exit_code, "forced": forced,
             "message": "Native session drain and process cleanup confirmed." if confirmed else
-                "Native drain/cleanup was not confirmed. Process exit is not proof that tools, children or MCP work settled; inspect host diagnostics before continuing interrupted work.",
+                "Native drain/cleanup was not confirmed. Process exit is not proof that tools, children, MCP work or local model protections settled; inspect host diagnostics before continuing interrupted work.",
         }
         if not confirmed:
             log.error("Mimir cleanup was not confirmed (exit=%s, forced=%s)", exit_code, forced)
@@ -454,7 +625,7 @@ class CodingRuntime:
         confirmed = False
         result = None
         try:
-            if self.process is not None and not self._failure:
+            if self.process is not None and self.process.returncode is None and not self._failure:
                 result = await self._request(method, maintenance = True)
                 confirmed = isinstance(result, dict) and result.get("cleanup_confirmed") is True
         except CodingRuntimeError as exc:
@@ -513,7 +684,7 @@ class CodingRuntime:
                         await self._finish_process(False)
                     # Unexpected loss has no clean Stop claim. A reaped process
                     # permits explicit replacement, not automatic accepted-work replay.
-                    if self._cleanup and self._cleanup["forced"]:
+                    if self._cleanup_failed or (self._cleanup and self._cleanup["forced"]):
                         self._cleanup_failed = True
                         raise CodingRuntimeError("cleanup_failed", self._cleanup["message"])
                 elif self.process is not None:
@@ -532,6 +703,14 @@ class CodingRuntime:
                 self._failure = None
                 self._expected_exit = False
                 self._restart_uncertain = self._restart_prepared = False
+                async with self._start_lock:
+                    if self.local_serving is not None and self.local_serving.closing:
+                        # Terminal receipts and the retired key belong to the old
+                        # process. Never bootstrap a replacement with that authority.
+                        self.local_serving = None
+                    if self.local_serving is None and self._local_origin and self._local_subject:
+                        await self._mint_local_serving(self._local_origin, self._local_subject,
+                                                       self._local_credential_generation)
                 await self.start(maintenance = True)
                 # Establish frontend activation/protocol readiness, not just helper launch.
                 try:
@@ -567,8 +746,27 @@ class CodingRuntime:
                 if self.process is not None:
                     cleanup = await self._drain("shutdown")
                     self._cleanup_failed = not cleanup["confirmed"]
+                else:
+                    # Setup may have minted a credential before any native process
+                    # was published, including a failed or cancelled startup.
+                    try:
+                        await self._close_local_serving(clean=True)
+                    except Exception:
+                        self._cleanup_failed = True
+                        self._record_cleanup(False, False, None, local_confirmed=False)
+                        log.error("Mimir local serving cleanup was not confirmed")
             finally:
                 self._maintaining = False
+
+    async def _close_local_serving(self, *, clean: bool) -> None:
+        try:
+            if self.local_serving is not None:
+                await self.local_serving.close(clean=clean)
+        finally:
+            if self._local_key_id is not None:
+                from auth.storage import revoke_internal_api_key
+                await asyncio.to_thread(revoke_internal_api_key, self._local_key_id)
+                self._local_key_id = None
 
 
 def runtime_for(app) -> CodingRuntime:

@@ -1,0 +1,18 @@
+{
+  "kind": "setup-only",
+  "repo": "unsloth/Qwen3-4B-Instruct-2507-GGUF",
+  "revision": "a06e946bb6b655725eafa393f4a9745d460374c9",
+  "filename": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+  "path": "/mnt/disks/unslothai/mugi/mimir-ticket-runner/studio-233/attempts/249/1/studio/.scratch/ticket246-live/models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+  "size_bytes": 2497281120,
+  "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+  "hub_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+  "gpu_workload_started": false,
+  "download_method": "huggingface_hub.hf_hub_download, anonymous, pinned revision, task local_dir",
+  "budget": {
+    "gpu_uuid": "GPU-2bdfcc31-cf97-42d6-c898-40700d02fd40",
+    "peak_gib": 24,
+    "grant_expires_epoch": 1791980523,
+    "requires_parent_confirmation": true
+  }
+}

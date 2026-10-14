@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Ticket 250: rendered persistent MCP settings through the actual native owner.
+"""Tickets 250/251: rendered MCP settings through the actual native owner.
 
 Run after building Studio frontend dist and the paired Mimir/product package:
   .venv/bin/python studio/tools/coding_mcp_browser_acceptance.py \
@@ -10,9 +10,12 @@ Run after building Studio frontend dist and the paired Mimir/product package:
 Uses the existing coding_acceptance_app composition: production auth/coding
 routers, built UI, installed studio.frontend plugin and native binary. No API
 routes are mocked. HOME, Studio profile, native agent directory and projects are
-isolated beneath evidence-dir. Fixtures are disabled and no provider/GPU work is
-performed. Run as a non-root user so permission fault injection is meaningful.
-This is not full-Studio startup, busy-work acceptance or ticket 251 live apply.
+isolated beneath evidence-dir. Default mode is save-only with disabled fixtures.
+--apply-reconnect adds ticket-251 real configured stdio MCP connections, tools,
+safe-idle busy refusal, failure/lifetime evidence and response-loss reconciliation.
+Its external HTTP provider is deterministic protocol input, NOT a live model;
+no GPU, real provider spend or shared native policy is used. Run as a non-root
+user so permission fault injection is meaningful. This is not full-Studio startup.
 """
 from __future__ import annotations
 
@@ -30,6 +33,12 @@ import time
 import urllib.error
 import urllib.request
 from urllib.parse import urlencode, urlparse
+
+from coding_mcp_apply_scenarios import (
+    MCP_TOOL_CAPTURE, STORAGE_VALUES, assert_private_storage_absent, fixture_processes, process_settled, run_apply_reconnect_scenarios,
+)
+from coding_mcp_stdio_fixture import read_events, write_control
+from coding_provider_fixture import ProviderFixture
 
 
 MCP_API = "/api/coding/conversations/{conversation_id}/mcp"
@@ -85,9 +94,13 @@ def main() -> None:
     runtime.add_argument("--mimir", type = Path)
     runtime.add_argument("--mimir-source", type = Path)
     parser.add_argument("--plugin-package", type = Path)
+    parser.add_argument("--compilation-cache", type = Path,
+                        help = "Reuse a task-owned native Wasmtime artifact cache only; configuration/history remain isolated")
     parser.add_argument("--evidence-dir", type = Path, required = True)
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
     parser.add_argument("--chrome", default = "/usr/bin/google-chrome")
+    parser.add_argument("--apply-reconnect", action = "store_true",
+                        help = "Ticket 251 native MCP tools/busy/lifetime/reconciliation with deterministic external provider")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     evidence = args.evidence_dir.resolve()
@@ -97,7 +110,7 @@ def main() -> None:
         parser.error("Permission acceptance requires a non-root POSIX user")
     evidence.mkdir(parents = True, exist_ok = True)
     report = {
-        "kind": "browser", "ticket": 250, "status": "running",
+        "kind": "browser", "ticket": 251 if args.apply_reconnect else 250, "status": "running",
         "composition": "production coding/auth routers + built Studio UI + installed product plugin + native Mimir",
         "provider_workload": False, "viewports": [[1440, 1000], [390, 844]],
         "revision_contract": "Opaque retained native edit-resource token; fresh editors have independent revisions, saved definition is checked on disk and by a fresh native read.",
@@ -108,7 +121,16 @@ def main() -> None:
             "Unrelated Studio ML/training routers and full-Studio startup are not mounted.",
         ],
     }
+    if args.apply_reconnect:
+        report["provider_workload"] = "deterministic-http-protocol-not-live-model"
+        report["limitations"] = [
+            "Provider input is a deterministic external HTTP fixture, not a completed live-model workload; native MCP connections/tools are real.",
+            "Transient SDK attachment grants/cleanup require separate native lifetime tests; this driver exercises configured session ownership.",
+            "Unrelated Studio ML/training routers and full-Studio startup are not mounted.",
+        ]
     server = None
+    provider = None
+    mcp_processes = []
     output = None
     products = []
     port = None
@@ -140,6 +162,19 @@ def main() -> None:
         if not (root / "studio/frontend/dist/index.html").is_file():
             raise RuntimeError("Build Studio frontend dist before acceptance")
         paths = create_fixtures(evidence / ("state-" + secrets.token_hex(4)))
+        if args.compilation_cache:
+            cache = args.compilation_cache.resolve(strict = True)
+            if not cache.is_dir() or cache.stat().st_uid != os.geteuid():
+                raise ValueError("Compilation cache must be a task-owned directory")
+            (paths["native"] / "cache").mkdir(exist_ok = True)
+            (paths["native"] / "cache" / "wasmtime").symlink_to(cache, target_is_directory = True)
+            report["compilation_cache"] = str(cache)
+        if args.apply_reconnect:
+            provider = ProviderFixture()
+            provider.configure(paths["native"])
+            paths["mcp_events"] = paths["native"].parent / "mcp-events.jsonl"
+            paths["mcp_control"] = paths["native"].parent / "mcp-control.json"
+            write_control(paths["mcp_control"])
         report["state_root"] = str(paths["native"].parent)
         report["native_sha256"] = fingerprint(args.mimir.resolve())
         report["plugin_sha256"] = fingerprint(args.plugin_package.resolve() / "plugin.wasm")
@@ -158,9 +193,11 @@ def main() -> None:
                    CODING_ACCEPTANCE_PASSWORD = password, MIMIR_DISABLE_MODELS_FETCH = "1",
                    MIMIR_MODELS_PATH = str(paths["native"] / "catalog.json"), CUDA_VISIBLE_DEVICES = "",
                    PYTHONPATH = str(root / "studio/backend"))
+        for key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "MIMIR_SKILLS_DIR"):
+            env.pop(key, None)
         with (evidence / "plugin-install.log").open("w") as install_log:
             subprocess.run([str(args.mimir.resolve()), "plugin", "install", str(args.plugin_package.resolve())],
-                           env = env, stdout = install_log, stderr = subprocess.STDOUT, check = True, timeout = 120)
+                           env = env, stdout = install_log, stderr = subprocess.STDOUT, check = True, timeout = 600)
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
@@ -194,6 +231,8 @@ def main() -> None:
             report["browser"] = {"engine": args.browser, "version": browser.version,
                                  "rendering": "hardware acceleration disabled"}
             context = browser.new_context(viewport = {"width": 1440, "height": 1000})
+            if args.apply_reconnect:
+                context.add_init_script(MCP_TOOL_CAPTURE)
             page = context.new_page()
             page.goto(base + "/coding")
             expect(page).to_have_url(base + "/login")
@@ -219,6 +258,9 @@ def main() -> None:
             scenario("A1-A8-real-path", "Established Studio login and native conversation, using one installed product process")
             try:
                 exercise_settings(page, context, playwright, base, headers, paths, conversation_id, report, scenario, snapshot, expect)
+                if args.apply_reconnect:
+                    run_apply_reconnect_scenarios(page, context, playwright, base, headers, paths, conversation_id,
+                                                 provider, report, scenario, snapshot, expect)
             except BaseException:
                 # Capture before sync_playwright tears down the browser on unwind.
                 try:
@@ -228,7 +270,8 @@ def main() -> None:
                 raise
             assert products[0].is_running(), "Settings must not stop the supervised native process"
             assert fingerprint(paths["trust"]) == trust_before, "Settings changed saved native trust"
-            scenario("A8-no-hidden-apply", "Native process and original conversation survive settings; saved distrust unchanged")
+            scenario("A8-session-process-trust-retained" if args.apply_reconnect else "A8-no-hidden-apply",
+                     "Native process and original conversation survive settings; saved distrust unchanged")
             browser.close()
         assert INVENTORY_SECRET not in (evidence / "server.log").read_text(), "Private definition leaked into backend logs"
         assert INVENTORY_SECRET not in (evidence / "plugin-install.log").read_text(), "Private definition leaked into installation logs"
@@ -247,6 +290,9 @@ def main() -> None:
             # Restore only permissions changed on this run's isolated fixtures.
             paths["global"].chmod(0o600)
             paths["native"].chmod(0o755)
+        if paths and "mcp_events" in paths:
+            write_control(paths["mcp_control"])
+            mcp_processes = fixture_processes(paths["mcp_events"])
         if server is not None:
             server.terminate()
             try:
@@ -258,6 +304,19 @@ def main() -> None:
             report["server_exit"] = server.returncode
         if output:
             output.close()
+        if provider:
+            provider.close()
+            report["provider_fixture_settled"] = True
+        if paths and "mcp_events" in paths:
+            deadline = time.monotonic() + 10
+            while not all(process_settled(identity) for identity in mcp_processes) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            report["mcp_cleanup"] = {
+                "processes": [{**identity, "settled": process_settled(identity)} for identity in mcp_processes],
+                "all_connections_settled": all(process_settled(identity) for identity in mcp_processes),
+                "events_path": str(paths["mcp_events"]), "events": read_events(paths["mcp_events"]),
+                "deadline_seconds": 10,
+            }
         settled = all(not product.is_running() for product in products) if products else None
         closed = None
         if port:
@@ -265,7 +324,8 @@ def main() -> None:
                 closed = probe.connect_ex(("127.0.0.1", port)) != 0
         report["cleanup"] = {"native_process_settled": settled, "server_port_closed": closed}
         cleanup_failed = report["status"] == "passed" and not (
-            settled and closed and server is not None and server.returncode in (0, -15))
+            settled and closed and server is not None and server.returncode in (0, -15)
+            and (not args.apply_reconnect or report.get("mcp_cleanup", {}).get("all_connections_settled") is True))
         if cleanup_failed:
             report["status"] = "failed"
             report["limitations"].append("Native settlement/server cleanup not confirmed.")
@@ -281,8 +341,9 @@ def exercise_settings(page, context, playwright, base, headers, paths, conversat
     inventory_path, edit_path, save_path = [prefix + suffix for suffix in ("/inventory", "/edit", "/save")]
     settings = page.get_by_role("main", name = "Mimir Settings", exact = True)
     configuration = settings.get_by_role("region", name = "MCP configuration", exact = True)
-    settings_tab = page.get_by_role("button", name = "Mimir Settings", exact = True)
-    conversation_tab = page.get_by_role("button", name = "Conversation", exact = True)
+    views = page.get_by_role("navigation", name = "Coding views", exact = True)
+    settings_tab = views.get_by_role("button", name = "Mimir Settings", exact = True)
+    conversation_tab = views.get_by_role("button", name = "Conversation", exact = True)
     observed_requests = []
     page.on("request", lambda request: observed_requests.append({"method": request.method, "path": urlparse(request.url).path}))
 
@@ -342,9 +403,7 @@ def exercise_settings(page, context, playwright, base, headers, paths, conversat
             page.keyboard.press("Enter")
             expect(settings.get_by_label("MCP definition JSON", exact = True)).to_have_value(text)
             expect(configuration).to_have_attribute("aria-busy", "false", timeout = 60000)
-        values = page.evaluate("Object.values(localStorage)")
-        assert not any(value == text or (len(text) >= 20 and text in value) for value in values), "Draft was persisted to localStorage"
-        assert not any(INVENTORY_SECRET in value for value in values), "Private definition persisted to localStorage"
+        assert_private_storage_absent(page.evaluate(STORAGE_VALUES), text, INVENTORY_SECRET)
 
     def expect_error(pattern):
         alert = settings.get_by_role("alert")
