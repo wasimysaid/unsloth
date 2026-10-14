@@ -292,3 +292,10 @@ absent. The operator inspected desktop protected-shell and narrow recovered UI.
 The earlier failed runs remain preserved, not relabeled as passes. This closes
 #246's infrastructure-blocked live check; cross-feature and human acceptance remain
 separate.
+
+Publication refreshed the Studio worktree to include #253. Two import/documentation
+conflicts were resolved while preserving reading controls and local-model evidence.
+Combined production/test typechecking and **290 coding tests** passed. The first
+combined build hit the command ceiling on the busy host; a separate production
+build completed successfully. The live report above was captured before that
+reading-slice merge; full integrated cross-feature live acceptance remains #255.

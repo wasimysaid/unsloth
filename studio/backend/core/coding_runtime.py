@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import struct
+import uuid
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -35,6 +36,9 @@ class CodingRuntimeError(Exception):
 
 class CodingRuntime:
     def __init__(self, executable: str | None = None):
+        # Native positions are comparable only within this non-restarting runtime.
+        # An opaque random epoch scopes browser observation, not execution authority.
+        self.observation_epoch = uuid.uuid4().hex
         self.executable = executable or os.environ.get("UNSLOTH_MIMIR_EXECUTABLE", "mimir")
         self.package = os.environ.get("UNSLOTH_MIMIR_PLUGIN_PACKAGE")
         self.process: asyncio.subprocess.Process | None = None

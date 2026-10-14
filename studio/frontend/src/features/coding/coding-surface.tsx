@@ -21,6 +21,7 @@ import {
 } from "react";
 import { restoreAnswerFocus, watchAnswerFocus } from "./answer-focus";
 import { codingRunApi } from "./api";
+import { boundedContentKeyDown } from "./bounded-content";
 import { ChildActivityRows, ChildInspector } from "./child-inspector";
 import { CodingComposer } from "./coding-composer";
 import { CodingCommandControls } from "./command-controls";
@@ -28,7 +29,7 @@ import { GoalSummary } from "./goal-summary";
 import { createInputDraft } from "./input";
 import { CodingModelPicker } from "./model-configuration-popover";
 import { CodingModeControl, PlanCard } from "./plan-card";
-import { nativeMessageRow } from "./presentation";
+import { nativeMessageRow, readingRowKey } from "./presentation";
 import { ProjectOverlapDialog } from "./project-overlap-dialog";
 import { QuestionCard } from "./question-card";
 import { codingRunAdapter } from "./run-runtime";
@@ -38,6 +39,10 @@ import {
   createCodingRun,
 } from "./run-session";
 import { ToolReport } from "./tool-report";
+import {
+  type TranscriptReader,
+  createTranscriptReader,
+} from "./transcript-reader";
 import { CodingUnsentDraft } from "./unsent-draft";
 
 // Focus intent only, not another answer/history store. assistant-ui may project
@@ -73,6 +78,8 @@ function NativeMessage() {
   }, [questionId, answerFocus]);
   if (!row || row.child || row.tool?.subagent?.attempt) return null;
   const tool = row.tool;
+  const longText =
+    (row.text?.length ?? 0) > 4000 || (row.text?.split("\n").length ?? 0) > 80;
   const tools = row.grouped ?? [row];
   const visible = tools.filter(
     (item) =>
@@ -85,7 +92,7 @@ function NativeMessage() {
   const reports = (
     <>
       {visible.map((item) => (
-        <ToolReport key={item.id} row={item} />
+        <ToolReport key={readingRowKey(item)} row={item} />
       ))}
       {quiet.length > 0 && (
         <details className="rounded-xl border border-border/50 text-xs">
@@ -95,7 +102,7 @@ function NativeMessage() {
           </summary>
           <div className="space-y-2 p-3">
             {quiet.map((item) => (
-              <ToolReport key={item.id} row={item} />
+              <ToolReport key={readingRowKey(item)} row={item} />
             ))}
           </div>
         </details>
@@ -107,6 +114,7 @@ function NativeMessage() {
       ref={root}
       className={`min-w-0 break-words ${row.kind === "user" ? "ml-auto max-w-[90%] rounded-2xl bg-muted px-4 py-3" : "w-full py-2"}`}
       data-native-entry={row.id}
+      data-reading-key={readingRowKey(row)}
       data-native-answer={row.answer?.user_request_id}
       tabIndex={row.answer ? -1 : undefined}
     >
@@ -138,9 +146,22 @@ function NativeMessage() {
                   ? "Native activity"
                   : "Mimir"}
           </p>
-          <div className="whitespace-pre-wrap text-sm leading-relaxed">
+          <div
+            className={`whitespace-pre-wrap text-sm leading-relaxed ${longText ? "max-h-96 overflow-auto overscroll-contain rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" : ""}`}
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: Long native messages need keyboard scrolling.
+            tabIndex={longText ? 0 : undefined}
+            onKeyDown={longText ? boundedContentKeyDown : undefined}
+            data-reading-control={longText ? "message-content" : undefined}
+            aria-label={longText ? "Bounded native message content" : undefined}
+          >
             {row.text}
           </div>
+          {longText && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Long message · scroll within the content to read all supplied
+              text.
+            </p>
+          )}
           {row.kind === "user" && (row.image_count ?? 0) > 0 && (
             <p className="mt-2 text-xs text-muted-foreground">
               Native saved input · {row.image_count}{" "}
@@ -177,12 +198,33 @@ export function CodingSurface({
   );
   const [draft] = useState(createInputDraft);
   const runtime = useExternalStoreRuntime(codingRunAdapter(state, run, draft));
-  const viewport = useRef<HTMLDivElement>(null);
+  const viewport = useRef<HTMLElement>(null);
   const answerFocus = useRef<string | null>(null);
   const promptInput = useRef<HTMLTextAreaElement>(null);
   const statusFocus = useRef<HTMLDivElement>(null);
-  const follow = useRef(true);
-  const [away, setAway] = useState(false);
+  const transcriptContent = useRef<HTMLDivElement>(null);
+  const reader = useRef<TranscriptReader | null>(null);
+  const [reading, setReading] = useState({ away: false, newActivity: false });
+  useLayoutEffect(() => {
+    if (!viewport.current || !transcriptContent.current) return;
+    const controller = createTranscriptReader(
+      viewport.current,
+      transcriptContent.current,
+      (next) => {
+        run?.setReading(next.away);
+        setReading((prior) =>
+          prior.away === next.away && prior.newActivity === next.newActivity
+            ? prior
+            : next,
+        );
+      },
+    );
+    reader.current = controller;
+    return () => {
+      controller.dispose();
+      reader.current = null;
+    };
+  }, [run]);
   useEffect(() => {
     const releaseFocus = watchAnswerFocus(answerFocus, document, window);
     run?.connect();
@@ -191,15 +233,19 @@ export function CodingSurface({
       run?.detach();
     };
   }, [run]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Restore geometry after row/question DOM replacement, not only new activity.
   useLayoutEffect(() => {
-    if (
-      (state?.rows.length || state?.native?.user_request) &&
-      follow.current &&
-      viewport.current
-    ) {
-      viewport.current.scrollTop = viewport.current.scrollHeight;
-    }
-  }, [state?.rows, state?.native?.user_request]);
+    reader.current?.activity(
+      state?.activityVersion ?? 0,
+      Boolean(state?.viewingEarlier),
+    );
+    reader.current?.restore();
+  }, [
+    state?.rows,
+    state?.native?.user_request,
+    state?.activityVersion,
+    state?.viewingEarlier,
+  ]);
   const active = state?.native?.active_request;
   const completion = codingRunCompletion(state);
   const canSend = Boolean(
@@ -251,7 +297,7 @@ export function CodingSurface({
           })
         }
       />
-      <ThreadPrimitive.Root className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+      <ThreadPrimitive.Root className="flex min-h-min min-w-0 flex-1 flex-col gap-3">
         {state && (
           <div
             ref={statusFocus}
@@ -461,116 +507,163 @@ export function CodingSurface({
         )}
         {state && run && <GoalSummary state={state} run={run} />}
         {/* Retain scrollable history beside the lazy child inspector when a plan expands. */}
-        <div
-          className={`relative flex min-w-0 flex-1 gap-3 ${state?.native?.plan ? "min-h-32" : "min-h-0"}`}
-        >
-          <div
+        <div className="relative flex h-[clamp(12rem,35dvh,28rem)] min-w-0 shrink-0 gap-3">
+          <section
             ref={viewport}
-            className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto"
+            className="min-h-0 min-w-0 flex-1 overflow-y-auto rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            style={{ overflowAnchor: "none" }}
             data-testid="coding-transcript"
             aria-label="Coding transcript"
-            aria-busy={state?.connection === "loading" || state?.recovering}
-            onScroll={() => {
-              const node = viewport.current;
-              if (!node) return;
-              follow.current =
-                node.scrollHeight - node.scrollTop - node.clientHeight < 48;
-              setAway(!follow.current);
-            }}
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: Main reading viewport needs keyboard scrolling and jump focus.
+            tabIndex={0}
+            aria-busy={
+              state?.connection === "loading" ||
+              state?.recovering ||
+              state?.loadingEarlier
+            }
           >
-            {state?.older && (
-              <div className="text-center text-xs text-muted-foreground">
-                <p>Earlier history is not shown in this bounded view.</p>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={state.loadingEarlier}
-                  onClick={() => {
-                    follow.current = false;
-                    void run
-                      ?.loadEarlier()
-                      .then(() => viewport.current?.scrollTo({ top: 0 }));
-                  }}
-                >
-                  {state.loadingEarlier
-                    ? "Loading earlier history…"
-                    : "Load earlier history"}
-                </Button>
-              </div>
-            )}
-            {state?.viewingEarlier && (
-              <p className="text-center text-xs text-muted-foreground">
-                Historical page · newer transcript messages are not shown.
-                {state.native?.pending_user_request
-                  ? " Question controls below still reflect current native state."
-                  : " Native work may still be running."}
-              </p>
-            )}
-            <AnswerFocus.Provider value={answerFocus}>
-              <ThreadPrimitive.Messages components={messageComponents} />
-              {run &&
-                state?.answerForms
-                  .filter(
-                    (form) =>
-                      !(state.viewingEarlier && form.status === "accepted") &&
-                      !state.rows.some(
-                        (row) =>
-                          row.answer?.request_id === form.target.request_id &&
-                          row.answer.user_request_id ===
-                            form.target.user_request_id,
-                      ),
-                  )
-                  .map((form) => (
-                    <QuestionCard
-                      key={`${form.target.request_id}:${form.target.user_request_id}`}
-                      form={form}
-                      run={run}
-                      live={Boolean(
-                        state.answerTarget &&
-                          state.answerTarget.subscription ===
-                            form.target.subscription &&
-                          state.answerTarget.request_id ===
-                            form.target.request_id &&
-                          state.answerTarget.user_request_id ===
-                            form.target.user_request_id,
-                      )}
-                      focus={follow.current && !state.viewingEarlier}
-                      onReleaseFocus={(questionId) => {
-                        if (document.activeElement !== document.body) return;
-                        answerFocus.current = questionId;
-                        const answer =
-                          viewport.current?.querySelector<HTMLElement>(
-                            `[data-native-answer="${CSS.escape(questionId)}"]`,
-                          );
-                        if (answer?.isConnected) {
-                          answer.focus();
-                          answerFocus.current = null;
+            <div ref={transcriptContent} className="min-w-0 space-y-3">
+              {state?.older && (
+                <div className="text-center text-xs text-muted-foreground">
+                  <p>Earlier history is not shown in this bounded view.</p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    // Native disabled drops focus in Firefox during the read.
+                    // Keep the control focusable, but refuse repeat activation.
+                    aria-disabled={
+                      state.loadingEarlier || state.connection !== "connected"
+                    }
+                    className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+                    data-reading-control="earlier"
+                    onClick={() => {
+                      if (
+                        state.loadingEarlier ||
+                        state.connection !== "connected"
+                      )
+                        return;
+                      reader.current?.pause();
+                      void run?.loadEarlier();
+                    }}
+                  >
+                    {state.loadingEarlier
+                      ? "Loading earlier history…"
+                      : "Load earlier history"}
+                  </Button>
+                </div>
+              )}
+              {state?.viewingEarlier && (
+                <p className="text-center text-xs text-muted-foreground">
+                  Historical reading window · live transcript updates are not
+                  merged into this bounded view.
+                  {state.newer &&
+                    " Newer saved history is not shown; load it below or Jump to latest."}
+                  {state.native?.pending_user_request
+                    ? " Question controls below still reflect current native state."
+                    : " Native work may still be running."}
+                </p>
+              )}
+              <AnswerFocus.Provider value={answerFocus}>
+                <ThreadPrimitive.Messages components={messageComponents} />
+                {run &&
+                  state?.answerForms
+                    .filter(
+                      (form) =>
+                        !(state.viewingEarlier && form.status === "accepted") &&
+                        !state.rows.some(
+                          (row) =>
+                            row.answer?.request_id === form.target.request_id &&
+                            row.answer.user_request_id ===
+                              form.target.user_request_id,
+                        ),
+                    )
+                    .map((form) => (
+                      <QuestionCard
+                        key={`${form.target.request_id}:${form.target.user_request_id}`}
+                        form={form}
+                        run={run}
+                        live={Boolean(
+                          state.answerTarget &&
+                            state.answerTarget.subscription ===
+                              form.target.subscription &&
+                            state.answerTarget.request_id ===
+                              form.target.request_id &&
+                            state.answerTarget.user_request_id ===
+                              form.target.user_request_id,
+                        )}
+                        focus={
+                          (reader.current?.following ?? true) &&
+                          !state.viewingEarlier
                         }
-                      }}
-                    />
-                  ))}
-            </AnswerFocus.Provider>
-            {run && <ChildActivityRows view={run.childView} />}
-          </div>
+                        onReleaseFocus={(questionId) => {
+                          if (document.activeElement !== document.body) return;
+                          answerFocus.current = questionId;
+                          const answer =
+                            viewport.current?.querySelector<HTMLElement>(
+                              `[data-native-answer="${CSS.escape(questionId)}"]`,
+                            );
+                          if (answer?.isConnected) {
+                            answer.focus();
+                            answerFocus.current = null;
+                          }
+                        }}
+                      />
+                    ))}
+              </AnswerFocus.Provider>
+              {run && <ChildActivityRows view={run.childView} />}
+              {state?.newer && (
+                <div className="text-center">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    data-reading-control="newer"
+                    aria-disabled={
+                      state.loadingEarlier || state.connection !== "connected"
+                    }
+                    className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+                    onClick={() => {
+                      if (
+                        state.loadingEarlier ||
+                        state.connection !== "connected"
+                      )
+                        return;
+                      reader.current?.pause();
+                      void run?.loadNewer();
+                    }}
+                  >
+                    {state.loadingEarlier
+                      ? "Loading history…"
+                      : "Load newer history"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          </section>
           {run && <ChildInspector view={run.childView} />}
         </div>
-        {(away || state?.viewingEarlier) && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="self-center"
-            onClick={() => {
-              follow.current = true;
-              run?.showLatest();
-              setAway(false);
-              viewport.current?.scrollTo({
-                top: viewport.current.scrollHeight,
-              });
-            }}
-          >
-            <ArrowDown className="size-3" aria-hidden="true" />
-            Jump to latest
-          </Button>
+        {(reading.away || state?.viewingEarlier) && (
+          <div className="flex shrink-0 flex-wrap items-center justify-center gap-2">
+            {reading.newActivity && (
+              <output
+                aria-live="polite"
+                data-testid="coding-new-activity"
+                className="text-xs font-medium"
+              >
+                New activity
+              </output>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                run?.showLatest();
+                reader.current?.jump();
+              }}
+            >
+              <ArrowDown className="size-3" aria-hidden="true" />
+              Jump to latest
+            </Button>
+          </div>
         )}
         <section
           className="shrink-0 space-y-3"

@@ -65,7 +65,7 @@ async def test_last_event_id_does_not_turn_new_view_into_arbitrary_replay(monkey
     opened = []
     released = []
 
-    class NativeViews:
+    class NativeViews(CodingRuntime):
         async def subscribe(self, conversation):
             opened.append(conversation)
             queue = asyncio.Queue()
