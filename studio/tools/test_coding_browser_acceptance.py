@@ -5,11 +5,13 @@ import json
 from pathlib import Path
 import tempfile
 import threading
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 import urllib.request
 
-from coding_browser_acceptance import FIXTURE_WORKLOADS, WORKLOADS, shared_trust_path
+from coding_browser_acceptance import FIXTURE_WORKLOADS, WORKLOADS, link_compilation_cache, shared_trust_path
 from coding_plan_scenarios import ACTION_LABELS, action_body, proposed_plan, provider_context, validate_action_ack
 from coding_provider_fixture import ProviderFixture, ProviderRequest, text_completion, tool_completion
 from coding_question_scenarios import QUESTION_SET, accepted_answer_rows, answer_url
@@ -19,6 +21,23 @@ from coding_extension_scenarios import (DISABLED_PLUGIN, NONLIVE_PLUGIN, EFFECTI
                                         assert_inventory, assert_same_activation, plugin_by_id)
 
 from coding_child_scenarios import admitted_identity, assert_outcome, validate_child_events
+from coding_reading_scenarios import history_response_matches
+from types import SimpleNamespace
+
+
+class HistoryResponseTests(unittest.TestCase):
+    def test_paging_awaits_its_cursor_not_concurrent_reconnect_capture(self):
+        url = "http://fixture/api/coding/conversations/one/entries"
+        anchor = {"after": "SYNTHETIC-reading-entry-1383"}
+        def response(cursor, method="POST", response_url=url):
+            return SimpleNamespace(url=response_url, request=SimpleNamespace(
+                method=method, post_data_json={"anchor": cursor}))
+        self.assertTrue(history_response_matches(response(anchor), url, anchor))
+        for unrelated in ("latest", {"before": anchor["after"]},
+                          {"after": "SYNTHETIC-reading-entry-1319"}):
+            self.assertFalse(history_response_matches(response(unrelated), url, anchor))
+        self.assertFalse(history_response_matches(response(anchor, method="GET"), url, anchor))
+        self.assertFalse(history_response_matches(response(anchor, response_url=url + "-other"), url, anchor))
 
 
 class SharedTrustEvidenceTests(unittest.TestCase):
@@ -30,6 +49,51 @@ class SharedTrustEvidenceTests(unittest.TestCase):
     def test_explicit_native_agent_directory_is_respected(self):
         with patch.dict(os.environ, {"MIMIR_CODING_AGENT_DIR": "/fixture/native"}, clear=True):
             self.assertEqual(shared_trust_path(), Path("/fixture/native/trust.json"))
+
+
+class CompilationCacheTests(unittest.TestCase):
+    def test_reuses_only_compiled_bytes_and_keeps_saved_state_isolated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            native, cache = root / "native", root / "compiled"
+            native.mkdir()
+            cache.mkdir()
+            (native / "settings.json").write_text("isolated settings")
+            (cache / "component-key").write_bytes(b"compiled fixture bytes, not a guest execution")
+            self.assertEqual(link_compilation_cache(native, cache), cache)
+            self.assertEqual((native / "cache/wasmtime/component-key").read_bytes(), b"compiled fixture bytes, not a guest execution")
+            self.assertEqual((native / "settings.json").read_text(), "isolated settings")
+            self.assertFalse((native / "auth.json").exists())
+            with self.assertRaises(FileExistsError):
+                link_compilation_cache(native, cache)
+
+    def test_live_cache_reuse_is_refused_before_touching_shared_native_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shared = root / "must-not-create-shared"
+            result = subprocess.run([
+                sys.executable, str(Path(__file__).with_name("coding_browser_acceptance.py")),
+                "--mimir", str(root / "not-invoked"), "--plugin-package", str(root / "not-installed"),
+                "--compilation-cache", str(root / "cache"), "--workload", "live", "--evidence-dir", str(root / "evidence"),
+            ], env={**os.environ, "MIMIR_CODING_AGENT_DIR": str(shared)}, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("restricted to isolated fixture workloads", result.stderr)
+            self.assertFalse(shared.exists())
+
+    def test_refuses_non_directory_and_other_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache, native = root / "compiled", root / "native"
+            native.mkdir()
+            cache.write_bytes(b"not a directory")
+            with self.assertRaises(ValueError):
+                link_compilation_cache(native, cache)
+            cache.unlink()
+            cache.mkdir()
+            with patch("coding_browser_acceptance.os.geteuid", return_value=cache.stat().st_uid + 1):
+                with self.assertRaises(ValueError):
+                    link_compilation_cache(native, cache)
+            self.assertFalse((native / "cache").exists())
 
 
 class DeterministicProviderTests(unittest.TestCase):

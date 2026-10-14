@@ -1,0 +1,33 @@
+{
+  "issue": 254,
+  "status": "candidate",
+  "historical_record": "coding-integration-254-record.json",
+  "source_content_digests": {
+    "studio": "5c668a4fc43b1e5f2b762ffe5f2a920145c9f54690467cea795ef51134ae6a0b",
+    "mimir": "11d5089d2b9864e5b531122702b62384a4714977e07150e6851b01765bfd149e"
+  },
+  "artifacts": {
+    "native_sha256": "9299be318690df84136e10cf290886481098f942bd5fcdf5257c329be82fed8e",
+    "plugin_sha256": "4812c0e1df15a12f963be5ceb46c2bb82f0646d03bb94f422f5e67d1442af909",
+    "frontend_index_sha256": "a86e8369a83b83cca76a351b344546c94cd8c9db8d6d2aad8c27de5f6a3d8a3c"
+  },
+  "operator_checks": [
+    {"check": "All 12 requested native failures reconciled", "passed": 71, "exit_code": 0, "evidence": "../mimir/target/ticket-254-verification/operator-repair/final-result.json", "source_manifest_verified_current": true, "test_executable_hashes_verified": 5},
+    {"check": "Reconnect/history reading unit regressions", "passed": 72, "failed": 0, "exit_code": 0, "evidence": ".verification/ticket254/operator-reading/frontend-tests.log"},
+    {"check": "Frontend application and tests typecheck/build", "exit_code": 0},
+    {"check": "Browser driver contracts including exact history cursor response matching", "passed": 30, "failed": 0, "exit_code": 0, "evidence": ".verification/ticket254/operator-reading/driver-tests.log"},
+    {"check": "Rendered reading/reconnect/history workload", "scenarios": 21, "exit_code": 0, "evidence": "../worker/operator-reading-final/report.json", "viewports": [[1440, 1000], [390, 844]], "focused_paging_control_retained_during_capture": true, "historical_reading_window_retained": true, "forward_pages_each_viewport": 11, "native_process_settled": true, "server_port_closed": true, "provider_thread_settled": true}
+  ],
+  "visual_evidence_inspected": [
+    "../worker/operator-reading-final/reading-SYNTHETIC-reopen-desktop.png",
+    "../worker/operator-reading-final/reading-SYNTHETIC-reopen-narrow.png"
+  ],
+  "limitations": [
+    "Historical broad-suite and 15 other rendered-workload results are reused, not represented as a new full run on this source. The affected reading workload was rerun.",
+    "41 strict Clippy findings remain proven baseline-identical; no full strict lint pass is claimed.",
+    "Two existing native timing harnesses remain ignored; no test was newly ignored.",
+    "Whole-workspace test execution and packaged-SDK distribution smoke were not repeated after the bounded repair; current workspace/all-target and consumer builds and relevant SDK guest entry tests passed.",
+    "Live-provider, Studio-local-model and ordinary-chat inference acceptance remain #255; user UI acceptance remains #256.",
+    "macOS menu execution unavailable on Linux."
+  ]
+}

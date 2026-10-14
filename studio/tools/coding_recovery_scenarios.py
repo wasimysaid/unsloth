@@ -158,7 +158,9 @@ def run_recovery_scenarios(page, context, base, provider, first, second_id, repo
     request.text("RECOVERY_NATIVE_COMPLETED")
     settled("RECOVERY_NATIVE_COMPLETED")
     assert (first / "recovery.txt").read_text() == "RECOVERY_NATIVE_FILE\n"
-    rows = page.get_by_test_id("coding-tool-row").filter(has_text="recovery-write")
+    # Bounded reports mount identity/output text only when expanded; the native
+    # call identity remains on the collapsed chronological row.
+    rows = page.locator('[data-testid="coding-tool-row"][data-call-id="recovery-write"]')
     expect(rows).to_have_count(1)
     expect(page.get_by_test_id("coding-transcript").get_by_text("RECOVERY_NAVIGATION_HELD", exact=True)).to_have_count(1)
     # Await the actual open response before inspecting the same-ID incarnation;
@@ -167,6 +169,7 @@ def run_recovery_scenarios(page, context, base, provider, first, second_id, repo
     expect(page.get_by_test_id("coding-run-status")).to_have_text("Completed", timeout=60000)
     expect(rows).to_have_count(1)
     expect(rows).not_to_contain_text(" · running")
+    expect(rows.locator("summary")).to_contain_text("completed")
     scenario("A1-reset-recovering-checkpoint", "Acceptance-only transport duplicated a real atomic native start as recovering reset; real tool/checkpoint settled recovery, one input/tool row remained, filesystem effect verified and reopen did not make historical activity live")
 
     # A failed-before-delivery attempt survives frontend reload. The UI retries

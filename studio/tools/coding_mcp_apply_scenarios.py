@@ -358,7 +358,11 @@ def run_apply_reconnect_scenarios(page, context, playwright, base, headers, path
         request = provider.request()
         result = request.tool_result(echo_call)
         assert marker in result and "pid" in result, "Native gateway result lacks actual stdio echo/PID"
-        row = page.get_by_test_id("coding-tool-row").filter(has_text = echo_call).last
+        row = page.locator(f'[data-testid="coding-tool-row"][data-call-id="{echo_call}"]')
+        expect(row).to_have_count(1, timeout = 60000)
+        if row.get_attribute("open") is None:
+            row.locator("summary").focus()
+            row.locator("summary").press("Enter")
         expect(row).to_contain_text(marker, timeout = 60000)
         assert row.get_attribute("data-call-id") == echo_call
         wait_for(lambda: page.evaluate("call => window.codingMcpToolIdentities.find(item => item.call_id === call)", echo_call),

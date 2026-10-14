@@ -43,6 +43,26 @@ async def test_commands_and_bounded_diagnostics_preserve_native_shapes(coding_ap
 
 
 @pytest.mark.asyncio
+async def test_unsupported_native_command_is_a_client_refusal_not_a_gateway_failure(coding_app):
+    app, headers = coding_app
+    calls = []
+
+    class Runtime:
+        async def command(self, method, params, *, expected_generation=None):
+            assert method == "command" and expected_generation == 1
+            calls.append(params)
+            raise CodingRuntimeError("unsupported_command", "Choose an effective native command.")
+
+    app.state.coding_runtime = Runtime()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
+        response = await client.post("/api/coding/conversations/exact-id/commands", json={"operation_id": "unsupported-op", "name": "unknown"})
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Choose an effective native command."
+    assert response.headers["cache-control"] == "no-store"
+    assert calls == [{"conversation_id": "exact-id", "operation_id": "unsupported-op", "name": "unknown", "tail": ""}]
+
+
+@pytest.mark.asyncio
 async def test_slash_prompt_bypass_and_invalid_diagnostics_never_reach_native_execution(coding_app):
     app, headers = coding_app
 

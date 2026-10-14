@@ -89,6 +89,7 @@ def run_question_scenarios(page, context, base, provider, first, second_id, repo
     assert provider is not None, "Question acceptance uses the clearly labeled deterministic HTTP provider"
     conversation = page.get_by_test_id("coding-conversation-id").inner_text()
     headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')")}
+    headers["X-Mimir-Runtime-Generation"] = str(context.request.get(base + "/api/coding/runtime", headers=headers).json()["generation"])
     evidence = report.setdefault("questions", {
         "kind": "deterministic-provider-and-browser-transport-faults-real-native-questions",
         "requests": [], "answer_attempts": [], "rejections": [], "accepted_inputs": [],
@@ -238,6 +239,13 @@ def run_question_scenarios(page, context, base, provider, first, second_id, repo
         assert waiting.value.request.post_data_json == {"subscription": target["subscription"], "answers": answers}
         assert_ack(waiting.value.json(), target)
         remember(target, answers)
+        # Earlier-reading/reconstructed windows intentionally do not merge new
+        # history until the reader explicitly returns to the latest native cut.
+        # Preserve the first answer's focus-handoff check below.
+        latest = page.get_by_role("button", name="Jump to latest", exact=True)
+        if len(expected) > 1 and latest.is_visible():
+            latest.focus()
+            latest.press("Enter")
         # Once native history contains this accepted input, the frontend replaces
         # the ephemeral controls with its durable accepted-answer transcript row.
         expect(page.get_by_test_id("coding-transcript").get_by_text("You · accepted answer", exact=True)).to_have_count(len(expected), timeout=60000)
@@ -352,11 +360,12 @@ def run_question_scenarios(page, context, base, provider, first, second_id, repo
         questions = freeform_question("What should survive a failed answer delivery?")
         card, before_target = start_question("QUESTION_BEFORE_DELIVERY", "question-before", questions)
         before_answers = type_freeform(card, questions, "QUESTION_DRAFT_RETAINED")
-        # An intentional click on non-focusable earlier transcript text can blur
-        # to body without a relatedTarget. Reconnection must not reclaim that focus.
+        # Deliberately release earlier-reading focus to body. The transcript
+        # container is now keyboard-focusable, so blur the actual clicked owner,
+        # not the textarea that no longer owns focus. Recovery must not reclaim it.
         focus_target = dict(before_target)
         page.get_by_test_id("coding-transcript").get_by_text("QUESTION_BEFORE_DELIVERY", exact=True).click()
-        card.locator("textarea").evaluate("el => el.blur()")
+        page.evaluate("document.activeElement.blur()")
         assert page.evaluate("document.activeElement === document.body")
         page.evaluate("window.codingDropView = true")
         expect(page.get_by_test_id("coding-disconnect-banner")).to_be_visible(timeout=60000)

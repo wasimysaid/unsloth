@@ -19,6 +19,7 @@ def run_catalog_scenarios(page, context, base, provider, native, first, report, 
 
     conversation = page.get_by_test_id("coding-conversation-id").inner_text()
     headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')")}
+    headers["X-Mimir-Runtime-Generation"] = str(context.request.get(base + "/api/coding/runtime", headers=headers).json()["generation"])
     endpoint = base + f"/api/coding/conversations/{conversation}"
     path = native / "models.json"
     original = json.loads(path.read_text())
@@ -99,6 +100,10 @@ def run_catalog_scenarios(page, context, base, provider, native, first, report, 
 
     def layout(name):
         viewport = page.viewport_size
+        # Resize/scroll schedules popover collision positioning asynchronously.
+        # Await the same full-viewport requirement rather than measuring its old
+        # desktop coordinates during that positioning frame.
+        expect(picker).to_be_in_viewport(ratio=1)
         assert_viewport_box(picker.bounding_box(), viewport["width"], viewport["height"], label=name)
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         for label in ("Refresh model choices", "Retry selected model", "Choose replacement"):
@@ -259,6 +264,7 @@ def run_catalog_scenarios(page, context, base, provider, native, first, report, 
     refresh_choices()
     expect(unavailable).to_contain_text(identity, timeout=60000)
     page.set_viewport_size({"width": 390, "height": 844})
+    trigger.scroll_into_view_if_needed()
     layout("catalog-narrow-unavailable")
     close_picker()
     # Detach the browser's long-lived HTTP/SSE view before graceful Uvicorn

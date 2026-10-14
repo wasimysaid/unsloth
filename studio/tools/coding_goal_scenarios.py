@@ -12,6 +12,7 @@ def run_goal_scenarios(page, context, base, provider, first, report, scenario, s
 
     conversation = page.get_by_test_id("coding-conversation-id").inner_text()
     headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')")}
+    headers["X-Mimir-Runtime-Generation"] = str(context.request.get(base + "/api/coding/runtime", headers=headers).json()["generation"])
     endpoint = base + f"/api/coding/conversations/{conversation}/goal"
     evidence = report.setdefault("goals", {"kind": "deterministic-http-provider-real-native-goals", "actions": []})
     summary = page.get_by_label("Autonomous goal details", exact=True)
@@ -21,10 +22,10 @@ def run_goal_scenarios(page, context, base, provider, first, report, scenario, s
     def native_state():
         # Obtain the atomic first item of a real native Session View, then release
         # only this inspection view. Never fetch a mutable snapshot or poll history.
-        return page.evaluate("""async url => {
+        return page.evaluate("""async ({url, headers}) => {
           const abort = new AbortController();
           try {
-            const response = await fetch(url, {headers: {Authorization: 'Bearer ' + localStorage.getItem('unsloth_auth_token')}, signal: abort.signal});
+            const response = await fetch(url, {headers, signal: abort.signal});
             if (!response.ok || !response.body) throw new Error('Native view unavailable');
             const reader = response.body.getReader(); const decoder = new TextDecoder(); let text = '';
             while (true) {
@@ -39,7 +40,7 @@ def run_goal_scenarios(page, context, base, provider, first, report, scenario, s
               throw new Error('Expected atomic native start capture');
             }
           } finally { abort.abort(); }
-        }""", base + f"/api/coding/conversations/{conversation}/events")
+        }""", {"url": base + f"/api/coding/conversations/{conversation}/events", "headers": headers})
 
     def action(name, objective=None):
         # A held provider boundary is stable, but its durable native state item
@@ -234,12 +235,15 @@ def run_goal_scenarios(page, context, base, provider, first, report, scenario, s
     # Deliberate reopening after actual native owner process loss/release, never replay.
     page.goto(base + "/coding")
     page.get_by_role("button", name="Refresh coding conversations", exact=True).click()
-    page.locator('[aria-label="Saved coding conversations"] button').filter(has_text=conversation).click()
+    with page.expect_response(lambda response: response.url == base + f"/api/coding/conversations/{conversation}/open" and response.request.method == "POST", timeout=60000) as reopened:
+        page.locator('[aria-label="Saved coding conversations"] button').filter(has_text=conversation).click()
+    assert reopened.value.ok
     expect(status).to_have_text("Interrupted · explicit resume required", timeout=60000)
     idle()
     provider.assert_no_request()
     stale = context.request.post(endpoint, data={"revision": before, "action": "resume"}, headers=headers)
     assert stale.status == 409, "Old owner incarnation must reject controls after reopening"
+    headers["X-Mimir-Runtime-Generation"] = str(reopened.value.json()["runtime_generation"])
     summary.focus()
     summary.press("Enter")
     expect(details).to_be_visible()

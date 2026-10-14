@@ -178,6 +178,7 @@ def main() -> None:
         report["state_root"] = str(paths["native"].parent)
         report["native_sha256"] = fingerprint(args.mimir.resolve())
         report["plugin_sha256"] = fingerprint(args.plugin_package.resolve() / "plugin.wasm")
+        report["frontend_index_sha256"] = fingerprint(root / "studio/frontend/dist/index.html")
         paired_source = args.mimir_source.resolve() if args.mimir_source else root.parent / "mimir"
         report["source_revisions"] = {"studio": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd = root, text = True, timeout = 30).strip()}

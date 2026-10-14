@@ -61,7 +61,8 @@ async def test_invalid_answer_envelope_never_reaches_native(coding_app, body):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("code,status", [("invalid", 400), ("not_found", 404), ("conflict", 409),
+@pytest.mark.parametrize("code,status", [("invalid", 400), ("invalid_answer", 400),
+                                         ("stale_answer", 409), ("not_found", 404), ("conflict", 409),
                                          ("disconnected", 503), ("uncertain", 504)])
 async def test_native_invalid_stale_or_uncertain_answer_is_not_retried(coding_app, code, status):
     app, headers = coding_app

@@ -639,9 +639,11 @@ export function createCodingRun(
         connection: "loading",
         completion: null,
         recovering: Boolean(event.recovering),
-        older: false,
-        newer: false,
-        viewingEarlier: false,
+        // Paging controls belong to the retained projection too. Hiding them
+        // during same-conversation capture removes the reader's focused node.
+        older: event.type === "reset" ? false : state.older,
+        newer: event.type === "reset" ? false : state.newer,
+        viewingEarlier: event.type === "reset" ? false : state.viewingEarlier,
       });
       await capture(
         event.root as { cut: JournalCut; live_invocations: string[] },

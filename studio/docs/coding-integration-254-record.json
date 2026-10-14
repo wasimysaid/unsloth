@@ -1,0 +1,79 @@
+{
+  "issue": 254,
+  "status": "needs-human",
+  "parent_acceptance": "not-established",
+  "source_revisions": {
+    "studio": "7089871db40303322de698bf9988372a46e2e4da",
+    "mimir": "7482fa0d41f114743daf6870c0052bf7fd95bd4e"
+  },
+  "source_content_digests": {
+    "studio": "cd00fe422d3e72829113a9b06063cd47946ee9ca50ae56a45f91bdc466a69fa4",
+    "mimir": "b7bf0bcbdd5e7765b4946ea53ba40e4eebf5442fc6181fd46d4a41fd79a09fe1"
+  },
+  "static_build": [
+    {"command": "npm --prefix studio/frontend run typecheck", "status": "passed", "returncode": 0, "evidence": ".verification/ticket254/frontend/typecheck-final.log", "scope": "frontend application and tests"},
+    {"command": "npm --prefix studio/frontend run build", "status": "passed", "returncode": 0, "evidence": ".verification/ticket254/frontend/build.log"},
+    {"command": "python -m compileall -q studio/backend", "status": "passed", "files": 2273, "evidence": ".verification/ticket254/backend/compile-parent-final.log"},
+    {"command": "python -m compileall -q studio/tools/coding*.py studio/tools/test_coding*.py", "status": "passed", "returncode": 0},
+    {"command": "rustfmt --check studio/src-tauri/src/app_menu.rs", "status": "passed", "returncode": 0, "limitation": "macOS menu execution unavailable on Linux"},
+    {"check": "source-bracketed native workspace/all-target, CLI, all guests and product/retirement/commands packages", "status": "passed", "generation": 4, "returncode": 0, "evidence": "../mimir/docs/ticket-254-native-build-provenance.json", "native_sha256": "9299be318690df84136e10cf290886481098f942bd5fcdf5257c329be82fed8e"}
+  ],
+  "deterministic_fault": [
+    {"check": "focused coding, route isolation and desktop menu", "status": "passed", "passed": 364, "failed": 0, "evidence": ".verification/ticket254/frontend/focused-tests.log"},
+    {"check": "full frontend suite", "status": "passed-with-recorded-self-skip", "passed": 11802, "failed": 0, "skipped": 1, "evidence": ".verification/ticket254/frontend/all-tests.log", "limitation": "mix of executed state/runtime contracts and legacy static source checks, not rendered UI acceptance"},
+    {"check": "scheduler-sensitive frontend test file rerun", "status": "passed", "passed": 11, "failed": 0, "skipped": 0, "evidence": ".verification/ticket254/frontend/timing-rerun.log"},
+    {"check": "coding browser driver contracts and reconciliation", "status": "passed", "passed": 75, "failed": 0, "evidence": ".verification/ticket254/tools-tests-final.log"},
+    {"check": "backend coding after real-native error mapping reproductions", "status": "passed", "passed": 293, "failed": 0, "evidence": ".verification/ticket254/backend/coding-parent-final.log"},
+    {"check": "backend lifecycle and model management", "status": "passed", "passed": 515, "failed": 0, "evidence": ".verification/ticket254/backend/lifecycle.log"},
+    {"check": "ordinary chat, auth, SSE and folder regressions", "status": "passed", "passed": 742, "failed": 0, "evidence": ".verification/ticket254/backend/ordinary-chat-auth-folders.log"},
+    {"check": "multi-account tests reconciled after dependency and CPU-fixture recovery", "status": "passed-after-recovery", "passed": 1206, "failed": 0, "evidence": ".verification/ticket254/backend/multi-account-reconciled-ledger.json", "initial_failures": 232, "limitation": "not a single initially clean run; suite counts overlap"},
+    {"check": "parent independent combined lifecycle/separate execution/coding actor verification", "status": "passed", "passed": 172, "failed": 0, "evidence": ".verification/ticket254/backend/parent-verification.log"},
+    {"check": "final PowerShell native/cmdlet ordering, early return and observer ownership", "status": "passed", "generation": 4, "passed": 3, "failed": 0, "evidence": "../mimir/target/ticket-254-verification/generation4-powershell-result.json"}
+  ],
+  "rendered_fixture_routes": {
+    "status": "passed-after-recorded-recovery",
+    "reconciliation_returncode": 0,
+    "workloads_passed": 16,
+    "workloads_failed": 0,
+    "scenario_occurrences": 397,
+    "scenario_occurrences_are_not_unique": true,
+    "native_generation": 4,
+    "evidence": "../worker/254-final-reconciled/integration-report.json",
+    "evidence_index": "../worker/254-final-reconciled/evidence-index.json",
+    "initial_run": "../worker/254-final-acceptance/integration-report.json",
+    "initial_result": "15 passed, one synthetic older-history keyboard focus assertion failed",
+    "recovery": "One unchanged focused reading driver rerun passed all required scenarios; no source/assertion/fixture changes. Initial failure retained; cause not established.",
+    "cleanup": "All native processes, server ports and provider fixtures settled; MCP configured connection settlement separately confirmed",
+    "viewports": [[1440, 1000], [390, 844]],
+    "representative_screenshots_inspected": [
+      "../worker/254-final-acceptance/deterministic/desktop-tools-public-output.png",
+      "../worker/254-final-acceptance/picker/picker-narrow-config.png"
+    ]
+  },
+  "native_historical_terminal_suites": [
+    {"check": "full CLI", "generation": 3, "status": "failed", "passed": 2156, "failed": 6, "ignored": 5, "returncode": 101, "evidence": "../mimir/target/ticket-254-verification/native-generation3-result.json"},
+    {"check": "full tools", "generation": 3, "status": "passed", "passed": 319, "failed": 0, "evidence": "../mimir/target/ticket-254-verification/native-tools-generation3.log"},
+    {"check": "complete external frontend suite with actual extracted SDK preparation", "generation": 2, "status": "passed", "passed": 15, "failed": 0, "evidence": "../mimir/target/ticket-254-verification/external-frontend-generation2.log"},
+    {"check": "affected actual extracted SDK/Wasm consumers", "generation": 3, "status": "passed", "passed": 2, "failed": 0, "filtered": 13, "evidence": "../mimir/target/ticket-254-verification/external-frontend-generation3-result.json"}
+  ],
+  "strict_integration_blockers": [
+    "Five native CLI workflow replay/schema mismatches and the unchanged oversized-entry tail assertion remain failed.",
+    "Additional strict tool_workflow_vcr/real_work_vcr suites retain two/four failed recordings; recordings were not weakened or re-recorded.",
+    "Strict Clippy retains documented baseline production/test/dependency findings; no whole-lint pass.",
+    "Initial synthetic older-history reading focus failure needs investigation despite an unchanged complete focused rerun passing."
+  ],
+  "live": [
+    {"ticket": 255, "status": "pending", "check": "completed real external-provider and Studio-local coding-route workloads, full recovery and ordinary-chat smoke"},
+    {"ticket": 255, "status": "pending", "check": "complete rendered desktop/narrow browser acceptance reconciled against real workloads"}
+  ],
+  "pending_human": [
+    {"ticket": 256, "status": "pending", "check": "implemented-UI user review and resolved corrections"}
+  ],
+  "notes": [
+    "No GPU workload, paid provider, shared trust edit, commit or publication.",
+    "All requested background workloads are terminal; failed/timeout/historical evidence is preserved separately.",
+    "Only the bounded PowerShell repair differs between native generations three/four; broad suites and packaged SDK were not repeated on generation four.",
+    "Independent read-only review confirmed the PowerShell finding resolved; reviewer did not rerun suites.",
+    "Live/human acceptance and clean strict CI are not inferred from fixture success; A1-A10 requirements and remaining boundaries are in coding-integration-254-evidence.md."
+  ]
+}

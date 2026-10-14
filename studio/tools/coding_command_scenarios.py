@@ -12,6 +12,7 @@ def run_command_scenarios(page, context, base, provider, first, report, scenario
 
     conversation = page.get_by_test_id("coding-conversation-id").inner_text()
     headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')")}
+    headers["X-Mimir-Runtime-Generation"] = str(context.request.get(base + "/api/coding/runtime", headers=headers).json()["generation"])
     endpoint = base + f"/api/coding/conversations/{conversation}"
     composer = page.get_by_label("Coding prompt", exact=True)
     transcript = page.get_by_test_id("coding-transcript")
@@ -134,7 +135,8 @@ def run_command_scenarios(page, context, base, provider, first, report, scenario
     compression_name = next((item["name"] for item in commands if item["name"] == "compress" or "compress" in item["aliases"]), None)
     assert compression_name, "Native model-context compression must be available"
     busy = context.request.post(endpoint + "/commands", headers=headers, data={"operation_id": str(uuid.uuid4()), "name": compression_name, "tail": ""})
-    assert busy.status == 409
+    outcomes["busy_refusal"] = {"status": busy.status, "body": busy.json()}
+    assert busy.status == 409, busy.text()
     assert "busy" in busy.json()["detail"].lower() or "idle" in busy.json()["detail"].lower()
     pending.text("Public ticket 243 reply retained after compression. " * 80)
     expect(page.get_by_test_id("coding-run-status")).to_have_text("Completed", timeout=60000)
