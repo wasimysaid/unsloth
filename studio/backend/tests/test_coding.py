@@ -7,6 +7,7 @@ import json
 import struct
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -31,6 +32,10 @@ def coding_app(monkeypatch, tmp_path):
 @pytest.mark.parametrize("method,path,body", [
     ("GET", "/projects/browse", None),
     ("GET", "/catalog?cwd=/", None),
+    ("GET", "/local-models/catalog", None),
+    ("POST", "/local-models/acquire", {"incarnation": "process", "operation_id": "operation", "conversation_id": "session", "request_id": "request", "model_id": "local-model", "api_model": "wire"}),
+    ("POST", "/local-models/inspect", {"incarnation": "process", "operation_id": "operation"}),
+    ("POST", "/local-models/release", {"incarnation": "process", "operation_id": "operation"}),
     ("GET", "/conversations/known-id/models", None),
     ("POST", "/conversations/known-id/models/refresh", None),
     ("GET", "/diagnostics", None),
@@ -377,7 +382,8 @@ async def test_private_framing_rejects_oversized_output_and_settles_pending():
     stream = asyncio.StreamReader()
     stream.feed_data(struct.pack(">I", MAX_FRAME + 1))
     runtime = CodingRuntime()
-    runtime.process = SimpleNamespace(stdout = stream, returncode = 0)
+    runtime.process = SimpleNamespace(stdout = stream, stdin = None, returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     future = asyncio.get_running_loop().create_future()
     runtime._pending[1] = future
     await runtime._read_responses()
@@ -385,6 +391,8 @@ async def test_private_framing_rejects_oversized_output_and_settles_pending():
         await future
     with pytest.raises(CodingRuntimeError, match = "disconnected"):
         await runtime.start()
+    assert runtime._shutdown_task is not None
+    await runtime._shutdown_task
 
 
 @pytest.mark.asyncio
@@ -392,13 +400,16 @@ async def test_private_framing_rejects_oversized_output_and_settles_pending():
 async def test_malformed_error_frame_settles_matching_pending_command(error):
     stream = asyncio.StreamReader()
     runtime = CodingRuntime()
-    runtime.process = SimpleNamespace(stdout = stream, returncode = 0)
+    runtime.process = SimpleNamespace(stdout = stream, stdin = None, returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     future = asyncio.get_running_loop().create_future()
     runtime._pending[1] = future
     data = json.dumps({"id": 1, "error": error}).encode()
     stream.feed_data(struct.pack(">I", len(data)) + data)
     stream.feed_eof()
     await runtime._read_responses()
+    assert runtime._shutdown_task is not None
+    await runtime._shutdown_task
     with pytest.raises(CodingRuntimeError, match = "disconnected"):
         await asyncio.wait_for(future, timeout = 0.1)
     assert not runtime._pending
@@ -408,7 +419,8 @@ async def test_malformed_error_frame_settles_matching_pending_command(error):
 async def test_private_framing_matches_ids_not_arrival_order():
     stream = asyncio.StreamReader()
     runtime = CodingRuntime()
-    runtime.process = SimpleNamespace(stdout = stream, returncode = 0)
+    runtime.process = SimpleNamespace(stdout = stream, stdin = None, returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     futures = [asyncio.get_running_loop().create_future() for _ in range(2)]
     runtime._pending = {1: futures[0], 2: futures[1]}
     for identifier in (2, 1):
@@ -416,6 +428,8 @@ async def test_private_framing_matches_ids_not_arrival_order():
         stream.feed_data(struct.pack(">I", len(data)) + data)
     stream.feed_eof()
     await runtime._read_responses()
+    assert runtime._shutdown_task is not None
+    await runtime._shutdown_task
     assert [await future for future in futures] == [{"conversation_id": "1"}, {"conversation_id": "2"}]
 
 
@@ -423,7 +437,8 @@ async def test_private_framing_matches_ids_not_arrival_order():
 async def test_view_start_in_same_pipe_read_is_not_lost():
     stream = asyncio.StreamReader()
     runtime = CodingRuntime()
-    runtime.process = SimpleNamespace(stdout = stream, returncode = 0)
+    runtime.process = SimpleNamespace(stdout = stream, stdin = None, returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     future = asyncio.get_running_loop().create_future()
     runtime._pending[1] = future
     runtime._opening_views.add(1)
@@ -436,13 +451,16 @@ async def test_view_start_in_same_pipe_read_is_not_lost():
     assert await runtime._subscriptions["view-1"].get() == start
     stream.feed_eof()
     await reader
+    assert runtime._shutdown_task is not None
+    await runtime._shutdown_task
 
 
 @pytest.mark.asyncio
 async def test_slow_view_gets_explicit_reconstruction_error_not_partial_suffix():
     stream = asyncio.StreamReader()
     runtime = CodingRuntime()
-    runtime.process = SimpleNamespace(stdout = stream, returncode = 0)
+    runtime.process = SimpleNamespace(stdout = stream, stdin = None, returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     queue = asyncio.Queue(maxsize = 2)
     runtime._subscriptions["view-1"] = queue
     barrier = asyncio.get_running_loop().create_future()
@@ -460,6 +478,8 @@ async def test_slow_view_gets_explicit_reconstruction_error_not_partial_suffix()
     assert queue.empty()
     stream.feed_eof()
     await reader
+    assert runtime._shutdown_task is not None
+    await runtime._shutdown_task
 
 
 @pytest.mark.asyncio
@@ -525,12 +545,15 @@ async def test_late_view_reply_reconciles_expired_admission(monkeypatch):
             commands.append(json.loads(data[4:]))
         async def drain(self):
             pass
+        def close(self):
+            commands.append({"method": "stdin-close"})
     class LateRuntime(CodingRuntime):
         async def unsubscribe(self, subscription):
             commands.append({"method": "close_view", "params": {"subscription": subscription}})
             closed.set()
     runtime = LateRuntime()
-    runtime.process = SimpleNamespace(stdout = stream, stdin = Writer(), returncode = 0)
+    runtime.process = SimpleNamespace(stdout = stream, stdin = Writer(), returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     with pytest.raises(CodingRuntimeError, match = "not confirmed"):
         await runtime.command("view", {"conversation_id": "saved"})
     assert runtime._abandoned_views == {1}
@@ -544,6 +567,10 @@ async def test_late_view_reply_reconciles_expired_admission(monkeypatch):
     assert not runtime._abandoned_views
     stream.feed_eof()
     await reader
+    assert runtime._shutdown_task is not None
+    await runtime._shutdown_task
+    assert commands[-1] == {"method": "stdin-close"}
+    runtime.process.wait.assert_awaited_once()
     if runtime._cleanup_tasks:
         await asyncio.gather(*tuple(runtime._cleanup_tasks))
 
@@ -788,7 +815,8 @@ async def test_uncertain_mcp_save_is_not_replayed_and_requires_saved_version_com
 async def test_private_overlap_error_retains_structured_warning_and_settles_exact_command():
     stream = asyncio.StreamReader()
     runtime = CodingRuntime()
-    runtime.process = SimpleNamespace(stdout = stream, returncode = 0)
+    runtime.process = SimpleNamespace(stdout = stream, stdin = None, returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     future = asyncio.get_running_loop().create_future()
     runtime._pending[7] = future
     overlap = {"cwd": "/canonical/project", "conversations": [{"id": "native-owner"}]}
@@ -796,6 +824,8 @@ async def test_private_overlap_error_retains_structured_warning_and_settles_exac
     stream.feed_data(struct.pack(">I", len(data)) + data)
     stream.feed_eof()
     await runtime._read_responses()
+    assert runtime._shutdown_task is not None
+    await runtime._shutdown_task
     with pytest.raises(CodingRuntimeError) as error:
         await future
     assert error.value.code == "overlap_required"
@@ -808,13 +838,16 @@ async def test_private_overlap_error_retains_structured_warning_and_settles_exac
 async def test_malformed_overlap_refusal_fails_transport_without_orphaning_command(overlap):
     stream = asyncio.StreamReader()
     runtime = CodingRuntime()
-    runtime.process = SimpleNamespace(stdout = stream, returncode = 0)
+    runtime.process = SimpleNamespace(stdout = stream, stdin = None, returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     future = asyncio.get_running_loop().create_future()
     runtime._pending[1] = future
     data = json.dumps({"id": 1, "error": {"code": "overlap_required", "message": "Review", "overlap": overlap}}).encode()
     stream.feed_data(struct.pack(">I", len(data)) + data)
     stream.feed_eof()
     await runtime._read_responses()
+    assert runtime._shutdown_task is not None
+    await runtime._shutdown_task
     with pytest.raises(CodingRuntimeError, match = "disconnected"):
         await future
     assert not runtime._pending

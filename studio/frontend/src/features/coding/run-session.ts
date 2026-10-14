@@ -191,6 +191,7 @@ export function createCodingRun(
   let reconnectAttempt = 0;
   let saved: CodingRow[] = [];
   let provisional: CodingRow[] = [];
+  let liveInvocations = new Set<string>();
   let cut: JournalCut | null = null;
   let firstEntry: string | null = null;
   let latestOlder = false;
@@ -413,7 +414,19 @@ export function createCodingRun(
     return rowsByIdentity;
   };
   const publishRows = () => {
-    const rows = mergeRows([...saved, ...provisional]);
+    // A persisted invocation start is not a terminal tool result. Native's
+    // captured live identities remain authoritative, including on reconnect.
+    const rows = mergeRows([...saved, ...provisional]).map((row) =>
+      row.tool?.status === "saved" &&
+      row.tool.invocation_id &&
+      liveInvocations.has(row.tool.invocation_id)
+        ? {
+            ...row,
+            historical: false,
+            tool: { ...row.tool, status: "running", historical: false },
+          }
+        : row,
+    );
     let bytes = rows.reduce((size, row) => size + codingRowSize(row), 0);
     let omitted = false;
     while (rows.length > MAX_ROWS || (bytes > MAX_TEXT && rows.length > 1)) {
@@ -487,6 +500,7 @@ export function createCodingRun(
       throw new Error("The native latest page omitted newer history.");
     saved = page.rows.map((row) => ({ ...row, historical: true }));
     provisional = [];
+    liveInvocations = new Set(root.live_invocations);
     cut = root.cut;
     firstEntry = page.first_id;
     latestOlder = page.older;
@@ -535,15 +549,17 @@ export function createCodingRun(
       }
     }
     cut = root.cut;
-    const live = new Set(root.live_invocations);
+    liveInvocations = new Set(root.live_invocations);
     provisional = provisional.filter(
       (row) =>
         row.tool?.invocation_id &&
-        live.has(row.tool.invocation_id) &&
+        liveInvocations.has(row.tool.invocation_id) &&
         !saved.some(
           (item) =>
             item.tool?.invocation_id === row.tool?.invocation_id &&
-            item.tool?.status !== "running",
+            ["completed", "failed", "cancelled", "interrupted"].includes(
+              item.tool?.status ?? "",
+            ),
         ),
     );
     update({ recovering: false });
@@ -852,10 +868,11 @@ export function createCodingRun(
       state.reconcilingGoal ||
       state.commandBusy ||
       state.uncertainCommand ||
-      state.storageError
+      state.storageError ||
+      state.native?.execution_preparation?.phase === "cleanup_pending"
     )
       throw new Error(
-        "Wait for a connected, reconstructed native view before sending.",
+        "Wait for a connected, reconstructed native view and confirmed cleanup before sending.",
       );
     try {
       const existing = pendingStore.load();
@@ -1807,6 +1824,14 @@ export function codingRunLabel(state: CodingRunState): string {
   if (state.connection === "loading") return "Loading native conversation…";
   if (state.stopping) return "Stopping… waiting for terminal cleanup";
   if (state.recovering) return "Recovering native history…";
+  const preparation = state.native?.execution_preparation;
+  if (preparation?.phase === "cleanup_pending")
+    return "Cleanup pending · local model protection retained";
+  if (preparation?.phase === "loading") return "Loading Studio local model…";
+  if (preparation?.phase === "busy")
+    return "Local model busy · explicit retry required";
+  if (preparation?.phase === "failed")
+    return "Local model preparation failed · explicit retry required";
   if (state.native?.pending_user_request) return "Waiting for user input";
   if (state.native?.active_request) return "Running";
   if (state.native?.requests.some((request) => request.status === "queued"))

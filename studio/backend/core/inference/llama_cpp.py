@@ -26,6 +26,7 @@ from loggers import get_logger
 from utils.gpu_memory_events import invalidate_gpu_memory as _invalidate_gpu_memory
 from utils import host_memory as _host_memory
 from utils.gpu_memory_events import invalidates_gpu_memory as _invalidates_gpu_memory
+from core.inference.llama_keepwarm import guards_coding_model
 import shutil
 import signal
 import socket
@@ -24463,6 +24464,7 @@ class LlamaCppBackend:
                 # finished load could blank the marker of a queued one that had published.
                 self._memory_pending_launch = None
 
+    @guards_coding_model("Reloading the model")
     @_invalidates_gpu_memory("llama.cpp load")
     @_with_gguf_load_marker
     def load_model(
@@ -34261,6 +34263,7 @@ class LlamaCppBackend:
         avoid restarting a load the user just cancelled."""
         return self._cancel_event.is_set()
 
+    @guards_coding_model("Unloading the model")
     @_invalidates_gpu_memory("llama.cpp unload")
     def unload_model(self) -> bool:
         """Terminate the subprocess and cancel any in-flight download."""
@@ -34646,6 +34649,7 @@ class LlamaCppBackend:
 
         return is_process_shutting_down()
 
+    @guards_coding_model("Stopping the model server")
     @_invalidates_gpu_memory("llama.cpp stop")
     def _kill_process(self, *, teardown: bool = False):
         """Terminate the subprocess if running.
@@ -35329,6 +35333,7 @@ class LlamaCppBackend:
             logger.warning("Error during orphan server cleanup", exc_info = True)
         return killed
 
+    @guards_coding_model("Cleaning up the model server")
     def _cleanup(self):
         """atexit handler to ensure llama-server is terminated (a teardown).
 

@@ -17,10 +17,15 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from auth.authentication import get_current_subject
-from core.coding_runtime import CodingRuntimeError, runtime_for
+from auth.authentication import get_current_credential
+from core.coding_runtime import CodingRuntime, CodingRuntimeError, runtime_for
 
-router = APIRouter(dependencies = [Depends(get_current_subject)])
+
+async def _coding_credential(request: Request, credential = Depends(get_current_credential)):
+    request.state.coding_subject, request.state.coding_credential_generation = credential
+
+
+router = APIRouter(dependencies = [Depends(_coding_credential)])
 
 
 class NativeViewResponse(StreamingResponse):
@@ -210,7 +215,71 @@ def _http_error(exc: CodingRuntimeError) -> HTTPException:
 
 async def _command(request: Request, method: str, params: dict | None = None):
     try:
-        return await runtime_for(request.app).command(method, params)
+        runtime = runtime_for(request.app)
+        if isinstance(runtime, CodingRuntime):
+            await runtime.configure_local_serving(request)
+        return await runtime.command(method, params)
+    except CodingRuntimeError as exc:
+        raise _http_error(exc) from exc
+
+
+class LocalOperationIdentity(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    incarnation: str = Field(min_length=1, max_length=128)
+    operation_id: str = Field(min_length=1, max_length=128)
+
+
+class LocalPreparation(LocalOperationIdentity):
+    conversation_id: str = Field(min_length=1, max_length=128)
+    request_id: str = Field(min_length=1, max_length=128)
+    model_id: str = Field(min_length=1, max_length=1024)
+    api_model: str = Field(min_length=1, max_length=32768)
+
+
+def _local_serving(request: Request, incarnation: str | None = None):
+    import secrets
+
+    runtime = getattr(request.app.state, "coding_runtime", None)
+    serving = getattr(runtime, "local_serving", None)
+    header = request.headers.get("authorization", "")
+    token = header[7:] if header.lower().startswith("bearer ") else ""
+    if (serving is None or not secrets.compare_digest(token.encode(), serving.key.encode())
+            or (incarnation is not None and incarnation != serving.incarnation)):
+        # Established authentication runs first. A valid browser token or another
+        # incarnation's workflow key still has no lifecycle release authority.
+        raise HTTPException(403, "This operation requires the current native serving incarnation.")
+    return serving
+
+
+@router.get("/local-models/catalog")
+async def local_models_catalog(request: Request):
+    _local_serving(request)
+    from core.coding_local_models import local_catalog
+    try:
+        return JSONResponse(await local_catalog(), headers={"Cache-Control": "no-store"})
+    except Exception:
+        raise HTTPException(503, "Studio downloaded model inventory is unavailable. Retry explicitly.") from None
+
+
+@router.post("/local-models/acquire")
+async def acquire_local_model(body: LocalPreparation, request: Request):
+    serving = _local_serving(request, body.incarnation)
+    try:
+        return await serving.acquire(body.model_dump(), request)
+    except CodingRuntimeError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post("/local-models/inspect")
+async def inspect_local_model(body: LocalOperationIdentity, request: Request):
+    return _local_serving(request, body.incarnation).inspect(body.operation_id)
+
+
+@router.post("/local-models/release")
+async def release_local_model(body: LocalOperationIdentity, request: Request):
+    serving = _local_serving(request, body.incarnation)
+    try:
+        return await serving.release(body.operation_id)
     except CodingRuntimeError as exc:
         raise _http_error(exc) from exc
 
@@ -436,6 +505,8 @@ async def conversation_events(conversation_id: str, request: Request):
     # captures its native ordered view; no snapshot-then-subscribe race exists.
     runtime = runtime_for(request.app)
     try:
+        if isinstance(runtime, CodingRuntime):
+            await runtime.configure_local_serving(request)
         subscription, queue = await runtime.subscribe(conversation_id)
     except CodingRuntimeError as exc:
         raise _http_error(exc) from exc

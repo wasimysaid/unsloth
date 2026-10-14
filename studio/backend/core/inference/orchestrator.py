@@ -15,6 +15,7 @@ import os
 import signal
 from loggers import get_logger
 from utils.gpu_memory_events import invalidates_gpu_memory as _invalidates_gpu_memory
+from core.inference.llama_keepwarm import guards_coding_model
 import multiprocessing as mp
 import queue
 import re
@@ -845,6 +846,7 @@ class InferenceOrchestrator:
             with self._dispatcher_lifecycle_lock:
                 self._worker_reserved_for = None
 
+    @guards_coding_model("Stopping the inference worker")
     def _shutdown_subprocess(self, timeout: float = 10.0) -> bool:
         with self._subprocess_shutdown_lock:
             managed = getattr(self, "_managed_engine", None)
@@ -856,6 +858,7 @@ class InferenceOrchestrator:
                 self.models.clear()
             return self._shutdown_subprocess_locked(timeout)
 
+    @guards_coding_model("Stopping the inference worker")
     def _shutdown_subprocess_locked(self, timeout: float) -> bool:
         """Gracefully shut down the inference subprocess. Returns True only once the worker is
         confirmed dead. If it survives terminate/kill (e.g. wedged in an uninterruptible CUDA
@@ -1996,6 +1999,7 @@ class InferenceOrchestrator:
     # get unloaded by the swap.
     load_generation: int = 0
 
+    @guards_coding_model("Reloading the model")
     @_invalidates_gpu_memory("inference load")
     def load_model(
         self,
@@ -2503,6 +2507,7 @@ class InferenceOrchestrator:
         finally:
             self.loading_models.discard(model)
 
+    @guards_coding_model("Cancelling the model load")
     def cancel_load(self, model_name: str) -> bool:
         """Abort an in-flight load by terminating its subprocess. Returns True if a load for
         ``model_name`` (matched case-insensitively) was cancelled, False if nothing was loading
@@ -2579,6 +2584,7 @@ class InferenceOrchestrator:
         from core.inference import stt_registry
         return stt_registry.resident()
 
+    @guards_coding_model("Unloading the model")
     @_invalidates_gpu_memory("inference unload")
     def unload_model(self, model_name: str) -> bool:
         # active_model_name can differ in case from the client's raw /unload name (the load path canonicalizes

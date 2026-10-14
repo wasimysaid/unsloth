@@ -149,7 +149,8 @@ def main() -> None:
     env = dict(os.environ, UNSLOTH_STUDIO_HOME = str(home), MIMIR_CODING_AGENT_DIR = str(native),
                UNSLOTH_MIMIR_EXECUTABLE = str(args.mimir.resolve()),
                UNSLOTH_MIMIR_PLUGIN_PACKAGE = str(args.plugin_package.resolve()), CODING_ACCEPTANCE_PASSWORD = password,
-               CUDA_VISIBLE_DEVICES = "", PYTHONPATH = str(root / "studio" / "backend"))
+               CUDA_VISIBLE_DEVICES = "", UNSLOTH_MIMIR_LOCAL_SERVING = "0",
+               PYTHONPATH = str(root / "studio" / "backend"))
     if args.workload == "retirement":
         env["CODING_ACCEPTANCE_RETIREMENT_FIXTURES"] = "1"
         report_clock = "compile-gated frozen/advanced plugin monotonic clock; not a 30-minute live workload"

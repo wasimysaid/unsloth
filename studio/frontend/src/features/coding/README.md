@@ -441,9 +441,50 @@ before further configuration or input. Stop remains available during selection.
 
 Catalog presence is not a health/credential check. Missing selected identities
 remain visible without fallback, with catalog retry or replacement. Setup,
-credentials and downloads remain in their existing workflows. Native execution
-boundary preparation/protection and fresh live selectability are implemented by
-subsequent #245–246 slices, not a browser scheduler or compatibility checker.
+credentials and downloads remain in their existing workflows. Live refresh and
+local preparation use native execution owners, not a browser scheduler or
+compatibility checker.
+
+## Studio local serving (#246)
+
+Downloaded Studio chat models enter the same native catalog as provider
+`studio-local`, with a stable provider-local ID derived from Studio's existing
+semantic inventory identity. The backend projects current downloaded rows; it
+neither saves another inventory nor adds downloads/onboarding to the picker.
+The native built-in OpenAI transport uses Studio's authenticated serving endpoint.
+One internal workflow credential per supervised process incarnation is minted by
+Studio's existing credential owner, transferred through a one-use read-only inherited
+pipe, and revoked after process exit. Native consumes/closes the descriptor before
+threads, plugins or tools start; environment contains only its non-secret descriptor
+number, never the credential. Legacy credential-bearing bootstrap variables are
+refused. The credential is never catalog or browser diagnostic data.
+
+Native execution resolves selection under its dequeue/configuration boundary,
+then admits an exact request-scoped hold through Studio's process-wide lifecycle
+gates before inference. The hold spans tool work, unanswered questions and native
+delegated activity, independently of browser connection or retained conversation
+lifetime. An idle conversation does not acquire a hold. Existing resident models
+are borrowed without changing their settings/ownership; a different workload is
+busy, never force-stopped or silently evicted to satisfy coding selection.
+
+`execution_preparation` in the ordered native state distinguishes loading, busy,
+failed and cleanup-pending. Retry local selection validates the exact current
+choice with empty native configuration; it does not load or automatically replay
+a failed prompt. Failed work must be explicitly resent. Cleanup-pending keeps
+protection and prevents unsafe successor work. HTTP timeouts/disconnects retain
+exact preparation receipts until acquisition/release is reconciled, and one
+request's release cannot remove another request's hold.
+
+The supervisor derives the loopback origin from the actual ASGI listening socket,
+not browser Host/proxy headers. `UNSLOTH_MIMIR_STUDIO_URL` can explicitly configure
+a trusted numeric-loopback HTTP origin (for example `http://127.0.0.1:8000` or
+`http://[::1]:8000`). HTTPS, DNS hostnames, malformed ports, credentials and paths
+are refused before a workflow credential is created, matching the native transport.
+CPU-only compositions without inference can set
+`UNSLOTH_MIMIR_LOCAL_SERVING=0`; the existing CPU browser driver does so explicitly.
+Local lifecycle HTTP operations require the current private workflow key and exact
+incarnation, not an ordinary browser credential. Process loss/failed native drain
+is not clean release: retained protections remain a visible recovery obligation.
 
 ## Long-conversation reading (#253)
 

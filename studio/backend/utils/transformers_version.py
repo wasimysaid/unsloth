@@ -3677,17 +3677,25 @@ def _workers_active_for_repair() -> bool:
     except Exception:
         pass
     try:
-        from core.inference import get_inference_backend
+        from core.inference import get_inference_backend, model_slots
 
-        backend = get_inference_backend()
-        if getattr(backend, "active_model_name", None):
-            return True
-        # An in-flight load counts too: its worker spawns moments later.
-        if getattr(backend, "loading_models", None):
-            return True
-        _alive = getattr(backend, "is_worker_alive", None)
-        if callable(_alive) and _alive():
-            return True
+        # Repairs replace shared import files, not just the primary's runtime. Include
+        # kept workers (even stuck teardown survivors) and ignore this task's routing.
+        backends = [slot.orchestrator for slot in model_slots.resident()]
+        try:
+            backends.append(model_slots.in_slot(None, get_inference_backend))
+        except Exception:
+            # An unavailable primary is not proof that existing kept workers are idle.
+            pass
+        for backend in backends:
+            if getattr(backend, "active_model_name", None):
+                return True
+            # An in-flight load counts too: its worker spawns moments later.
+            if getattr(backend, "loading_models", None):
+                return True
+            _alive = getattr(backend, "is_worker_alive", None)
+            if callable(_alive) and _alive():
+                return True
     except Exception:
         pass
     return False

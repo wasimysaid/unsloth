@@ -735,9 +735,11 @@ def _run_llama_phase(
 ) -> dict:
     """The llama phase of a chained update: put the backend into a maintenance state, run the installer for the latest prebuilt, then refresh caches so the next load uses the new build. Returns {to_tag, reload_required, message}; raises on failure. pin_release_tag pins the installer to that exact published release instead of letting it re-resolve "latest" (see start_update)."""
     backend = None
+    primary_marked = False
     marked = []
     model_was_active = False
     mtmd_guard = ExitStack()
+    coding_guard = ExitStack()
     # The installer exits 0 for a transient failure it answered by keeping the tree, so success no longer implies a new release. Read as the post-install check reads it.
     prior_marker = read_install_marker(_find_binary())
     prior_tag = (prior_marker or {}).get("release_tag") or (prior_marker or {}).get("tag")
@@ -752,9 +754,19 @@ def _run_llama_phase(
             backend = None
 
         if backend is not None:
+            from core.inference.llama_keepwarm import coding_model_mutation
+
+            # Outside the best-effort unload below: a protection refusal must abort the
+            # runtime-tree replacement, not become a swallowed coordination failure.
+            # Keep the fence through installation and flag cleanup so a hold cannot be
+            # published in the unload-to-swap gap, even if ordinary teardown failed.
+            coding_guard.enter_context(coding_model_mutation(
+                backend, action = "Updating the llama.cpp runtime"
+            ))
             try:
                 with backend._serial_load_lock:
                     backend._llama_update_in_progress = True
+                    primary_marked = True
                     if getattr(backend, "is_active", False):
                         model_was_active = True
                         backend.unload_model()
@@ -940,15 +952,20 @@ def _run_llama_phase(
             raise _LlamaPhaseError(str(exc), reload_required = True) from exc
         raise
     finally:
-        mtmd_guard.close()
-        # A kept slot serving a non-GGUF model stays loaded through the update; its llama backend
-        # must not stay refused once the update is done.
-        for llama in (backend, *marked):
-            if llama is not None:
-                try:
-                    llama._llama_update_in_progress = False
-                except Exception:  # pragma: no cover - defensive
-                    pass
+        try:
+            mtmd_guard.close()
+        finally:
+            try:
+                # Only clear flags this phase set; an early protection refusal changes no
+                # resident state. Non-GGUF kept slots must become usable again afterwards.
+                for llama in (backend if primary_marked else None, *marked):
+                    if llama is not None:
+                        try:
+                            llama._llama_update_in_progress = False
+                        except Exception:  # pragma: no cover - defensive
+                            pass
+            finally:
+                coding_guard.close()
 
 
 def _block_mtmd_sidecar(stack: ExitStack) -> bool:
