@@ -158,6 +158,53 @@ function harness(
   };
 }
 
+test("local preparation comes from native state; retry does not replay and cleanup stays protected", async () => {
+  const h = harness();
+  const state = native("request");
+  state.running_configuration = null;
+  state.execution_preparation = {
+    request_id: "request",
+    configuration: state.configuration,
+    phase: "loading",
+    error_code: null,
+    message: "Loading",
+    retryable: false,
+  };
+  await h.start(state);
+  assert.equal(
+    codingRunLabel(h.run.getSnapshot()),
+    "Loading Studio local model…",
+  );
+  assert.equal(h.run.getSnapshot().native?.running_configuration, null);
+  state.active_request = null;
+  state.requests[0].status = "failed";
+  state.execution_preparation.phase = "busy";
+  state.execution_preparation.retryable = true;
+  await h.event({ type: "state", state });
+  assert.equal(
+    codingRunLabel(h.run.getSnapshot()),
+    "Local model busy · explicit retry required",
+  );
+  const configurations: unknown[] = [];
+  h.api.configure = async (_id, change) => {
+    configurations.push(change);
+    return state.configuration;
+  };
+  await h.run.configure({});
+  assert.deepEqual(configurations, [{}]);
+  assert.deepEqual(h.submissions, []);
+  state.execution_preparation.phase = "cleanup_pending";
+  state.execution_preparation.retryable = false;
+  await h.event({ type: "state", state });
+  assert.equal(
+    codingRunLabel(h.run.getSnapshot()),
+    "Cleanup pending · local model protection retained",
+  );
+  await assert.rejects(h.run.send("new work"), /confirmed cleanup/);
+  assert.deepEqual(h.submissions, []);
+  h.run.detach();
+});
+
 test("initial capture reconstructs only its immutable history cut, without optimistic messages", async () => {
   const h = harness();
   const row: CodingRow = { id: "history1", kind: "user", text: "Saved input" };
@@ -1107,6 +1154,97 @@ test("saved tool result replaces a provisional invocation without duplicate or l
   assert.equal(h.run.getSnapshot().rows[0].historical, true);
   h.run.detach();
 });
+
+test("saved invocation start at a checkpoint preserves the exact live running tool", async () => {
+  const h = harness();
+  await h.start(native("request"));
+  const tool = {
+    invocation_id: "invocation",
+    call_id: "call",
+    request_id: "request",
+    name: "shell",
+    title: "Run shell",
+    status: "running",
+    output: "",
+    clipped: false,
+    quiet: false,
+    row_group: null,
+    historical: false,
+  };
+  await h.event({
+    type: "activity",
+    rows: [{ id: "live-tool", kind: "tool", tool }],
+  });
+  h.setRows([
+    {
+      id: "saved-start",
+      entry_id: "saved-start",
+      kind: "tool",
+      historical: true,
+      tool: { ...tool, status: "saved", historical: true },
+    },
+  ]);
+  await h.event({
+    type: "checkpoint",
+    cut: { journal: "root", leaf: "cut2" },
+    live_invocations: ["invocation"],
+  });
+  const rows = h.run.getSnapshot().rows;
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].tool?.status, "running");
+  assert.equal(rows[0].tool?.historical, false);
+  assert.notEqual(rows[0].historical, true);
+  assert.equal(rows[0].entry_id, "saved-start");
+  h.run.detach();
+});
+
+for (const status of ["saved", "completed", "failed"]) {
+  test(`capture reconciles ${status} tool rows with authoritative live invocation IDs`, async () => {
+    const h = harness();
+    h.setRows([
+      {
+        id: "saved-start",
+        entry_id: "saved-start",
+        kind: "tool",
+        historical: true,
+        tool: {
+          invocation_id: "invocation",
+          call_id: "call",
+          request_id: "request",
+          name: "shell",
+          title: "Run shell",
+          status,
+          output: "",
+          clipped: false,
+          quiet: false,
+          row_group: null,
+          historical: true,
+        },
+      },
+    ]);
+    await h.event({
+      type: "start",
+      state: native("request"),
+      recovering: false,
+      root: {
+        cut: { journal: "root", leaf: "cut1" },
+        live_invocations: ["invocation"],
+      },
+    });
+    const row = h.run.getSnapshot().rows[0];
+    assert.equal(row.tool?.status, status === "saved" ? "running" : status);
+    assert.equal(row.tool?.historical, status !== "saved");
+    assert.equal(row.historical, status !== "saved");
+    await h.event({
+      type: "checkpoint",
+      cut: { journal: "root", leaf: "cut1" },
+      live_invocations: [],
+    });
+    assert.equal(h.run.getSnapshot().rows[0].tool?.status, status);
+    assert.equal(h.run.getSnapshot().rows[0].historical, true);
+    h.run.detach();
+  });
+}
 
 test("oversized older page remains actionable incomplete history instead of exceeding memory bound", async () => {
   const h = harness();

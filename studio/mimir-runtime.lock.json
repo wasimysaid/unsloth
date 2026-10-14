@@ -2,7 +2,7 @@
   "frontend": {
     "artifacts": {
       "mimir-plugin.toml": "43f29a1dbb2dc30edc7ddd0c604c90c47d2cf8daedfe449565287b6efcff7d1c",
-      "plugin.wasm": "3130e96f3e40be0c00348d60aefc683d05dc53a82c8a14d33d01ee6c840648ab"
+      "plugin.wasm": "1866538d21861d5cb5b4a4ee341400e91e23f2c63bb7ad1d9a292d6313f11c5f"
     },
     "build": [
       {

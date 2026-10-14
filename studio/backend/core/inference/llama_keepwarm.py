@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import functools
+from dataclasses import dataclass
 import threading
 import time
 from pathlib import Path
@@ -56,6 +58,134 @@ _lifecycle_lock = threading.Lock()
 
 
 _load_lock = threading.Lock()
+
+
+@dataclass(frozen = True)
+class CodingModelHold:
+    backend: object
+    slot: object | None
+    identity: tuple
+
+
+# Host request ownership, not HTTP activity or conversation retention. No TTL, task callback,
+# or teardown path may release these: only the caller's confirmed native terminal cleanup does.
+_coding_holds: dict[str, CodingModelHold] = {}
+# Destruction may run off-gate (notably cancellation of a loading worker). Publishing a hold
+# and entering a mutation are atomic under _lock. Counters do not block or serialize loads,
+# and so preserve ordinary off-gate cancellation and independent kept-slot operations.
+_coding_mutations: list[tuple[object | None, object | None]] = []
+
+
+def coding_model_identity(backend) -> tuple | None:
+    """Concrete resident identity; obtain and compare under the existing lifecycle/load gates."""
+    if getattr(backend, "is_loaded", False):
+        return _loaded_identity(backend)
+    active = getattr(backend, "active_model_name", None)
+    return (active,) if active else None
+
+
+def _coding_target_matches(hold, backend, slot) -> bool:
+    if backend is None and slot is None:
+        return True
+    if slot is not None and hold.slot is slot:
+        return True
+    return backend is not None and (
+        hold.backend is backend
+        or (hold.slot is not None and (
+            getattr(hold.slot, "llama", None) is backend
+            or getattr(hold.slot, "orchestrator", None) is backend
+        ))
+    )
+
+
+def _coding_protected_error(action: str):
+    from fastapi import HTTPException
+
+    return HTTPException(status_code = 409, detail = {
+        "error": "coding_model_protected",
+        "message": f"{action} would interrupt an active coding request. "
+        "Finish or cancel that request and wait for confirmed cleanup, then retry.",
+    })
+
+
+def hold_coding_model(token: str, backend, *, slot = None, identity: tuple) -> CodingModelHold:
+    """Protect one admitted concrete backend for a whole native coding request.
+
+    Caller MUST hold model_load_gate + inference_lifecycle_gate through non-evicting
+    admission and this publication. Identity is mandatory: a stale choice cannot borrow
+    a different resident. Repeating the same token/target is idempotent, retargeting is not.
+    """
+    if not isinstance(token, str) or not token:
+        raise ValueError("A non-empty coding request owner token is required")
+    with _lock:
+        existing = _coding_holds.get(token)
+        if existing is not None:
+            if existing.backend is backend and existing.slot is slot and existing.identity == identity:
+                return existing
+            raise ValueError("A coding request owner token cannot be retargeted")
+        hold = CodingModelHold(backend, slot, identity)
+        if any(_coding_target_matches(hold, b, s) for b, s in _coding_mutations):
+            raise _coding_protected_error("Model lifecycle maintenance in progress")
+        if identity is None or coding_model_identity(backend) != identity:
+            raise _coding_protected_error("The selected model changed; loading it")
+        if slot is not None:
+            from core.inference import model_slots
+            if slot not in model_slots.slots or backend not in (slot.llama, slot.orchestrator):
+                raise _coding_protected_error("The selected model slot changed; loading it")
+        _coding_holds[token] = hold
+        return hold
+
+
+def release_coding_model(token: str) -> bool:
+    """Release only this owner after confirmed terminal cleanup; never unload a model."""
+    global _last_active
+    with _lock:
+        if _coding_holds.pop(token, None) is None:
+            return False
+        _last_active = time.monotonic()
+        return True
+
+
+def coding_model_protection_count(backend = None, *, slot = None) -> int:
+    with _lock:
+        return sum(_coding_target_matches(h, backend, slot) for h in _coding_holds.values())
+
+
+def require_coding_model_unprotected(backend = None, *, slot = None, action = "Model maintenance") -> None:
+    """Refuse destructive management, including force, without leaking owner/model IDs."""
+    with _lock:
+        if any(_coding_target_matches(h, backend, slot) for h in _coding_holds.values()):
+            raise _coding_protected_error(action)
+
+
+@contextlib.contextmanager
+def coding_model_mutation(backend = None, *, slot = None, action = "Model maintenance"):
+    """Fence lower-owner destruction vs hold publication, without holding a lock over work."""
+    mutation = (backend, slot)
+    with _lock:
+        if any(_coding_target_matches(h, backend, slot) for h in _coding_holds.values()):
+            raise _coding_protected_error(action)
+        _coding_mutations.append(mutation)
+    try:
+        yield
+    finally:
+        with _lock:
+            # Identity, not equality: nested/parallel operations can have the same target.
+            for index, active in enumerate(_coding_mutations):
+                if active is mutation:
+                    del _coding_mutations[index]
+                    break
+
+
+def guards_coding_model(action: str):
+    """Decorate a concrete backend's destructive synchronous lifecycle operation."""
+    def decorate(fn):
+        @functools.wraps(fn)
+        def guarded(self, *args, **kwargs):
+            with coding_model_mutation(self, action = action):
+                return fn(self, *args, **kwargs)
+        return guarded
+    return decorate
 
 
 @contextlib.asynccontextmanager
@@ -866,7 +996,7 @@ async def idle_unload_loop(poll_seconds: float = 15.0) -> None:
                 if backend.is_loaded and await asyncio.to_thread(_user_pinned, backend):
                     # loaded from the UI, so the user wants it resident; only models the API loaded are freed
                     continue
-                if backend.is_loaded and _is_idle(ttl):
+                if backend.is_loaded and not coding_model_protection_count(backend) and _is_idle(ttl):
                     freed = _loaded_identity(backend)
                     manifest = None
                     if await asyncio.to_thread(get_auto_unload_keep_kv):

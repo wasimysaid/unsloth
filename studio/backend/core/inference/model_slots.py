@@ -14,6 +14,11 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from core.inference.orchestrator import routed_slot
+from core.inference.llama_keepwarm import (
+    coding_model_mutation,
+    coding_model_protection_count,
+    require_coding_model_unprotected,
+)
 from hub.services.models import account_access
 from loggers import get_logger
 from state import active_generations
@@ -152,7 +157,7 @@ def eviction_victims(
     for slot in sorted(candidates, key = lambda s: s.last_used):
         planned = getattr(slot.llama, "_planned_vram_mib", {})
         held = sum(mib for idx, mib in planned.items() if gpu_indices is None or idx in gpu_indices)
-        if slot.generations or slot.refs or (planned and not held):
+        if slot.generations or slot.refs or coding_model_protection_count(slot = slot) or (planned and not held):
             continue
         victims.append(slot)
         freed += held
@@ -163,11 +168,19 @@ def eviction_victims(
 
 def claim_victim(slot: ExtraSlot) -> bool:
     """Take ``slot`` out of routing unless a request reached it since it was picked."""
-    with lock:
-        if slot.generations or slot.refs or slot not in slots:
-            return False
-        slots.remove(slot)
-        return True
+    from fastapi import HTTPException
+
+    try:
+        with coding_model_mutation(slot = slot, action = "Evicting a kept model"):
+            with lock:
+                if slot.generations or slot.refs or slot not in slots:
+                    return False
+                slots.remove(slot)
+                return True
+    except HTTPException as exc:
+        if exc.status_code != 409:
+            raise
+        return False
 
 
 def evict(
@@ -203,6 +216,11 @@ def routed_generation_count() -> int:
 
 
 def drop(slot: ExtraSlot) -> None:
+    with coding_model_mutation(slot = slot, action = "Unloading a kept model"):
+        _drop_unprotected(slot)
+
+
+def _drop_unprotected(slot: ExtraSlot) -> None:
     from core.inference.llama_cpp import unregister_serving_backend
 
     with suppress(ValueError):
@@ -235,6 +253,8 @@ def stop_orchestrator_workers() -> None:
         s for s in resident() if s.orchestrator.active_model_name or _worker_alive(s.orchestrator)
     ]
     for slot in doomed:
+        require_coding_model_unprotected(slot = slot, action = "Installing a new transformers version")
+    for slot in doomed:
         with suppress(Exception):
             drop(slot)
     if any(_worker_alive(slot.orchestrator) for slot in doomed):
@@ -249,6 +269,10 @@ def _drop_where(predicate, strict: bool = False) -> int:
     filling = loading[0] if loading else None
     doomed = [slot for slot in list(slots) if predicate(slot, slot is filling)]
     retried = list(stuck)
+    # Refuse before removing routing or partially tearing down other slots; never swallow
+    # a protection refusal as a best-effort cleanup failure.
+    for slot in [*doomed, *retried]:
+        require_coding_model_unprotected(slot = slot, action = "Unloading kept models")
     failed = []
     for slot in doomed:
         try:
@@ -274,6 +298,8 @@ def unload_extra_models(
     """Drop every slot, or with ``keep`` only the loaded ones it does not spare. Returns how many."""
 
     def doomed(slot, filling):
+        if keep is not None and coding_model_protection_count(slot = slot):
+            return False  # idle unload spares whole-request owners, not unrelated slots
         loaded = slot.llama.is_loaded or slot.orchestrator.active_model_name
         return not (spare_filling and filling) and (
             keep is None or bool(loaded and not keep(slot.llama))
@@ -306,6 +332,8 @@ def audio_cpp_model_names(orchestrator) -> list[str]:
 def unload_audio_cpp_slots(strict: bool = False) -> int:
     """Drop every slot holding or loading an audio.cpp model, for the audio.cpp runtime swap."""
     doomed = [slot for slot in list(slots) if audio_cpp_model_names(slot.orchestrator)]
+    for slot in doomed:
+        require_coding_model_unprotected(slot = slot, action = "Updating the audio runtime")
     for slot in doomed:
         # drop() keeps the loading marker, so a load still ahead of its spawn would start a worker after it.
         for name in list(slot.orchestrator.loading_models):

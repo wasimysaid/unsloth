@@ -21,16 +21,16 @@ import {
 } from "react";
 import { restoreAnswerFocus, watchAnswerFocus } from "./answer-focus";
 import { codingRunApi } from "./api";
-import { CodingModeControl, PlanCard } from "./plan-card";
-import { GoalSummary } from "./goal-summary";
 import { ChildActivityRows, ChildInspector } from "./child-inspector";
 import { CodingComposer } from "./coding-composer";
 import { CodingCommandControls } from "./command-controls";
+import { GoalSummary } from "./goal-summary";
 import { createInputDraft } from "./input";
 import { CodingModelPicker } from "./model-configuration-popover";
+import { CodingModeControl, PlanCard } from "./plan-card";
 import { nativeMessageRow } from "./presentation";
-import { QuestionCard } from "./question-card";
 import { ProjectOverlapDialog } from "./project-overlap-dialog";
+import { QuestionCard } from "./question-card";
 import { codingRunAdapter } from "./run-runtime";
 import {
   codingRunCompletion,
@@ -218,7 +218,8 @@ export function CodingSurface({
       !state.native?.pending_user_request &&
       !state.commandBusy &&
       !state.uncertainCommand &&
-      !state.overlapWarning,
+      !state.overlapWarning &&
+      state.native?.execution_preparation?.phase !== "cleanup_pending",
   );
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -284,7 +285,7 @@ export function CodingSurface({
             )}
             {active && (
               <p
-                className="break-all text-muted-foreground"
+                className="break-words text-muted-foreground"
                 data-testid="coding-running-model"
               >
                 Running coding model:{" "}
@@ -313,6 +314,47 @@ export function CodingSurface({
                 History remains readable. Open the model picker to retry or
                 choose a replacement.
               </output>
+            )}
+            {state.native?.execution_preparation && (
+              <div
+                data-testid="coding-local-preparation"
+                className="space-y-2 break-words"
+              >
+                <p
+                  role={
+                    state.native.execution_preparation.phase === "loading"
+                      ? "status"
+                      : "alert"
+                  }
+                >
+                  {state.native.execution_preparation.message ??
+                    (state.native.execution_preparation.phase === "loading"
+                      ? "Preparing the exact native local-model selection without evicting other workloads."
+                      : "Local preparation or cleanup needs attention. No fallback was used.")}
+                </p>
+                {state.native.execution_preparation.retryable &&
+                  ["busy", "failed"].includes(
+                    state.native.execution_preparation.phase,
+                  ) && (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!canSend || Boolean(active)}
+                        onClick={() => void run?.configure({}).catch(() => {})}
+                      >
+                        {state.configuring
+                          ? "Retrying local selection…"
+                          : "Retry local selection"}
+                      </Button>
+                      <p className="text-muted-foreground">
+                        Retry checks the same selection. Resend failed work
+                        explicitly; no prompt is replayed and no idle model is
+                        reserved.
+                      </p>
+                    </>
+                  )}
+              </div>
             )}
             {completion?.error && (
               <p role="alert" className="break-words text-destructive">

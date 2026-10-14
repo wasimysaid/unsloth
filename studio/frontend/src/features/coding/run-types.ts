@@ -2,12 +2,6 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 import type {
-  CodingMode,
-  NativePlan,
-  PlanActionResult,
-  PlanDecision,
-} from "./plan-types.ts";
-import type {
   ChildAttempt,
   ChildDetail,
   ChildPresentation,
@@ -26,6 +20,12 @@ import type {
   CodingConfiguration,
   CodingConfigurationChange,
 } from "./model-selection.ts";
+import type {
+  CodingMode,
+  NativePlan,
+  PlanActionResult,
+  PlanDecision,
+} from "./plan-types.ts";
 import type { CodingConversation } from "./types.ts";
 
 export type RequestStatus =
@@ -94,6 +94,15 @@ export interface NativeState {
   configuration: CodingConfiguration;
   /** Native inventory/resolution failure, never a health certification. */
   selection_unavailable?: string | null;
+  /** Native preparation/cleanup, not inferred from picker or token traffic. */
+  execution_preparation?: {
+    request_id: string;
+    configuration: CodingConfiguration;
+    phase: "loading" | "busy" | "failed" | "cleanup_pending";
+    error_code: string | null;
+    message: string | null;
+    retryable: boolean;
+  } | null;
   running_configuration: CodingConfiguration | null;
   active_request: string | null;
   requests: NativeRequest[];
