@@ -142,6 +142,7 @@ def main() -> None:
             assert created.value.status == 201
             conversation = created.value.json()["id"]
             report["conversation_id"] = conversation
+            report["runtime_generation"] = created.value.json()["runtime_generation"]
             expect(page.get_by_test_id("coding-conversation-id")).to_have_text(conversation, timeout=60000)
             expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
             catalog = context.request.post(base + f"/api/coding/conversations/{conversation}/models/refresh", headers=headers)
@@ -251,7 +252,7 @@ def main() -> None:
                     report["rendered_running_shell_assertion"] = "passed"
                     snapshot("local-protected-native-shell-desktop")
                 terminal = status.inner_text() if status.count() else ""
-                if terminal.lower() in ("completed", "failed", "interrupted", "stopped"):
+                if terminal.lower().startswith(("completed", "failed", "interrupted", "stopped")):
                     report["terminal_status"] = terminal
                     break
                 page.wait_for_timeout(150)
