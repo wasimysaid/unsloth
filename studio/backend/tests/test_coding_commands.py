@@ -15,7 +15,8 @@ async def test_commands_and_bounded_diagnostics_preserve_native_shapes(coding_ap
     calls = []
 
     class Runtime:
-        async def command(self, method, params):
+        async def command(self, method, params, *, expected_generation=None):
+            assert expected_generation == (1 if method == "command" else None)
             calls.append((method, params))
             if method == "commands":
                 return {"conversation_id": params["conversation_id"], "commands": [{"name": "project:inspect", "aliases": ["inspect"], "description": "Contributed command", "argument": "path", "availability": "any"}]}

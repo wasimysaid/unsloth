@@ -148,7 +148,8 @@ def main():
                 # cancellation. Preserve actual terminal state rather than the ACK.
                 import httpx
                 conversation = browser_report["conversation_id"]
-                headers = {"Authorization": "Bearer " + token}
+                headers = {"Authorization": "Bearer " + token,
+                           "X-Mimir-Runtime-Generation": str(browser_report["runtime_generation"])}
                 with httpx.Client(timeout=httpx.Timeout(180, connect=10)) as client:
                     with client.stream("GET", base + f"/api/coding/conversations/{conversation}/events", headers=headers) as stream:
                         assert stream.status_code == 200

@@ -300,8 +300,10 @@ class PlanWorkloadTests(unittest.TestCase):
         self.assertIn("questions", FIXTURE_WORKLOADS)
         self.assertIn("goals", WORKLOADS)
         self.assertIn("goals", FIXTURE_WORKLOADS)
+        self.assertIn("maintenance", WORKLOADS)
+        self.assertIn("maintenance", FIXTURE_WORKLOADS)
         self.assertEqual(set(FIXTURE_WORKLOADS), {
-            "deterministic", "picker", "catalog", "recovery", "plan", "goals", "questions", "commands", "retirement",
+            "deterministic", "picker", "catalog", "recovery", "maintenance", "plan", "goals", "questions", "commands", "retirement",
             "concurrency", "children", "inputs", "file-changes", "reading",
         })
         self.assertTrue(set(FIXTURE_WORKLOADS).issubset(WORKLOADS))

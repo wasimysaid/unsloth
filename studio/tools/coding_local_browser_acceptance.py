@@ -142,6 +142,7 @@ def main() -> None:
             assert created.value.status == 201
             conversation = created.value.json()["id"]
             report["conversation_id"] = conversation
+            report["runtime_generation"] = created.value.json()["runtime_generation"]
             expect(page.get_by_test_id("coding-conversation-id")).to_have_text(conversation, timeout=60000)
             expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
             catalog = context.request.post(base + f"/api/coding/conversations/{conversation}/models/refresh", headers=headers)
@@ -234,13 +235,24 @@ def main() -> None:
                     refusal = context.request.post(base + "/api/inference/unload", headers=headers, data={"model_path": model["api_model"]})
                     assert refusal.status == 409, "Destructive production unload was not refused during native tools"
                     report["destructive_unload_during_tool"] = {"status": refusal.status, "coding_holds": gap_owner["coding_holds"]}
+                    runtime_before = context.request.get(base + "/api/coding/runtime", headers=headers).json()
+                    restart_refusal = context.request.post(base + "/api/coding/runtime/restart", headers=headers,
+                        data={"scope": "all_hosted_conversations"})
+                    assert restart_refusal.status == 409, "Whole-runtime restart was not refused during protected native tools"
+                    owner_after_refusal = context.request.get(base + "/api/coding-local-acceptance/protection", headers=headers).json()
+                    runtime_after = context.request.get(base + "/api/coding/runtime", headers=headers).json()
+                    assert owner_after_refusal["coding_holds"] > 0 and owner_after_refusal["native_pid"] == gap_owner["native_pid"]
+                    assert runtime_after["generation"] == runtime_before["generation"] and runtime_after["state"] == "running"
+                    report["whole_runtime_restart_during_protected_tool"] = {
+                        "status": restart_refusal.status, "generation": runtime_after["generation"],
+                        "coding_holds_preserved": owner_after_refusal["coding_holds"], "native_pid": owner_after_refusal["native_pid"]}
                     gap_hold = True
                     expect(rendered).to_contain_text("running", timeout=3000)
                     report["shell_row_during_native_gap"] = rendered.inner_text()[:1024]
                     report["rendered_running_shell_assertion"] = "passed"
                     snapshot("local-protected-native-shell-desktop")
                 terminal = status.inner_text() if status.count() else ""
-                if terminal.lower() in ("completed", "failed", "interrupted", "stopped"):
+                if terminal.lower().startswith(("completed", "failed", "interrupted", "stopped")):
                     report["terminal_status"] = terminal
                     break
                 page.wait_for_timeout(150)

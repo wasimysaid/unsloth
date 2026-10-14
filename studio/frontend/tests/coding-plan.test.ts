@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { goalActionDisabledReason } from "../src/features/coding/goal.ts";
+import { CodingHttpError } from "../src/features/coding/errors.ts";
 import type {
   NativePlan,
   PlanDecision,
@@ -111,6 +112,37 @@ function harness() {
       },
     });
   return { run, api, calls, start };
+}
+
+for (const operation of ["mode", "plan"] as const) {
+  for (const status of [409, 503]) {
+    test(`${operation} owner-loss evidence ${status} requires deliberate reopen without replay`, async () => {
+      const h = harness();
+      await h.start();
+      const reject = async () => {
+        h.calls.push(operation);
+        throw new CodingHttpError(status, "Runtime changed; deliberately reopen", true);
+      };
+      h.api.setMode = reject;
+      h.api.decidePlan = reject;
+      const change = () => operation === "mode" ? h.run.setMode("build") : h.run.decidePlan(plan, "implement");
+      try {
+        await change();
+        assert.equal(h.run.getSnapshot().reopenRequired, true);
+        assert.equal(h.run.getSnapshot().connection, "disconnected");
+        assert.ok(h.run.getSnapshot().planControl);
+        assert.equal(h.run.getSnapshot().native?.plan?.status, "review_pending");
+        assert.equal(h.run.getSnapshot().native?.configuration.mode, "plan");
+        assert.match(h.run.getSnapshot().planControlError!, /reopen/i);
+        h.run.connect();
+        await change();
+        assert.deepEqual(h.calls, [operation]);
+        assert.equal(h.run.getSnapshot().connection, "disconnected");
+      } finally {
+        h.run.detach();
+      }
+    });
+  }
 }
 
 test("mode selection is configuration, not plan acceptance; authoritative state waits for fresh cut", async () => {

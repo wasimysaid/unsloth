@@ -172,6 +172,7 @@ test("installed runtime upcoming assistant placeholder is not a native transcrip
     reopenRequired: false,
     reconcilingAction: null,
     retryStop: null,
+    continuationRequested: null,
     planControl: null,
     planControlReconciling: false,
     planControlUncertain: false,

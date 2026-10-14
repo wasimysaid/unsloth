@@ -58,6 +58,13 @@ def create_app() -> FastAPI:
         faults["reset_conversation"] = conversation_id
         return {"configured": True}
 
+    @app.post("/api/coding-acceptance/shutdown", dependencies = [Depends(get_current_subject)])
+    async def shutdown_native_runtime():
+        # Test-only exposure of the production lifespan operation, retaining its
+        # terminal cleanup result instead of treating uvicorn exit as proof.
+        await close_coding_runtime(app)
+        return runtime_for(app).status()
+
     if os.environ.get("CODING_ACCEPTANCE_RETIREMENT_FIXTURES") == "1":
         @app.post("/api/coding-acceptance/retention-clock", dependencies = [Depends(get_current_subject)])
         async def retention_clock(body: RetentionClock, request: Request):

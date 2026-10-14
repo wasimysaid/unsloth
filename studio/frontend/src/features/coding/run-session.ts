@@ -85,6 +85,7 @@ export interface CodingRunState {
   reopenRequired: boolean;
   reconcilingAction: string | null;
   retryStop: string | null;
+  continuationRequested: string | null;
   planControl: PendingPlanControl | null;
   planControlReconciling: boolean;
   planControlUncertain: boolean;
@@ -109,6 +110,10 @@ export interface CodingRunState {
     | (CodingInput & { key: string; overlap: ProjectOverlap })
     | null;
 }
+const needsReopen = (reason: unknown) =>
+  reason instanceof Error &&
+  "requiresReopen" in reason &&
+  reason.requiresReopen === true;
 const MAX_ROWS = 1000;
 const MAX_TEXT = 2 * 1024 * 1024;
 const errorText = (reason: unknown) =>
@@ -124,6 +129,7 @@ export function createCodingRun(
   options: {
     storage?: () => SubmissionStorage;
     reconnectDelay?: (attempt: number) => number;
+    onRuntimeLost?: () => void;
   } = {},
 ) {
   const pendingStore = pendingSubmissionStore(id, options.storage);
@@ -153,6 +159,7 @@ export function createCodingRun(
     reopenRequired: false,
     reconcilingAction: null,
     retryStop: null,
+    continuationRequested: null,
     planControl: null,
     planControlReconciling: false,
     planControlUncertain: false,
@@ -189,6 +196,7 @@ export function createCodingRun(
   let diagnosticRevision = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
+  let runtimeLost = false;
   let saved: CodingRow[] = [];
   let provisional: CodingRow[] = [];
   let liveInvocations = new Set<string>();
@@ -794,7 +802,26 @@ export function createCodingRun(
     }
     reconcileAnswers(answersAwaitCapture);
   }
+  function requireRuntimeReopen() {
+    if (runtimeLost) return;
+    runtimeLost = true;
+    // Retire cached/in-flight maintenance evidence before publishing owner loss.
+    options.onRuntimeLost?.();
+    ++incarnation;
+    if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    abort?.abort();
+    abort = null;
+    update({
+      connection: "disconnected",
+      disconnected: true,
+      reopenRequired: true,
+      answerTarget: null,
+      loadingEarlier: false,
+    }); // Retain saved rows, model identity, errors and pending delivery keys.
+  }
   function connect() {
+    if (runtimeLost) return; // Only a deliberately reopened owner gets a new run.
     if (reconnectTimer !== null) clearTimeout(reconnectTimer);
     reconnectTimer = null;
     abort?.abort();
@@ -831,17 +858,19 @@ export function createCodingRun(
       .catch((reason: unknown) => {
         if (controller.signal.aborted || current !== incarnation) return;
         controller.abort();
+        const requiresReopen = needsReopen(reason);
+        if (requiresReopen) requireRuntimeReopen();
         childView.setConnected(false);
         update({
           connection: "disconnected",
           answerTarget: null,
           disconnected: true,
-          reopenRequired: reason instanceof Error && "requiresReopen" in reason,
+          reopenRequired: requiresReopen,
           error: errorText(reason),
         });
         // Every attempt obtains a new atomic capture. Never replay an event cursor
         // or reopen/take over the native conversation owner.
-        if (reason instanceof Error && "requiresReopen" in reason) return;
+        if (requiresReopen) return;
         const delay =
           options.reconnectDelay?.(reconnectAttempt) ??
           Math.min(500 * 2 ** Math.min(reconnectAttempt, 5), 15000);
@@ -925,7 +954,12 @@ export function createCodingRun(
       return true;
     } catch (reason) {
       if (state.acceptedSubmissionKey === key) return true;
-      if (reason instanceof CodingOverlapError) {
+      if (needsReopen(reason)) {
+        requireRuntimeReopen();
+        update({
+          error: `${errorText(reason)} Deliberately reopen before reconciling this same submission identity. This rejection does not resolve an earlier uncertain acceptance; no prompt was replayed.`,
+        });
+      } else if (reason instanceof CodingOverlapError) {
         clearPending(key, false);
         update({
           overlapWarning: { key, ...input, overlap: reason.overlap },
@@ -942,6 +976,7 @@ export function createCodingRun(
           error: errorText(reason),
           unsentDraft: input.text,
         });
+        return false;
       } else if (state.uncertainSubmission?.key === key) {
         update({
           error: `${errorText(reason)} Delivery is unconfirmed; do not send a new copy. Reconnect or retry the same submission identity.`,
@@ -984,6 +1019,10 @@ export function createCodingRun(
         planControlUncertain: !rejected,
         planControlError: errorText(reason),
       });
+      if (needsReopen(reason)) {
+        requireRuntimeReopen();
+        return;
+      }
     }
     // Acceptance is not authoritative state; reconstruct without replaying.
     if (current !== attachment || abort === null) return;
@@ -1294,8 +1333,10 @@ export function createCodingRun(
       };
       publishRows();
     } catch (reason) {
-      if (current === incarnation && intentRevision === readingIntentRevision)
+      if (current === incarnation && intentRevision === readingIntentRevision) {
+        if (needsReopen(reason)) requireRuntimeReopen();
         update({ error: errorText(reason) });
+      }
     } finally {
       // Even superseded reading intent must release this incarnation's loading
       // flag. Jump does not abort the authoritative native watcher or its reads.
@@ -1320,6 +1361,18 @@ export function createCodingRun(
       };
     },
     connect,
+    requireRuntimeReopen,
+    async continueInterruptedWork() {
+      const request = codingInterruptedRequest(state);
+      if (!request || !codingCanContinue(state)) return;
+      update({ continuationRequested: request.id });
+      const sent = await submit(
+        { text: `Continue the interrupted work from request ${request.id}. Review saved history and the current project state first; do not blindly repeat commands or assume prior actions completed.` },
+        makeKey(),
+      );
+      // Uncertain delivery stays locked to its new key, not another continuation.
+      if (sent === false) update({ continuationRequested: null });
+    },
     editAnswer(target: AnswerTarget, answers: NativeAnswer[]) {
       const form = state.answerForms.find((item) =>
         sameTarget(item.target, target),
@@ -1366,7 +1419,10 @@ export function createCodingRun(
         const latest = state.answerForms.find((item) =>
           sameQuestion(item.target, target),
         );
-        if (latest?.status === "accepted") return; // Public native evidence supersedes a lost ACK.
+        if (latest?.status === "accepted") {
+          if (needsReopen(reason)) requireRuntimeReopen();
+          return; // Public native evidence supersedes a lost ACK, not owner loss.
+        }
         const rejected =
           reason instanceof Error &&
           "admissionRejected" in reason &&
@@ -1377,9 +1433,13 @@ export function createCodingRun(
             ? errorText(reason)
             : `${errorText(reason)} Answer delivery is unconfirmed. Inspecting native state and history; no answer was replayed.`,
         });
-        // Even a rejection can race cancellation/replacement. Rebuild authority
-        // before admitting a new action, retaining the exact question's draft.
-        connect();
+        if (needsReopen(reason)) {
+          requireRuntimeReopen();
+        } else {
+          // Even a rejection can race cancellation/replacement. Rebuild authority
+          // before admitting a new action, retaining the exact question's draft.
+          connect();
+        }
       }
     },
     async configure(change: CodingConfigurationChange) {
@@ -1541,14 +1601,18 @@ export function createCodingRun(
         return true;
       } catch (reason) {
         if (current !== incarnation) return false;
-        // Reconstruct even on explicit stale/busy refusals: the old controls are
-        // invalid. Never retry a non-idempotent goal command automatically.
+        // Reconstruct stale/busy refusals, but never retarget a lost owner or
+        // automatically retry a non-idempotent goal command.
+        const requiresReopen = needsReopen(reason);
         update({
           goalChanging: null,
           reconcilingGoal: change.action,
-          goalNotice: `${errorText(reason)} Inspecting a fresh native view before another goal action; no action was replayed.`,
+          goalNotice: requiresReopen
+            ? `${errorText(reason)} Deliberately reopen saved history before another goal action; no action was replayed.`
+            : `${errorText(reason)} Inspecting a fresh native view before another goal action; no action was replayed.`,
         });
-        connect();
+        if (requiresReopen) requireRuntimeReopen();
+        else connect();
         return false;
       }
     },
@@ -1716,6 +1780,13 @@ export function createCodingRun(
           state.stopping !== request
         )
           return;
+        if (needsReopen(reason)) {
+          requireRuntimeReopen();
+          update({
+            error: `${errorText(reason)} Cancellation is unconfirmed. Deliberately reopen saved history before another action; no cancellation was replayed.`,
+          });
+          return;
+        }
         update({
           reconcilingAction: request,
           error:
@@ -1748,6 +1819,35 @@ export function createCodingRun(
   };
 }
 export type CodingRun = ReturnType<typeof createCodingRun>;
+
+export function codingInterruptedRequest(state: CodingRunState | null) {
+  const latest = state?.native?.requests.at(-1);
+  return latest?.status === "interrupted" ? latest : null;
+}
+
+export function codingCanContinue(state: CodingRunState | null): boolean {
+  const request = codingInterruptedRequest(state);
+  return Boolean(
+    state &&
+      request &&
+      state.connection === "connected" &&
+      !state.recovering &&
+      !state.native?.active_request &&
+      !state.native?.pending_user_request &&
+      !state.native?.requests.some(
+        (item) => item.status === "queued" || item.status === "running",
+      ) &&
+      !state.submitting &&
+      !state.goalChanging &&
+      !state.reconcilingGoal &&
+      !state.planControl &&
+      !state.stopping &&
+      !state.reconcilingAction &&
+      !state.uncertainSubmission &&
+      !state.storageError &&
+      state.continuationRequested !== request.id,
+  );
+}
 
 export function codingModeControlReason(
   state: CodingRunState | null,

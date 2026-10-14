@@ -31,6 +31,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import {
+  useCallback,
   type RefObject,
   useEffect,
   useLayoutEffect,
@@ -38,7 +39,9 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { codingApi, mcpSettingsApi } from "./api";
+import { codingApi, codingRuntimeApi, mcpSettingsApi } from "./api";
+import { createRuntimeMaintenance } from "./runtime-maintenance";
+import { CodingRuntimeControls } from "./runtime-controls";
 import { CodingSurface } from "./coding-surface";
 import { createMcpSettings } from "./mcp-settings";
 import { MimirSettings } from "./mimir-settings";
@@ -200,10 +203,28 @@ function CodingSidebar({
 }
 
 export function CodingPage() {
-  const [session] = useState(() => createCodingSession(codingApi));
+  const [maintenance] = useState(() =>
+    createRuntimeMaintenance(codingRuntimeApi),
+  );
+  const inspectFreshRuntime = useCallback(() => {
+    maintenance.invalidate();
+    void maintenance.refresh();
+  }, [maintenance]);
+  const [session] = useState(() =>
+    createCodingSession(codingApi, { onOpened: inspectFreshRuntime }),
+  );
   const [settings] = useState(() => createMcpSettings(mcpSettingsApi));
   const [tab, setTab] = useState<"conversation" | "settings">("conversation");
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
+  const runtime = useSyncExternalStore(
+    maintenance.subscribe,
+    maintenance.getSnapshot,
+  );
+  useEffect(() => {
+    void maintenance.refresh();
+    const timer = setInterval(() => void maintenance.refresh(), 3000);
+    return () => clearInterval(timer);
+  }, [maintenance]);
   const [folderOpen, setFolderOpen] = useState(false);
   const folderInvoker = useRef<HTMLElement | null>(null);
   const projectChooser = useRef<HTMLButtonElement | null>(null);
@@ -267,6 +288,7 @@ export function CodingPage() {
             </Button>
           </nav>
         </header>
+        <CodingRuntimeControls maintenance={maintenance} state={runtime} />
         {tab === "settings" && (
           <MimirSettings settings={settings} conversation={state.active} />
         )}
@@ -324,6 +346,26 @@ export function CodingPage() {
                   >
                     {state.active.id}
                   </p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-auto whitespace-normal text-left"
+                    data-testid="coding-reopen-saved"
+                    aria-disabled={
+                      state.opening ||
+                      Boolean(
+                        state.openingUncertainty &&
+                          !state.openingUncertainty.inspected,
+                      )
+                    }
+                    aria-describedby="coding-project-disclosure"
+                    onClick={() =>
+                      void session.openConversation(state.active!.id)
+                    }
+                  >
+                    Reopen saved conversation
+                  </Button>
                 </div>
               )}
               {state.reopened && (
@@ -366,6 +408,9 @@ export function CodingPage() {
             <CodingSurface
               key={`${state.active?.id ?? "unopened"}:${state.openingGeneration}`}
               conversationId={state.active?.id ?? null}
+              conversationGeneration={state.active?.runtime_generation}
+              runtimeStatus={runtime.status}
+              onRuntimeLost={inspectFreshRuntime}
             >
               {/* The host project chooser intentionally sits beneath the composer, not in its toolbar. */}
               <div

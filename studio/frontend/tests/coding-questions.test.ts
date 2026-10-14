@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createCodingRun } from "../src/features/coding/run-session.ts";
+import { CodingHttpError } from "../src/features/coding/errors.ts";
 import type {
   AnswerTarget,
   CodingRow,
@@ -151,6 +152,63 @@ function harness() {
   };
 }
 
+for (const status of [409, 503]) {
+  test(`answer loss evidence ${status} requires deliberate owner reopen without replaying the retained draft`, async () => {
+    const h = harness();
+    await h.start();
+    const target = currentTarget(h.run);
+    h.run.editAnswer(target, answers);
+    h.respond(async () => { throw new CodingHttpError(status, "Runtime changed; deliberately reopen", true); });
+    try {
+      await h.run.answer(target);
+      assert.equal(h.run.getSnapshot().reopenRequired, true);
+      assert.equal(h.run.getSnapshot().connection, "disconnected");
+      assert.equal(h.run.getSnapshot().answerTarget, null);
+      assert.deepEqual(h.run.getSnapshot().answerForms[0].answers, answers);
+      h.run.connect();
+      await h.run.answer(target);
+      assert.equal(h.calls.length, 1, "an answer cannot reach a replacement owner or replay itself");
+      assert.equal(h.run.getSnapshot().connection, "disconnected");
+    } finally {
+      h.run.detach();
+    }
+  });
+
+  test(`accepted native answer history does not hide owner-loss evidence ${status} from a late ACK`, async () => {
+    const h = harness();
+    await h.start();
+    const target = currentTarget(h.run);
+    h.run.editAnswer(target, answers);
+    h.respond(async () => {
+      h.setRows([{
+        id: "accepted",
+        kind: "user",
+        answer: { request_id: "request", user_request_id: "question", answers },
+      }]);
+      await h.event({
+        type: "checkpoint",
+        cut: { journal: "root", leaf: "accepted-answer-cut" },
+        live_invocations: [],
+      });
+      assert.equal(h.run.getSnapshot().answerForms[0].status, "accepted");
+      throw new CodingHttpError(status, "Runtime changed; deliberately reopen", true);
+    });
+    try {
+      await h.run.answer(target);
+      assert.equal(h.run.getSnapshot().reopenRequired, true);
+      assert.equal(h.run.getSnapshot().connection, "disconnected");
+      assert.equal(h.run.getSnapshot().answerTarget, null);
+      assert.equal(h.run.getSnapshot().answerForms[0].status, "accepted");
+      assert.deepEqual(h.run.getSnapshot().answerForms[0].answers, answers);
+      assert.equal(h.run.getSnapshot().rows[0].id, "accepted");
+      h.run.connect();
+      await h.run.answer(target);
+      assert.equal(h.calls.length, 1);
+    } finally {
+      h.run.detach();
+    }
+  });
+}
 test("mode selection preserves the current question draft without deciding its plan or replaying answers", async () => {
   const h = harness();
   const plan = {

@@ -11,6 +11,7 @@ import type {
   PluginReloadStatus,
   RuntimeDiagnostics,
 } from "./maintenance";
+import type { CodingRuntimeApi } from "./runtime-maintenance";
 import type {
   McpDraft,
   McpInventory,
@@ -68,9 +69,22 @@ async function codingRequest(
     throw new CodingHttpError(
       response.status,
       await readFastApiError(response, "Coding request failed"),
+      response.headers.get("X-Mimir-Requires-Reopen") === "true",
     );
   }
   return response;
+}
+
+function openedConversation(info: CodingConversation): CodingConversation {
+  if (
+    typeof info.runtime_generation !== "number" ||
+    !Number.isSafeInteger(info.runtime_generation) ||
+    info.runtime_generation < 1
+  )
+    throw new Error(
+      "Native opening did not confirm its runtime generation. Inspect shared native history, then deliberately reopen the saved conversation; no owner operation can use an inferred generation.",
+    );
+  return info;
 }
 
 export const codingApi: CodingApi = {
@@ -111,7 +125,7 @@ export const codingApi: CodingApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cwd }),
     });
-    return (await response.json()) as CodingConversation;
+    return openedConversation((await response.json()) as CodingConversation);
   },
   async openConversation(id) {
     const response = await codingRequest(
@@ -120,7 +134,7 @@ export const codingApi: CodingApi = {
         method: "POST",
       },
     );
-    return (await response.json()) as CodingConversation;
+    return openedConversation((await response.json()) as CodingConversation);
   },
   async browseProjects(path, signal) {
     const query = new URLSearchParams({ path });
@@ -128,6 +142,21 @@ export const codingApi: CodingApi = {
       signal,
     });
     return (await response.json()) as CodingProjectDirectory;
+  },
+};
+
+export const codingRuntimeApi: CodingRuntimeApi = {
+  async readStatus() {
+    return await (await codingRequest("/runtime")).json();
+  },
+  async restart() {
+    return await (
+      await codingRequest("/runtime/restart", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: "all_hosted_conversations" }),
+      })
+    ).json();
   },
 };
 
@@ -277,13 +306,18 @@ export async function discoverCodingSkills(id: string, signal?: AbortSignal) {
   return (await response.json()) as { skills: import("./input").CodingSkill[] };
 }
 
-export const codingRunApi: RunApi = {
+/** Owner execution and views retain the generation confirmed by create/open. */
+export function createCodingRunApi(openingGeneration: number): RunApi {
+  if (!Number.isSafeInteger(openingGeneration) || openingGeneration < 1)
+    throw new Error("A confirmed runtime generation from create/open is required. Deliberately reopen the saved conversation.");
+  const generationHeaders = { "X-Mimir-Runtime-Generation": String(openingGeneration) };
+  return {
   async changeGoal(id, change) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/goal`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...generationHeaders, "Content-Type": "application/json" },
         body: JSON.stringify(change),
       },
     );
@@ -294,7 +328,7 @@ export const codingRunApi: RunApi = {
       `/conversations/${encodeURIComponent(id)}/mode`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...generationHeaders, "Content-Type": "application/json" },
         body: JSON.stringify({ mode }),
       },
     );
@@ -305,7 +339,7 @@ export const codingRunApi: RunApi = {
       `/conversations/${encodeURIComponent(id)}/requests/${encodeURIComponent(target.request_id)}/questions/${encodeURIComponent(target.user_request_id)}/answers`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...generationHeaders, "Content-Type": "application/json" },
         body: JSON.stringify({ subscription: target.subscription, answers }),
       },
     );
@@ -328,7 +362,7 @@ export const codingRunApi: RunApi = {
       `/conversations/${encodeURIComponent(id)}/commands`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...generationHeaders, "Content-Type": "application/json" },
         body: JSON.stringify({ name, tail, operation_id: operationId }),
       },
     );
@@ -339,7 +373,7 @@ export const codingRunApi: RunApi = {
       `/conversations/${encodeURIComponent(id)}/plan-actions`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...generationHeaders, "Content-Type": "application/json" },
         body: JSON.stringify({
           plan_id: plan.id,
           revision: plan.revision,
@@ -389,7 +423,7 @@ export const codingRunApi: RunApi = {
       `/conversations/${encodeURIComponent(id)}/prompts`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...generationHeaders, "Content-Type": "application/json" },
         body: JSON.stringify({
           submission_key: submissionKey,
           text,
@@ -400,49 +434,42 @@ export const codingRunApi: RunApi = {
     );
     return await response.json();
   },
-  async cancel(id, requestId) {
-    const response = await codingRequest(
-      `/conversations/${encodeURIComponent(id)}/requests/${encodeURIComponent(requestId)}/cancel`,
-      { method: "POST" },
-    );
-    return await response.json();
-  },
-  async readEntries(id, cut, anchor, signal) {
-    const response = await codingRequest(
-      `/conversations/${encodeURIComponent(id)}/entries`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal,
-        body: JSON.stringify({
-          cut,
-          anchor,
-          max_entries: 100,
-          max_bytes: 262144,
-        }),
-      },
-    );
-    return (await response.json()) as EntryPage;
-  },
-  watch: watchCodingConversation,
-};
-
-/** Consume the native view stream without building a browser-owned message history. */
-export async function watchCodingConversation(
-  id: string,
-  signal: AbortSignal,
-  onConnected: () => void,
-  onView?: (view: unknown) => Promise<void> | void,
-): Promise<void> {
-  const response = await codingRequest(
-    `/conversations/${encodeURIComponent(id)}/events`,
-    {
-      signal,
-      headers: { Accept: "text/event-stream" },
+    async cancel(id, requestId) {
+      const response = await codingRequest(
+        `/conversations/${encodeURIComponent(id)}/requests/${encodeURIComponent(requestId)}/cancel`,
+        { method: "POST", headers: { ...generationHeaders } },
+      );
+      return await response.json();
     },
-  );
-  if (!response.body)
-    throw new Error("The native event stream is unavailable.");
-  if (!signal.aborted) onConnected();
-  await consumeCodingEvents(response.body, signal, onView);
+    async readEntries(id, cut, anchor, signal) {
+      const response = await codingRequest(
+        `/conversations/${encodeURIComponent(id)}/entries`,
+        {
+          method: "POST",
+          headers: { ...generationHeaders, "Content-Type": "application/json" },
+          signal,
+          body: JSON.stringify({
+            cut,
+            anchor,
+            max_entries: 100,
+            max_bytes: 262144,
+          }),
+        },
+      );
+      return (await response.json()) as EntryPage;
+    },
+    async watch(id, signal, onConnected, onView) {
+      const response = await codingRequest(
+        `/conversations/${encodeURIComponent(id)}/events`,
+        {
+          signal,
+          headers: { ...generationHeaders, Accept: "text/event-stream" },
+        },
+      );
+      if (!response.body)
+        throw new Error("The native event stream is unavailable.");
+      if (!signal.aborted) onConnected();
+      await consumeCodingEvents(response.body, signal, onView);
+    },
+  };
 }

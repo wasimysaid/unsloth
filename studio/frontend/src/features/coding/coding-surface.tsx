@@ -20,7 +20,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { restoreAnswerFocus, watchAnswerFocus } from "./answer-focus";
-import { codingRunApi } from "./api";
+import { createCodingRunApi } from "./api";
 import { boundedContentKeyDown } from "./bounded-content";
 import { ChildActivityRows, ChildInspector } from "./child-inspector";
 import { CodingComposer } from "./coding-composer";
@@ -44,6 +44,8 @@ import {
   createTranscriptReader,
 } from "./transcript-reader";
 import { CodingUnsentDraft } from "./unsent-draft";
+import { CodingRecoveryControls } from "./recovery-controls";
+import type { CodingRuntimeStatus } from "./runtime-maintenance";
 
 // Focus intent only, not another answer/history store. assistant-ui may project
 // a native row one render after its question controls have disappeared.
@@ -187,11 +189,32 @@ const messageComponents = {
 
 export function CodingSurface({
   conversationId,
+  conversationGeneration,
+  runtimeStatus,
+  onRuntimeLost,
   children,
-}: { conversationId: string | null; children: React.ReactNode }) {
-  const [run] = useState(() =>
-    conversationId ? createCodingRun(conversationId, codingRunApi) : null,
-  );
+}: {
+  conversationId: string | null;
+  conversationGeneration?: number;
+  runtimeStatus: CodingRuntimeStatus | null;
+  onRuntimeLost?: () => void;
+  children: React.ReactNode;
+}) {
+  const [run] = useState(() => {
+    if (
+      !conversationId ||
+      typeof conversationGeneration !== "number" ||
+      !Number.isSafeInteger(conversationGeneration) ||
+      conversationGeneration < 1
+    )
+      return null;
+    return createCodingRun(
+      conversationId,
+      createCodingRunApi(conversationGeneration),
+      undefined,
+      { onRuntimeLost },
+    );
+  });
   const state = useSyncExternalStore(
     run?.subscribe ?? (() => () => {}),
     run?.getSnapshot ?? (() => null),
@@ -233,6 +256,21 @@ export function CodingSurface({
       run?.detach();
     };
   }, [run]);
+  useEffect(() => {
+    if (!run || !runtimeStatus || conversationGeneration === undefined) return;
+    // Successful create/open invalidates prior observations before this owner is
+    // published. Fresh epochs are opaque: inequality, not numeric order, is loss.
+    const replaced = runtimeStatus.generation !== conversationGeneration;
+    // Same-generation restart preparation/uncertainty is not proof of process
+    // loss. A refused attempt must leave the connected view and Stop available.
+    if (
+      replaced ||
+      ["disconnected", "stopped", "cleanup_failed"].includes(
+        runtimeStatus.state,
+      )
+    )
+      run.requireRuntimeReopen();
+  }, [runtimeStatus, conversationGeneration, run]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Restore geometry after row/question DOM replacement, not only new activity.
   useLayoutEffect(() => {
     reader.current?.activity(
@@ -298,13 +336,20 @@ export function CodingSurface({
         }
       />
       <ThreadPrimitive.Root className="flex min-h-min min-w-0 flex-1 flex-col gap-3">
+        {conversationId && !run && (
+          <p role="alert" className="break-words text-sm text-destructive">
+            The saved conversation has no confirmed opening generation.
+            Deliberately reopen it before sending or controlling native work;
+            runtime status cannot supply its owner identity.
+          </p>
+        )}
         {state && (
           <div
             ref={statusFocus}
             role="region"
             aria-label="Coding request status"
             tabIndex={-1}
-            className="space-y-2 rounded-xl border border-border/60 px-3 py-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="max-h-[35dvh] shrink-0 space-y-2 overflow-y-auto rounded-xl border border-border/60 px-3 py-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             data-testid="coding-event-status"
           >
             <output
@@ -434,6 +479,7 @@ export function CodingSurface({
                   : "Disconnected · work may still be running. Reconnecting automatically; this warning stays until native history is rebuilt."}
               </output>
             )}
+            <CodingRecoveryControls state={state} run={run} />
             {(state.reconcilingAction || state.retryStop) && (
               <output
                 className="block"

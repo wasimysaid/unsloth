@@ -32,7 +32,10 @@ const errorText = (error: unknown) =>
     : "The coding request failed. Please try again.";
 
 /** Ephemeral presentation state backed exclusively by the native HTTP API. */
-export function createCodingSession(api: CodingApi) {
+export function createCodingSession(
+  api: CodingApi,
+  options: { onOpened?: (conversation: CodingConversation) => void } = {},
+) {
   let state: CodingSessionState = {
     conversations: [],
     active: null,
@@ -103,6 +106,9 @@ export function createCodingSession(api: CodingApi) {
     update({ opening: true, openingError: null });
     try {
       const active = await operation();
+      // Synchronous lifecycle boundary: retire old runtime observations before
+      // publishing this owner, including deliberate same-ID reopenings.
+      options.onOpened?.(active);
       openingMutation = false;
       // The canonical cwd and conversation ID come from Mimir, never the browser input.
       // A deliberate same-ID reopening also needs a fresh native view after

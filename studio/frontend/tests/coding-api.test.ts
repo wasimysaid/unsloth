@@ -10,10 +10,14 @@ import {
   CodingOverlapError,
 } from "../src/features/coding/errors.ts";
 import { consumeCodingEvents } from "../src/features/coding/events.ts";
+import { createCodingRun } from "../src/features/coding/run-session.ts";
+import { memorySubmissionStorage } from "./coding-storage-fixture.ts";
 import * as fastApiError from "../src/lib/format-fastapi-error.ts";
 import { loadWithStubs } from "./helpers/module-stubs.ts";
 
-function client(response: () => Response) {
+function client(
+  response: (path: string, init?: RequestInit) => Response | Promise<Response>,
+) {
   const requests: { path: string; init?: RequestInit; options: unknown }[] = [];
   const api = loadWithStubs<typeof Coding>(
     new URL("../src/features/coding/api.ts", import.meta.url),
@@ -25,7 +29,7 @@ function client(response: () => Response) {
           options?: unknown,
         ) => {
           requests.push({ path, init, options });
-          return response();
+          return response(path, init);
         },
       },
       "@/lib/format-fastapi-error": fastApiError,
@@ -38,8 +42,8 @@ function client(response: () => Response) {
 
 test("mode and plan decisions are separate authenticated non-replayed commands with exact revision", async () => {
   const c = client(() => Response.json({ conversation_id: "conversation/id" }));
-  await c.api.codingRunApi.setMode("conversation/id", "plan");
-  await c.api.codingRunApi.decidePlan(
+  await c.api.createCodingRunApi(7).setMode("conversation/id", "plan");
+  await c.api.createCodingRunApi(7).decidePlan(
     "conversation/id",
     {
       id: "plan-id",
@@ -74,6 +78,8 @@ test("mode and plan decisions are separate authenticated non-replayed commands w
       },
     ],
   );
+  for (const request of c.requests)
+    assert.equal(new Headers(request.init?.headers).get("X-Mimir-Runtime-Generation"), "7");
 });
 
 test("goal changes carry exact native revision and action without transport replay or fabricated completion", async () => {
@@ -84,7 +90,7 @@ test("goal changes carry exact native revision and action without transport repl
     revision: "native-owner-goal-revision",
   };
   assert.deepEqual(
-    await c.api.codingRunApi.changeGoal!(result.conversation_id, change),
+    await c.api.createCodingRunApi(7).changeGoal!(result.conversation_id, change),
     result,
   );
   assert.deepEqual(c.requests, [
@@ -92,7 +98,7 @@ test("goal changes carry exact native revision and action without transport repl
       path: "/api/coding/conversations/native%2Fid%3F/goal",
       init: {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "X-Mimir-Runtime-Generation": "7", "Content-Type": "application/json" },
         body: JSON.stringify(change),
       },
       options: { retryNetworkErrors: false },
@@ -102,7 +108,7 @@ test("goal changes carry exact native revision and action without transport repl
     Response.json({ detail: "Goal controls are stale" }, { status: 409 }),
   );
   await assert.rejects(
-    stale.api.codingRunApi.changeGoal!("id", change),
+    stale.api.createCodingRunApi(7).changeGoal!("id", change),
     /stale/,
   );
 });
@@ -128,7 +134,11 @@ test("browse uses authenticated host API with query encoding and cancellation", 
 });
 
 test("native creation sends only cwd with no transport replay, prompts, settings or tools", async () => {
-  const native = { id: "native-1", cwd: "/canonical/project" };
+  const native = {
+    id: "native-1",
+    cwd: "/canonical/project",
+    runtime_generation: 7,
+  };
   const c = client(() => Response.json(native));
   assert.deepEqual(
     await c.api.codingApi.createConversation("/host/link"),
@@ -148,7 +158,7 @@ test("native creation sends only cwd with no transport replay, prompts, settings
 });
 
 test("list and explicit reopen consume native records; IDs are encoded as one path segment", async () => {
-  const row = { id: "native/id?", cwd: "/saved" };
+  const row = { id: "native/id?", cwd: "/saved", runtime_generation: 7 };
   let listing = true;
   const c = client(() =>
     Response.json(listing ? { conversations: [row], next_cursor: null } : row),
@@ -243,13 +253,17 @@ test("run and Stop carry exact native identities without implicit transport retr
       cancel_requested: true,
     }),
   );
-  await c.api.codingRunApi.submit("conversation/id", "same-key", "Work once");
-  await c.api.codingRunApi.cancel("conversation/id", "request/id");
-  await c.api.codingRunApi.readEntries(
-    "conversation/id",
-    { journal: "root", leaf: "captured-leaf" },
-    { after: "previous-leaf" },
-  );
+  await c.api
+    .createCodingRunApi(7)
+    .submit("conversation/id", "same-key", "Work once");
+  await c.api.createCodingRunApi(7).cancel("conversation/id", "request/id");
+  await c.api
+    .createCodingRunApi(7)
+    .readEntries(
+      "conversation/id",
+      { journal: "root", leaf: "captured-leaf" },
+      { after: "previous-leaf" },
+    );
   assert.deepEqual(
     c.requests.map((request) => request.path),
     [
@@ -269,8 +283,13 @@ test("run and Stop carry exact native identities without implicit transport retr
     max_entries: 100,
     max_bytes: 262144,
   });
-  for (const request of c.requests)
+  for (const request of c.requests) {
     assert.deepEqual(request.options, { retryNetworkErrors: false });
+    assert.equal(
+      new Headers(request.init?.headers).get("X-Mimir-Runtime-Generation"),
+      "7",
+    );
+  }
 });
 
 test("child inspection carries exact attempt and immutable child journal through authenticated read-only APIs", async () => {
@@ -287,7 +306,7 @@ test("child inspection carries exact attempt and immutable child journal through
   const c = client(() => Response.json(detail));
   const abort = new AbortController();
   assert.deepEqual(
-    await c.api.codingRunApi.readChild(
+    await c.api.createCodingRunApi(7).readChild(
       "conversation/id?",
       "agent-native",
       7,
@@ -302,7 +321,7 @@ test("child inspection carries exact attempt and immutable child journal through
   assert.equal(c.requests[0].init?.signal, abort.signal);
   assert.equal(c.requests[0].init?.body, undefined);
   const cut = { journal: { child: "agent-native" }, leaf: "child-cut" };
-  await c.api.codingRunApi.readEntries(
+  await c.api.createCodingRunApi(7).readEntries(
     "conversation/id?",
     cut,
     "latest",
@@ -343,7 +362,7 @@ test("effective skills and rich prompt inputs use authenticated exact-ID transpo
     skill_mentions: [{ name: "plugin:alpha:review", start: 0, end: 20 }],
     images: [{ mime_type: "image/png", data: "exact-base64" }],
   };
-  await c.api.codingRunApi.submit(
+  await c.api.createCodingRunApi(7).submit(
     "native/id",
     "same-key",
     "@plugin:alpha:review",
@@ -375,9 +394,14 @@ test("event stream uses authenticated fetch, exposes a disconnect event and is c
   const abort = new AbortController();
   let connected = false;
   await assert.rejects(
-    c.api.watchCodingConversation("native/id", abort.signal, () => {
-      connected = true;
-    }),
+    c.api.createCodingRunApi(7).watch(
+      "native/id",
+      abort.signal,
+      () => {
+        connected = true;
+      },
+      async () => {},
+    ),
     /Native frontend stopped/,
   );
   assert.equal(connected, true);
@@ -387,6 +411,7 @@ test("event stream uses authenticated fetch, exposes a disconnect event and is c
   );
   assert.equal(c.requests[0].init?.signal, abort.signal);
   assert.deepEqual(c.requests[0].init?.headers, {
+    "X-Mimir-Runtime-Generation": "7",
     Accept: "text/event-stream",
   });
   assert.deepEqual(c.requests[0].options, { retryNetworkErrors: false });
@@ -435,11 +460,11 @@ test("picker reads only authenticated native catalog and sends identity patches 
   const c = client(() => Response.json([]));
   const controller = new AbortController();
   await c.api.codingModelApi.catalog("conversation/id", controller.signal);
-  await c.api.codingRunApi.configure("conversation/id", {
+  await c.api.createCodingRunApi(7).configure("conversation/id", {
     provider: "provider-id",
     model: "provider-local-id",
   });
-  await c.api.codingRunApi.configure("conversation/id", {
+  await c.api.createCodingRunApi(7).configure("conversation/id", {
     reasoning: "medium",
   });
   assert.equal(
@@ -550,11 +575,13 @@ test("coding transport failure stays unconfirmed without claiming native work di
     throw transport;
   });
   await assert.rejects(
-    c.api.codingRunApi.readEntries(
-      "conversation",
-      { journal: "root", leaf: "captured" },
-      "latest",
-    ),
+    c.api
+      .createCodingRunApi(7)
+      .readEntries(
+        "conversation",
+        { journal: "root", leaf: "captured" },
+        "latest",
+      ),
     (reason: unknown) => {
       assert.ok(reason instanceof Error);
       assert.match(
@@ -594,7 +621,7 @@ test("answers address exact conversation, request, question and live view withou
   };
   const c = client(() => Response.json(result));
   assert.deepEqual(
-    await c.api.codingRunApi.answer(result.conversation_id, target, answers),
+    await c.api.createCodingRunApi(7).answer(result.conversation_id, target, answers),
     result,
   );
   assert.deepEqual(c.requests, [
@@ -602,7 +629,7 @@ test("answers address exact conversation, request, question and live view withou
       path: "/api/coding/conversations/conversation%2Fid%3F/requests/request%2Fid%3F/questions/question%2Fid%3F/answers",
       init: {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "X-Mimir-Runtime-Generation": "7", "Content-Type": "application/json" },
         body: JSON.stringify({ subscription: target.subscription, answers }),
       },
       options: { retryNetworkErrors: false },
@@ -612,7 +639,7 @@ test("answers address exact conversation, request, question and live view withou
     throw new Error("Lost answer acknowledgement");
   });
   await assert.rejects(
-    loss.api.codingRunApi.answer(result.conversation_id, target, answers),
+    loss.api.createCodingRunApi(7).answer(result.conversation_id, target, answers),
     /Lost answer/,
   );
   assert.equal(loss.requests.length, 1);
@@ -634,18 +661,326 @@ test("coding request preserves abort and non-transport authentication errors", a
   }
 });
 
+test("whole-runtime maintenance carries explicit all-hosted scope and never replays refusal", async () => {
+  const status = { state: "running", generation: 2, cleanup: null };
+  const c = client(() => Response.json(status));
+  assert.deepEqual(await c.api.codingRuntimeApi.readStatus(), status);
+  assert.deepEqual(await c.api.codingRuntimeApi.restart(), status);
+  assert.deepEqual(
+    c.requests.map((request) => request.path),
+    ["/api/coding/runtime", "/api/coding/runtime/restart"],
+  );
+  assert.deepEqual(c.requests[1].init, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scope: "all_hosted_conversations" }),
+  });
+  assert.deepEqual(c.requests[1].options, { retryNetworkErrors: false });
+  const refused = client(() =>
+    Response.json(
+      { detail: "Native runtime busy; Stop affected work first" },
+      { status: 409 },
+    ),
+  );
+  await assert.rejects(
+    refused.api.codingRuntimeApi.restart(),
+    /Native runtime busy/,
+  );
+  assert.equal(refused.requests.length, 1);
+});
+
+test("create/open must acquire a valid generation; catalog/status cannot supply an inferred fence", async () => {
+  for (const generation of [
+    undefined,
+    0,
+    -1,
+    1.5,
+    "7",
+    Number.MAX_SAFE_INTEGER + 1,
+  ]) {
+    const c = client(() =>
+      Response.json({
+        id: "saved",
+        cwd: "/project",
+        runtime_generation: generation,
+      }),
+    );
+    await assert.rejects(
+      c.api.codingApi.createConversation("/project"),
+      /did not confirm its runtime generation/,
+    );
+    await assert.rejects(
+      c.api.codingApi.openConversation("saved"),
+      /did not confirm its runtime generation/,
+    );
+    assert.equal(c.requests.length, 2, "opening responses are never replayed");
+  }
+  const c = client(() => Response.json({}));
+  for (const generation of [
+    undefined,
+    0,
+    -1,
+    1.5,
+    NaN,
+    Infinity,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])
+    assert.throws(
+      () => c.api.createCodingRunApi(generation as number),
+      /confirmed runtime generation.*reopen/,
+    );
+  assert.deepEqual(
+    c.requests,
+    [],
+    "invalid fences fail before any owner HTTP request",
+  );
+});
+
+test("owner API retains the exact large opening epoch despite status changes and delayed HTTP delivery", async () => {
+  const openingEpoch = 2 ** 49 + 123;
+  let liveEpoch = openingEpoch;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const admitted: string[] = [];
+  const c = client(async (path, init) => {
+    if (path.endsWith("/open"))
+      return Response.json({
+        id: "saved",
+        cwd: "/project",
+        runtime_generation: liveEpoch,
+      });
+    if (path.endsWith("/runtime"))
+      return Response.json({
+        state: "running",
+        generation: liveEpoch,
+        cleanup: null,
+      });
+    await gate;
+    if (
+      new Headers(init?.headers).get("X-Mimir-Runtime-Generation") !==
+      String(liveEpoch)
+    )
+      return Response.json(
+        {
+          detail:
+            "Stale runtime generation; deliberately reopen the saved conversation",
+        },
+        {
+          status: 409,
+          headers: { "X-Mimir-Requires-Reopen": "true" },
+        },
+      );
+    admitted.push(path);
+    return Response.json({
+      conversation_id: "saved",
+      request_id: "new-request",
+      submission_key: JSON.parse(String(init?.body)).submission_key,
+    });
+  });
+  const opening = await c.api.codingApi.openConversation("saved");
+  const owner = c.api.createCodingRunApi(opening.runtime_generation!);
+  const controller = new AbortController();
+  const delayed = [
+    owner.submit("saved", "original-key", "Original accepted work"),
+    owner.cancel("saved", "original-request"),
+    owner.readEntries("saved", { journal: "root", leaf: "cut" }, "latest"),
+    owner.watch(
+      "saved",
+      controller.signal,
+      () => {},
+      async () => {},
+    ),
+  ];
+  const results = Promise.allSettled(delayed);
+  liveEpoch = 3; // A new backend epoch can be numerically smaller; no retargeting.
+  await c.api.codingRuntimeApi.readStatus();
+  release();
+  for (const result of await results) {
+    assert.equal(result.status, "rejected");
+    if (result.status === "rejected") {
+      assert.ok(result.reason instanceof CodingHttpError);
+      assert.equal(result.reason.requiresReopen, true);
+      assert.match(result.reason.message, /Stale runtime generation/);
+    }
+  }
+  const oldRequests = c.requests.filter(
+    (request) =>
+      !request.path.endsWith("/open") && !request.path.endsWith("/runtime"),
+  );
+  assert.equal(
+    oldRequests.length,
+    4,
+    "no delayed operation was automatically retried",
+  );
+  for (const request of oldRequests)
+    assert.equal(
+      new Headers(request.init?.headers).get("X-Mimir-Runtime-Generation"),
+      String(openingEpoch),
+    );
+  assert.deepEqual(
+    admitted,
+    [],
+    "old calls cannot act against the replacement incarnation",
+  );
+  assert.deepEqual(JSON.parse(String(oldRequests[0].init?.body)), {
+    submission_key: "original-key",
+    text: "Original accepted work",
+  });
+  assert.ok(oldRequests[1].path.includes("/requests/original-request/cancel"));
+  const reopened = await c.api.codingApi.openConversation("saved");
+  const replacementOwner = c.api.createCodingRunApi(
+    reopened.runtime_generation!,
+  );
+  await replacementOwner.submit("saved", "new-key", "Explicit new admission");
+  assert.equal(
+    new Headers(c.requests.at(-1)?.init?.headers).get(
+      "X-Mimir-Runtime-Generation",
+    ),
+    "3",
+  );
+  assert.equal(
+    admitted.length,
+    1,
+    "only explicitly acquired replacement ownership admits new work",
+  );
+});
+
+test("HTTP reopen evidence is explicit: stale 409 and loss 503 require reopen, busy 409 does not", async () => {
+  for (const [status, requiresReopen] of [
+    [409, true],
+    [503, true],
+    [409, false],
+  ] as const) {
+    const c = client(() =>
+      Response.json(
+        {
+          detail: requiresReopen
+            ? "Owner incarnation lost; deliberately reopen"
+            : "Native runtime busy",
+        },
+        {
+          status,
+          headers: requiresReopen ? { "X-Mimir-Requires-Reopen": "true" } : {},
+        },
+      ),
+    );
+    await assert.rejects(
+      c.api.createCodingRunApi(7).watch(
+        "saved",
+        new AbortController().signal,
+        () => {},
+        async () => {},
+      ),
+      (reason: unknown) => {
+        assert.ok(reason instanceof CodingHttpError);
+        assert.equal(reason.requiresReopen, requiresReopen);
+        return true;
+      },
+    );
+    assert.equal(c.requests.length, 1);
+  }
+});
+
+for (const failure of ["process_loss", "view_overflow", "busy_view"] as const) {
+  test(`production scoped watch handles ${failure} without implicit owner reopen or prompt replay`, async () => {
+    let watches = 0;
+    const c = client(() => {
+      watches++;
+      if (watches === 1 && failure === "busy_view")
+        return Response.json(
+          { detail: "Native runtime temporarily busy" },
+          { status: 409 },
+        );
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (watches === 1)
+            controller.enqueue(
+              new TextEncoder().encode(
+                `event:error\ndata:${JSON.stringify({
+                  code:
+                    failure === "process_loss"
+                      ? "disconnected"
+                      : "view_overflow",
+                  requires_reopen: failure === "process_loss",
+                  message:
+                    failure === "process_loss"
+                      ? "Native process lost; deliberately reopen"
+                      : "View buffer overflow; reconnect for fresh capture",
+                })}\n\n`,
+              ),
+            );
+        },
+      });
+      return new Response(body, {
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    });
+    const attempts: number[] = [];
+    const run = createCodingRun(
+      "saved",
+      c.api.createCodingRunApi(7),
+      () => "unused-key",
+      {
+        storage: () => memorySubmissionStorage(),
+        reconnectDelay: (attempt) => {
+          attempts.push(attempt);
+          return 0;
+        },
+      },
+    );
+    try {
+      run.connect();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      if (failure === "process_loss") {
+        assert.equal(run.getSnapshot().reopenRequired, true);
+        assert.equal(run.getSnapshot().connection, "disconnected");
+        assert.deepEqual(attempts, []);
+        run.connect();
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(
+          watches,
+          1,
+          "only deliberate native reopen can acquire a replacement owner",
+        );
+      } else {
+        assert.equal(run.getSnapshot().reopenRequired, false);
+        assert.deepEqual(attempts, [0]);
+        assert.equal(
+          watches,
+          2,
+          "transient view failure reconnects the same fenced owner",
+        );
+      }
+      for (const request of c.requests) {
+        assert.ok(
+          request.path.endsWith("/events"),
+          "no open/create/prompt/cancel was replayed",
+        );
+        assert.equal(
+          new Headers(request.init?.headers).get("X-Mimir-Runtime-Generation"),
+          "7",
+        );
+      }
+    } finally {
+      run.detach();
+    }
+  });
+}
+
 test("overlap preflight authenticates exact identity and confirmation is explicit", async () => {
   const overlap = {
     cwd: "/canonical/project",
     conversations: [{ id: "other" }],
   };
   const c = client(() => Response.json(overlap));
-  assert.deepEqual(await c.api.codingRunApi.checkOverlap("native/id"), overlap);
+  assert.deepEqual(await c.api.createCodingRunApi(7).checkOverlap("native/id"), overlap);
   assert.equal(
     c.requests[0].path,
     "/api/coding/conversations/native%2Fid/overlap",
   );
-  await c.api.codingRunApi.submit(
+  await c.api.createCodingRunApi(7).submit(
     "native/id",
     "key",
     "warned draft",
@@ -678,7 +1013,7 @@ test("structured overlap refusal is distinct from native busy/capacity and malfo
     ),
   );
   await assert.rejects(
-    c.api.codingRunApi.submit("id", "key", "draft"),
+    c.api.createCodingRunApi(7).submit("id", "key", "draft"),
     (error: unknown) => {
       assert.ok(error instanceof CodingOverlapError);
       assert.deepEqual(error.overlap, overlap);
@@ -693,7 +1028,7 @@ test("structured overlap refusal is distinct from native busy/capacity and malfo
       ),
     );
     await assert.rejects(
-      busy.api.codingRunApi.submit("id", "key", "draft"),
+      busy.api.createCodingRunApi(7).submit("id", "key", "draft"),
       (error: unknown) => {
         assert.ok(error instanceof CodingHttpError);
         assert.equal(error.admissionRejected, true);
@@ -705,7 +1040,7 @@ test("structured overlap refusal is distinct from native busy/capacity and malfo
     Response.json({ cwd: "/alias", conversations: [{ id: null }] }),
   );
   await assert.rejects(
-    malformed.api.codingRunApi.checkOverlap("id"),
+    malformed.api.createCodingRunApi(7).checkOverlap("id"),
     /could not be confirmed.*No prompt was sent/,
   );
 });

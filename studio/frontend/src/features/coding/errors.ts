@@ -38,9 +38,11 @@ export class CodingOverlapError extends Error {
 export class CodingHttpError extends Error {
   readonly admissionRejected: boolean;
   readonly status: number;
-  constructor(status: number, message: string) {
+  readonly requiresReopen: boolean;
+  constructor(status: number, message: string, requiresReopen = false) {
     super(message);
     this.status = status;
+    this.requiresReopen = requiresReopen;
     this.admissionRejected = [400, 401, 403, 404, 409, 422, 429].includes(
       status,
     );

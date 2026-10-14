@@ -138,7 +138,8 @@ async def test_cold_events_configure_local_serving_before_native_start(coding_ap
     app.state.coding_runtime = runtime
     monkeypatch.setenv("UNSLOTH_MIMIR_STUDIO_URL", "http://127.0.0.1:8800")
 
-    async def subscribe(identifier):
+    async def subscribe(identifier, *, expected_generation=None):
+        assert expected_generation == 1, "SSE must preserve the opened owner's runtime fence"
         assert runtime.local_serving is not None, "SSE must configure serving before starting native execution"
         raise CodingRuntimeError("not_found", "Unknown saved conversation")
 

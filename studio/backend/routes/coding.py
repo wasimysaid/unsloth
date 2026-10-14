@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path as ApiPath, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Path as ApiPath, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
@@ -47,6 +47,11 @@ class NativeViewResponse(StreamingResponse):
 class ProjectSelection(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     cwd: str = Field(min_length = 1, max_length = 32768)
+
+
+class RuntimeRestart(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    scope: Literal["all_hosted_conversations"]
 
 
 MAX_IMAGE_BYTES = 512 * 1024
@@ -206,19 +211,23 @@ def _http_error(exc: CodingRuntimeError) -> HTTPException:
         })
     status = {"invalid": 400, "not_found": 404, "denied": 403,
               "busy": 409, "conflict": 409, "trust_conflict": 409,
-              "stale_plan": 409, "stale_goal": 409,
+              "runtime_changed": 409, "stale_plan": 409, "stale_goal": 409,
               "unavailable": 503, "disconnected": 503, "uncertain": 504,
-              "limit": 429, "failed": 502, "protocol": 502}.get(exc.code, 502)
-    return HTTPException(status_code = status, detail = exc.message,
-                         headers = {"Cache-Control": "no-store"})
+              "limit": 429, "failed": 502, "cleanup_failed": 502, "protocol": 502}.get(exc.code, 502)
+    headers = {"Cache-Control": "no-store"}
+    if exc.requires_reopen:
+        headers["X-Mimir-Requires-Reopen"] = "true"
+    return HTTPException(status_code = status, detail = exc.message, headers = headers)
 
 
-async def _command(request: Request, method: str, params: dict | None = None):
+async def _command(request: Request, method: str, params: dict | None = None, *, generation: int | None = None):
     try:
         runtime = runtime_for(request.app)
         if isinstance(runtime, CodingRuntime):
             await runtime.configure_local_serving(request)
-        return await runtime.command(method, params)
+        if generation is None:
+            return await runtime.command(method, params)
+        return await runtime.command(method, params, expected_generation = generation)
     except CodingRuntimeError as exc:
         raise _http_error(exc) from exc
 
@@ -243,7 +252,7 @@ def _local_serving(request: Request, incarnation: str | None = None):
     serving = getattr(runtime, "local_serving", None)
     header = request.headers.get("authorization", "")
     token = header[7:] if header.lower().startswith("bearer ") else ""
-    if (serving is None or not secrets.compare_digest(token.encode(), serving.key.encode())
+    if (serving is None or serving.closing or not secrets.compare_digest(token.encode(), serving.key.encode())
             or (incarnation is not None and incarnation != serving.incarnation)):
         # Established authentication runs first. A valid browser token or another
         # incarnation's workflow key still has no lifecycle release authority.
@@ -320,6 +329,24 @@ def _browse(path: str | None) -> dict:
         # Python 3.12 reports symlink loops/unknown ~users as RuntimeError;
         # they are invalid host paths, not an internal-server failure.
         raise HTTPException(400, "That host folder cannot be read. Check the path and host permissions.") from exc
+
+
+@router.get("/runtime")
+async def runtime_status(request: Request):
+    return await runtime_for(request.app).inspect_status()
+
+
+@router.post("/runtime/restart")
+async def restart_whole_runtime(body: RuntimeRestart, request: Request):
+    # Explicit all-conversation scope, not plugin hot reload. Native admission
+    # refuses any busy hosted owner; HTTP disconnect never cancels maintenance.
+    try:
+        runtime = runtime_for(request.app)
+        if isinstance(runtime, CodingRuntime):
+            await runtime.configure_local_serving(request)
+        return await runtime.restart()
+    except CodingRuntimeError as exc:
+        raise _http_error(exc) from exc
 
 
 @router.get("/projects/browse")
@@ -415,49 +442,55 @@ async def conversation_skills(conversation_id: str, request: Request):
 
 
 @router.post("/conversations/{conversation_id}/prompts", status_code = 202)
-async def submit_prompt(conversation_id: str, body: PromptSubmission, request: Request):
+async def submit_prompt(conversation_id: str, body: PromptSubmission, request: Request,
+                        generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
     # Slash attempts never bypass native command handling, including recovered drafts.
     if body.text.lstrip().startswith("/"):
         raise HTTPException(400, "Slash commands must use native command dispatch; no model prompt was submitted.")
-    # Mimir admits/deduplicates the submission and owns scheduling and saved input.
-    return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump(exclude_unset = True), "overlap_confirmed": body.overlap_confirmed})
+    # Native deduplication and the opening's exact supervisor incarnation both apply.
+    return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump(exclude_unset = True), "overlap_confirmed": body.overlap_confirmed}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/requests/{request_id}/cancel")
-async def cancel_request(conversation_id: str, request_id: str, request: Request):
+async def cancel_request(conversation_id: str, request_id: str, request: Request,
+                         generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
     # Acceptance is not settlement. The ordered native view confirms completion.
-    return await _command(request, "cancel", {"conversation_id": conversation_id, "request_id": request_id})
+    return await _command(request, "cancel", {"conversation_id": conversation_id, "request_id": request_id}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/mode")
-async def select_mode(conversation_id: str, body: ModeSelection, request: Request):
+async def select_mode(conversation_id: str, body: ModeSelection, request: Request,
+                      generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
     # Configuration selection is not plan acceptance; native execution owns admission.
-    return await _command(request, "set_mode", {"conversation_id": conversation_id, **body.model_dump()})
+    return await _command(request, "set_mode", {"conversation_id": conversation_id, **body.model_dump()}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/plan-actions")
-async def decide_plan(conversation_id: str, body: PlanSelection, request: Request):
-    # Exact current identity/revision is validated at the native operation boundary.
-    return await _command(request, "decide_plan", {"conversation_id": conversation_id, **body.model_dump()})
+async def decide_plan(conversation_id: str, body: PlanSelection, request: Request,
+                      generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
+    # Validate both the opening's owner generation and exact native plan revision.
+    return await _command(request, "decide_plan", {"conversation_id": conversation_id, **body.model_dump()}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/goal")
-async def change_goal(conversation_id: str, body: GoalChange, request: Request):
-    # Native owner validates revision and admission atomically. No retry or
-    # inference from an accepted command to verified completion belongs here.
+async def change_goal(conversation_id: str, body: GoalChange, request: Request,
+                      generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
+    # Native owner validates revision and admission atomically; the opening's
+    # generation prevents delivery to a replacement owner. Never infer completion.
     return await _command(request, "change_goal", {"conversation_id": conversation_id,
-                                                  **body.model_dump(exclude_unset = True)})
+                                                  **body.model_dump(exclude_unset = True)}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/requests/{request_id}/questions/{user_request_id}/answers")
 async def answer_questions(conversation_id: str, request_id: str, user_request_id: str,
-                           body: AnswerSubmission, request: Request):
+                           body: AnswerSubmission, request: Request,
+                           generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
     # Native admission validates the current request/question/view before accepting
     # the waiter. Public answer history and terminal cleanup are separate evidence;
     # uncertain delivery must be reconciled through the native view, never replayed.
     return await _command(request, "answer", {"conversation_id": conversation_id,
                           "request_id": request_id, "user_request_id": user_request_id,
-                          **body.model_dump()})
+                          **body.model_dump()}, generation = generation)
 
 
 @router.get("/conversations/{conversation_id}/commands")
@@ -466,9 +499,10 @@ async def discover_commands(conversation_id: str, request: Request):
 
 
 @router.post("/conversations/{conversation_id}/commands")
-async def invoke_command(conversation_id: str, body: CommandInvocation, request: Request):
-    # Not prompt delivery: the browser reconciles a lost reply before another action.
-    return await _command(request, "command", {"conversation_id": conversation_id, **body.model_dump()})
+async def invoke_command(conversation_id: str, body: CommandInvocation, request: Request,
+                         generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
+    # A command may submit native work too; never dispatch it into a replacement owner.
+    return await _command(request, "command", {"conversation_id": conversation_id, **body.model_dump()}, generation = generation)
 
 
 @router.get("/conversations/{conversation_id}/commands/{operation_id}")
@@ -484,8 +518,9 @@ async def inspect_diagnostics(conversation_id: str, kind: Literal["context", "to
 
 
 @router.post("/conversations/{conversation_id}/entries")
-async def read_entries(conversation_id: str, body: HistorySelection, request: Request):
-    return await _command(request, "read_entries", {"conversation_id": conversation_id, **body.model_dump()})
+async def read_entries(conversation_id: str, body: HistorySelection, request: Request,
+                       generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
+    return await _command(request, "read_entries", {"conversation_id": conversation_id, **body.model_dump()}, generation = generation)
 
 
 @router.get("/conversations/{conversation_id}/children/{handle}/attempts/{attempt}")
@@ -500,14 +535,16 @@ async def child_detail(conversation_id: str, request: Request,
 
 
 @router.get("/conversations/{conversation_id}/events")
-async def conversation_events(conversation_id: str, request: Request):
+async def conversation_events(conversation_id: str, request: Request,
+                              generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
     # A GET never implicitly opens an owner or grants project trust. The plugin
     # captures its native ordered view; no snapshot-then-subscribe race exists.
     runtime = runtime_for(request.app)
     try:
         if isinstance(runtime, CodingRuntime):
             await runtime.configure_local_serving(request)
-        subscription, queue = await runtime.subscribe(conversation_id)
+        subscription, queue = await runtime.subscribe(conversation_id, expected_generation = generation)
+        observation_epoch = runtime.observation_epoch
     except CodingRuntimeError as exc:
         raise _http_error(exc) from exc
 
@@ -519,11 +556,12 @@ async def conversation_events(conversation_id: str, request: Request):
                 yield ": keepalive\n\n"
                 continue
             if isinstance(item, CodingRuntimeError):
-                yield "event: disconnected\ndata: " + json.dumps({"message": item.message}) + "\n\n"
+                yield "event: disconnected\ndata: " + json.dumps({"message": item.message, "code": item.code, "requires_reopen": item.requires_reopen}) + "\n\n"
                 return
-            # Scope repeated native positions to one runtime without rewriting
-            # subscription, position or event, or mutating the native queue item.
-            envelope = {**item, "observation_epoch": runtime.observation_epoch}
+            # Retained views keep their admitted observation domain even when
+            # the persistent supervisor publishes a replacement process.
+            # Do not rewrite native subscription/position/event or queue items.
+            envelope = {**item, "observation_epoch": observation_epoch}
             yield "event: view\ndata: " + json.dumps(envelope, separators = (",", ":")) + "\n\n"
             if item.get("event", {}).get("type") == "closed":
                 return

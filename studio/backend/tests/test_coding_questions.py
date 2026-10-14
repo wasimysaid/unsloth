@@ -25,7 +25,8 @@ async def test_answer_preserves_exact_identities_payload_and_native_ack(coding_a
            "user_request_id": "exact-user-request", "subscription": "exact-live-view", "accepted": True}
 
     class RecordingRuntime:
-        async def command(self, method, params):
+        async def command(self, method, params, *, expected_generation=None):
+            assert expected_generation == 1
             calls.append((method, params))
             return ack
 
@@ -67,7 +68,8 @@ async def test_native_invalid_stale_or_uncertain_answer_is_not_retried(coding_ap
     calls = []
 
     class RejectingRuntime:
-        async def command(self, method, params):
+        async def command(self, method, params, *, expected_generation=None):
+            assert expected_generation == 1
             calls.append((method, params))
             raise CodingRuntimeError(code, "The exact question was not confirmed; reconstruct its native view.")
 

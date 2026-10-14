@@ -56,6 +56,7 @@ from coding_catalog_scenarios import run_catalog_scenarios
 from coding_extension_scenarios import prepare_extension_fixtures, run_extension_scenarios
 from coding_input_scenarios import prepare_input_project, input_scenarios, live_input_scenario
 from coding_recovery_scenarios import run_recovery_scenarios
+from coding_maintenance_scenarios import run_maintenance_scenarios, verify_shutdown
 from coding_plan_scenarios import run_plan_scenarios
 from coding_goal_scenarios import run_goal_scenarios
 from coding_question_scenarios import run_question_scenarios
@@ -67,8 +68,8 @@ from coding_file_change_scenarios import LIVE_PROFILE_OBSERVER, run_file_change_
 from coding_reading_scenarios import READING_VIEW_FAULT, run_reading_scenarios
 
 
-WORKLOADS = ("opening", "deterministic", "picker", "catalog", "recovery", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live", "reading")
-FIXTURE_WORKLOADS = ("deterministic", "picker", "catalog", "recovery", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "file-changes", "reading")
+WORKLOADS = ("opening", "deterministic", "picker", "catalog", "recovery", "maintenance", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live", "reading")
+FIXTURE_WORKLOADS = ("deterministic", "picker", "catalog", "recovery", "maintenance", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "file-changes", "reading")
 
 
 def shared_trust_path() -> Path:
@@ -437,9 +438,13 @@ def main() -> None:
                                    if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
                         assert len(product) == 1
                         report["supervised_pid"] = product[0].pid
+                    elif args.workload == "maintenance":
+                        run_maintenance_scenarios(page, context, base, provider, first, second_id,
+                                                  report, scenario, snapshot, server.pid)
                     elif args.workload == "plan":
                         run_plan_scenarios(page, context, base, provider, first, second_id,
-                                           report, scenario, snapshot)
+                                           report, scenario, snapshot,
+                                           opening_generation = reopened.value.json()["runtime_generation"])
                     elif args.workload == "questions":
                         run_question_scenarios(page, context, base, provider, first, second_id,
                                                report, scenario, snapshot)
@@ -556,6 +561,8 @@ def main() -> None:
             from urllib.parse import urlencode
             denied_requests = []
             for method, path, kwargs in (
+                ("get", "/api/coding/runtime", {}),
+                ("post", "/api/coding/runtime/restart", {"data": {"scope": "all_hosted_conversations"}}),
                 ("get", "/api/coding/projects/browse", {}),
                 ("get", "/api/coding/catalog?" + urlencode({"cwd": str(first)}), {}),
                 ("get", "/api/coding/conversations", {}),
@@ -603,6 +610,8 @@ def main() -> None:
                                                   "minimum_observation_ms": 11000,
                                                   "status_requests": ordinary_status_requests}
             scenario("A9-ordinary-observer-isolation", "Direct coding route with loaded-model preference enabled issued no ordinary inference/media status polls; no ordinary workload was loaded or cancelled")
+            if args.workload == "maintenance":
+                verify_shutdown(page, context, base, provider, report, scenario)
             browser.close()
         assert fingerprint(trust_path) == trust_before, "Isolated saved ancestor distrust was changed"
         assert fingerprint(shared_trust) == shared_before, "Shared saved trust changed during acceptance"

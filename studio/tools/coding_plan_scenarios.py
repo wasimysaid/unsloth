@@ -61,12 +61,13 @@ def validate_action_ack(ack: dict, conversation: str, plan: dict, decision: str)
 
 
 def run_plan_scenarios(page, context, base, provider, first, second_id, report,
-                       scenario, snapshot):
+                       scenario, snapshot, *, opening_generation):
     from playwright.sync_api import expect
 
     assert provider is not None, "Plan acceptance requires the deterministic external provider"
     conversation = page.get_by_test_id("coding-conversation-id").inner_text()
-    headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')")}
+    headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')"),
+               "X-Mimir-Runtime-Generation": str(opening_generation)}
     prefix = base + f"/api/coding/conversations/{conversation}"
     action_url, mode_url, event_url = [prefix + suffix for suffix in ("/plan-actions", "/mode", "/events")]
     composer = page.get_by_label("Coding prompt", exact=True)
@@ -84,7 +85,11 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
     def reopen(identifier=conversation):
         saved = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text=identifier)
         expect(saved).to_be_visible(timeout=60000)
-        saved.click()
+        with page.expect_response(lambda response: response.url == base + f"/api/coding/conversations/{identifier}/open"
+                                  and response.request.method == "POST", timeout=60000) as opening:
+            saved.click()
+        assert opening.value.ok
+        headers["X-Mimir-Runtime-Generation"] = str(opening.value.json()["runtime_generation"])
         expect(page.get_by_test_id("coding-conversation-id")).to_have_text(identifier, timeout=60000)
         expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
 

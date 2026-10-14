@@ -16,6 +16,7 @@ def run_scenarios(page, context, base, provider, first, second_id, report, scena
     status = page.get_by_test_id("coding-run-status")
     send = page.get_by_role("button", name="Send", exact=True)
     headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')")}
+    headers["X-Mimir-Runtime-Generation"] = str(context.request.get(base + "/api/coding/runtime", headers=headers).json()["generation"])
     evidence = report.setdefault("workload", {"kind": "live" if live else "deterministic-http-provider-real-native-tools", "requests": []})
     page.evaluate("""() => {
       window.codingAcceptanceStates = [];

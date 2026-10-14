@@ -33,14 +33,22 @@ async function checkFrame(
   }
   if (event !== "disconnected" && event !== "error") return;
   let reason = DISCONNECTED;
+  let requiresReopen = false;
   try {
-    const payload = JSON.parse(data) as { detail?: unknown; message?: unknown };
+    const payload = JSON.parse(data) as {
+      detail?: unknown;
+      message?: unknown;
+      requires_reopen?: unknown;
+    };
     if (typeof payload.detail === "string") reason = payload.detail;
     else if (typeof payload.message === "string") reason = payload.message;
+    requiresReopen = payload.requires_reopen === true;
   } catch {
     // An invalid error payload still means disconnected, never connected.
   }
-  throw new Error(reason);
+  const error = new Error(reason);
+  if (requiresReopen) throw Object.assign(error, { requiresReopen: true });
+  throw error;
 }
 
 /** Await each ordered native item, including immutable-cut reads, before the next. */

@@ -118,3 +118,40 @@ test("abort cancels an idle stream and releases its reader without reporting an 
   assert.equal(source.cancelled(), true);
   assert.equal(source.body.locked, false);
 });
+
+test("process-loss SSE requires deliberate reopen, unlike transient per-view overflow", async () => {
+  for (const payload of [
+    {
+      code: "disconnected",
+      requires_reopen: true,
+      message: "Supervised Mimir process lost; deliberately reopen",
+    },
+    {
+      code: "view_overflow",
+      requires_reopen: false,
+      message: "View overflow; reconnect for a fresh capture",
+    },
+    {
+      code: "disconnected",
+      requires_reopen: false,
+      message: "Only the view disconnected; the native owner remains live",
+    },
+  ]) {
+    const source = stream([
+      `event:error\ndata:${JSON.stringify(payload)}\n\n: heartbeat\n\n`,
+    ]);
+    await assert.rejects(
+      consumeCodingEvents(source.body, new AbortController().signal),
+      (reason: unknown) => {
+        assert.ok(reason instanceof Error);
+        assert.equal(reason.message, payload.message);
+        assert.equal(
+          "requiresReopen" in reason && reason.requiresReopen === true,
+          payload.requires_reopen,
+        );
+        return true;
+      },
+    );
+    assert.equal(source.cancelled(), true);
+  }
+});

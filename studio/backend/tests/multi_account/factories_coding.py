@@ -59,7 +59,8 @@ class NativeCodingBoundary:
                  "revision": "matrix-revision", "json": "{}"}
         return draft if method == "mcp_edit" else {"draft": draft, "inventory": {"documents": []}}
 
-    async def subscribe(self, conversation_id):
+    async def subscribe(self, conversation_id, *, expected_generation):
+        assert expected_generation == 1
         assert conversation_id == CONVERSATION_ID
         self.subjects.append(current_account().username)
         self.operations.append("view")

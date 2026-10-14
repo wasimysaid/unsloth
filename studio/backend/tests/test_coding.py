@@ -25,7 +25,7 @@ def coding_app(monkeypatch, tmp_path):
     storage.create_initial_user("unsloth", "isolated-test-password", "isolated-signing-secret-234-long-enough")
     app = FastAPI()
     app.include_router(router, prefix = "/api/coding")
-    return app, {"Authorization": "Bearer " + create_access_token("unsloth")}
+    return app, {"Authorization": "Bearer " + create_access_token("unsloth"), "X-Mimir-Runtime-Generation": "1"}
 
 
 @pytest.mark.asyncio
@@ -136,7 +136,7 @@ async def test_idle_cleanup_failure_is_not_reported_as_successful_reopen(coding_
 async def test_open_never_accepts_a_replacement_working_directory(coding_app):
     app, headers = coding_app
     class RecordingRuntime:
-        async def command(self, method, params):
+        async def command(self, method, params, *, expected_generation=None):
             assert method == "open"
             assert params == {"conversation_id": "saved-id"}
             raise CodingRuntimeError("busy", "Conversation is in use by another process; close that owner first.")
@@ -178,7 +178,8 @@ async def test_sse_observation_epoch_preserves_native_envelopes_across_views_and
     def observed_runtime(position):
         runtime = CodingRuntime()
         views = []
-        async def subscribe(conversation_id):
+        async def subscribe(conversation_id, *, expected_generation=None):
+            assert expected_generation == 1
             assert conversation_id == "native-conversation"
             subscription = f"native-view-{position}-{len(views)}"
             views.append(subscription)
@@ -224,7 +225,7 @@ async def test_sse_observation_epoch_preserves_native_envelopes_across_views_and
 async def test_stream_id_does_not_implicitly_open_or_grant_trust(coding_app):
     app, headers = coding_app
     class RecordingRuntime:
-        async def subscribe(self, conversation_id):
+        async def subscribe(self, conversation_id, *, expected_generation=None):
             assert conversation_id == "not-open"
             raise CodingRuntimeError("not_found", "Deliberately reopen this conversation first.")
     app.state.coding_runtime = RecordingRuntime()
@@ -238,7 +239,7 @@ async def test_run_stop_and_history_preserve_exact_native_identities(coding_app)
     app, headers = coding_app
     calls = []
     class RecordingRuntime:
-        async def command(self, method, params):
+        async def command(self, method, params, *, expected_generation=None):
             calls.append((method, params))
             if method == "prompt":
                 return {"request_id": "native-request", "submission_key": params["submission_key"]}
@@ -271,7 +272,8 @@ async def test_mode_and_plan_actions_keep_native_revision_and_admission(coding_a
     app, headers = coding_app
     calls = []
     class RecordingRuntime:
-        async def command(self, method, params):
+        async def command(self, method, params, *, expected_generation=None):
+            assert expected_generation == 1
             calls.append((method, params))
             if method == "set_mode":
                 return {"conversation_id": params["conversation_id"], "mode": params["mode"]}
@@ -296,7 +298,8 @@ async def test_goal_commands_preserve_native_admission_identity_and_refusals(cod
     app, headers = coding_app
     calls = []
     class RecordingRuntime:
-        async def command(self, method, params):
+        async def command(self, method, params, *, expected_generation=None):
+            assert expected_generation == 1
             calls.append((method, params))
             if params["revision"] == "stale-owner":
                 raise CodingRuntimeError("stale_goal", "Goal controls are stale; inspect a fresh native view.")
@@ -341,7 +344,8 @@ async def test_child_inspection_forwards_exact_attempt_and_native_cut_without_co
     calls = []
     outcome = {"handle": "agent-exact", "attempt": 1, "status": "completed", "result": "earlier result", "error": None}
     class RecordingRuntime:
-        async def command(self, method, params):
+        async def command(self, method, params, *, expected_generation=None):
+            assert expected_generation == (1 if method == "read_entries" else None)
             calls.append((method, params))
             if method == "child_detail":
                 if params["attempt"] == 3:
@@ -488,7 +492,7 @@ async def test_disconnect_during_view_admission_releases_view_not_owner():
     reply = asyncio.Event()
     calls = []
     class AdmittedRuntime(CodingRuntime):
-        async def command(self, method, params = None):
+        async def command(self, method, params = None, *, expected_generation=None):
             calls.append((method, params))
             if method == "view":
                 admitted.set()
@@ -626,7 +630,8 @@ async def test_model_configuration_is_native_and_never_part_of_queued_prompt(cod
     app, headers = coding_app
     calls = []
     class RecordingRuntime:
-        async def command(self, method, params):
+        async def command(self, method, params, *, expected_generation=None):
+            assert expected_generation == (1 if method == "prompt" else None)
             calls.append((method, params))
             if method == "configure":
                 if params["configuration"].get("model") == "unavailable":
@@ -725,7 +730,8 @@ async def test_overlap_preflight_and_refusal_carry_canonical_identity_without_op
     overlap = {"cwd": "/canonical/project", "conversations": [{"id": "other-native"}]}
     calls = []
     class RecordingRuntime:
-        async def command(self, method, params):
+        async def command(self, method, params, *, expected_generation=None):
+            assert expected_generation == (1 if method == "prompt" else None)
             calls.append((method, params))
             if method == "overlap":
                 return overlap

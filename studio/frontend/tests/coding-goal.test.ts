@@ -7,6 +7,7 @@ import {
   goalActionDisabledReason,
 } from "../src/features/coding/goal.ts";
 import { createCodingRun } from "../src/features/coding/run-session.ts";
+import { CodingHttpError } from "../src/features/coding/errors.ts";
 import type {
   GoalAction,
   GoalChange,
@@ -155,6 +156,28 @@ function harness() {
       hold = value;
     },
   };
+}
+
+for (const status of [409, 503]) {
+  test(`goal owner-loss evidence ${status} requires deliberate reopen and never replays the action`, async () => {
+    const h = harness();
+    await h.start();
+    h.hold(async () => { throw new CodingHttpError(status, "Runtime changed; deliberately reopen", true); });
+    try {
+      assert.equal(await h.run.changeGoal({ action: "pause", revision: "owner:goal:1" }), false);
+      assert.equal(h.run.getSnapshot().reopenRequired, true);
+      assert.equal(h.run.getSnapshot().connection, "disconnected");
+      assert.equal(h.run.getSnapshot().native?.goal?.phase, "active");
+      assert.equal(h.run.getSnapshot().reconcilingGoal, "pause");
+      assert.match(h.run.getSnapshot().goalNotice!, /reopen/i);
+      h.run.connect();
+      assert.equal(await h.run.changeGoal({ action: "pause", revision: "owner:goal:1" }), false);
+      assert.equal(h.changes.length, 1);
+      assert.equal(h.run.getSnapshot().connection, "disconnected");
+    } finally {
+      h.run.detach();
+    }
+  });
 }
 
 test("only native goal completion evidence is independently verified, never an ordinary turn ending", async () => {

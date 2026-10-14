@@ -1,4 +1,89 @@
-# Coding: trusted projects, native execution, recovery, plans, questions, goals, models, reported changes, rich inputs, concurrency, idle retirement and focused Settings
+# Coding: native execution, recovery, maintenance, plans, questions, goals, rich inputs, models, file changes and Settings
+
+## Process recovery and whole-runtime maintenance (#249)
+
+Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`
+and private Mimir `91b975adae2df627d7c67c6bcede6d910a592a7d`.
+
+Unexpected frontend-process loss disconnects every affected native view and fails
+unconfirmed commands; it never becomes Completed or a clean Stop. The supervisor
+reaps only its own process, retains unconfirmed cleanup diagnostics, and does not
+automatically replace the process, reopen owners, or replay accepted work, answers
+or commands. Saved native history remains authoritative. Deliberate reopening
+reapplies effective Studio project trust without changing saved trust/defaults and
+still respects native execution leases and live-controller conflicts.
+
+The coding route's **Mimir runtime maintenance** disclosure separates read-only
+**Refresh runtime status** from **Restart whole Mimir runtime**. The latter names
+its all-hosted-conversations scope and is the required way to replace the selected
+frontend plugin; it is not hot reload. Authenticated `GET /api/coding/runtime`
+reads supervisor status without starting Mimir. Authenticated
+`POST /api/coding/runtime/restart` requires exactly
+`{"scope":"all_hosted_conversations"}`. Command admission is closed during the
+maintenance operation. Native safe-idle admission refuses any affected busy work;
+no view, owner or process is cancelled by refusal. Users must explicitly Stop
+work and await native terminal cleanup first. The backend awaits both native
+session drain confirmation and process exit before starting a replacement. Missing
+confirmation, forced termination or a nonzero exit prevents that replacement and
+is surfaced as incomplete cleanup. Accepted maintenance survives HTTP disconnect;
+an uncertain restart is inspected via fresh status/generation, never blindly retried.
+Unconfirmed safe-idle admission leaves the original process/stdin alive: timeout,
+transport uncertainty and local admission limits cannot authorize cancelling busy
+work. Read-only native maintenance inspection distinguishes an unadmitted guard
+from a drained/prepared runtime. Completing a prepared restart still requires
+another explicit user action; inspection itself does not stop or replace a process.
+
+Create/open HTTP replies stamp `runtime_generation`. Prompts, question answers, goal changes,
+mode selection, plan decisions, native command dispatch, cancellation, bounded history and SSE require
+`X-Mimir-Runtime-Generation` from that opening. Stale-tab
+operations are rejected before native delivery even if another tab has reopened
+the same saved conversation ID in the replacement process. Epochs do not reset to
+the same counter after backend restart. Process-loss SSE explicitly requires
+reopening; a transient view-buffer/transport reconnect cannot retarget a new owner.
+A pending restart poll is not proof of owner loss, so a native busy refusal keeps
+the current incarnation's view and Stop controls available.
+
+After unexpected process loss, explicit restart may start an empty runtime after
+the supervised process is reaped. Its previous cleanup remains **not confirmed**;
+this is not proof orphaned external work settled. Saved conversations must be
+reopened deliberately. Native interrupted requests are shown as **Interrupted**.
+**Retry same submission** only reconciles delivery and returns the original
+accepted ID, even for interrupted work. **Continue interrupted work** is a separate
+explicit admission with a new key, asking Mimir to inspect saved history and
+current project state before continuing. No request, answer or command is replayed
+automatically. Saved configured provider/model identities stay visible; reopening
+or admission errors never substitute a new folder, owner or model.
+
+Normal backend shutdown invokes native cancellation/drain, closes every owning
+session and awaits process cleanup. Status remains **Stopping** until the retained
+operation actually finishes. Cleanup confirmation, exit code, forced-termination
+state and actionable failure text are retained in supervisor diagnostics and
+logged on failure; neither cancellation acknowledgment nor a helper's exit is
+sufficient confirmation.
+
+Run the actual coding-route browser driver on current paired artifacts:
+
+```sh
+.venv/bin/python studio/tools/coding_browser_acceptance.py \
+  --mimir /path/to/current/mimir --plugin-package /path/to/current/package \
+  --workload maintenance --browser firefox --evidence-dir /path/to/worker/maintenance
+```
+
+This deterministic-provider/native-process fault workload covers concurrent
+conversations and busy restart refusal, explicit Stop/terminal cleanup,
+idle restart, stale-tab delivery across replacement, process loss after a real file tool, saved interrupted identities,
+same-key deduplication, keyboard explicit continuation, authenticated maintenance,
+1440×1000 and 390×844 state/layout checks, unchanged saved trust fingerprints and
+native shutdown confirmation. Supervisor fault tests separately cover missing
+native acknowledgment, nonzero exit, forced termination and uncertain maintenance.
+Native tests cover the native busy admission categories and cleanup failures.
+These are fixture/fault checks, not live provider/model acceptance.
+
+The inherited #249 baseline does not contain #246's coding whole-request
+local-model protection integration. The required combined local-protection cleanup
+scenario must be run once that dependency is integrated; no synthetic lease or
+per-inference protection is substituted. Full cross-feature/live/human acceptance
+remains #254–256 and cannot be claimed from this ticket's scoped evidence.
 
 ## Native plans and explicit implementation (#239)
 
@@ -19,8 +104,10 @@ an implementation request. All three native decisions return to Build.
 The authenticated bridge admits separate `set_mode` and `decide_plan` commands, not
 synthetic prompts or mode-switch acceptance. Native validation rejects stale revisions,
 changed current plans and accepted-action replay. Browser controls display busy/error
-reasons and reconstruct a fresh captured view after any action response, including
-uncertain delivery. Reconnection never replays a plan decision. An acknowledgment is
+reasons and reconstruct a fresh captured view after an action response, including
+uncertain delivery. Owner-loss evidence instead requires deliberate reopening; it
+never automatically reconnects into a replacement owner or replays the command.
+Reconnection never replays a plan decision. An acknowledgment is
 not terminal implementation completion; native request/lifecycle evidence supplies
 that outcome.
 
@@ -102,8 +189,10 @@ The bridge acquires an event queue only for a `view` command: answer acknowledgm
 merely echo their target subscription and must not replace the queue held by SSE.
 
 On answer transport uncertainty the frontend retains its in-memory draft, opens a
-fresh captured view/history cut, and reconciles the exact question. It never blindly
-resubmits. Confirmed still-waiting state permits only an explicit action with the new
+fresh captured view/history cut, and reconciles the exact question. Runtime-generation
+or process-loss evidence instead requires deliberate reopening; accepted native
+answer history remains readable but cannot authorize reconnecting a lost owner.
+It never blindly resubmits. Confirmed still-waiting state permits only an explicit action with the new
 view identity; an absent question without accepted evidence remains unconfirmed and
 non-actionable, not cancelled. Native validation errors preserve the draft. Full
 browser reload drops unsent form drafts, but accepted native transcript answers
@@ -523,8 +612,8 @@ For uncertain non-prompt responses, rebuild the authoritative native view before
 allowing another action. Stop is never blindly replayed; cancellation acknowledgment
 is not terminal cleanup. This shared pattern does **not** promise generic
 exactly-once commands. Capability-specific stale question/plan/goal tests remain
-with their feature tickets. Production process restart remains #249; continuous
-idle retirement is described above (#248).
+with their feature tickets. Production process recovery/restart is described in
+#249 above; continuous idle retirement is described above (#248).
 
 Run the actual-browser recovery driver after building the frontend/native package:
 

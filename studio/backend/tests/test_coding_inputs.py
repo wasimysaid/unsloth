@@ -21,7 +21,7 @@ def coding_app(monkeypatch, tmp_path):
     storage.create_initial_user("unsloth", "isolated-input-password", "isolated-signing-secret-242-long-enough")
     app = FastAPI()
     app.include_router(router, prefix = "/api/coding")
-    return app, {"Authorization": "Bearer " + create_access_token("unsloth")}
+    return app, {"Authorization": "Bearer " + create_access_token("unsloth"), "X-Mimir-Runtime-Generation": "1"}
 
 PNG = base64.b64encode(bytes.fromhex("89504e470d0a1a0a") + b"transport fixture").decode()
 
@@ -54,7 +54,8 @@ async def test_rich_input_crosses_transport_without_rewriting_exact_key_ranges_o
     app, headers = coding_app
     calls = []
     class Runtime:
-        async def command(self, method, params):
+        async def command(self, method, params, *, expected_generation=None):
+            assert expected_generation == 1
             calls.append((method, params))
             return {"conversation_id": params["conversation_id"], "submission_key": params["submission_key"], "request_id": "native"}
     app.state.coding_runtime = Runtime()
@@ -100,7 +101,8 @@ async def test_invalid_inputs_rejected_before_native_transport(coding_app, extra
 async def test_native_supported_input_failure_is_explicit_not_silent_drop(coding_app):
     app, headers = coding_app
     class Runtime:
-        async def command(self, method, params):
+        async def command(self, method, params, *, expected_generation=None):
+            assert expected_generation == 1
             assert method == "prompt" and params["images"][0]["data"] == PNG
             raise CodingRuntimeError("invalid", "Selected provider does not support image input.")
     app.state.coding_runtime = Runtime()
