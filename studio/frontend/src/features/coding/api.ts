@@ -388,7 +388,7 @@ export function createCodingRunApi(openingGeneration: number): RunApi {
       `/conversations/${encodeURIComponent(id)}/configuration`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...generationHeaders, "Content-Type": "application/json" },
         body: JSON.stringify(change),
       },
     );

@@ -143,6 +143,7 @@ def main() -> None:
             conversation = created.value.json()["id"]
             report["conversation_id"] = conversation
             report["runtime_generation"] = created.value.json()["runtime_generation"]
+            headers["X-Mimir-Runtime-Generation"] = str(report["runtime_generation"])
             expect(page.get_by_test_id("coding-conversation-id")).to_have_text(conversation, timeout=60000)
             expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
             catalog = context.request.post(base + f"/api/coding/conversations/{conversation}/models/refresh", headers=headers)

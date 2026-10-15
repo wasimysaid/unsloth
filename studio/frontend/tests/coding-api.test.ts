@@ -483,6 +483,8 @@ test("picker reads only authenticated native catalog and sends identity patches 
   assert.deepEqual(JSON.parse(String(c.requests[2].init?.body)), {
     reasoning: "medium",
   });
+  for (const request of c.requests.slice(1))
+    assert.equal(new Headers(request.init?.headers).get("X-Mimir-Runtime-Generation"), "7");
   assert.ok(
     c.requests.every(
       (request) =>
@@ -645,6 +647,22 @@ test("answers address exact conversation, request, question and live view withou
   assert.equal(loss.requests.length, 1);
 });
 
+test("answer HTTP serialization preserves native long fields without truncation or independent caps", async () => {
+  const target = { subscription: "live-view", request_id: "request", user_request_id: "user-request" };
+  const answers = [{
+    question_id: "q".repeat(4096),
+    selected_options: ["L".repeat(8192)],
+    freeform_text: ` \n${"é".repeat(65537)}\r\n `,
+  }];
+  const ack = { conversation_id: "conversation", ...target, accepted: true };
+  const c = client(() => Response.json(ack));
+  assert.deepEqual(await c.api.createCodingRunApi(7).answer("conversation", target, answers), ack);
+  assert.equal(c.requests.length, 1);
+  assert.deepEqual(JSON.parse(String(c.requests[0].init?.body)), { subscription: target.subscription, answers });
+  assert.equal(new Headers(c.requests[0].init?.headers).get("X-Mimir-Runtime-Generation"), "7");
+  assert.deepEqual(c.requests[0].options, { retryNetworkErrors: false });
+});
+
 test("coding request preserves abort and non-transport authentication errors", async () => {
   for (const original of [
     new DOMException("Detached", "AbortError"),
@@ -785,6 +803,7 @@ test("owner API retains the exact large opening epoch despite status changes and
   const delayed = [
     owner.submit("saved", "original-key", "Original accepted work"),
     owner.cancel("saved", "original-request"),
+    owner.configure("saved", { provider: "native-provider", model: "native-model", reasoning: "high" }),
     owner.readEntries("saved", { journal: "root", leaf: "cut" }, "latest"),
     owner.watch(
       "saved",
@@ -811,7 +830,7 @@ test("owner API retains the exact large opening epoch despite status changes and
   );
   assert.equal(
     oldRequests.length,
-    4,
+    5,
     "no delayed operation was automatically retried",
   );
   for (const request of oldRequests)
@@ -883,11 +902,16 @@ test("HTTP reopen evidence is explicit: stale 409 and loss 503 require reopen, b
   }
 });
 
-for (const failure of ["process_loss", "view_overflow", "busy_view"] as const) {
+for (const failure of ["process_loss", "retired_view", "closed_attachment", "view_invalidated", "view_overflow", "busy_view"] as const) {
   test(`production scoped watch handles ${failure} without implicit owner reopen or prompt replay`, async () => {
     let watches = 0;
     const c = client(() => {
       watches++;
+      if (watches === 1 && (failure === "retired_view" || failure === "closed_attachment"))
+        return Response.json(
+          { detail: "Native attachment no longer exists" },
+          { status: failure === "retired_view" ? 404 : 502, headers: { "X-Mimir-Requires-Reopen": "true" } },
+        );
       if (watches === 1 && failure === "busy_view")
         return Response.json(
           { detail: "Native runtime temporarily busy" },
@@ -895,7 +919,11 @@ for (const failure of ["process_loss", "view_overflow", "busy_view"] as const) {
         );
       const body = new ReadableStream<Uint8Array>({
         start(controller) {
-          if (watches === 1)
+          if (watches === 1 && failure === "view_invalidated") {
+            controller.enqueue(new TextEncoder().encode(
+              'event:view\ndata:{"subscription":"old-view","event":{"type":"invalidated","reason":"reopened"}}\n\n',
+            ));
+          } else if (watches === 1)
             controller.enqueue(
               new TextEncoder().encode(
                 `event:error\ndata:${JSON.stringify({
@@ -933,7 +961,7 @@ for (const failure of ["process_loss", "view_overflow", "busy_view"] as const) {
     try {
       run.connect();
       await new Promise((resolve) => setTimeout(resolve, 20));
-      if (failure === "process_loss") {
+      if (["process_loss", "retired_view", "closed_attachment"].includes(failure)) {
         assert.equal(run.getSnapshot().reopenRequired, true);
         assert.equal(run.getSnapshot().connection, "disconnected");
         assert.deepEqual(attempts, []);
@@ -946,7 +974,11 @@ for (const failure of ["process_loss", "view_overflow", "busy_view"] as const) {
         );
       } else {
         assert.equal(run.getSnapshot().reopenRequired, false);
-        assert.deepEqual(attempts, [0]);
+        assert.deepEqual(attempts, failure === "view_invalidated" ? [] : [0]);
+        if (failure === "view_invalidated") {
+          assert.equal(run.getSnapshot().disconnected, false);
+          assert.equal(run.getSnapshot().error, null);
+        }
         assert.equal(
           watches,
           2,

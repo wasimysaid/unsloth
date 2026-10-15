@@ -1177,6 +1177,33 @@ test("native configuration refusals retain selection, and uncertain errors requi
   h.run.detach();
 });
 
+test("stale configuration refusal requires deliberate owner reopen without mutation replay", async () => {
+  const h = harness();
+  try {
+    await h.start(native("request"));
+    const before = structuredClone(h.run.getSnapshot().native);
+    const signal = h.signal();
+    let calls = 0;
+    h.api.configure = async () => {
+      calls++;
+      throw new CodingHttpError(409, "Earlier runtime incarnation. Deliberately reopen.", true);
+    };
+    await assert.rejects(h.run.configure({ reasoning: "high" }), /Deliberately reopen/);
+    assert.equal(h.run.getSnapshot().reopenRequired, true);
+    assert.equal(h.run.getSnapshot().connection, "disconnected");
+    assert.deepEqual(h.run.getSnapshot().native, before);
+    h.run.connect();
+    assert.equal(h.signal(), signal, "view retry must not reacquire a replacement owner");
+    assert.equal(signal?.aborted, true);
+    await assert.rejects(h.run.configure({ reasoning: "low" }), /reconstructed/);
+    assert.equal(calls, 1);
+    assert.deepEqual(h.submissions, []);
+    assert.deepEqual(h.cancellations, []);
+  } finally {
+    h.run.detach();
+  }
+});
+
 test("overlap continuation retains rich input while model configuration is pending or unconfirmed", async () => {
   const h = harness();
   const overlap = { cwd: "/project", conversations: [{ id: "other-native" }] };

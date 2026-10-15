@@ -40,10 +40,45 @@ async def test_answer_preserves_exact_identities_payload_and_native_ack(coding_a
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("question_length,label_length,freeform_length", [
+    (128, 1024, 16384),
+    (129, 1025, 16385),
+    (4096, 8192, 65536),
+    (128, 1024, 65537),
+])
+async def test_long_native_answer_fields_forward_verbatim(coding_app, question_length, label_length, freeform_length):
+    app, headers = coding_app
+    body = {"subscription": "exact-live-view", "answers": [{
+        "question_id": "q" * question_length,
+        "selected_options": ["L" * label_length],
+        "freeform_text": " \n" + "é" * (freeform_length - 4) + "\r\n",
+    }]}
+    calls = []
+    ack = {"conversation_id": "exact-conversation", "request_id": "exact-request",
+           "user_request_id": "exact-user-request", "subscription": "exact-live-view", "accepted": True}
+
+    class RecordingRuntime:
+        async def command(self, method, params, *, expected_generation=None):
+            calls.append((method, params, expected_generation))
+            return ack
+
+    app.state.coding_runtime = RecordingRuntime()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
+        response = await client.post(ANSWER_PATH, json=body)
+    assert response.status_code == 200
+    assert response.json() == ack
+    assert calls == [("answer", {"conversation_id": "exact-conversation", "request_id": "exact-request",
+                                  "user_request_id": "exact-user-request", **body}, 1)]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("body", [
     {}, {"answers": ANSWER_BODY["answers"]},
     {**ANSWER_BODY, "subscription": ""},
+    {**ANSWER_BODY, "subscription": "v" * 129},
     {**ANSWER_BODY, "answers": []},
+    {**ANSWER_BODY, "answers": ANSWER_BODY["answers"] + [ANSWER_BODY["answers"][0]]},
+    {**ANSWER_BODY, "answers": [{"question_id": "single", "selected_options": ["One", "Two", "Three", "Four", "Five"]}]},
     {**ANSWER_BODY, "answers": [{"question_id": "single", "selected_options": "First", "freeform_text": None}]},
     {**ANSWER_BODY, "answers": [{"question_id": "", "selected_options": [], "freeform_text": None}]},
     {**ANSWER_BODY, "answers": [{"question_id": "single", "selected_options": [], "freeform_text": None, "accepted": True}]},
@@ -58,6 +93,29 @@ async def test_invalid_answer_envelope_never_reaches_native(coding_app, body):
         response = await client.post(ANSWER_PATH, json=body)
     assert response.status_code == 422
     assert not hasattr(app.state, "coding_runtime")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["question_id", "selected_options", "freeform_text"])
+async def test_answer_total_transport_bound_still_refuses_before_native_stdin(coding_app, field):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from core.coding_runtime import CodingRuntime, MAX_FRAME
+
+    app, headers = coding_app
+    runtime = CodingRuntime()
+    runtime._generation = 1
+    writer = Mock()
+    runtime.process = SimpleNamespace(stdin=writer)
+    app.state.coding_runtime = runtime
+    answer = {"question_id": "exact-question", "selected_options": [], "freeform_text": None}
+    answer[field] = ["x" * MAX_FRAME] if field == "selected_options" else "x" * MAX_FRAME
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
+        response = await client.post(ANSWER_PATH, json={"subscription": "exact-live-view", "answers": [answer]})
+    assert response.status_code == 400
+    assert "command is too large" in response.json()["detail"]
+    writer.write.assert_not_called()
+    assert not runtime._pending and not runtime._subscriptions
 
 
 @pytest.mark.asyncio

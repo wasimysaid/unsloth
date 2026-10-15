@@ -538,7 +538,7 @@ def main() -> None:
                         owned_elsewhere.click()
                     assert refusal.value.status == 409, "Studio bypassed native execution lease admission"
                     refusal_detail = refusal.value.json()["detail"]
-                    assert "another owner" in refusal_detail, refusal_detail
+                    assert refusal_detail == "Conversation is in use by another process. Close that owner before reopening.", refusal_detail
                     expect(page.get_by_role("alert").filter(has_text = refusal_detail)).to_be_visible(timeout = 60000)
                     expect(page.get_by_test_id("coding-conversation-id")).to_have_text(first_id)
                     assert foreign.poll() is None, "Studio cancelled the foreign owner"

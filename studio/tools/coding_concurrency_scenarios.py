@@ -67,8 +67,7 @@ def run_concurrency_scenarios(page, context, base, provider, first, second, seco
             page.wait_for_timeout(50)
         assert path.is_file(), f"Native tool did not create {path.name}"
 
-    def tool_start(marker, folder):
-        request = receive(marker)
+    def tool_start(marker, folder, request):
         request.tool(marker, "shell", {
             "command": f"echo $$ > {marker}.pid; printf STARTED > {marker}.started; while [ ! -f {marker}.release ]; do sleep 0.1; done; printf NATIVE_COMPLETED > {marker}.completed",
             "timeout_seconds": 180, "yield_time_ms": 30000,
@@ -80,10 +79,47 @@ def run_concurrency_scenarios(page, context, base, provider, first, second, seco
         return process
 
     first_ack = accepted("CONCURRENT_A: run a gated native shell", first_id)
-    process_a = tool_start("CONCURRENT_A", first)
+    held_first = receive("CONCURRENT_A")
+    # Another deliberate same-ID open revokes old answer capabilities, not the
+    # running owner. Both mounted tabs must regain fresh atomic views on their own.
+    event_url = base + f"/api/coding/conversations/{first_id}/events"
+    watching_requests = []
+    record_watch = lambda request: watching_requests.append((request.method, request.url))
+    page.on("request", record_watch)
+    peer = context.new_page()
+    try:
+        peer.goto(base + "/coding")
+        peer_saved = peer.locator('[aria-label="Saved coding conversations"] button').filter(has_text=first_id)
+        expect(peer_saved).to_be_visible(timeout=60000)
+        with page.expect_request(lambda request: request.url == event_url, timeout=60000):
+            peer_saved.click()
+        expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+        expect(peer.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+        peer.on("request", record_watch)
+        with page.expect_request(lambda request: request.url == event_url, timeout=60000), peer.expect_request(lambda request: request.url == event_url, timeout=60000):
+            reopened = context.request.post(base + f"/api/coding/conversations/{first_id}/open", headers=headers)
+        assert reopened.ok and reopened.json()["id"] == first_id
+        for tab in (page, peer):
+            expect(tab.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+            expect(tab.get_by_test_id("coding-run-status")).to_have_text("Running", timeout=60000)
+            expect(tab.get_by_test_id("coding-request-id")).to_contain_text(first_ack["request_id"])
+        owner_requests = [(method, url) for method, url in watching_requests if "/api/coding/conversations/" in url]
+        assert all((method == "GET") or (method == "POST" and url.endswith("/entries")) for method, url in owner_requests), owner_requests
+        provider.assert_no_request()
+        snapshot(page, "concurrency-same-owner-resubscribed")
+        page.set_viewport_size({"width": 390, "height": 844})
+        snapshot(page, "concurrency-same-owner-resubscribed-narrow")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.set_viewport_size({"width": 1440, "height": 1000})
+        evidence["same_owner_resubscribe"] = {"request_id": first_ack["request_id"], "tabs": 2, "watcher_requests": owner_requests, "provider_replay": False}
+        scenario("A7-same-owner-view-invalidation", "Compatible same-ID reopen notified all watching tabs; both obtained fresh read-only views with the exact running request and no automatic open, mutation, or provider replay; desktop/narrow inspected")
+    finally:
+        page.remove_listener("request", record_watch)
+        peer.close()
+    process_a = tool_start("CONCURRENT_A", first, held_first)
     choose(second_id)
     second_ack = accepted("CONCURRENT_B: independent gated native shell", second_id)
-    process_b = tool_start("CONCURRENT_B", second)
+    process_b = tool_start("CONCURRENT_B", second, receive("CONCURRENT_B"))
     assert process_a.is_running() and process_b.is_running()
     assert not (first / "CONCURRENT_A.completed").exists()
     assert not (second / "CONCURRENT_B.completed").exists()

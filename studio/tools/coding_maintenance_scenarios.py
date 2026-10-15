@@ -123,6 +123,16 @@ def run_maintenance_scenarios(page, context, base, provider, first, second_id,
     assert stale_response.value.status == 409
     assert stale_response.value.headers["x-mimir-requires-reopen"] == "true"
     provider.assert_no_request()
+    replacement_headers = {**headers, "X-Mimir-Runtime-Generation": str(opening.value.json()["runtime_generation"])}
+    before_configuration = captured_state(base, replacement_headers, conversation)["configuration"]
+    stale_configuration = context.request.post(base + f"/api/coding/conversations/{conversation}/configuration",
+        headers={**headers, "X-Mimir-Runtime-Generation": stale_generation}, data={"reasoning": "high"})
+    assert stale_configuration.status == 409
+    assert stale_configuration.headers["x-mimir-requires-reopen"] == "true"
+    assert captured_state(base, replacement_headers, conversation)["configuration"] == before_configuration
+    provider.assert_no_request()
+    evidence["stale_configuration"] = {"status": 409, "requires_reopen": True, "replacement_configuration_unchanged": True}
+    scenario("A7-stale-configuration-incarnation-fence", "After another tab deliberately reopened the saved ID in a replacement runtime, an old-generation configuration mutation was refused with 409/reopen-required and left native configuration unchanged")
     other_tab.close()
     reopen()
     assert captured_state(base, headers, conversation)["active_request"] is None

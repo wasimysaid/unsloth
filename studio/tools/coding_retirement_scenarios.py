@@ -64,6 +64,7 @@ def run_retirement_scenarios(page, context, base, provider, first, second_id,
         page.get_by_label("Coding prompt", exact=True).press("Enter")
     assert waiting.value.status == 202
     evidence["request"] = waiting.value.json()
+    headers["X-Mimir-Runtime-Generation"] = waiting.value.request.headers["x-mimir-runtime-generation"]
     pending = provider.request()
     switch(second_id)
     wait_owner(lambda item: not item["viewed"] and not item["quiescent"])
@@ -100,6 +101,18 @@ def run_retirement_scenarios(page, context, base, provider, first, second_id,
     assert listing.ok
     saved = next(item for item in listing.json()["conversations"] if item["id"] == conversation)
     assert saved["cwd"] == str(first) and not saved["live"]
+
+    # Retirement leaves the supervised process epoch unchanged. A stale browser
+    # must stop retrying views, not silently reacquire an execution attachment.
+    events = context.request.get(base + f"/api/coding/conversations/{conversation}/events", headers=headers, timeout=60000)
+    assert events.status == 404, events.text()
+    assert events.headers["x-mimir-requires-reopen"] == "true"
+    runtime = context.request.get(base + "/api/coding/runtime", headers=headers).json()
+    assert str(runtime["generation"]) == headers["X-Mimir-Runtime-Generation"]
+    assert owner(clock()) is None, "Read-only view retry reacquired the retired owner"
+    provider.assert_no_request()
+    evidence["retired_view"] = {"status": events.status, "requires_reopen": True, "generation": runtime["generation"], "owner_reacquired": False}
+    scenario("A7-retired-view-deliberate-reopen", "Same-generation events GET returned 404/reopen-required after real idle retirement, with no execution owner acquisition or provider replay")
 
     # Deliberate reopen reuses the same history and canonical project despite the
     # isolated saved ancestor distrust. No prompt or work is replayed.

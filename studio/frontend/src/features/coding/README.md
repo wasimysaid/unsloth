@@ -50,6 +50,11 @@ All `/api/coding` routes use established Studio auth, including IDs and fetch SS
   ordered activity, checkpoints, whole state, completion and reset items. Position
   gaps are allowed; backward positions and wrong conversation IDs are errors.
 
+Owner calls retain the `runtime_generation` returned by create/open through
+`X-Mimir-Runtime-Generation`, including model/reasoning `POST /configuration`.
+A stale configuration is rejected before native stdin just like other fenced owner
+mutations; status polling never retargets a tab's opening or authorizes replay.
+
 Initial/reset history is read at the captured root cut before the view is Ready.
 Checkpoint reads reconcile saved rows after the previous cut and replace provisional
 activity, except exact still-live tool invocations. A reset discards the old branch;
@@ -255,8 +260,15 @@ Transport loss automatically reconnects with 500 ms exponential backoff capped a
 15 seconds. Every attempt reconstructs a new authoritative capture; no Last-Event-ID
 or arbitrary last-event replay is sent. The persistent disconnect banner survives
 HTTP connection, unfinished entry reads and recovering resets until capture/checkpoint
-is complete. A native closed view instead requires deliberate reopen, preserving
-native lease/folder/trust errors. Detach aborts only watching and reconnect timers,
+is complete. A native `invalidated` view (`reason: "reopened"`) means compatible
+same-owner reopen revoked the old subscription: immediately recapture read-only,
+retaining rows/drafts without an owner-loss warning. Old answer capabilities stay
+unusable until a fresh capture supplies a new subscription. No open, prompt, answer,
+configuration or other mutation is replayed. A native `closed` view, or `not_found` /
+`closed` at view admission after idle retirement, instead requires deliberate reopen
+via the existing `X-Mimir-Requires-Reopen` contract. Other missing-resource errors
+are not owner-loss evidence. Native lease/folder/trust errors remain visible.
+Detach aborts only watching and reconnect timers,
 not accepted work or the conversation owner. Late Stop replies are gated by command attachment lifetime and exact terminal
 evidence, so neither cancellation refusal nor transport failure can reconnect a
 detached surface. Mode-driven view reconstruction does not retire an outstanding

@@ -47,6 +47,25 @@ test("native ordered view lifecycle closed cannot leave the preview connected", 
   assert.equal(source.cancelled(), true);
 });
 
+test("same-owner invalidation ends only the old view and requests read-only resubscription", async () => {
+  const source = stream([
+    'event:view\ndata:{"subscription":"old-view","event":{"type":"invalidated","reason":"reopened"}}\n\n',
+    'event:view\ndata:{"subscription":"old-view","position":99,"event":{"type":"state"}}\n\n',
+  ], true);
+  const received: unknown[] = [];
+  await assert.rejects(
+    consumeCodingEvents(source.body, new AbortController().signal, (view) => { received.push(view); }),
+    (reason: unknown) => {
+      assert.ok(reason instanceof Error);
+      assert.equal("viewInvalidated" in reason && reason.viewInvalidated, true);
+      assert.equal("requiresReopen" in reason && reason.requiresReopen, false);
+      return true;
+    },
+  );
+  assert.deepEqual(received, [], "invalidation is terminal transport control, not positioned native history");
+  assert.equal(source.body.locked, false);
+});
+
 test("malformed disconnected payload cannot leave the preview connected", async () => {
   const source = stream(["event:disconnected\ndata:not-json\n\n"]);
   await assert.rejects(

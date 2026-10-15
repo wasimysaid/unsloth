@@ -860,6 +860,12 @@ export function createCodingRun(
       .catch((reason: unknown) => {
         if (controller.signal.aborted || current !== incarnation) return;
         controller.abort();
+        if (reason instanceof Error && "viewInvalidated" in reason && reason.viewInvalidated === true) {
+          // Compatible reopen revoked only this view's capabilities. Keep the
+          // projection/drafts and recapture read-only, without owner-loss feedback.
+          connect();
+          return;
+        }
         const requiresReopen = needsReopen(reason);
         if (requiresReopen) requireRuntimeReopen();
         childView.setConnected(false);
@@ -1475,6 +1481,7 @@ export function createCodingRun(
             ? errorText(reason)
             : `${errorText(reason)} Configuration is unconfirmed; reconnect to reconstruct before changing it again. It was not retried.`,
         });
+        if (needsReopen(reason)) requireRuntimeReopen();
         throw reason;
       } finally {
         ++configurationEpoch;

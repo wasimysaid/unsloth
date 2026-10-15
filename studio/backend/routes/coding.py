@@ -148,9 +148,11 @@ class GoalChange(BaseModel):
 
 class QuestionAnswer(BaseModel):
     model_config = ConfigDict(extra = "forbid")
-    question_id: str = Field(min_length = 1, max_length = 128)
+    # Native question IDs/labels and user text remain verbatim. The complete
+    # command is transport-bounded; native validates the exact pending question.
+    question_id: str = Field(min_length = 1)
     selected_options: list[str] = Field(max_length = 4)
-    freeform_text: str | None = Field(default = None, max_length = 65536)
+    freeform_text: str | None = None
 
 
 class AnswerSubmission(BaseModel):
@@ -419,13 +421,14 @@ async def open_conversation(conversation_id: str, request: Request):
 
 
 @router.post("/conversations/{conversation_id}/configuration")
-async def configure_model(conversation_id: str, body: ModelConfiguration, request: Request):
+async def configure_model(conversation_id: str, body: ModelConfiguration, request: Request,
+                          generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
     # No Studio scheduler/config store. Mimir orders selection against dequeue and
     # keeps running work frozen; prompts deliberately carry no model configuration.
     return await _command(request, "configure", {
         "conversation_id": conversation_id,
         "configuration": body.model_dump(exclude_unset = True),
-    })
+    }, generation = generation)
 
 
 @router.get("/conversations/{conversation_id}/overlap")
@@ -563,7 +566,7 @@ async def conversation_events(conversation_id: str, request: Request,
             # Do not rewrite native subscription/position/event or queue items.
             envelope = {**item, "observation_epoch": observation_epoch}
             yield "event: view\ndata: " + json.dumps(envelope, separators = (",", ":")) + "\n\n"
-            if item.get("event", {}).get("type") == "closed":
+            if item.get("event", {}).get("type") in ("closed", "invalidated"):
                 return
 
     # Only this view is released on disconnect; native conversation owners survive.

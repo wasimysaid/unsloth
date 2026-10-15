@@ -21,6 +21,11 @@ async function checkFrame(
     .join("\n");
   if (event === "view") {
     const view = JSON.parse(data) as { event?: { type?: string } };
+    if (view.event?.type === "invalidated")
+      throw Object.assign(
+        new Error("The native view was replaced. Refreshing the same conversation view."),
+        { viewInvalidated: true },
+      );
     if (view.event?.type === "closed")
       throw Object.assign(
         new Error(

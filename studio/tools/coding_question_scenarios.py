@@ -7,7 +7,9 @@ Invoked by coding_browser_acceptance.py --workload questions after paired builds
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from urllib.parse import quote
 import urllib.request
 
@@ -490,6 +492,45 @@ def run_question_scenarios(page, context, base, provider, first, second_id, repo
         expect(page.get_by_test_id("coding-transcript").get_by_text("You · accepted answer", exact=True)).to_have_count(len(expected))
         audit()
         scenario("A2-A7-stop-waiting-terminal-cleanup", "Deliberate waiting reopen rejected old subscription; Stop targeted the exact native request, eventual cancelled state cleared active/pending question, stale answer rejected, no continuation or accepted stopped draft")
+
+        # One real rendered/native answer crosses all former independent field
+        # caps without replacing native ownership or the total frame budget.
+        long_id = "notes_" + "x" * 128
+        long_label = "Long choice " * 100
+        long_text = "Exact long answer\n" + "x" * 65537
+        questions = [{"id": long_id, "prompt": "Which exact long answer should be retained?",
+                      "allow_multiple": False, "options": [
+                          {"label": long_label, "description": "Preserve the complete selected label"},
+                          {"label": "Short choice", "description": "Alternate answer"}]}]
+        card, target = start_question("QUESTION_LONG_CONTROLS", "question-long-controls", questions)
+        card.locator('input[type="radio"]').first.check()
+        textarea = card.get_by_label(questions[0]["prompt"] + " — Additional or custom answer", exact=True)
+        assert textarea.get_attribute("maxlength") is None
+        textarea.fill(long_text)
+        expect(textarea).to_have_value(long_text)
+        answers = [{"question_id": long_id, "selected_options": [long_label], "freeform_text": long_text}]
+        snapshot(page, "questions-long-controls-desktop")
+        page.set_viewport_size({"width": 390, "height": 844})
+        snapshot(page, "questions-long-controls-narrow")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.set_viewport_size({"width": 1440, "height": 1000})
+        send(card, target, answers)
+        continuation = provider.request()
+        result = continuation.tool_result("question-long-controls")
+        # Native's existing per-result projection excerpts very large tool output;
+        # acceptance/history remain exact and the model gets a recoverable artifact.
+        artifact = re.search(r"Full raw tool output artifact: `([^`]+)` \(sha256 `([0-9a-f]{64})`, ([0-9]+) bytes\)", result)
+        assert artifact, "Large native tool output must carry its recovery evidence"
+        journals = list((first.parent.parent / "mimir-home" / "sessions").rglob(conversation + ".jsonl"))
+        assert len(journals) == 1, journals
+        raw_path = journals[0].parent / "artifacts" / "sessions" / conversation / artifact[1]
+        raw = raw_path.read_bytes()
+        assert len(raw) == int(artifact[3]) and hashlib.sha256(raw).hexdigest() == artifact[2]
+        assert raw.decode() == f"User replied:\n{long_id}: {long_label}\n  note: {long_text}"
+        evidence["long_answer_recovery"] = {"path": str(raw_path), "sha256": artifact[2], "bytes": len(raw)}
+        complete(continuation, "QUESTION_LONG_CONTROLS_COMPLETED")
+        audit()
+        scenario("A2-exact-long-question-controls", "Rendered answer retained a question ID over 128 bytes, selected label over 1024 bytes, and freeform text over 65536 bytes through native acceptance and durable history; native tool-output projection preserved exact full content in the model's hash-verified recovery artifact")
         evidence["status"] = "passed"
     finally:
         evidence["public_view_trace"] = page.evaluate("window.codingQuestionViewTrace || []")

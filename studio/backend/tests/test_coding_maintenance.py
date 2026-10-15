@@ -180,7 +180,8 @@ async def test_runtime_scope_and_auth_are_explicit(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_waiting_delivery_cannot_retarget_a_replaced_process():
+@pytest.mark.parametrize("method,expected_generation,code", [("view", None, "disconnected"), ("configure", 1, "runtime_changed")])
+async def test_waiting_delivery_cannot_retarget_a_replaced_process(method, expected_generation, code):
     from types import SimpleNamespace
     entered = asyncio.Event()
     class Runtime(CodingRuntime):
@@ -195,14 +196,18 @@ async def test_waiting_delivery_cannot_retarget_a_replaced_process():
     runtime.process = SimpleNamespace(stdin=old)
     runtime._generation = 1
     await runtime._write_lock.acquire()
-    command = asyncio.create_task(runtime.command("view", {"conversation_id": "saved"}))
+    params = {"conversation_id": "saved"}
+    if method == "configure":
+        params["configuration"] = {"reasoning": "high"}
+    command = asyncio.create_task(runtime.command(method, params, expected_generation=expected_generation))
     await entered.wait()
     runtime.process = SimpleNamespace(stdin=new)
     runtime._generation = 2
     runtime._write_lock.release()
     with pytest.raises(CodingRuntimeError) as failure:
         await command
-    assert failure.value.code == "disconnected"
+    assert failure.value.code == code
+    assert failure.value.requires_reopen is (expected_generation is not None)
     assert not old.frames and not new.frames
     assert not runtime._abandoned_views and not runtime._pending
 
@@ -394,25 +399,28 @@ async def test_owner_http_calls_are_fenced_before_delivery_even_after_other_tab_
     app.include_router(router, prefix="/api/coding")
     app.state.coding_runtime = runtime
     token = {"Authorization": "Bearer " + create_access_token("unsloth")}
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        for method, path, body in (
-            ("POST", "/conversations/same-saved-id/prompts", {"submission_key": "old-tab-new-key", "text": "must not run"}),
-            ("POST", "/conversations/same-saved-id/commands", {"operation_id": "old-tab-command", "name": "compress", "tail": ""}),
-            ("POST", "/conversations/same-saved-id/goal", {"revision": "old-owner-goal", "action": "pause"}),
-            ("POST", "/conversations/same-saved-id/mode", {"mode": "build"}),
-            ("POST", "/conversations/same-saved-id/plan-actions", {"plan_id": "old-plan", "revision": "old-revision", "decision": "implement"}),
-            ("POST", "/conversations/same-saved-id/requests/exact/questions/question/answers", {"subscription": "view-1", "answers": [{"question_id": "choice", "selected_options": ["One"]}]}),
-            ("POST", "/conversations/same-saved-id/requests/exact/cancel", None),
-            ("POST", "/conversations/same-saved-id/entries", {"cut": {"journal": "root", "leaf": None}}),
-            ("GET", "/conversations/same-saved-id/events", None),
-        ):
-            missing = await client.request(method, "/api/coding" + path, headers=token, json=body)
-            assert missing.status_code == 422
-            stale = await client.request(method, "/api/coding" + path,
-                headers={**token, "X-Mimir-Runtime-Generation": "19"}, json=body)
-            assert stale.status_code == 409
-            assert stale.headers["X-Mimir-Requires-Reopen"] == "true"
-            assert "Deliberately reopen" in stale.json()["detail"]
-    assert runtime.process.returncode is None
-    assert not (tmp_path / "native-command-trace").exists(), "No stale prompt, native command, Stop, view, or history command reached the new owner"
-    await runtime.close()
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            for method, path, body in (
+                ("POST", "/conversations/same-saved-id/prompts", {"submission_key": "old-tab-new-key", "text": "must not run"}),
+                ("POST", "/conversations/same-saved-id/commands", {"operation_id": "old-tab-command", "name": "compress", "tail": ""}),
+                ("POST", "/conversations/same-saved-id/goal", {"revision": "old-owner-goal", "action": "pause"}),
+                ("POST", "/conversations/same-saved-id/mode", {"mode": "build"}),
+                ("POST", "/conversations/same-saved-id/configuration", {"provider": "native-provider", "model": "native-model", "reasoning": "high"}),
+                ("POST", "/conversations/same-saved-id/plan-actions", {"plan_id": "old-plan", "revision": "old-revision", "decision": "implement"}),
+                ("POST", "/conversations/same-saved-id/requests/exact/questions/question/answers", {"subscription": "view-1", "answers": [{"question_id": "choice", "selected_options": ["One"]}]}),
+                ("POST", "/conversations/same-saved-id/requests/exact/cancel", None),
+                ("POST", "/conversations/same-saved-id/entries", {"cut": {"journal": "root", "leaf": None}}),
+                ("GET", "/conversations/same-saved-id/events", None),
+            ):
+                stale = await client.request(method, "/api/coding" + path,
+                    headers={**token, "X-Mimir-Runtime-Generation": "19"}, json=body)
+                assert stale.status_code == 409
+                assert stale.headers["X-Mimir-Requires-Reopen"] == "true"
+                assert "Deliberately reopen" in stale.json()["detail"]
+                missing = await client.request(method, "/api/coding" + path, headers=token, json=body)
+                assert missing.status_code == 422
+        assert runtime.process.returncode is None
+        assert not (tmp_path / "native-command-trace").exists(), "No stale prompt, configuration, native command, Stop, view, or history command reached the new owner"
+    finally:
+        await runtime.close()

@@ -222,6 +222,30 @@ async def test_sse_observation_epoch_preserves_native_envelopes_across_views_and
 
 
 @pytest.mark.asyncio
+async def test_invalidated_view_ends_sse_and_releases_only_that_subscription(coding_app, monkeypatch):
+    app, headers = coding_app
+    runtime = CodingRuntime()
+    invalidated = {"subscription": "old-view", "event": {"type": "invalidated", "reason": "reopened"}}
+    queue = asyncio.Queue()
+    queue.put_nowait(invalidated)
+    # A terminal invalidation must end the response itself, not wait for EOF or
+    # a later closed item that would incorrectly claim execution owner loss.
+    queue.put_nowait({"subscription": "old-view", "event": {"type": "closed"}})
+    subscribe = AsyncMock(return_value = ("old-view", queue))
+    unsubscribe = AsyncMock()
+    monkeypatch.setattr(runtime, "subscribe", subscribe)
+    monkeypatch.setattr(runtime, "unsubscribe", unsubscribe)
+    app.state.coding_runtime = runtime
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        response = await client.get("/api/coding/conversations/same-owner/events")
+    envelopes = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+    assert envelopes == [{**invalidated, "observation_epoch": runtime.observation_epoch}]
+    subscribe.assert_awaited_once_with("same-owner", expected_generation = 1)
+    unsubscribe.assert_awaited_once_with("old-view")
+    assert runtime.process is None and not runtime._failure
+
+
+@pytest.mark.asyncio
 async def test_stream_id_does_not_implicitly_open_or_grant_trust(coding_app):
     app, headers = coding_app
     class RecordingRuntime:
@@ -438,6 +462,42 @@ async def test_private_framing_matches_ids_not_arrival_order():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("code,requires_reopen", [("not_found", True), ("closed", True), ("busy", False)])
+async def test_retired_same_generation_view_requires_deliberate_reopen_only_at_view_boundary(coding_app, code, requires_reopen):
+    app, headers = coding_app
+    stream = asyncio.StreamReader()
+    runtime = CodingRuntime()
+    runtime._generation = 1  # Idle retirement does not replace the process epoch.
+    frames = []
+    class Writer:
+        def write(self, data):
+            command = json.loads(data[4:])
+            frames.append(command)
+            response = json.dumps({"id": command["id"], "error": {"code": code, "message": "Native attachment unavailable."}}).encode()
+            stream.feed_data(struct.pack(">I", len(response)) + response)
+        async def drain(self):
+            pass
+    runtime.process = SimpleNamespace(stdout = stream, stdin = Writer())
+    app.state.coding_runtime = runtime
+    reader = asyncio.create_task(runtime._read_responses())
+    try:
+        async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+            response = await client.get("/api/coding/conversations/retired/events")
+        assert response.status_code == {"not_found": 404, "closed": 502, "busy": 409}[code]
+        assert (response.headers.get("X-Mimir-Requires-Reopen") == "true") is requires_reopen
+        # Other missing resources are not evidence that the execution owner died.
+        with pytest.raises(CodingRuntimeError) as lookup:
+            await runtime.command("read_entries", {"conversation_id": "retired"}, expected_generation = 1)
+        assert lookup.value.code == code and not lookup.value.requires_reopen
+        assert [frame["method"] for frame in frames] == ["view", "read_entries"]
+        assert not runtime._subscriptions and not runtime._failure
+        assert runtime._generation == 1
+    finally:
+        reader.cancel()
+        await asyncio.gather(reader, return_exceptions = True)
+
+
+@pytest.mark.asyncio
 async def test_view_start_in_same_pipe_read_is_not_lost():
     stream = asyncio.StreamReader()
     runtime = CodingRuntime()
@@ -631,7 +691,7 @@ async def test_model_configuration_is_native_and_never_part_of_queued_prompt(cod
     calls = []
     class RecordingRuntime:
         async def command(self, method, params, *, expected_generation=None):
-            assert expected_generation == (1 if method == "prompt" else None)
+            assert expected_generation == 1
             calls.append((method, params))
             if method == "configure":
                 if params["configuration"].get("model") == "unavailable":

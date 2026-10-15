@@ -2,6 +2,11 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 import assert from "node:assert/strict";
 import test from "node:test";
+import * as React from "react";
+import * as jsxRuntime from "react/jsx-runtime";
+import { renderToStaticMarkup } from "react-dom/server";
+import type * as QuestionCardModule from "../src/features/coding/question-card.tsx";
+import { loadWithStubs } from "./helpers/module-stubs.ts";
 import { createCodingRun } from "../src/features/coding/run-session.ts";
 import { CodingHttpError } from "../src/features/coding/errors.ts";
 import type {
@@ -56,6 +61,7 @@ const answers: NativeAnswer[] = [
 ];
 function harness() {
   let deliver!: (view: unknown) => Promise<void>;
+  let failWatch!: (reason: unknown) => void;
   let generation = 0;
   let position = 0;
   let rows: CodingRow[] = [];
@@ -114,7 +120,7 @@ function harness() {
       generation++;
       position = 0;
       deliver = consume;
-      await new Promise(() => {});
+      await new Promise<void>((_resolve, reject) => { failWatch = reject; });
     },
   };
   const run = createCodingRun("conversation", api, () => "key", {
@@ -143,6 +149,7 @@ function harness() {
     calls,
     event,
     start,
+    failWatch: (reason: unknown) => failWatch(reason),
     setRows: (value: CodingRow[]) => {
       rows = value;
     },
@@ -151,6 +158,77 @@ function harness() {
     },
   };
 }
+
+test("rendered question controls and submission preserve long native IDs, labels and verbatim freeform", async () => {
+  // Real React/HTML rendering; only the unrelated styled Button is substituted.
+  const { QuestionCard } = loadWithStubs<typeof QuestionCardModule>(
+    new URL("../src/features/coding/question-card.tsx", import.meta.url),
+    { react: React, "react/jsx-runtime": jsxRuntime, "@/components/ui/button": { Button: "button" } },
+  );
+  const h = harness();
+  const questionId = "q".repeat(4096);
+  const label = "L".repeat(8192);
+  const freeform = ` \n${"é".repeat(65537)}\r\n `;
+  const input = [{ question_id: questionId, selected_options: [label], freeform_text: freeform }];
+  try {
+    await h.start({
+      ...waiting(),
+      user_request: { id: "question", questions: [{
+        id: questionId, prompt: "Keep the full answer", allow_multiple: false,
+        options: [{ label, description: "Native long option" }],
+      }] },
+    });
+    const target = currentTarget(h.run);
+    h.run.editAnswer(target, input);
+    const html = renderToStaticMarkup(React.createElement(QuestionCard, {
+      form: h.run.getSnapshot().answerForms[0], run: h.run, live: true, focus: false,
+      onReleaseFocus: () => {},
+    }));
+    assert.equal(/\bmaxlength=/i.test(html), false, "the textarea must not impose an independent answer cap");
+    assert.equal(html.includes(`value="${label}"`), true);
+    assert.equal(html.includes(freeform), true, "the rendered draft is not clipped or normalized");
+    await h.run.answer(target);
+    assert.deepEqual(h.calls, [{ id: "conversation", target, answers: input }]);
+    assert.equal(h.run.getSnapshot().answerForms[0].status, "accepted");
+  } finally {
+    h.run.detach();
+  }
+});
+
+test("same-owner view invalidation preserves rows and question draft but renews answer authority without replay", async () => {
+  const h = harness();
+  try {
+    h.setRows([{ id: "saved", kind: "user", text: "Accepted prompt" }]);
+    await h.start();
+    const target = currentTarget(h.run);
+    h.run.editAnswer(target, answers);
+    const before = h.run.getSnapshot();
+    const published: ReturnType<typeof h.run.getSnapshot>[] = [];
+    h.run.subscribe(() => published.push(h.run.getSnapshot()));
+    h.failWatch(Object.assign(new Error("View invalidated by compatible reopen"), { viewInvalidated: true }));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(h.run.getSnapshot().connection, "loading");
+    assert.equal(h.run.getSnapshot().answerTarget, null);
+    assert.deepEqual(h.run.getSnapshot().rows, before.rows);
+    assert.deepEqual(h.run.getSnapshot().native, before.native);
+    await h.run.answer(target);
+    assert.equal(h.calls.length, 0, "old answer capability is not actionable during recapture");
+    await h.start();
+    const renewed = currentTarget(h.run);
+    assert.notEqual(renewed.subscription, target.subscription);
+    assert.equal(renewed.request_id, target.request_id);
+    assert.equal(renewed.user_request_id, target.user_request_id);
+    assert.deepEqual(h.run.getSnapshot().answerForms[0].answers, answers);
+    assert.ok(published.every((state) => !state.disconnected && !state.reopenRequired && state.error === null));
+    await h.run.answer(target);
+    assert.equal(h.calls.length, 0, "old controls cannot answer the renewed view");
+    await h.run.answer(renewed); // Only explicit submission uses the fresh capability.
+    assert.equal(h.calls.length, 1);
+    assert.deepEqual(h.calls[0].target, renewed);
+  } finally {
+    h.run.detach();
+  }
+});
 
 for (const status of [409, 503]) {
   test(`answer loss evidence ${status} requires deliberate owner reopen without replaying the retained draft`, async () => {

@@ -434,6 +434,9 @@ class CodingRuntime:
                     error = payload["error"]
                     future.set_exception(CodingRuntimeError(
                         error["code"], error["message"], error.get("overlap"),
+                        # A retired/closed attachment cannot be repaired by view
+                        # retries. Other missing resources do not imply owner loss.
+                        requires_reopen = identifier in self._opening_views and error["code"] in ("not_found", "closed"),
                     ))
                 elif "result" in payload:
                     result = payload["result"]
