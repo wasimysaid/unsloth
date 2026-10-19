@@ -59,46 +59,33 @@ export function CodingComposer({
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<DraftImage | null>(null);
   const connected = state?.connection === "connected";
+  const composing = useRef(false);
+  // The shipped primitive suppresses composer updates during IME input. Keep
+  // its controlled DOM value locally until compositionend commits it natively.
+  const [compositionText, setCompositionText] = useState<string | null>(null);
+  const pendingEdit = useRef<{
+    text: string;
+    start: number;
+    end: number;
+    type: string;
+  } | null>(null);
   useEffect(() => {
     const node = input.current;
     if (!node) return;
-    let pending: {
-      text: string;
-      start: number;
-      end: number;
-      type: string;
-    } | null = null;
-    // Native beforeinput exposes the actual occurrence being edited, including
-    // deletion/paste. React's inferred string diff cannot distinguish equal tokens.
+    // Capture only: publishing here would render the old controlled value before
+    // assistant-ui's React onChange has accepted the browser edit.
     const before = (event: InputEvent) => {
-      pending = {
+      pendingEdit.current = {
         text: node.value,
         start: node.selectionStart,
         end: node.selectionEnd,
         type: event.inputType,
       };
     };
-    const after = () => {
-      const previous = pending;
-      pending = null;
-      if (!previous || previous.text !== draft.getSnapshot().text) return;
-      let { start, end } = previous;
-      const delta = node.value.length - previous.text.length;
-      let known =
-        previous.type.startsWith("insert") ||
-        previous.type.startsWith("delete");
-      if (start === end && previous.type.startsWith("delete")) {
-        if (previous.type.endsWith("Backward")) start += delta;
-        else if (previous.type.endsWith("Forward")) end -= delta;
-        else known = false;
-      }
-      draft.syncText(node.value, known ? { start, end } : null);
-    };
     node.addEventListener("beforeinput", before);
-    node.addEventListener("input", after);
     return () => {
       node.removeEventListener("beforeinput", before);
-      node.removeEventListener("input", after);
+      pendingEdit.current = null;
     };
   }, [draft]);
   useEffect(() => {
@@ -166,8 +153,29 @@ export function CodingComposer({
   const changed = (node: HTMLTextAreaElement, syncText = true) => {
     // Selection notifications can observe the previous DOM value while the
     // native composer applies setText. They must never undo a selected mention.
-    if (syncText) draft.syncText(node.value);
-    else if (node.value !== draft.getSnapshot().text) return;
+    if (syncText) {
+      const text = node.value;
+      const previous = pendingEdit.current;
+      pendingEdit.current = null;
+      // React batches this notification with ComposerPrimitive.Input's own
+      // onChange. Never publish from a native input listener ahead of it, or
+      // setText here: that can restore old text or move the browser's caret.
+      if (previous && previous.text === draft.getSnapshot().text) {
+        let { start, end } = previous;
+        const delta = text.length - previous.text.length;
+        let known =
+          previous.type.startsWith("insert") ||
+          previous.type.startsWith("delete");
+        if (start === end && previous.type.startsWith("delete")) {
+          if (previous.type.endsWith("Backward")) start += delta;
+          else if (previous.type.endsWith("Forward")) end -= delta;
+          else known = false;
+        }
+        draft.syncText(text, known ? { start, end } : null);
+      } else {
+        draft.syncText(text);
+      }
+    } else if (node.value !== draft.getSnapshot().text) return;
     const cursor = node.selectionStart;
     const match = /(?:^|\s)(@[^\s@]*)$/.exec(node.value.slice(0, cursor));
     if (match) {
@@ -312,8 +320,26 @@ export function CodingComposer({
             unstable_focusOnThreadSwitched={false}
             unstable_focusOnRunStart={false}
             unstable_focusOnScrollToBottom={false}
-            onChange={(event) => changed(event.currentTarget)}
-            onCompositionEnd={(event) => changed(event.currentTarget)}
+            {...(compositionText === null ? {} : { value: compositionText })}
+            onChange={(event) => {
+              if (
+                composing.current ||
+                (event.nativeEvent as InputEvent).isComposing
+              ) {
+                setCompositionText(event.currentTarget.value);
+              } else {
+                changed(event.currentTarget);
+              }
+            }}
+            onCompositionStart={(event) => {
+              composing.current = true;
+              setCompositionText(event.currentTarget.value);
+            }}
+            onCompositionEnd={(event) => {
+              composing.current = false;
+              setCompositionText(null);
+              changed(event.currentTarget);
+            }}
             onSelect={(event) => {
               if (panelOpen.current && range)
                 changed(event.currentTarget, false);
