@@ -165,13 +165,21 @@ test("list and explicit reopen consume native records; IDs are encoded as one pa
   );
   assert.deepEqual(await c.api.codingApi.listConversations(), [row]);
   listing = false;
-  assert.deepEqual(await c.api.codingApi.openConversation(row.id), row);
+  // Navigation owns the signal so a superseded open is abandoned, not awaited.
+  const navigation = new AbortController();
+  assert.deepEqual(
+    await c.api.codingApi.openConversation(row.id, navigation.signal),
+    row,
+  );
   assert.equal(c.requests[0].path, "/api/coding/conversations");
   assert.equal(
     c.requests[1].path,
     "/api/coding/conversations/native%2Fid%3F/open",
   );
-  assert.deepEqual(c.requests[1].init, { method: "POST" });
+  assert.deepEqual(c.requests[1].init, {
+    method: "POST",
+    signal: navigation.signal,
+  });
 });
 
 test("native pagination is fully followed with encoded cursors", async () => {

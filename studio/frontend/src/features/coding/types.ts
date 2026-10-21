@@ -22,7 +22,10 @@ export interface CodingProjectDirectory {
 export interface CodingApi {
   listConversations(): Promise<CodingConversation[]>;
   createConversation(cwd: string): Promise<CodingConversation>;
-  openConversation(id: string): Promise<CodingConversation>;
+  openConversation(
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<CodingConversation>;
   browseProjects(
     path: string,
     signal: AbortSignal,

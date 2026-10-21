@@ -19,7 +19,7 @@ import uuid
 from typing import Any
 
 log = logging.getLogger(__name__)
-MAX_FRAME = 1024 * 1024
+MAX_FRAME = 32 * 1024 * 1024
 COMMAND_TIMEOUT = 60
 DRAIN_TIMEOUT = 30
 TERMINATE_TIMEOUT = 10

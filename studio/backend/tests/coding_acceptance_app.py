@@ -76,7 +76,7 @@ def create_app() -> FastAPI:
     async def unavailable(path: str):
         raise HTTPException(404, "This opening-only acceptance composition does not mount unrelated APIs.")
 
-    dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    dist = Path(os.environ.get("CODING_ACCEPTANCE_DIST", Path(__file__).resolve().parents[2] / "frontend" / "dist")).resolve()
     app.mount("/assets", StaticFiles(directory = dist / "assets"), name = "assets")
 
     @app.get("/{path:path}")

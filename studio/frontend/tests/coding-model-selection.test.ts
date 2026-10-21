@@ -3,7 +3,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  STARRED_GROUP,
   filterCodingModels,
+  modelGroups,
   findCodingModel,
   modelIdentity,
   readCodingFavorites,
@@ -55,37 +57,40 @@ test("catalog selection and favorites use exact identity, never colliding labels
     JSON.stringify([a, a, "Same model label", '["single"]', '["", "id"]']),
   );
   assert.deepEqual([...favorites], [a]);
+  const [starred, ...providers] = modelGroups(
+    filterCodingModels(catalog, ""),
+    favorites,
+  );
+  assert.equal(starred.key, STARRED_GROUP);
   assert.deepEqual(
-    filterCodingModels(catalog, "", null, favorites, true).map(
-      (provider) => provider.id,
-    ),
-    ["provider/a"],
+    starred.models.map(({ provider, model }) => [provider, model.id]),
+    [["provider/a", "local-id"]],
+    "only the exact starred identity, never the same id of another provider",
+  );
+  assert.deepEqual(
+    providers.map((group) => group.key),
+    catalog.map((provider) => provider.id),
   );
   assert.equal(
-    filterCodingModels(catalog, "", "provider/b", favorites, true).length,
-    0,
+    modelGroups(filterCodingModels(catalog, ""), new Set())[0].key,
+    catalog[0].id,
+    "no Starred group without favorites",
   );
 });
 
 test("search/provider navigation derive exclusively from native entries and do not invent reasoning levels", () => {
   const before = structuredClone(catalog);
   assert.deepEqual(
-    filterCodingModels(
-      catalog,
-      " NATIVE-api-PROVIDER/B ",
-      null,
-      new Set(),
-      false,
-    ).map((provider) => provider.id),
+    filterCodingModels(catalog, " NATIVE-api-PROVIDER/B ").map(
+      (provider) => provider.id,
+    ),
     ["provider/b"],
   );
-  assert.equal(
-    filterCodingModels(catalog, "no such model", null, new Set(), false).length,
-    0,
-  );
+  assert.equal(filterCodingModels(catalog, "no such model").length, 0);
   assert.deepEqual(
-    filterCodingModels(catalog, "same", "provider/b", new Set(), false)[0]
-      .models[0].reasoning,
+    modelGroups(filterCodingModels(catalog, "same"), new Set()).find(
+      (group) => group.key === "provider/b",
+    )?.models[0].model.reasoning,
     "unsupported",
   );
   assert.deepEqual(catalog, before);

@@ -4,17 +4,30 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { CodingHttpError } from "../src/features/coding/errors.ts";
 import {
+  type CodingInputDraft,
+  type CodingSkill,
   MAX_IMAGE_BYTES,
+  MAX_TOTAL_IMAGE_BYTES,
   createInputDraft,
   editMentions,
   imageSignature,
+  planImageAttachments,
   readCodingImage,
 } from "../src/features/coding/input.ts";
 import { codingRunAdapter } from "../src/features/coding/run-runtime.ts";
 import { createCodingRun } from "../src/features/coding/run-session.ts";
 import type { RunApi } from "../src/features/coding/run-types.ts";
-import { memorySubmissionStorage } from "./coding-storage-fixture.ts";
+import {
+  memoryImageStorage,
+  memorySubmissionStorage,
+} from "./coding-storage-fixture.ts";
 
+const selectSkill = (
+  draft: CodingInputDraft,
+  skill: CodingSkill,
+  start: number,
+  end: number,
+) => draft.selectMention({ kind: "skill", skill }, start, end);
 const skill = {
   name: "review",
   qualified_name: "plugin:alpha:review",
@@ -23,9 +36,10 @@ const skill = {
 test("qualified-name collisions stay distinct, edits track exact mentions and Unicode native ranges", () => {
   const draft = createInputDraft();
   draft.syncText("Please ");
-  draft.selectSkill(skill, 7, 7);
+  selectSkill(draft, skill, 7, 7);
   let text = draft.getSnapshot().text;
-  draft.selectSkill(
+  selectSkill(
+    draft,
     { ...skill, qualified_name: "plugin:beta:review" },
     text.length,
     text.length,
@@ -53,7 +67,8 @@ test("qualified-name collisions stay distinct, edits track exact mentions and Un
 test("disk skill input preserves its exact native descriptor path, including restored Unicode ranges", () => {
   const draft = createInputDraft();
   draft.syncText("😀 ");
-  const selected = draft.selectSkill(
+  const selected = selectSkill(
+    draft,
     {
       name: "review",
       qualified_name: "review",
@@ -85,19 +100,19 @@ test("repeated selected skill insertion and replacement use explicit editing ran
     description: "Disk skill",
     path: "/project/review/SKILL.md",
   };
-  draft.selectSkill(disk, 0, 0);
-  draft.selectSkill(disk, 0, 0);
+  selectSkill(draft, disk, 0, 0);
+  selectSkill(draft, disk, 0, 0);
   let text = draft.getSnapshot().text;
   assert.equal(text, "@review @review ");
   assert.deepEqual(draft.input(text).skill_mentions, [
     { name: "review", path: disk.path, start: 0, end: 7 },
     { name: "review", path: disk.path, start: 8, end: 15 },
   ]);
-  draft.selectSkill(disk, 0, 7);
+  selectSkill(draft, disk, 0, 7);
   text = draft.getSnapshot().text;
   assert.equal(draft.input(text).skill_mentions?.length, 2);
   const length = text.length;
-  draft.selectSkill(disk, length, length);
+  selectSkill(draft, disk, length, length);
   assert.equal(draft.input(draft.getSnapshot().text).skill_mentions?.length, 3);
 });
 
@@ -108,13 +123,13 @@ test("deleting selected versus literal repeated text respects the actual edit ra
     path: "/project/review/SKILL.md",
   };
   const selected = createInputDraft();
-  selected.selectSkill(disk, 0, 0);
+  selectSkill(selected, disk, 0, 0);
   selected.syncText("@review @review ", { start: 8, end: 8 });
   selected.syncText("@review ", { start: 0, end: 8 });
   assert.deepEqual(selected.input("@review "), {});
 
   const literal = createInputDraft();
-  literal.selectSkill(disk, 0, 0);
+  selectSkill(literal, disk, 0, 0);
   literal.syncText("@review @review ", { start: 8, end: 8 });
   literal.syncText("@review ", { start: 8, end: 16 });
   assert.deepEqual(literal.input("@review ").skill_mentions, [
@@ -125,7 +140,7 @@ test("deleting selected versus literal repeated text respects the actual edit ra
   assert.deepEqual(literal.input("@review "), {});
 
   const uncertain = createInputDraft();
-  uncertain.selectSkill(disk, 0, 0);
+  selectSkill(uncertain, disk, 0, 0);
   uncertain.syncText("@review @review ");
   assert.deepEqual(uncertain.input("@review @review "), {});
 });
@@ -142,6 +157,15 @@ test("insertions at mention boundaries preserve the token; insertions inside inv
   assert.deepEqual(editMentions("@qualified", "@quxalified", [mention]), []);
   assert.deepEqual(editMentions("@qualified", "", [mention]), []);
 });
+const png = (size: number) => {
+  const bytes = new Uint8Array(size);
+  bytes.set([137, 80, 78, 71, 13, 10, 26, 10]);
+  return bytes;
+};
+const decoded =
+  (width = 64, height = 64) =>
+  async () => ({ width, height });
+
 test("image attachment contract rejects unsupported, empty, oversized and spoofed images without silently adding them", async () => {
   await assert.rejects(
     readCodingImage(
@@ -155,21 +179,58 @@ test("image attachment contract rejects unsupported, empty, oversized and spoofe
   );
   await assert.rejects(
     readCodingImage(
-      new File([new Uint8Array(MAX_IMAGE_BYTES + 1)], "big.png", {
-        type: "image/png",
-      }),
+      new File([png(MAX_IMAGE_BYTES + 1)], "big.png", { type: "image/png" }),
+      decoded(),
     ),
-    /512 KiB/,
+    /at most 10 MiB/,
   );
   await assert.rejects(
     readCodingImage(new File(["not a PNG"], "fake.png", { type: "image/png" })),
     /do not match/,
+  );
+  await assert.rejects(
+    readCodingImage(
+      new File([png(64)], "huge.png", { type: "image/png" }),
+      decoded(4097, 10),
+    ),
+    /4096 × 4096/,
+  );
+  await assert.rejects(
+    readCodingImage(
+      new File([png(64)], "broken.png", { type: "image/png" }),
+      async () => {
+        throw new Error("decode");
+      },
+    ),
+    /cannot be decoded/,
   );
   assert.equal(
     imageSignature(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])),
     "image/png",
   );
   assert.equal(imageSignature(new Uint8Array([255, 216, 255])), "image/jpeg");
+});
+
+test("images above the old 512 KiB cap are accepted up to exactly 10 MiB, with exact base64 bytes", async () => {
+  // The baseline rejected this 662,321-byte screenshot size.
+  const medium = await readCodingImage(
+    new File([png(662_321)], "screenshot.png", { type: "image/png" }),
+    decoded(),
+  );
+  assert.equal(medium.bytes, 662_321);
+  assert.deepEqual(
+    Buffer.from(medium.data, "base64"),
+    Buffer.from(png(662_321)),
+  );
+  const boundary = await readCodingImage(
+    new File([png(MAX_IMAGE_BYTES)], "boundary.png", { type: "image/png" }),
+    decoded(4096, 4096),
+  );
+  assert.equal(boundary.bytes, MAX_IMAGE_BYTES);
+  assert.equal(boundary.data.length, Math.ceil(MAX_IMAGE_BYTES / 3) * 4);
+});
+
+test("count and 20 MiB total bounds are enforced before reading and on add", () => {
   const draft = createInputDraft();
   const image = {
     id: "image",
@@ -178,14 +239,16 @@ test("image attachment contract rejects unsupported, empty, oversized and spoofe
     data: "AA==",
     bytes: MAX_IMAGE_BYTES,
   };
-  draft.addImages([image]);
+  draft.addImages([image, { ...image, id: "second" }]);
+  assert.equal(MAX_TOTAL_IMAGE_BYTES, 2 * MAX_IMAGE_BYTES);
   assert.throws(
     () => draft.addImages([{ ...image, id: "extra", bytes: 1 }]),
-    /total at most/,
+    /total at most 20 MiB/,
   );
-  assert.equal(draft.getSnapshot().images.length, 1);
+  assert.equal(draft.getSnapshot().images.length, 2);
   draft.removeImage("image");
-  assert.equal(draft.getSnapshot().images.length, 0);
+  assert.equal(draft.getSnapshot().images.length, 1);
+  draft.removeImage("second");
   assert.throws(
     () =>
       draft.addImages(
@@ -197,9 +260,50 @@ test("image attachment contract rejects unsupported, empty, oversized and spoofe
       ),
     /at most 4/,
   );
+  const file = (name: string, size: number, type = "image/png") => ({
+    name,
+    size,
+    type,
+  });
+  const planned = planImageAttachments(
+    [{ bytes: 6 * 1024 * 1024 }],
+    [{ bytes: 6 * 1024 * 1024 }],
+    [
+      file("ok.png", 8 * 1024 * 1024),
+      file("over-total.png", 1024),
+      file("notes.pdf", 10, "application/pdf"),
+      file("too-big.png", MAX_IMAGE_BYTES + 1),
+      file("empty.png", 0),
+      file("small.png", 1),
+    ],
+  );
+  assert.deepEqual(
+    planned.accepted.map((item) => item.name),
+    ["ok.png"],
+    "current + pending + new stays within 20 MiB",
+  );
+  assert.deepEqual(
+    planned.errors.map((error) => error.split(":")[0]),
+    ["over-total.png", "notes.pdf", "too-big.png", "empty.png", "small.png"],
+  );
+  assert.match(planned.errors[0], /total at most 20 MiB/);
+  assert.match(planned.errors[1], /PNG, JPEG, WebP or GIF/);
+  const counted = planImageAttachments(
+    [{ bytes: 1 }, { bytes: 1 }, { bytes: 1 }],
+    [],
+    [file("fourth.png", 1), file("fifth.png", 1)],
+  );
+  assert.deepEqual(
+    counted.accepted.map((item) => item.name),
+    ["fourth.png"],
+  );
+  assert.match(counted.errors[0], /fifth.png: attach at most 4 images/);
 });
 
-async function harness(storage = memorySubmissionStorage()) {
+async function harness(
+  storage = memorySubmissionStorage(),
+  images = memoryImageStorage(),
+) {
   const calls: unknown[] = [];
   let deliver!: (value: unknown) => Promise<void>;
   let failure: Error | null = null;
@@ -257,6 +361,7 @@ async function harness(storage = memorySubmissionStorage()) {
   };
   const run = createCodingRun("conversation", api, () => "submission-exact", {
     storage: () => storage,
+    imageStorage: () => images,
   });
   run.connect();
   await deliver({
@@ -290,7 +395,9 @@ async function harness(storage = memorySubmissionStorage()) {
 }
 test("reopening preserves the full rich-input payload and retries its original identity", async () => {
   const storage = memorySubmissionStorage();
-  const first = await harness(storage);
+  // One image store across both runs stands in for IndexedDB surviving reload.
+  const images = memoryImageStorage();
+  const first = await harness(storage, images);
   first.fail(new Error("Lost response"));
   const extras = {
     skill_mentions: [
@@ -302,16 +409,20 @@ test("reopening preserves the full rich-input payload and retries its original i
   const expected = structuredClone(first.calls[0]);
   first.run.detach();
   extras.images[0].data = "changed after send";
-  const reopened = await harness(storage);
+  const reopened = await harness(storage, images);
   assert.equal(
     reopened.calls.length,
     0,
     "reopen must not replay automatically",
   );
+  const restored = reopened.run.getSnapshot().uncertainSubmission;
   assert.equal(
-    reopened.run.getSnapshot().uncertainSubmission?.images?.[0].data,
-    "original-image-bytes",
+    restored?.images,
+    undefined,
+    "image bytes are not kept in the small localStorage record",
   );
+  assert.equal(restored?.image_manifest?.length, 1);
+  assert.equal(restored?.image_manifest?.[0].mime_type, "image/png");
   assert.equal(await reopened.run.retrySubmission(), true);
   assert.deepEqual(reopened.calls, [expected]);
   assert.equal(reopened.run.getSnapshot().uncertainSubmission, null);
@@ -344,7 +455,7 @@ test("native rejection retains actionable rich input for restoration; adapter ne
   h.fail(new CodingHttpError(422, "Provider does not support images"));
   const draft = createInputDraft();
   draft.syncText("@plugin:alpha:review ");
-  draft.selectSkill(skill, 0, draft.getSnapshot().text.length);
+  selectSkill(draft, skill, 0, draft.getSnapshot().text.length);
   draft.addImages([
     {
       id: "visual",
@@ -371,7 +482,17 @@ test("native rejection retains actionable rich input for restoration; adapter ne
   assert.ok(rejected);
   assert.equal(rejected.text, text);
   assert.equal(rejected.images?.length, 1);
-  assert.equal(draft.getSnapshot().images.length, 1);
+  assert.equal(
+    draft.getSnapshot().images.length,
+    0,
+    "the sent message consumed its input; the rejection retains it",
+  );
+  draft.restore(rejected);
+  assert.equal(
+    draft.getSnapshot().images.length,
+    1,
+    "Restore input brings it back",
+  );
   assert.equal(h.run.getSnapshot().uncertainSubmission, null);
   assert.deepEqual(h.run.getSnapshot().rows, []);
   const restored = createInputDraft();

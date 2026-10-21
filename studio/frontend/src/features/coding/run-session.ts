@@ -12,11 +12,16 @@ import {
 } from "./command-types.ts";
 import { CodingOverlapError } from "./errors.ts";
 import { codingRowSize } from "./file-changes.ts";
-import type { CodingInput, CodingInputExtras } from "./input.ts";
+import type { CodingImage, CodingInput, CodingInputExtras } from "./input.ts";
 import type { CodingConfigurationChange } from "./model-selection.ts";
 import { type PendingCommand, pendingCommandStore } from "./pending-command.ts";
 import {
+  type PendingImageStore,
+  PendingImageStorageError,
+  type PendingSubmission,
   type SubmissionStorage,
+  imageManifest,
+  pendingInput,
   pendingSubmissionStore,
 } from "./pending-submission.ts";
 import {
@@ -55,6 +60,10 @@ export interface QuestionAnswerForm {
 }
 export interface CodingRunState {
   connection: "loading" | "connected" | "disconnected";
+  /** The subscription whose own native state names this view's requests.
+   * Request controls (Stop) need it, not rebuilt history; a new watcher,
+   * disconnect, owner loss or detach revokes it. */
+  authority: string | null;
   native: NativeState | null;
   rows: CodingRow[];
   recovering: boolean;
@@ -75,7 +84,8 @@ export interface CodingRunState {
     stop_reason: string;
     error: string | null;
   } | null;
-  uncertainSubmission: (CodingInput & { key: string }) | null;
+  /** After reload, image bytes are referenced by digest and read back only for retry. */
+  uncertainSubmission: PendingSubmission | null;
   rejectedSubmission?: CodingInput | null;
   acceptedSubmissionKey?: string;
   storageError: string | null;
@@ -128,15 +138,23 @@ export function createCodingRun(
   makeKey: () => string = () => crypto.randomUUID(),
   options: {
     storage?: () => SubmissionStorage;
+    imageStorage?: () => PendingImageStore;
     reconnectDelay?: (attempt: number) => number;
+    /** Bound on waiting for ordered native state after a mode command. */
+    modeSettleDelay?: number;
     onRuntimeLost?: () => void;
   } = {},
 ) {
-  const pendingStore = pendingSubmissionStore(id, options.storage);
+  const pendingStore = pendingSubmissionStore(
+    id,
+    options.storage,
+    options.imageStorage,
+  );
   const commandStore = pendingCommandStore(id, options.storage);
   const childView = createChildView(id, api);
   let state: CodingRunState = {
     connection: "loading",
+    authority: null,
     native: null,
     rows: [],
     recovering: false,
@@ -376,6 +394,35 @@ export function createCodingRun(
           : "Fresh native view has not confirmed released terminal cleanup for the cancellation target. No action was replayed; wait for native cleanup or deliberately reopen saved history to inspect again.",
     });
   };
+  let modeAwaiting: { mode: CodingMode; uncertain: boolean } | null = null;
+  let modeTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearModeWait = () => {
+    if (modeTimer !== null) clearTimeout(modeTimer);
+    modeTimer = null;
+    modeAwaiting = null;
+  };
+  const settleMode = () => {
+    const control = state.planControl;
+    if (
+      control?.kind !== "mode" ||
+      !modeAwaiting ||
+      state.planControlReconciling ||
+      state.connection !== "connected" ||
+      state.recovering ||
+      state.native?.configuration.mode !== control.mode
+    )
+      return;
+    const { uncertain } = modeAwaiting;
+    clearModeWait();
+    update({
+      planControl: null,
+      planControlUncertain: false,
+      planControlError: null,
+      planControlNotice: uncertain
+        ? `Delivery was unconfirmed, but ordered native state now reports ${control.mode} mode. No command was replayed.`
+        : null,
+    });
+  };
   const reconcilePlanControl = () => {
     const control = state.planControl;
     if (
@@ -392,12 +439,20 @@ export function createCodingRun(
         : plan?.id !== control.plan_id
           ? "The selected plan is no longer current. Its action was not replayed."
           : `Native plan ${plan.id}: ${plan.status}.`;
+    clearModeWait();
     update({
       planControl: null,
       planControlReconciling: false,
+      // A mode wait message is superseded by this inspection; plan refusals stay.
+      planControlError: control.kind === "mode" ? null : state.planControlError,
       planControlNotice: `${state.planControlUncertain ? "Delivery remains unconfirmed. " : ""}Fresh native view inspected. ${observation} No command was replayed; any further choice must target the current native revision.`,
     });
   };
+  // Unchanged native inputs keep the same derived row objects, so presentation
+  // reuses work by reference instead of re-comparing transcript content.
+  const merged = new WeakMap<CodingRow, WeakMap<CodingRow, CodingRow>>();
+  let liveRows = new WeakMap<CodingRow, CodingRow>();
+  let liveRowsFor = liveInvocations;
   const mergeRows = (source: CodingRow[]) => {
     // Saved starts/results and live activity refer to the same native invocation.
     // Collapse only that exact identity, preserving its first chronological slot.
@@ -411,30 +466,51 @@ export function createCodingRun(
         rowsByIdentity.push(row);
       } else {
         const prior = rowsByIdentity[existing];
-        rowsByIdentity[existing] = {
-          ...row,
-          id: prior.id,
-          entry_id: prior.entry_id ?? row.entry_id,
-          request_id: row.request_id ?? prior.request_id,
-        };
+        let byRow = merged.get(prior);
+        if (!byRow) {
+          byRow = new WeakMap();
+          merged.set(prior, byRow);
+        }
+        let next = byRow.get(row);
+        if (!next) {
+          next = {
+            ...row,
+            id: prior.id,
+            entry_id: prior.entry_id ?? row.entry_id,
+            request_id: row.request_id ?? prior.request_id,
+          };
+          byRow.set(row, next);
+        }
+        rowsByIdentity[existing] = next;
       }
     }
     return rowsByIdentity;
   };
   const publishRows = () => {
+    if (liveRowsFor !== liveInvocations) {
+      liveRows = new WeakMap();
+      liveRowsFor = liveInvocations;
+    }
     // A persisted invocation start is not a terminal tool result. Native's
     // captured live identities remain authoritative, including on reconnect.
-    const rows = mergeRows([...saved, ...provisional]).map((row) =>
-      row.tool?.status === "saved" &&
-      row.tool.invocation_id &&
-      liveInvocations.has(row.tool.invocation_id)
-        ? {
-            ...row,
-            historical: false,
-            tool: { ...row.tool, status: "running", historical: false },
-          }
-        : row,
-    );
+    const rows = mergeRows([...saved, ...provisional]).map((row) => {
+      if (
+        row.tool?.status !== "saved" ||
+        !row.tool.invocation_id ||
+        !liveInvocations.has(row.tool.invocation_id)
+      )
+        return row;
+      let live = liveRows.get(row);
+      if (!live) {
+        live = {
+          ...row,
+          historical: false,
+          tool: { ...row.tool, status: "running", historical: false },
+        };
+        liveRows.set(row, live);
+      }
+      return live;
+    });
     let bytes = rows.reduce((size, row) => size + codingRowSize(row), 0);
     let omitted = false;
     while (rows.length > MAX_ROWS || (bytes > MAX_TEXT && rows.length > 1)) {
@@ -632,6 +708,7 @@ export function createCodingRun(
       cut = null;
       update({
         native,
+        authority: view.subscription,
         // A same-conversation reconnect keeps the existing projection visibly
         // busy until capture, preserving mounted expansion/focus state. A reset
         // must hide the superseded branch immediately.
@@ -803,6 +880,7 @@ export function createCodingRun(
       void reconcileCommand();
     }
     reconcileAnswers(answersAwaitCapture);
+    settleMode();
   }
   function requireRuntimeReopen() {
     if (runtimeLost) return;
@@ -816,6 +894,7 @@ export function createCodingRun(
     abort = null;
     update({
       connection: "disconnected",
+      authority: null,
       disconnected: true,
       reopenRequired: true,
       answerTarget: null,
@@ -837,6 +916,7 @@ export function createCodingRun(
     subscription = null;
     update({
       connection: "loading",
+      authority: null,
       answerTarget: null,
       error: state.reconcilingAction ? state.error : null,
       loadingEarlier: false,
@@ -871,6 +951,7 @@ export function createCodingRun(
         childView.setConnected(false);
         update({
           connection: "disconnected",
+          authority: null,
           answerTarget: null,
           disconnected: true,
           reopenRequired: requiresReopen,
@@ -886,6 +967,12 @@ export function createCodingRun(
         reconnectTimer = setTimeout(connect, delay);
       });
   }
+  const sameImages = async (
+    existing: PendingSubmission,
+    images: CodingImage[] | undefined,
+  ) =>
+    JSON.stringify(existing.image_manifest ?? []) ===
+    JSON.stringify(await imageManifest(images ?? []));
   async function submit(
     input: CodingInput,
     key: string,
@@ -911,28 +998,62 @@ export function createCodingRun(
       throw new Error(
         "Wait for a connected, reconstructed native view and confirmed cleanup before sending.",
       );
+    // Image persistence is asynchronous: hold the send gate meanwhile, and
+    // deliver only through the same view lifetime that admitted this send.
+    const lifetime = { attachment, incarnation };
+    update({ submitting: true });
+    let existing: PendingSubmission | null;
     try {
-      const existing = pendingStore.load();
+      existing = pendingStore.load();
       if (
         existing &&
         (existing.key !== key ||
           existing.text !== input.text ||
           JSON.stringify(existing.skill_mentions ?? []) !==
             JSON.stringify(input.skill_mentions ?? []) ||
-          JSON.stringify(existing.images ?? []) !==
-            JSON.stringify(input.images ?? []))
+          JSON.stringify(existing.subagent_mentions ?? []) !==
+            JSON.stringify(input.subagent_mentions ?? []) ||
+          JSON.stringify(existing.file_mentions ?? []) !==
+            JSON.stringify(input.file_mentions ?? []) ||
+          !(await sameImages(existing, input.images)))
       )
         throw new Error(
           "Another pending submission must be reconciled before sending.",
         );
-      pendingStore.save({ key, ...input }); // Complete input durable BEFORE HTTP.
+      await pendingStore.save({ key, ...input }); // Complete input durable BEFORE HTTP.
     } catch (reason) {
       // The shipped composer clears its text before onNew. Keep this known-unsent
       // draft separately from uncertain delivery and native transcript rows.
       update({
-        storageError: `Submission storage unavailable. No prompt was sent. ${errorText(reason)}`,
+        submitting: false,
+        ...(reason instanceof PendingImageStorageError
+          ? {
+              error: `${reason.message} Nothing was sent; your input is retained.`,
+            }
+          : {
+              storageError: `Submission storage unavailable. No prompt was sent. ${errorText(reason)}`,
+            }),
         unsentDraft: input.text,
         rejectedSubmission: input,
+      });
+      return false;
+    }
+    if (
+      lifetime.attachment !== attachment ||
+      lifetime.incarnation !== incarnation ||
+      runtimeLost ||
+      state.connection !== "connected" ||
+      state.recovering
+    ) {
+      // Known unsent: a fresh record is withdrawn; a retried uncertain one stays.
+      if (!existing) clearPending(key, false);
+      update({
+        submitting: false,
+        error:
+          "The native view changed while this submission was being saved. Nothing was sent; your input is retained.",
+        ...(existing
+          ? {}
+          : { unsentDraft: input.text, rejectedSubmission: input }),
       });
       return false;
     }
@@ -1489,6 +1610,7 @@ export function createCodingRun(
       }
     },
     detach() {
+      clearModeWait();
       ++attachment;
       ++incarnation;
       ++diagnosticRevision;
@@ -1496,17 +1618,72 @@ export function createCodingRun(
       reconnectTimer = null;
       abort?.abort();
       abort = null;
-      update({ answerTarget: null });
+      update({ answerTarget: null, authority: null });
       childView.detach();
     },
+    /** Mode-only: the reply is not authority. The already-ordered native view
+     * settles it; one fresh capture is read only if that never confirms. */
     async setMode(mode: CodingMode) {
-      await planControl({ kind: "mode", mode }, async () => {
+      const disabled = codingModeControlReason(state);
+      if (disabled) {
+        update({ planControlError: disabled });
+        return;
+      }
+      const current = attachment;
+      clearModeWait();
+      update({
+        planControl: { kind: "mode", mode },
+        planControlReconciling: false,
+        planControlUncertain: false,
+        planControlError: null,
+        planControlNotice: null,
+      });
+      let uncertain = false;
+      try {
         const result = await api.setMode(id, mode);
         if (result.conversation_id !== id || result.mode !== mode)
           throw new Error(
             "The native mode selection identity could not be confirmed.",
           );
-      });
+      } catch (reason) {
+        if (current !== attachment) return;
+        if (needsReopen(reason)) {
+          // The owner is gone: keep the control blocked until deliberate reopen.
+          update({
+            planControlUncertain: true,
+            planControlError: errorText(reason),
+          });
+          requireRuntimeReopen();
+          return;
+        }
+        if (
+          reason instanceof Error &&
+          "admissionRejected" in reason &&
+          reason.admissionRejected === true
+        ) {
+          // Definite refusal before native admission: the ordered view still
+          // reports the authoritative mode, so nothing needs reconstruction.
+          update({ planControl: null, planControlError: errorText(reason) });
+          return;
+        }
+        uncertain = true;
+        update({
+          planControlUncertain: true,
+          planControlError: `${errorText(reason)} Mode delivery is unconfirmed; waiting for ordered native state. No command was replayed.`,
+        });
+      }
+      if (current !== attachment || abort === null) return;
+      modeAwaiting = { mode, uncertain };
+      settleMode();
+      if (state.planControl?.kind !== "mode") return;
+      modeTimer = setTimeout(() => {
+        modeTimer = null;
+        if (current !== attachment || state.planControl?.kind !== "mode")
+          return;
+        modeAwaiting = null;
+        update({ planControlReconciling: true });
+        connect();
+      }, options.modeSettleDelay ?? 5000);
     },
     async decidePlan(plan: NativePlan, decision: PlanDecision) {
       if (
@@ -1732,25 +1909,35 @@ export function createCodingRun(
     },
     async retrySubmission() {
       const pending = state.uncertainSubmission;
-      if (pending) {
-        const { key, ...input } = pending;
-        return await submit(input, key);
+      if (!pending) return false;
+      let images: CodingImage[] | undefined;
+      try {
+        // Exactly the original bytes, verified by digest, or no retry at all.
+        images = await pendingStore.images(pending);
+      } catch (reason) {
+        update({ error: errorText(reason) });
+        return false;
       }
-      return false;
+      return await submit(
+        { ...pendingInput(pending), ...(images ? { images } : {}) },
+        pending.key,
+      );
     },
     clearRejectedSubmission() {
       update({ rejectedSubmission: null });
     },
+    /** Composer text already cleared by the shipped runtime, refused before any
+     * delivery: keep it restorable. Not a transcript row or uncertain delivery. */
+    retainUnsent(input: CodingInput, reason: unknown) {
+      update({
+        error: `${errorText(reason)} No prompt was sent; your input is retained.`,
+        unsentDraft: input.text,
+        rejectedSubmission: structuredClone(input),
+      });
+    },
     async stop() {
-      const request = state.native?.active_request;
-      if (
-        !request ||
-        state.stopping ||
-        state.reconcilingAction ||
-        state.recovering ||
-        state.connection !== "connected"
-      )
-        return;
+      const request = codingStopTarget(state);
+      if (!request) return;
       const current = attachment;
       const attempt = ++stopAttempt;
       update({
@@ -1829,6 +2016,14 @@ export function createCodingRun(
 }
 export type CodingRun = ReturnType<typeof createCodingRun>;
 
+/** The exact native request Stop may target now, or null. History capture or
+ * native recovery does not withhold it; only the current view's own state can. */
+export function codingStopTarget(state: CodingRunState | null): string | null {
+  if (!state?.authority || state.stopping || state.reconcilingAction)
+    return null;
+  return state.native?.active_request ?? null;
+}
+
 export function codingInterruptedRequest(state: CodingRunState | null) {
   const latest = state?.native?.requests.at(-1);
   return latest?.status === "interrupted" ? latest : null;
@@ -1856,6 +2051,46 @@ export function codingCanContinue(state: CodingRunState | null): boolean {
       !state.storageError &&
       state.continuationRequested !== request.id,
   );
+}
+
+/** Why a new prompt cannot be admitted now; null when native admission may be tried.
+ * One rule for the Send button, Enter, the adapter and `send` itself. */
+export function codingSendBlockedReason(
+  state: CodingRunState | null,
+): string | null {
+  if (!state) return "Choose a project folder first.";
+  if (state.connection !== "connected" || state.recovering)
+    return "Waiting for a connected, reconstructed native view.";
+  if (state.storageError) return "Browser storage is unavailable.";
+  if (state.uncertainSubmission)
+    return "Reconcile the unconfirmed submission first.";
+  if (state.submitting) return "Sending…";
+  if (state.stopping || state.reconcilingAction)
+    return "Waiting for Stop to finish native cleanup.";
+  if (state.planControl)
+    return state.planControl.kind === "mode"
+      ? "Waiting for native mode confirmation."
+      : "Waiting for the native plan decision.";
+  if (state.configuring || state.configurationUncertain)
+    return "Waiting for native model configuration.";
+  if (state.goalChanging || state.reconcilingGoal)
+    return "Waiting for the native goal change.";
+  if (state.commandBusy || state.uncertainCommand)
+    return "Waiting for the native command outcome.";
+  if (state.overlapWarning) return "Resolve the project overlap warning.";
+  if (state.native?.pending_user_request)
+    return "Answer the native question first.";
+  if (state.native?.execution_preparation?.phase === "cleanup_pending")
+    return "Waiting for local model cleanup.";
+  return null;
+}
+
+/** Typing is never native work; only a missing owner or failed storage stops it. */
+export function codingCanEdit(
+  state: CodingRunState | null,
+  run: CodingRun | null,
+): boolean {
+  return Boolean(state && run && !state.storageError);
 }
 
 export function codingModeControlReason(

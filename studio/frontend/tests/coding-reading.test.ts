@@ -2,9 +2,13 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readingRowKey } from "../src/features/coding/presentation.ts";
 import { codingRunAdapter } from "../src/features/coding/run-runtime.ts";
 import type { CodingRow } from "../src/features/coding/run-types.ts";
+import {
+  projectTranscript,
+  readingRowKey,
+  latestWindow,
+} from "../src/features/coding/transcript-model.ts";
 import { atTranscriptBottom } from "../src/features/coding/transcript-reader.ts";
 
 test("bottom-follow uses geometry, not streaming or projection status", () => {
@@ -64,15 +68,22 @@ test("saved/provisional keys preserve exact invocation while repeated edits stay
   const repeated = tool("another-entry", "invocation-two");
   assert.equal(readingRowKey(provisional), readingRowKey(saved));
   assert.notEqual(readingRowKey(saved), readingRowKey(repeated));
-  const adapter = codingRunAdapter(null, null);
-  assert.ok(adapter.convertMessage);
-  const projected = adapter.convertMessage(saved, 0);
-  assert.equal(projected.id, readingRowKey(provisional));
+  const [block] = projectTranscript([saved, repeated], latestWindow());
+  assert.equal(block.kind, "activity");
+  if (block.kind !== "activity") return;
+  assert.deepEqual(
+    block.items.map((item) => item.key),
+    [readingRowKey(provisional), readingRowKey(repeated)],
+    "repeated edits stay separate under exact invocation keys",
+  );
   assert.equal(
-    projected.metadata?.custom?.nativeRow,
+    block.items[0].row,
     saved,
     "native identities stay unmodified in the projection",
   );
+  const adapter = codingRunAdapter(null, null);
+  assert.ok(adapter.convertMessage);
+  assert.equal(adapter.convertMessage(block, 0).id, block.key);
 });
 
 test("accepted answer replacement retains exact request/question identity, not answer text", () => {

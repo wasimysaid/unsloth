@@ -8,8 +8,11 @@ import type {
   NativePlan,
   PlanDecision,
 } from "../src/features/coding/plan-types.ts";
+import { codingRunAdapter } from "../src/features/coding/run-runtime.ts";
 import {
+  codingCanEdit,
   codingPlanControlReason,
+  codingSendBlockedReason,
   createCodingRun,
 } from "../src/features/coding/run-session.ts";
 import type { NativeState, RunApi } from "../src/features/coding/run-types.ts";
@@ -39,9 +42,10 @@ const native = (): NativeState => ({
   plan,
   action_disabled_reason: null,
 });
-function harness() {
+function harness(modeSettleDelay = 5000) {
   let deliver!: (value: unknown) => Promise<void>;
   let position = 0;
+  let watches = 0;
   const calls: unknown[] = [];
   const api: RunApi = {
     async answer() {
@@ -92,14 +96,23 @@ function harness() {
       };
     },
     async watch(_id, _signal, _connected, onView) {
+      watches++;
       deliver = onView;
       await new Promise(() => {});
     },
   };
   const run = createCodingRun("conversation", api, () => "unused", {
     storage: () => memorySubmissionStorage(),
+    modeSettleDelay,
   });
   run.connect();
+  // An ordered whole-state item on the already-open view.
+  const state = (value: NativeState) =>
+    deliver({
+      subscription: "view",
+      position: ++position,
+      event: { type: "state", state: value },
+    });
   const start = (state = native(), recovering = false) =>
     deliver({
       subscription: "view",
@@ -111,7 +124,16 @@ function harness() {
         root: { cut: { journal: "root", leaf: "cut" }, live_invocations: [] },
       },
     });
-  return { run, api, calls, start };
+  return {
+    run,
+    api,
+    calls,
+    start,
+    state,
+    get watches() {
+      return watches;
+    },
+  };
 }
 
 for (const operation of ["mode", "plan"] as const) {
@@ -145,9 +167,16 @@ for (const operation of ["mode", "plan"] as const) {
   }
 }
 
-test("mode selection is configuration, not plan acceptance; authoritative state waits for fresh cut", async () => {
+const built = () => {
+  const value = native();
+  value.configuration.mode = "build";
+  return value;
+};
+
+test("mode selection is configuration, not plan acceptance; ordered native state settles it without reconnecting", async () => {
   const h = harness();
   await h.start();
+  const rows = h.run.getSnapshot().rows;
   await h.run.setMode("build");
   assert.deepEqual(h.calls, [{ id: "conversation", mode: "build" }]);
   assert.equal(
@@ -156,18 +185,122 @@ test("mode selection is configuration, not plan acceptance; authoritative state 
     "no optimistic mode change",
   );
   assert.equal(h.run.getSnapshot().native?.plan?.status, "review_pending");
-  assert.ok(h.run.getSnapshot().planControlReconciling);
-  const selected = native();
-  selected.configuration.mode = "build";
-  await h.start(selected);
+  assert.equal(h.run.getSnapshot().planControl?.kind, "mode");
+  assert.equal(h.run.getSnapshot().planControlReconciling, false);
+  assert.equal(h.watches, 1, "a definite acknowledgment never reconnects");
+  assert.equal(h.run.getSnapshot().connection, "connected");
+  await h.state(built());
   assert.equal(h.run.getSnapshot().planControl, null);
   assert.equal(h.run.getSnapshot().native?.configuration.mode, "build");
+  assert.equal(h.run.getSnapshot().planControlNotice, null);
+  assert.equal(h.watches, 1);
+  assert.equal(h.run.getSnapshot().rows, rows, "history is not re-read");
+  assert.deepEqual(h.run.getSnapshot().rows[0].plan, plan);
+  h.run.detach();
+});
+
+test("ordered native state that arrives before the acknowledgment settles the mode at ack", async () => {
+  const h = harness();
+  await h.start();
+  let finish!: () => void;
+  h.api.setMode = async (id, mode) => {
+    h.calls.push({ id, mode });
+    await new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    return { conversation_id: id, mode };
+  };
+  const changing = h.run.setMode("build");
+  await h.state(built());
+  assert.equal(
+    h.run.getSnapshot().planControl?.kind,
+    "mode",
+    "state alone does not settle a command still awaiting admission",
+  );
+  finish();
+  await changing;
+  assert.equal(h.run.getSnapshot().planControl, null);
+  assert.equal(h.watches, 1);
+  h.run.detach();
+});
+
+test("a delayed or missing native confirmation is reconciled by one bounded fresh capture", async () => {
+  const h = harness(5);
+  await h.start();
+  await h.run.setMode("build");
+  assert.equal(h.watches, 1);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(h.watches, 2, "one fresh capture after the bound, never a replay");
+  assert.equal(h.run.getSnapshot().planControlReconciling, true);
+  await h.start(); // Authoritative capture still reports Plan.
+  assert.equal(h.run.getSnapshot().planControl, null);
   assert.match(
     h.run.getSnapshot().planControlNotice ?? "",
-    /Authoritative mode: build.*No command was replayed/,
+    /Authoritative mode: plan.*No command was replayed/,
   );
-  assert.deepEqual(h.run.getSnapshot().rows[0].plan, plan);
-  assert.equal(h.run.getSnapshot().rows[0].historical, true);
+  assert.deepEqual(h.calls, [{ id: "conversation", mode: "build" }]);
+  h.run.detach();
+});
+
+test("a definite mode refusal keeps the authoritative view and needs no reconstruction", async () => {
+  const h = harness();
+  await h.start();
+  h.api.setMode = async (id, mode) => {
+    h.calls.push({ id, mode });
+    throw new CodingHttpError(409, "Native mode change refused while busy");
+  };
+  await h.run.setMode("build");
+  assert.equal(h.run.getSnapshot().planControl, null);
+  assert.match(h.run.getSnapshot().planControlError ?? "", /refused/);
+  assert.equal(h.run.getSnapshot().native?.configuration.mode, "plan");
+  assert.equal(h.watches, 1);
+  h.run.detach();
+});
+
+test("uncertain mode delivery waits for ordered evidence and never replays", async () => {
+  const h = harness();
+  await h.start();
+  h.api.setMode = async (id, mode) => {
+    h.calls.push({ id, mode });
+    throw new Error("Coding response unconfirmed");
+  };
+  await h.run.setMode("build");
+  assert.equal(h.run.getSnapshot().planControlUncertain, true);
+  assert.match(h.run.getSnapshot().planControlError ?? "", /unconfirmed/);
+  assert.equal(h.run.getSnapshot().planControl?.kind, "mode");
+  await h.state(built());
+  assert.equal(h.run.getSnapshot().planControl, null);
+  assert.equal(h.run.getSnapshot().planControlError, null);
+  assert.match(
+    h.run.getSnapshot().planControlNotice ?? "",
+    /Delivery was unconfirmed.*build mode.*No command was replayed/,
+  );
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.watches, 1);
+  h.run.detach();
+});
+
+test("while a mode change settles, the draft stays editable, Send is gated and Stop stays available", async () => {
+  const h = harness();
+  const running = native();
+  running.active_request = "exact-request";
+  running.requests = [
+    { id: "exact-request", status: "running", submission_key: "key" },
+  ];
+  await h.start(running);
+  const cancelled: string[] = [];
+  h.api.cancel = async (id, request) => {
+    cancelled.push(request);
+    return { conversation_id: id, request_id: request, cancel_requested: true };
+  };
+  await h.run.setMode("build");
+  const pending = h.run.getSnapshot();
+  assert.equal(codingCanEdit(pending, h.run), true, "typing is never blocked");
+  assert.equal(codingRunAdapter(pending, h.run).isDisabled, false);
+  assert.match(codingSendBlockedReason(pending) ?? "", /mode confirmation/);
+  await h.run.stop();
+  assert.deepEqual(cancelled, ["exact-request"]);
+  assert.equal(h.run.getSnapshot().connection, "connected");
   h.run.detach();
 });
 
@@ -417,7 +550,9 @@ test("plan reconstruction guards model selection and slash dispatch", async () =
   assert.deepEqual(h.calls, [{ id: "conversation", mode: "build" }]);
   finish();
   await changing;
-  await h.start();
+  // Still a conflicting action until native state confirms the mode.
+  await assert.rejects(h.run.configure({ model: "other" }), /reconstructed/);
+  await h.start(built());
   await h.run.configure({ model: "other" });
   h.run.detach();
 });
@@ -462,7 +597,7 @@ test("plan admission and reconstruction block goal actions without replay", asyn
   assert.equal(await h.run.changeGoal(goalChange), false);
   finish();
   await changing;
-  assert.ok(h.run.getSnapshot().planControlReconciling);
+  assert.equal(h.run.getSnapshot().planControl?.kind, "mode");
   assert.equal(await h.run.changeGoal(goalChange), false);
   assert.deepEqual(h.calls, [{ id: "conversation", mode: "build" }]);
   current.configuration.mode = "build";

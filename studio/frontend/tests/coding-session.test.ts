@@ -146,14 +146,17 @@ test("loading and concurrent keyboard/click activation issue just one native ope
     }),
   );
   const opening = session.createConversation("/a");
-  assert.equal(session.getSnapshot().opening, true);
+  assert.deepEqual(session.getSnapshot().pending, {
+    operation: "create",
+    id: null,
+  });
   assert.equal(session.getSnapshot().active, null);
   assert.equal(await session.createConversation("/b"), false);
   assert.equal(await session.openConversation("saved"), false);
   assert.equal(calls, 1);
   pending.resolve({ id: "native", cwd: "/a" });
   assert.equal(await opening, true);
-  assert.equal(session.getSnapshot().opening, false);
+  assert.equal(session.getSnapshot().pending, null);
 });
 
 test("native validation/open failures preserve the open conversation and expose a retryable error", async () => {
@@ -286,7 +289,8 @@ test("lost create acknowledgement inspects shared history before deliberate reop
   );
   const opening = session.createConversation("/requested");
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(session.getSnapshot().opening, true);
+  // No longer pending: the unconfirmed create is held by catalog inspection.
+  assert.equal(session.getSnapshot().pending, null);
   assert.equal(session.getSnapshot().openingUncertainty?.inspected, false);
   assert.match(
     session.getSnapshot().openingError ?? "",
@@ -337,7 +341,7 @@ test("failed uncertainty inspection blocks mutation until explicit history refre
     }),
   );
   await session.createConversation("/project");
-  assert.equal(session.getSnapshot().opening, false);
+  assert.equal(session.getSnapshot().pending, null);
   assert.equal(session.getSnapshot().openingUncertainty?.inspected, false);
   assert.equal(session.getSnapshot().historyError, "Catalog offline");
   assert.equal(await session.createConversation("/project"), false);

@@ -15,19 +15,20 @@ export function CodingRuntimeControls({
   const incomplete =
     state.status?.state === "cleanup_failed" || (cleanup && !cleanup.confirmed);
   return (
-    <details
-      className="shrink-0 border-b border-border/50 px-4 py-2 text-xs sm:px-8"
+    <section
+      className="min-w-0 space-y-2 break-words text-xs"
+      aria-label="Mimir runtime maintenance"
       data-testid="coding-runtime-maintenance"
     >
-      <summary className="cursor-pointer rounded font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        Mimir runtime maintenance ·{" "}
+      <h3 className="text-sm font-medium">
+        Mimir runtime ·{" "}
         {state.restarting
           ? "restarting"
           : (state.status?.state ?? "status unavailable")}
         {incomplete ? " · cleanup unconfirmed" : ""}
         {state.error || state.statusError ? " · inspect runtime error" : ""}
-      </summary>
-      <div className="mx-auto mt-2 max-h-[30dvh] max-w-2xl space-y-2 overflow-y-auto break-words pb-2">
+      </h3>
+      <div className="space-y-2">
         <output
           aria-live="polite"
           data-testid="coding-runtime-status"
@@ -58,13 +59,13 @@ export function CodingRuntimeControls({
             automatically.
           </p>
         )}
-        <p id="coding-runtime-restart-scope">
+        <p id="coding-runtime-restart-scope" className="text-muted-foreground">
           Restart whole Mimir runtime affects all hosted conversations, not just
           this view. Native safety checks refuse restart while any conversation
           has busy work. Explicitly Stop affected work and wait for confirmed
           cleanup first.
         </p>
-        <p>
+        <p className="text-muted-foreground">
           Frontend-plugin replacement requires this process restart, not hot
           reload. Saved history remains; owners are not reopened and accepted
           work, answers and commands are not replayed automatically.
@@ -129,6 +130,6 @@ export function CodingRuntimeControls({
           </Button>
         </div>
       </div>
-    </details>
+    </section>
   );
 }

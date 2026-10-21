@@ -643,7 +643,7 @@ async def test_late_view_reply_reconciles_expired_admission(monkeypatch):
 async def test_fatal_framing_closes_stdin_and_reaps_actual_child(tmp_path):
     import sys
     reaped = tmp_path / "eof-observed"
-    code = "import sys,struct,pathlib; sys.stdout.buffer.write(struct.pack('>I',1048577)); sys.stdout.buffer.flush(); sys.stdin.buffer.read(); pathlib.Path(sys.argv[1]).write_text('EOF')"
+    code = f"import sys,struct,pathlib; sys.stdout.buffer.write(struct.pack('>I',{MAX_FRAME + 1})); sys.stdout.buffer.flush(); sys.stdin.buffer.read(); pathlib.Path(sys.argv[1]).write_text('EOF')"
     process = await asyncio.create_subprocess_exec(sys.executable, "-c", code, str(reaped),
         stdin = asyncio.subprocess.PIPE, stdout = asyncio.subprocess.PIPE, stderr = asyncio.subprocess.PIPE)
     runtime = CodingRuntime()
@@ -774,7 +774,7 @@ async def test_diagnostics_are_bounded_allowlisted_and_do_not_launch(coding_app)
     async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
         response = await client.get("/api/coding/diagnostics")
         assert response.status_code == 200
-        assert response.json() == {"connection": "not_started", "frontend_plugin": "studio.frontend", "protocol": 1, "pending_commands": 0, "open_views": 0, "command_timeout_seconds": 60, "max_frame_bytes": 1048576}
+        assert response.json() == {"connection": "not_started", "frontend_plugin": "studio.frontend", "protocol": 1, "pending_commands": 0, "open_views": 0, "command_timeout_seconds": 60, "max_frame_bytes": 32 * 1024 * 1024}
         assert runtime.process is None
         runtime._failure = CodingRuntimeError("failed", "raw-provider-credential-secret")
         response = await client.get("/api/coding/diagnostics")

@@ -11,21 +11,201 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { SquareSlash } from "lucide-react";
 import { useState } from "react";
 import {
   type CodingCommand,
   type DiagnosticKind,
   commandOutcomeLabel,
+  type SessionUsage,
   contextUsageLabel,
 } from "./command-types";
 import type { CodingRun, CodingRunState } from "./run-session";
+
+const tokens = (count: number) => count.toLocaleString();
+/** Ring + percent, as Comet's footer: absent without a reported window, and
+ * no diagnostics on click. Estimated or stale native counts say so. */
+function ContextIndicator({ usage }: { usage?: SessionUsage | null }) {
+  const window = usage?.context_window;
+  if (!window) return null;
+  const prompt = usage?.prompt_tokens;
+  const used = prompt?.used_prompt_tokens;
+  const share = used === undefined ? null : Math.min(1, used / window);
+  const tone =
+    share === null
+      ? "text-muted-foreground/60"
+      : share >= 0.9
+        ? "text-destructive"
+        : share >= 0.75
+          ? "text-amber-600 dark:text-amber-400"
+          : "text-muted-foreground";
+  const qualifiers = [
+    prompt && !prompt.provider_confirmed ? "estimated" : null,
+    usage?.stale ? "stale" : null,
+  ].filter(Boolean);
+  const detail =
+    used === undefined
+      ? `${tokens(window)} token context · usage not reported yet`
+      : `${tokens(used)} / ${tokens(window)} tokens · ${tokens(Math.max(0, window - used))} left${qualifiers.length ? ` (${qualifiers.join(", ")})` : ""}`;
+  const percent = share === null ? "—" : `${Math.round(share * 100)}%`;
+  const circumference = 2 * Math.PI * 6;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild={true}>
+        <span
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users reach the usage tooltip.
+          tabIndex={0}
+          role="img"
+          aria-label={`Context ${percent}: ${detail}`}
+          data-testid="coding-context-usage"
+          className={`flex h-7 items-center gap-1.5 rounded-full px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${tone}`}
+        >
+          <svg
+            viewBox="0 0 16 16"
+            className="size-3.5 -rotate-90"
+            aria-hidden="true"
+          >
+            <circle
+              cx="8"
+              cy="8"
+              r="6"
+              fill="none"
+              strokeWidth="2"
+              className="stroke-border"
+            />
+            <circle
+              cx="8"
+              cy="8"
+              r="6"
+              fill="none"
+              strokeWidth="2"
+              strokeLinecap="round"
+              className="stroke-current"
+              strokeDasharray={`${(share ?? 0) * circumference} ${circumference}`}
+            />
+          </svg>
+          {percent}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top">{detail}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** On-demand native diagnostics, reached from run details, never the composer. */
+export function CodingDiagnosticsDialog({
+  run,
+  state,
+  open,
+  onOpenChange,
+}: {
+  run: CodingRun;
+  state: CodingRunState;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const connected = state.connection === "connected" && !state.recovering;
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        onOpenChange(next);
+        if (!next) run.clearDiagnostic();
+      }}
+    >
+      <DialogContent className="min-w-0 content-start sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Current-session diagnostics</DialogTitle>
+          <DialogDescription>
+            Inspect supported, bounded native data on demand. Model context is
+            separate from the public transcript; private content and credentials
+            are not shown. These are current-session observations, not a
+            historical usage dashboard.
+          </DialogDescription>
+        </DialogHeader>
+        <p className="text-sm">{contextUsageLabel(state.native?.usage)}</p>
+        {state.native?.active_request && (
+          <p
+            className="break-all text-muted-foreground"
+            data-testid="coding-request-id"
+          >
+            Active native request: {state.native.active_request}
+          </p>
+        )}
+        {state.native?.usage?.request_usage && (
+          <p className="text-muted-foreground">
+            Latest native turn usage:{" "}
+            {state.native.usage.request_usage.input_tokens.toLocaleString()}{" "}
+            input ·{" "}
+            {state.native.usage.request_usage.output_tokens.toLocaleString()}{" "}
+            output tokens
+            {state.native.usage.stale && " · stale observation"}
+          </p>
+        )}
+        <div
+          className="flex flex-wrap gap-2"
+          aria-label="Diagnostic categories"
+        >
+          {(
+            ["context", "tokens", "retry", "execution"] as DiagnosticKind[]
+          ).map((kind) => (
+            <Button
+              key={kind}
+              variant="outline"
+              size="sm"
+              disabled={!connected || Boolean(state.inspectingDiagnostic)}
+              onClick={() => void run.inspectDiagnostic(kind)}
+            >
+              {kind[0].toUpperCase() + kind.slice(1)} diagnostics
+            </Button>
+          ))}
+        </div>
+        {state.inspectingDiagnostic && (
+          <output className="block">
+            Reading bounded {state.inspectingDiagnostic} diagnostics…
+          </output>
+        )}
+        {state.commandError && (
+          <p role="alert" className="break-words text-destructive">
+            {state.commandError}
+          </p>
+        )}
+        {state.diagnostic ? (
+          <section
+            aria-label={`${state.diagnostic.kind} diagnostics result`}
+            className="min-w-0 space-y-2"
+          >
+            <p className="font-medium">
+              {state.diagnostic.kind} · native bounded snapshot{" "}
+              {state.diagnostic.clipped && "· truncated"}
+            </p>
+            <pre
+              className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-xl bg-muted p-3 text-xs"
+              data-testid="coding-diagnostic-result"
+            >
+              {JSON.stringify(state.diagnostic.data, null, 2)}
+            </pre>
+          </section>
+        ) : (
+          !state.inspectingDiagnostic && (
+            <p>Select a category to request its supported data.</p>
+          )
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export function CodingCommandControls({
   run,
   state,
 }: { run: CodingRun; state: CodingRunState }) {
   const [commandsOpen, setCommandsOpen] = useState(false);
-  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<CodingCommand | null>(null);
   const [tail, setTail] = useState("");
@@ -62,89 +242,11 @@ export function CodingCommandControls({
   const compression = state.native?.compression;
   return (
     <div
-      className="min-w-0 space-y-2 text-xs"
+      className="min-w-0 space-y-1 text-xs"
       data-testid="coding-command-controls"
     >
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <Dialog
-          open={diagnosticsOpen}
-          onOpenChange={(open) => {
-            setDiagnosticsOpen(open);
-            if (!open) run.clearDiagnostic();
-          }}
-        >
-          <DialogTrigger asChild={true}>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-auto min-w-0 whitespace-normal text-left"
-              disabled={!connected}
-              aria-label="Inspect current-session context and usage"
-            >
-              {contextUsageLabel(state.native?.usage)}
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="min-w-0 content-start sm:max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>Current-session diagnostics</DialogTitle>
-              <DialogDescription>
-                Inspect supported, bounded native data on demand. Model context
-                is separate from the public transcript; private content and
-                credentials are not shown. These are current-session
-                observations, not a historical usage dashboard.
-              </DialogDescription>
-            </DialogHeader>
-            <div
-              className="flex flex-wrap gap-2"
-              aria-label="Diagnostic categories"
-            >
-              {(
-                ["context", "tokens", "retry", "execution"] as DiagnosticKind[]
-              ).map((kind) => (
-                <Button
-                  key={kind}
-                  variant="outline"
-                  size="sm"
-                  disabled={!connected || Boolean(state.inspectingDiagnostic)}
-                  onClick={() => void run.inspectDiagnostic(kind)}
-                >
-                  {kind[0].toUpperCase() + kind.slice(1)} diagnostics
-                </Button>
-              ))}
-            </div>
-            {state.inspectingDiagnostic && (
-              <output className="block">
-                Reading bounded {state.inspectingDiagnostic} diagnostics…
-              </output>
-            )}
-            {state.commandError && (
-              <p role="alert" className="break-words text-destructive">
-                {state.commandError}
-              </p>
-            )}
-            {state.diagnostic ? (
-              <section
-                aria-label={`${state.diagnostic.kind} diagnostics result`}
-                className="min-w-0 space-y-2"
-              >
-                <p className="font-medium">
-                  {state.diagnostic.kind} · native bounded snapshot{" "}
-                  {state.diagnostic.clipped && "· truncated"}
-                </p>
-                <pre
-                  className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-xl bg-muted p-3 text-xs"
-                  data-testid="coding-diagnostic-result"
-                >
-                  {JSON.stringify(state.diagnostic.data, null, 2)}
-                </pre>
-              </section>
-            ) : (
-              !state.inspectingDiagnostic && (
-                <p>Select a category to request its supported data.</p>
-              )
-            )}
-          </DialogContent>
-        </Dialog>
+      <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
+        <ContextIndicator usage={state.native?.usage} />
         <Dialog
           open={commandsOpen}
           onOpenChange={(open) => {
@@ -153,7 +255,13 @@ export function CodingCommandControls({
           }}
         >
           <DialogTrigger asChild={true}>
-            <Button variant="outline" size="sm" disabled={!connected}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1.5 rounded-full px-2 text-xs font-normal text-muted-foreground"
+              disabled={!connected}
+            >
+              <SquareSlash className="size-3.5" aria-hidden="true" />
               Commands
             </Button>
           </DialogTrigger>
@@ -332,14 +440,6 @@ export function CodingCommandControls({
             ? "Inspecting native command outcome…"
             : "Inspect command outcome"}
         </Button>
-      )}
-      {state.native?.usage?.request_usage && (
-        <p className="text-muted-foreground">
-          Latest native turn usage:{" "}
-          {state.native.usage.request_usage.input_tokens.toLocaleString()} input
-          · {state.native.usage.request_usage.output_tokens.toLocaleString()}{" "}
-          output tokens{state.native.usage.stale && " · stale observation"}
-        </p>
       )}
       {state.commandOutcome && (
         <div className="min-w-0 space-y-1" data-testid="coding-command-outcome">

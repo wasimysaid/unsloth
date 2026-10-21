@@ -127,12 +127,10 @@ export const codingApi: CodingApi = {
     });
     return openedConversation((await response.json()) as CodingConversation);
   },
-  async openConversation(id) {
+  async openConversation(id, signal) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/open`,
-      {
-        method: "POST",
-      },
+      { method: "POST", signal },
     );
     return openedConversation((await response.json()) as CodingConversation);
   },
@@ -304,6 +302,37 @@ export async function discoverCodingSkills(id: string, signal?: AbortSignal) {
     { signal },
   );
   return (await response.json()) as { skills: import("./input").CodingSkill[] };
+}
+
+/** Bounded host search over project paths; never file contents. */
+export async function discoverCodingFiles(
+  id: string,
+  query: string,
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams({ query, max_results: "40" });
+  const response = await codingRequest(
+    `/conversations/${encodeURIComponent(id)}/files?${params}`,
+    { signal },
+  );
+  return (await response.json()) as {
+    files: import("./input").CodingFile[];
+    truncated: boolean;
+  };
+}
+
+/** Effective native subagent identities for this open controller; metadata only. */
+export async function discoverCodingSubagents(
+  id: string,
+  signal?: AbortSignal,
+) {
+  const response = await codingRequest(
+    `/conversations/${encodeURIComponent(id)}/subagents`,
+    { signal },
+  );
+  return (await response.json()) as {
+    subagents: import("./input").CodingSubagent[];
+  };
 }
 
 /** Owner execution and views retain the generation confirmed by create/open. */

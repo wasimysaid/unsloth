@@ -17,7 +17,8 @@ const actions: GoalAction[] = ["start", "edit", "pause", "resume", "clear"];
 export function GoalSummary({
   state,
   run,
-}: { state: CodingRunState; run: CodingRun }) {
+  defaultOpen = false,
+}: { state: CodingRunState; run: CodingRun; defaultOpen?: boolean }) {
   const goal = state.native?.goal;
   const controls = state.native?.goal_controls;
   // Reuse the captured public tool report, never decode private result JSON or
@@ -50,13 +51,14 @@ export function GoalSummary({
   };
   return (
     <details
-      className="shrink-0 min-w-0 rounded-xl border border-border/60 text-xs"
+      className="shrink-0 min-w-0 rounded-2xl border border-border/60 bg-background text-xs dark:bg-card"
       data-testid="coding-goal"
+      open={defaultOpen || undefined}
       data-goal-revision={controls?.revision}
     >
       <summary
         ref={summary}
-        className="flex cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 rounded-xl px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 rounded-2xl px-3.5 py-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-label="Autonomous goal details"
       >
         <span
@@ -91,9 +93,6 @@ export function GoalSummary({
             <p>
               Native phase: {goal.phase} · Cause: {goal.cause} · Work turns:{" "}
               {goal.work_turns}
-            </p>
-            <p className="break-all font-mono text-[10px] text-muted-foreground">
-              Goal {goal.id}
             </p>
             {goal.display_clipped && (
               <p role="note" data-testid="coding-goal-clipped">

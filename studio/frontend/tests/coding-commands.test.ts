@@ -12,7 +12,10 @@ import {
 import { CodingHttpError } from "../src/features/coding/errors.ts";
 import { createCodingRun } from "../src/features/coding/run-session.ts";
 import type { NativeState, RunApi } from "../src/features/coding/run-types.ts";
-import { memorySubmissionStorage } from "./coding-storage-fixture.ts";
+import {
+  memoryImageStorage,
+  memorySubmissionStorage,
+} from "./coding-storage-fixture.ts";
 
 function harness(storage = memorySubmissionStorage()) {
   let deliver!: (value: unknown) => Promise<void>;
@@ -110,8 +113,10 @@ function harness(storage = memorySubmissionStorage()) {
       await new Promise(() => {});
     },
   };
+  const images = memoryImageStorage();
   const run = createCodingRun("session", api, () => "key", {
     storage: () => storage,
+    imageStorage: () => images,
   });
   run.connect();
   const start = async (active: string | null = null) => {

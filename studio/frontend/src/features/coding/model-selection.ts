@@ -46,31 +46,50 @@ export function findCodingModel(
 export function filterCodingModels(
   catalog: CodingProviderChoice[],
   search: string,
-  providerId: string | null,
-  favorites: ReadonlySet<string>,
-  favoritesOnly: boolean,
 ) {
   const query = search.trim().toLocaleLowerCase();
   return catalog
-    .filter((provider) => providerId === null || provider.id === providerId)
     .map((provider) => ({
       ...provider,
-      models: provider.models.filter((model) => {
-        if (
-          favoritesOnly &&
-          !favorites.has(modelIdentity(provider.id, model.id))
-        )
-          return false;
-        return [
+      models: provider.models.filter((model) =>
+        [
           provider.id,
           provider.name,
           model.id,
           model.name,
           model.api_model,
-        ].some((text) => text.toLocaleLowerCase().includes(query));
-      }),
+        ].some((text) => text.toLocaleLowerCase().includes(query)),
+      ),
     }))
     .filter((provider) => provider.models.length > 0);
+}
+
+export const STARRED_GROUP = "starred";
+/** Starred models first, then one group per provider, in catalog order. */
+export function modelGroups(
+  catalog: CodingProviderChoice[],
+  favorites: ReadonlySet<string>,
+) {
+  const entry =
+    (provider: CodingProviderChoice) => (model: CodingModelChoice) => ({
+      provider: provider.id,
+      model,
+    });
+  const starred = catalog.flatMap((provider) =>
+    provider.models
+      .filter((model) => favorites.has(modelIdentity(provider.id, model.id)))
+      .map(entry(provider)),
+  );
+  return [
+    ...(starred.length
+      ? [{ key: STARRED_GROUP, name: "Starred", models: starred }]
+      : []),
+    ...catalog.map((provider) => ({
+      key: provider.id,
+      name: provider.name,
+      models: provider.models.map(entry(provider)),
+    })),
+  ];
 }
 
 /** Favorite persistence stores exact identity pairs, never copies of catalog entries. */

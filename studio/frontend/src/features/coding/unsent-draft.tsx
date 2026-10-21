@@ -5,7 +5,7 @@
 export function CodingUnsentDraft({ text }: { text: string }) {
   return (
     <section
-      className="space-y-2 rounded-xl border border-border/60 p-3 text-xs"
+      className="space-y-2 rounded-2xl border border-border/60 p-3 text-xs"
       aria-label="Unsent prompt recovery"
     >
       <p className="font-medium">

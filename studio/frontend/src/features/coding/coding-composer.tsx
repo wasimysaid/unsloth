@@ -8,56 +8,127 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ComposerPrimitive, useComposerRuntime } from "@assistant-ui/react";
-import { ArrowUp, AtSign, ImagePlus, Square, X } from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { discoverCodingSkills } from "./api";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { ComposerPrimitive, useComposerRuntime } from "@assistant-ui/react";
+import {
+  ArrowUp,
+  AtSign,
+  Bot,
+  FileText,
+  Folder,
+  LoaderCircle,
+  Paperclip,
+  Plus,
+  Sparkles,
+  Square,
+  Target,
+  X,
+} from "lucide-react";
+import { flushResourcesSync } from "@assistant-ui/tap";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { flushSync } from "react-dom";
+import {
+  discoverCodingFiles,
+  discoverCodingSkills,
+  discoverCodingSubagents,
+} from "./api";
+import {
+  type CodingFile,
   type CodingInputDraft,
   type CodingSkill,
+  type CodingSubagent,
   type DraftImage,
+  type DraftMention,
+  IMAGE_LIMITS,
   IMAGE_TYPES,
-  readCodingImage,
 } from "./input";
-import type { CodingRun, CodingRunState } from "./run-session";
+import { MentionList, mentionOptionId } from "./mention-list";
+import {
+  type MentionOption,
+  mentionGroups,
+  mentionQuery,
+  stepMention,
+} from "./mention-menu";
+import { pendingImageCount } from "./pending-submission";
+import {
+  type CodingRun,
+  type CodingRunState,
+  codingStopTarget,
+} from "./run-session";
+
+const LIST_ID = "coding-mention-options";
+const megabytes = (bytes: number) =>
+  bytes >= 1024 * 1024
+    ? `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
+    : `${Math.max(1, Math.round(bytes / 1024))} KiB`;
+interface Catalog {
+  skills: CodingSkill[];
+  subagents: CodingSubagent[];
+  files: CodingFile[];
+  skillStatus: string | null;
+  subagentStatus: string | null;
+  fileStatus: string | null;
+}
+const failure = (reason: unknown, what: string) =>
+  `${reason instanceof Error ? reason.message : `${what} discovery failed.`} Retry.`;
 
 export function CodingComposer({
   conversationId,
   run,
   state,
   draft,
-  canSend,
-  children,
+  canEdit,
+  sendBlocked,
   inputRef,
+  modelPicker,
+  modeControl,
+  onGoal,
+  projectChooser,
 }: {
   conversationId: string | null;
   run: CodingRun | null;
   state: CodingRunState | null;
   draft: CodingInputDraft;
-  canSend: boolean;
-  children?: React.ReactNode;
+  /** Typing is allowed whenever an owner exists; Send has its own gate. */
+  canEdit: boolean;
+  sendBlocked: string | null;
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
+  modelPicker?: React.ReactNode;
+  modeControl?: React.ReactNode;
+  onGoal?: () => void;
+  /** Landing: project selection replaces the conversation-only controls. */
+  projectChooser?: React.ReactNode;
 }) {
   const composer = useComposerRuntime();
   const input = inputRef;
   const files = useRef<HTMLInputElement>(null);
-  const search = useRef<HTMLInputElement>(null);
   const model = useSyncExternalStore(draft.subscribe, draft.getSnapshot);
-  const [skills, setSkills] = useState<CodingSkill[]>([]);
-  const [skillStatus, setSkillStatus] = useState(
-    "Select a project to discover skills.",
-  );
+  const [catalog, setCatalog] = useState<Catalog>({
+    skills: [],
+    subagents: [],
+    files: [],
+    skillStatus: "Select a project to discover skills.",
+    subagentStatus: "Select a project to discover subagents.",
+    fileStatus: null,
+  });
   const [refresh, setRefresh] = useState(0);
-  const [panel, setPanel] = useState(false);
-  const panelOpen = useRef(false);
-  const [query, setQuery] = useState("");
-  const [range, setRange] = useState<{ start: number; end: number } | null>(
-    null,
-  );
-  const [index, setIndex] = useState(0);
-  const [reading, setReading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{
+    start: number;
+    end: number;
+    query: string;
+  } | null>(null);
+  // Escape/selection close synchronously; a late selection event must not reopen.
+  const menuOpen = useRef(false);
+  const dismissed = useRef<number | null>(null);
+  const [active, setActive] = useState<number | null>(null);
+  const [errors, setErrors] = useState<string[]>([]);
   const [preview, setPreview] = useState<DraftImage | null>(null);
+  const [dragging, setDragging] = useState(false);
   const connected = state?.connection === "connected";
   const composing = useRef(false);
   // The shipped primitive suppresses composer updates during IME input. Keep
@@ -88,67 +159,125 @@ export function CodingComposer({
       pendingEdit.current = null;
     };
   }, [draft]);
+  // The draft can outlive a composer (a conversation created from the landing
+  // takes the landing's draft over). A new, empty composer shows its text; a
+  // composer that already has text is never overwritten.
   useEffect(() => {
-    // Focus only after deliberate panel opening, never on route mount/discovery.
-    if (panel && !range) search.current?.focus();
-  }, [panel, range]);
-  useEffect(() => {
-    if (state?.acceptedSubmissionKey) draft.clear();
-  }, [state?.acceptedSubmissionKey, draft]);
+    const { text } = draft.getSnapshot();
+    if (text && !composer.getState().text) composer.setText(text);
+  }, [composer, draft]);
   useEffect(() => {
     if (!conversationId || !connected) return;
     const abort = new AbortController();
-    setSkillStatus("Discovering effective project skills…");
-    void discoverCodingSkills(conversationId, abort.signal)
-      .then((result) => {
-        if (abort.signal.aborted) return;
-        setSkills(result.skills);
-        setSkillStatus(
-          result.skills.length
-            ? "Discovery lists metadata only; selecting a mention invokes native skill input."
-            : "No skills in this project's effective native context.",
-        );
-      })
-      .catch((reason: unknown) => {
-        if (!abort.signal.aborted) {
-          setSkills([]);
-          setSkillStatus(
-            reason instanceof Error
-              ? reason.message
-              : "Skill discovery failed. Refresh to retry.",
-          );
-        }
-      });
+    setCatalog((prior) => ({
+      ...prior,
+      skillStatus: "Discovering effective project skills…",
+      subagentStatus: "Discovering effective subagents…",
+    }));
+    void Promise.allSettled([
+      discoverCodingSkills(conversationId, abort.signal),
+      discoverCodingSubagents(conversationId, abort.signal),
+    ]).then(([skills, subagents]) => {
+      if (abort.signal.aborted) return;
+      setCatalog((prior) => ({
+        ...prior,
+        skills: skills.status === "fulfilled" ? skills.value.skills : [],
+        subagents:
+          subagents.status === "fulfilled" ? subagents.value.subagents : [],
+        skillStatus:
+          skills.status === "rejected" ? failure(skills.reason, "Skill") : null,
+        subagentStatus:
+          subagents.status === "rejected"
+            ? failure(subagents.reason, "Subagent")
+            : null,
+      }));
+    });
     return () => abort.abort();
   }, [conversationId, connected, refresh]);
-  const filtered = skills.filter((skill) =>
-    `${skill.qualified_name} ${skill.description}`
-      .toLowerCase()
-      .includes(query.toLowerCase()),
-  );
-  const close = () => {
-    // React selection notifications can follow Escape in the same event batch.
-    // Close synchronously so that an old handler cannot reopen the suggestions.
-    panelOpen.current = false;
-    setPanel(false);
-    setRange(null);
+  // A quoted reference is being typed as `@"path…`; search the path itself.
+  const fileQuery = menu ? menu.query.replace(/^"/, "") : null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh is the Retry trigger.
+  useEffect(() => {
+    if (!conversationId || !connected || fileQuery === null) return;
+    const abort = new AbortController();
+    setCatalog((prior) => ({
+      ...prior,
+      files: [],
+      fileStatus: "Searching files…",
+    }));
+    const timer = setTimeout(() => {
+      void discoverCodingFiles(conversationId, fileQuery, abort.signal)
+        .then((result) => {
+          if (abort.signal.aborted) return;
+          setCatalog((prior) => ({
+            ...prior,
+            files: result.files,
+            fileStatus: result.files.length ? null : "No matching files.",
+          }));
+        })
+        .catch((reason: unknown) => {
+          if (abort.signal.aborted) return;
+          setCatalog((prior) => ({
+            ...prior,
+            files: [],
+            fileStatus: failure(reason, "File"),
+          }));
+        });
+    }, 120);
+    return () => {
+      clearTimeout(timer);
+      abort.abort();
+    };
+  }, [conversationId, connected, fileQuery, refresh]);
+  const mode = state?.native?.configuration.mode;
+  const groups = menu ? mentionGroups(catalog, menu.query, mode) : [];
+  const options = groups.flatMap((group) => group.options);
+  const current = active !== null ? options[active] : undefined;
+  const close = (dismiss = false) => {
+    menuOpen.current = false;
+    dismissed.current = dismiss ? (menu?.start ?? null) : null;
+    setMenu(null);
+    setActive(null);
   };
-  const focus = (cursor?: number) =>
-    requestAnimationFrame(() => {
-      input.current?.focus();
-      if (cursor !== undefined)
-        input.current?.setSelectionRange(cursor, cursor);
+  const focus = () => requestAnimationFrame(() => input.current?.focus());
+  // The shipped setText reaches the DOM on a later macrotask, which queued
+  // keystrokes overtake under load; React's commit then restores their stale
+  // caret. Commit text and caret before the next input event is handled.
+  const commitText = (text: string, cursor: number) => {
+    flushSync(() => {
+      flushResourcesSync(() => composer.setText(text));
     });
-  const select = (skill: CodingSkill) => {
     const node = input.current;
-    const text = composer.getState().text;
+    if (!node) return;
+    node.focus();
+    node.setSelectionRange(cursor, cursor);
+  };
+  const select = (option: MentionOption) => {
+    const node = input.current;
+    const text = node?.value ?? composer.getState().text;
     draft.syncText(text);
-    const start = range?.start ?? node?.selectionStart ?? text.length;
-    const end = range?.end ?? node?.selectionEnd ?? start;
-    const next = draft.selectSkill(skill, start, end);
-    composer.setText(next.text);
-    close();
-    focus(next.cursor);
+    // The live token at the caret, not a possibly older rendered menu range.
+    const live = node ? mentionQuery(text, node.selectionStart) : null;
+    const start = live?.start ?? menu?.start ?? text.length;
+    const end = live?.end ?? menu?.end ?? start;
+    try {
+      const next = draft.selectMention(option.choice, start, end);
+      close();
+      commitText(next.text, next.cursor);
+    } catch (reason) {
+      setErrors([reason instanceof Error ? reason.message : String(reason)]);
+    }
+  };
+  const openAt = (query: { start: number; end: number; query: string }) => {
+    menuOpen.current = true;
+    setMenu(query);
+    setActive(
+      stepMention(
+        mentionGroups(catalog, query.query, mode).flatMap((g) => g.options),
+        null,
+        1,
+      ),
+    );
   };
   const changed = (node: HTMLTextAreaElement, syncText = true) => {
     // Selection notifications can observe the previous DOM value while the
@@ -171,150 +300,255 @@ export function CodingComposer({
           else if (previous.type.endsWith("Forward")) end -= delta;
           else known = false;
         }
-        draft.syncText(text, known ? { start, end } : null);
+        draft.syncText(text, known ? { start, end } : undefined);
       } else {
         draft.syncText(text);
       }
     } else if (node.value !== draft.getSnapshot().text) return;
-    const cursor = node.selectionStart;
-    const match = /(?:^|\s)(@[^\s@]*)$/.exec(node.value.slice(0, cursor));
-    if (match) {
-      setRange({ start: cursor - match[1].length, end: cursor });
-      setQuery(match[1].slice(1));
-      setIndex(0);
-      panelOpen.current = true;
-      setPanel(true);
-    } else close();
-  };
-  async function attach(selected: File[]) {
-    setError(null);
-    setReading(true);
-    try {
-      const images = await Promise.all(selected.map(readCodingImage));
-      draft.addImages(images);
-    } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "Image attachment failed.",
-      );
-    } finally {
-      setReading(false);
-      focus();
+    const query = mentionQuery(node.value, node.selectionStart);
+    if (!query) {
+      dismissed.current = null;
+      if (menuOpen.current) close();
+    } else if (dismissed.current !== query.start) {
+      if (
+        !menuOpen.current ||
+        menu?.query !== query.query ||
+        menu.start !== query.start
+      )
+        openAt(query);
     }
-  }
-  const pending = state?.uncertainSubmission;
+  };
+  const startMention = () => {
+    const node = input.current;
+    const text = composer.getState().text;
+    const at = node?.selectionStart ?? text.length;
+    const pad = at > 0 && !/\s/.test(text[at - 1]) ? " " : "";
+    const next = `${text.slice(0, at)}${pad}@${text.slice(at)}`;
+    draft.syncText(text);
+    draft.syncText(next, { start: at, end: at });
+    const start = at + pad.length;
+    commitText(next, start + 1);
+    dismissed.current = null;
+    openAt({ start, end: start + 1, query: "" });
+  };
+  const attach = (selected: File[]) => {
+    setErrors([]);
+    void draft.attach(selected);
+  };
+  const busy = Boolean(state?.native?.active_request || state?.stopping);
+  const blocked =
+    sendBlocked ??
+    (model.reading.length
+      ? "Wait for attached images to finish reading."
+      : null);
+  const recovery = state?.uncertainSubmission ?? state?.rejectedSubmission;
   const rejected = state?.rejectedSubmission;
   return (
     <ComposerPrimitive.Root
       className="aui-composer-root relative w-full min-w-0"
       aria-label="Coding composer"
+      onSubmit={(event) => {
+        if (blocked) event.preventDefault();
+      }}
     >
-      <div className="unsloth-composer-surface min-w-0">
-        {(pending || rejected) && (
+      {menu && (
+        <MentionList
+          id={LIST_ID}
+          groups={groups}
+          options={options}
+          active={active}
+          query={menu.query}
+          onSelect={select}
+          onActive={setActive}
+          onRetry={() => setRefresh((value) => value + 1)}
+        />
+      )}
+      <div
+        className={`unsloth-composer-surface min-w-0 ${dragging ? "ring-2 ring-primary/60" : ""}`}
+        data-testid="coding-composer-surface"
+        onDragOver={(event) => {
+          if (!canEdit || !event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(event) => {
+          setDragging(false);
+          if (!canEdit || !event.dataTransfer.files.length) return;
+          event.preventDefault();
+          attach(Array.from(event.dataTransfer.files));
+        }}
+      >
+        {recovery && (
           <div
-            className="mb-2 rounded-xl border border-border p-3 text-xs"
+            className="mx-1 mb-2 space-y-1 rounded-2xl bg-muted/60 p-3 text-xs"
             data-testid="coding-input-recovery"
           >
             <p className="font-medium">
-              {pending
+              {state?.uncertainSubmission
                 ? "Delivery unconfirmed · these inputs are not confirmed accepted"
-                : "Submission rejected · input retained, not accepted"}
+                : "Not sent · input retained, not accepted"}
             </p>
-            <p className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words">
-              {(pending ?? rejected)?.text}
+            <p className="max-h-24 overflow-auto whitespace-pre-wrap break-words">
+              {recovery.text}
             </p>
-            <p>
-              {(pending ?? rejected)?.skill_mentions?.length ?? 0} skill
-              mentions · {(pending ?? rejected)?.images?.length ?? 0} images
+            <p className="text-muted-foreground">
+              {recovery.skill_mentions?.length ?? 0} skill ·{" "}
+              {recovery.subagent_mentions?.length ?? 0} subagent mentions ·{" "}
+              {pendingImageCount(recovery)} images
             </p>
-            {rejected && (
+            {rejected && !state?.uncertainSubmission && (
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={!canSend}
+                disabled={!canEdit}
                 onClick={() => {
                   draft.restore(rejected);
-                  composer.setText(rejected.text);
+                  commitText(rejected.text, rejected.text.length);
                   run?.clearRejectedSubmission();
-                  focus();
                 }}
               >
-                Restore rejected input
+                Restore input
               </Button>
             )}
           </div>
         )}
-        {model.images.length > 0 && (
-          <ul
-            aria-label="Attached coding images"
-            className="mb-2 flex max-h-40 flex-wrap gap-2 overflow-y-auto"
-          >
-            {model.images.map((image) => (
-              <li
-                key={image.id}
-                className="flex min-w-0 max-w-full items-center gap-1 rounded-xl border border-border p-1"
+        {(model.images.length > 0 ||
+          model.reading.length > 0 ||
+          model.mentions.length > 0) && (
+          <div className="mx-1 mb-1 flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
+            {model.images.length > 0 && (
+              <ul aria-label="Attached coding images" className="contents">
+                {model.images.map((image) => (
+                  <li
+                    key={image.id}
+                    className="flex min-w-0 max-w-full items-center gap-1 rounded-2xl bg-muted/70 p-1 pr-1.5 dark:bg-accent"
+                  >
+                    <button
+                      type="button"
+                      className="flex min-w-0 items-center gap-2 rounded-xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      aria-label={`Inspect ${image.filename}`}
+                      onClick={() => setPreview(image)}
+                    >
+                      <img
+                        src={`data:${image.mime_type};base64,${image.data}`}
+                        alt=""
+                        className="size-9 shrink-0 rounded-xl object-cover"
+                      />
+                      <span className="min-w-0">
+                        <span className="block max-w-36 truncate text-xs">
+                          {image.filename}
+                        </span>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {megabytes(image.bytes)}
+                        </span>
+                      </span>
+                    </button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="rounded-full"
+                      aria-label={`Remove ${image.filename}`}
+                      disabled={!canEdit}
+                      onClick={() => {
+                        draft.removeImage(image.id);
+                        focus();
+                      }}
+                    >
+                      <X className="size-3" aria-hidden="true" />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {model.reading.map((item) => (
+              <output
+                key={item.id}
+                className="flex items-center gap-2 rounded-2xl bg-muted/70 px-2.5 py-2 text-xs dark:bg-accent"
               >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="h-auto min-w-0 gap-2 p-1"
-                  aria-label={`Inspect ${image.filename}`}
-                  onClick={() => setPreview(image)}
-                >
-                  <img
-                    src={`data:${image.mime_type};base64,${image.data}`}
-                    alt=""
-                    className="size-10 shrink-0 rounded object-cover"
-                  />
-                  <span className="max-w-36 truncate text-xs">
-                    {image.filename}
-                  </span>
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={`Remove ${image.filename}`}
-                  disabled={!canSend || reading}
-                  onClick={() => {
-                    draft.removeImage(image.id);
-                    focus();
-                  }}
-                >
-                  <X className="size-3" aria-hidden="true" />
-                </Button>
-              </li>
+                <LoaderCircle
+                  className="size-3.5 animate-spin"
+                  aria-hidden="true"
+                />
+                Reading {item.filename} · {megabytes(item.bytes)}
+              </output>
             ))}
-          </ul>
+            {model.mentions.length > 0 && (
+              <ul aria-label="Selected mentions" className="contents">
+                {model.mentions.map((mention) => (
+                  <MentionChip
+                    key={`${mention.kind}:${mention.start}`}
+                    mention={mention}
+                    ineligible={
+                      mention.kind === "subagent" &&
+                      mode === "plan" &&
+                      catalog.subagents.some(
+                        (agent) =>
+                          agent.name === mention.name && !agent.plan_eligible,
+                      )
+                    }
+                    disabled={!canEdit}
+                    onRemove={() => {
+                      const next = draft.removeMention(mention);
+                      if (!next) return;
+                      commitText(next.text, next.cursor);
+                    }}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
         )}
-        {model.mentions.length > 0 && (
-          <p
-            className="mb-2 break-all text-xs text-muted-foreground"
-            aria-label="Selected skill mentions"
+        {(errors.length > 0 || model.attachmentErrors.length > 0) && (
+          <div
+            role="alert"
+            className="mx-1 mb-1 flex items-start gap-2 rounded-2xl bg-destructive/10 px-3 py-2 text-xs text-destructive"
           >
-            Skills: {model.mentions.map((mention) => mention.name).join(", ")} ·
-            edit the mention to remove its association
-          </p>
+            <ul className="min-w-0 flex-1 space-y-0.5 break-words">
+              {[...errors, ...model.attachmentErrors].map((error) => (
+                <li key={error}>{error}</li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              aria-label="Dismiss attachment errors"
+              className="shrink-0 rounded-full p-0.5 hover:bg-destructive/10"
+              onClick={() => {
+                setErrors([]);
+                draft.dismissAttachmentErrors();
+              }}
+            >
+              <X className="size-3" aria-hidden="true" />
+            </button>
+          </div>
         )}
-        <div className="flex min-w-0 items-end gap-2">
+        <div className="unsloth-composer-line" data-expanded="true">
           <ComposerPrimitive.Input
             ref={input}
-            className="unsloth-composer-input disabled:cursor-not-allowed"
+            className="aui-composer-input unsloth-composer-input disabled:cursor-not-allowed"
             aria-label="Coding prompt"
-            role={panel ? "combobox" : undefined}
-            aria-autocomplete={panel ? "list" : undefined}
-            aria-haspopup={panel ? "listbox" : undefined}
+            role={menu ? "combobox" : undefined}
+            aria-autocomplete={menu ? "list" : undefined}
+            aria-haspopup={menu ? "listbox" : undefined}
             aria-describedby="coding-send-explanation coding-image-support"
-            aria-controls={panel ? "coding-skill-options" : undefined}
-            aria-expanded={panel}
+            aria-controls={menu ? LIST_ID : undefined}
+            aria-expanded={menu ? true : undefined}
             aria-activedescendant={
-              panel && filtered[index] ? `coding-skill-${index}` : undefined
+              menu && current
+                ? mentionOptionId(LIST_ID, active ?? 0)
+                : undefined
             }
-            placeholder="What would you like to build?"
+            placeholder={
+              conversationId
+                ? "Ask Mimir to build, fix or explain…"
+                : "Choose a project folder to start"
+            }
             submitMode="enter"
-            disabled={!canSend || reading}
-            minRows={2}
-            maxRows={5}
+            disabled={!canEdit}
+            minRows={1}
+            maxRows={10}
             addAttachmentOnPaste={false}
             cancelOnEscape={false}
             unstable_focusOnThreadSwitched={false}
@@ -341,224 +575,179 @@ export function CodingComposer({
               changed(event.currentTarget);
             }}
             onSelect={(event) => {
-              if (panelOpen.current && range)
-                changed(event.currentTarget, false);
+              if (menuOpen.current) changed(event.currentTarget, false);
             }}
             onKeyDown={(event) => {
-              if (!panelOpen.current || event.nativeEvent.isComposing) return;
-              if (["ArrowDown", "ArrowUp"].includes(event.key)) {
-                event.preventDefault();
-                setIndex(
-                  (old) =>
-                    (old +
-                      (event.key === "ArrowDown" ? 1 : -1) +
-                      filtered.length) %
-                    Math.max(1, filtered.length),
-                );
-              } else if (event.key === "Enter") {
-                event.preventDefault();
-                if (filtered[index]) select(filtered[index]);
-              } else if (event.key === "Escape") {
-                event.preventDefault();
-                close();
+              if (event.nativeEvent.isComposing) return;
+              if (menuOpen.current) {
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setActive(
+                    stepMention(
+                      options,
+                      active,
+                      event.key === "ArrowDown" ? 1 : -1,
+                    ),
+                  );
+                  return;
+                }
+                if (
+                  ((event.key === "Enter" && !event.shiftKey) ||
+                    event.key === "Tab") &&
+                  current &&
+                  !current.disabled
+                ) {
+                  event.preventDefault();
+                  select(current);
+                  return;
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  close(true);
+                  return;
+                }
               }
+              if (event.key === "Enter" && !event.shiftKey && blocked)
+                event.preventDefault();
             }}
             onPaste={(event) => {
               const selected = Array.from(event.clipboardData.files);
               if (selected.length) {
                 event.preventDefault();
-                if (canSend && !reading) void attach(selected);
+                if (canEdit) attach(selected);
               }
             }}
           />
-          {state?.native?.active_request || state?.stopping ? (
-            <Button
-              type="button"
-              size="icon"
-              aria-label={
-                state?.stopping
-                  ? "Stopping…"
-                  : state?.retryStop
-                    ? "Retry Stop for same request"
-                    : "Stop"
-              }
-              title={
-                state?.stopping
-                  ? "Waiting for native terminal cleanup"
-                  : "Cancel this exact native request"
-              }
-              disabled={
-                Boolean(
-                  state?.stopping ||
-                    state?.reconcilingAction ||
-                    state?.recovering,
-                ) || state?.connection !== "connected"
-              }
-              className="mb-1 shrink-0 rounded-full"
-              onClick={() => void run?.stop()}
-            >
-              <Square className="size-4" aria-hidden="true" />
-            </Button>
-          ) : (
-            <ComposerPrimitive.Send asChild={true}>
-              <Button
-                type="submit"
-                size="icon"
-                aria-label="Send"
-                disabled={!canSend || reading || panel}
-                aria-describedby="coding-send-explanation"
-                className="mb-1 shrink-0 rounded-full"
-              >
-                <ArrowUp className="size-5" aria-hidden="true" />
-              </Button>
-            </ComposerPrimitive.Send>
-          )}
-        </div>
-        <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            disabled={!canSend || reading}
-            onClick={() => files.current?.click()}
-          >
-            <ImagePlus className="size-4" aria-hidden="true" /> Attach image
-          </Button>
-          <input
-            ref={files}
-            type="file"
-            accept={IMAGE_TYPES.join(",")}
-            multiple={true}
-            className="sr-only"
-            tabIndex={-1}
-            aria-label="Coding image files"
-            disabled={!canSend || reading}
-            onChange={(event) => {
-              const selected = Array.from(event.currentTarget.files ?? []);
-              event.currentTarget.value = "";
-              if (selected.length) void attach(selected);
-            }}
-          />
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            disabled={!canSend}
-            aria-expanded={panel}
-            aria-controls="coding-skill-options"
-            onClick={() => {
-              if (panel) {
-                close();
-                focus();
-              } else {
-                setRange(null);
-                setQuery("");
-                setIndex(0);
-                panelOpen.current = true;
-                setPanel(true);
-              }
-            }}
-          >
-            <AtSign className="size-4" aria-hidden="true" /> Mention skill
-          </Button>
-          {reading && <output className="text-xs">Validating image…</output>}
-        </div>
-        <p
-          id="coding-image-support"
-          className="mt-1 text-[11px] text-muted-foreground"
-        >
-          PNG, JPEG, WebP, GIF · up to 4 images, 512 KiB total · native provider
-          must support images. Include a text prompt.
-        </p>
-        {error && (
-          <p role="alert" className="mt-2 break-words text-xs text-destructive">
-            {error}
-          </p>
-        )}
-        {panel && (
-          <section
-            className="mt-2 min-w-0 rounded-xl border border-border p-2"
-            aria-label="Effective project skills"
-          >
-            <div className="flex min-w-0 items-center gap-2">
-              <input
-                className="min-w-0 flex-1 rounded-lg border border-border bg-transparent px-2 py-1 text-sm"
-                aria-label="Search project skills"
-                ref={search}
-                value={query}
-                onChange={(event) => {
-                  setQuery(event.target.value);
-                  setIndex(0);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    close();
-                    focus();
-                  }
-                }}
-              />
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => setRefresh((old) => old + 1)}
-              >
-                Refresh
-              </Button>
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="ghost"
-                aria-label="Close skill mentions"
-                onClick={() => {
-                  close();
-                  focus();
-                }}
-              >
-                <X className="size-4" aria-hidden="true" />
-              </Button>
-            </div>
-            <p
-              className="my-1 break-words text-[11px] text-muted-foreground"
-              role="status"
-            >
-              {skillStatus}
-            </p>
-            <div
-              id="coding-skill-options"
-              role="listbox"
-              aria-label="Project skills"
-              className="max-h-40 overflow-y-auto"
-            >
-              {filtered.map((skill, item) => (
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={item === index}
-                  id={`coding-skill-${item}`}
-                  key={skill.qualified_name}
-                  onClick={() => select(skill)}
-                  className="block w-full min-w-0 rounded-lg px-2 py-1 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-selected:bg-muted"
+          <div className="unsloth-composer-left">
+            {projectChooser}
+            {!projectChooser && (
+              <DropdownMenu modal={false}>
+                <DropdownMenuTrigger asChild={true}>
+                  <button
+                    type="button"
+                    aria-label="Add images, mentions or a goal"
+                    className="unsloth-composer-plus"
+                    disabled={!canEdit}
+                  >
+                    <Plus
+                      className="size-[calc(22px*var(--ui-space-scale,1))] stroke-[1.75px]"
+                      aria-hidden="true"
+                    />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  side="top"
+                  align="start"
+                  className="unsloth-plus-menu w-[calc(272px*var(--ui-space-scale,1))]"
                 >
-                  <span className="block break-all text-xs font-medium">
-                    {skill.qualified_name}
-                  </span>
-                  <span className="block break-words text-[11px] text-muted-foreground">
-                    {skill.description}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
-        {children && (
-          <div
-            className="mt-2 flex min-w-0 items-center justify-end gap-1"
-            data-testid="coding-composer-controls"
-          >
-            {children}
+                  <DropdownMenuItem onSelect={() => files.current?.click()}>
+                    <Paperclip aria-hidden="true" />
+                    <span className="min-w-0">
+                      <span className="block">Images</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {IMAGE_LIMITS}
+                      </span>
+                    </span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => startMention()}>
+                    <AtSign aria-hidden="true" />
+                    <span className="min-w-0">
+                      <span className="block">Skill or subagent</span>
+                      <span className="block text-xs text-muted-foreground">
+                        Mention a native identity
+                      </span>
+                    </span>
+                  </DropdownMenuItem>
+                  {onGoal && (
+                    <DropdownMenuItem onSelect={() => onGoal()}>
+                      <Target aria-hidden="true" />
+                      <span className="min-w-0">
+                        <span className="block">Goal</span>
+                        <span className="block text-xs text-muted-foreground">
+                          Set a goal to keep pursuing
+                        </span>
+                      </span>
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            {!projectChooser && modeControl}
           </div>
-        )}
+          <div className="aui-composer-action-wrapper flex min-w-0 shrink items-center gap-1">
+            {modelPicker}
+            {busy ? (
+              <Button
+                type="button"
+                size="icon"
+                aria-label={
+                  state?.stopping
+                    ? "Stopping…"
+                    : state?.retryStop
+                      ? "Retry Stop for same request"
+                      : "Stop"
+                }
+                title={
+                  state?.stopping
+                    ? "Waiting for native terminal cleanup"
+                    : "Cancel this exact native request"
+                }
+                disabled={!codingStopTarget(state)}
+                className="aui-composer-cancel ml-1 size-9 shrink-0 rounded-full"
+                onClick={() => void run?.stop()}
+              >
+                {state?.stopping ? (
+                  <LoaderCircle
+                    className="size-4 animate-spin"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <Square className="size-3 fill-current" aria-hidden="true" />
+                )}
+              </Button>
+            ) : (
+              <ComposerPrimitive.Send asChild={true}>
+                <Button
+                  type="submit"
+                  size="icon"
+                  aria-label="Send"
+                  title={blocked ?? "Send (Enter)"}
+                  // Omit otherwise: assistant-ui's own empty/running gate applies.
+                  {...(blocked ? { disabled: true } : {})}
+                  aria-describedby="coding-send-explanation"
+                  className="aui-composer-send ml-1 size-9 shrink-0 rounded-full"
+                >
+                  <ArrowUp className="size-5" aria-hidden="true" />
+                </Button>
+              </ComposerPrimitive.Send>
+            )}
+          </div>
+        </div>
+        <input
+          ref={files}
+          type="file"
+          accept={IMAGE_TYPES.join(",")}
+          multiple={true}
+          className="sr-only"
+          tabIndex={-1}
+          aria-label="Coding image files"
+          disabled={!canEdit}
+          onChange={(event) => {
+            const selected = Array.from(event.currentTarget.files ?? []);
+            event.currentTarget.value = "";
+            if (selected.length) attach(selected);
+          }}
+        />
+        <p id="coding-image-support" className="sr-only">
+          {IMAGE_LIMITS}. The native provider must support images. Include a
+          text prompt.
+        </p>
+        <p id="coding-send-explanation" className="sr-only">
+          {blocked ??
+            (conversationId
+              ? "Mimir owns execution, tools and saved history. Stop cancels the running native request; leaving this view does not stop work."
+              : "Choose a host project folder before sending a coding prompt.")}
+        </p>
       </div>
       <Dialog
         open={Boolean(preview)}
@@ -586,5 +775,46 @@ export function CodingComposer({
         </DialogContent>
       </Dialog>
     </ComposerPrimitive.Root>
+  );
+}
+
+function MentionChip({
+  mention,
+  ineligible,
+  disabled,
+  onRemove,
+}: {
+  mention: DraftMention;
+  ineligible: boolean;
+  disabled: boolean;
+  onRemove: () => void;
+}) {
+  const [Icon, label] =
+    mention.kind === "skill"
+      ? [Sparkles, "Skill"]
+      : mention.kind === "subagent"
+        ? [Bot, "Subagent"]
+        : mention.fileKind === "directory"
+          ? [Folder, "Folder"]
+          : [FileText, "File"];
+  return (
+    <li
+      className={`flex min-w-0 max-w-full items-center gap-1.5 rounded-full py-1 pl-2.5 pr-1 text-xs ${ineligible ? "bg-destructive/10 text-destructive" : "bg-muted/70 dark:bg-accent"}`}
+      title={ineligible ? "This subagent is not available in Plan mode" : label}
+      data-mention-kind={mention.kind}
+    >
+      <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+      <span className="min-w-0 truncate">{mention.token}</span>
+      {ineligible && <span className="shrink-0">· not in Plan</span>}
+      <button
+        type="button"
+        className="shrink-0 rounded-full p-0.5 hover:bg-foreground/10 disabled:opacity-50"
+        aria-label={`Remove mention ${mention.token}`}
+        disabled={disabled}
+        onClick={onRemove}
+      >
+        <X className="size-3" aria-hidden="true" />
+      </button>
+    </li>
   );
 }

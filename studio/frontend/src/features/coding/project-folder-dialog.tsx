@@ -29,13 +29,14 @@ export function ProjectFolderDialog({
   state: CodingSessionState;
 }) {
   const [path, setPath] = useState("");
+  const creating = state.pending?.operation === "create";
   useEffect(() => {
     if (state.directory) setPath(state.directory.path);
   }, [state.directory]);
 
   const close = (next: boolean) => {
     // A native creation isn't cancelled by dismissing the folder picker.
-    if (!next && state.opening) return;
+    if (!next && creating) return;
     if (!next) session.cancelBrowse();
     onOpenChange(next);
   };
@@ -44,7 +45,7 @@ export function ProjectFolderDialog({
     <Dialog open={open} onOpenChange={close}>
       <DialogContent
         className="sm:max-w-xl"
-        showCloseButton={!state.opening}
+        showCloseButton={!creating}
         onCloseAutoFocus={(event) => {
           // This controlled dialog has multiple invokers and no DialogTrigger.
           // Restore the actual invoker instead of Radix's absent-trigger fallback.
@@ -85,12 +86,12 @@ export function ProjectFolderDialog({
               placeholder="Enter a host folder path"
               autoComplete="off"
               spellCheck={false}
-              disabled={state.opening}
+              disabled={creating}
             />
             <Button
               type="submit"
               variant="outline"
-              disabled={state.browsing || state.opening}
+              disabled={state.browsing || creating}
             >
               Browse
             </Button>
@@ -122,7 +123,7 @@ export function ProjectFolderDialog({
                   variant="ghost"
                   size="icon-sm"
                   aria-label="Go to parent folder"
-                  disabled={state.directory.parent === null || state.opening}
+                  disabled={state.directory.parent === null || creating}
                   onClick={() => {
                     if (state.directory?.parent)
                       void session.browse(state.directory.parent);
@@ -145,7 +146,7 @@ export function ProjectFolderDialog({
                   <li key={entry.path}>
                     <button
                       type="button"
-                      disabled={state.opening}
+                      disabled={creating}
                       onClick={() => void session.browse(entry.path)}
                       className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                     >
@@ -187,7 +188,7 @@ export function ProjectFolderDialog({
           <Button
             type="button"
             variant="ghost"
-            disabled={state.opening}
+            disabled={creating}
             onClick={() => close(false)}
           >
             Cancel
@@ -198,7 +199,7 @@ export function ProjectFolderDialog({
               !state.directory ||
               path !== state.directory.path ||
               state.browsing ||
-              state.opening ||
+              creating ||
               Boolean(state.openingUncertainty)
             }
             onClick={async () => {
@@ -209,7 +210,7 @@ export function ProjectFolderDialog({
               }
             }}
           >
-            {state.opening ? (
+            {creating ? (
               <>
                 <LoaderCircle
                   className="size-4 animate-spin"

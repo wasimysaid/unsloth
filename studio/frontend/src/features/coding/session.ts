@@ -1,12 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import { type CodingInputDraft, createInputDraft } from "./input.ts";
 import type {
   CodingApi,
   CodingConversation,
   CodingProjectDirectory,
 } from "./types.ts";
 
+/** A navigation the page is waiting on. A pending open is superseded by any
+ * newer navigation; a create runs to its native outcome and is never doubled. */
+export interface PendingOpening {
+  operation: "create" | "open";
+  id: string | null;
+}
 export interface CodingSessionState {
   conversations: CodingConversation[];
   active: CodingConversation | null;
@@ -14,7 +21,7 @@ export interface CodingSessionState {
   reopened: boolean;
   loadingConversations: boolean;
   historyError: string | null;
-  opening: boolean;
+  pending: PendingOpening | null;
   openingError: string | null;
   openingUncertainty: {
     operation: "create" | "open";
@@ -24,6 +31,11 @@ export interface CodingSessionState {
   directory: CodingProjectDirectory | null;
   browsing: boolean;
   browseError: string | null;
+  /** The composer draft of the current view: text, selected mentions, images.
+   * A conversation created from the landing takes the landing's draft over as
+   * it is when the create lands, edits made while pending included. Every other
+   * opening, and New, starts a fresh one. */
+  draft: CodingInputDraft;
 }
 
 const errorText = (error: unknown) =>
@@ -43,16 +55,19 @@ export function createCodingSession(
     reopened: false,
     loadingConversations: false,
     historyError: null,
-    opening: false,
+    pending: null,
     openingError: null,
     openingUncertainty: null,
     directory: null,
     browsing: false,
     browseError: null,
+    draft: createInputDraft(),
   };
   const listeners = new Set<() => void>();
   let historyRevision = 0;
-  let openingMutation = false;
+  let navigation = 0;
+  let current: { abort: AbortController; pending: PendingOpening } | null =
+    null;
   let browseRevision = 0;
   let browseAbort: AbortController | null = null;
   const update = (patch: Partial<CodingSessionState>) => {
@@ -71,7 +86,6 @@ export function createCodingSession(
           loadingConversations: false,
           ...(state.openingUncertainty
             ? {
-                opening: openingMutation,
                 openingUncertainty: {
                   ...state.openingUncertainty,
                   inspected: true,
@@ -84,53 +98,76 @@ export function createCodingSession(
         update({
           historyError: errorText(error),
           loadingConversations: false,
-          ...(state.openingUncertainty ? { opening: openingMutation } : {}),
         });
     }
   }
 
+  /** Stop waiting on a pending open; a pending create cannot be withdrawn. */
+  function supersede() {
+    if (current?.pending.operation === "create") return false;
+    current?.abort.abort();
+    current = null;
+    ++navigation;
+    return true;
+  }
+
   async function open(
-    operation: () => Promise<CodingConversation>,
+    operation: (signal: AbortSignal) => Promise<CodingConversation>,
     kind: "create" | "open",
     id: string | null,
   ): Promise<boolean> {
     // Uncertain creation is never blindly repeated. Inspect the shared catalog,
     // then deliberately reopen a saved identity; folder equality is not identity.
     if (
-      state.opening ||
+      (current?.pending.operation === kind && current.pending.id === id) ||
       (state.openingUncertainty &&
-        (kind === "create" || !state.openingUncertainty.inspected))
+        (kind === "create" || !state.openingUncertainty.inspected)) ||
+      !supersede()
     )
       return false;
-    openingMutation = true;
-    update({ opening: true, openingError: null });
+    const revision = navigation;
+    const fromLanding = kind === "create" && state.active === null;
+    const pending = { operation: kind, id };
+    current = { abort: new AbortController(), pending };
+    update({ pending, openingError: null });
     try {
-      const active = await operation();
+      const active = await operation(current.abort.signal);
+      if (revision !== navigation) {
+        // Superseded: a create still finished natively, so history shows it.
+        if (kind === "create") void refreshConversations();
+        return false;
+      }
+      current = null;
       // Synchronous lifecycle boundary: retire old runtime observations before
       // publishing this owner, including deliberate same-ID reopenings.
       options.onOpened?.(active);
-      openingMutation = false;
       // The canonical cwd and conversation ID come from Mimir, never the browser input.
       // A deliberate same-ID reopening also needs a fresh native view after
       // disconnect/closure; identity alone is not a subscription incarnation.
       update({
         active,
-        opening: false,
+        pending: null,
         openingUncertainty: null,
         openingGeneration: state.openingGeneration + 1,
         reopened: kind === "open",
+        draft: fromLanding ? state.draft : createInputDraft(),
       });
       void refreshConversations();
       return true;
     } catch (error) {
-      openingMutation = false;
+      const superseded = revision !== navigation;
+      if (!superseded) {
+        current = null;
+        update({ pending: null });
+      }
       if (
         error instanceof Error &&
         "admissionRejected" in error &&
         error.admissionRejected === true
       ) {
-        update({ opening: false, openingError: errorText(error) });
-      } else {
+        if (!superseded) update({ openingError: errorText(error) });
+      } else if (!superseded || kind === "create") {
+        // An abandoned open's fate is irrelevant; an unconfirmed create is not.
         update({
           openingUncertainty: { operation: kind, id, inspected: false },
           openingError: `${errorText(error)} Opening is unconfirmed, not failed. Inspect shared native history, then deliberately reopen a saved conversation; do not create another copy. Close the folder picker to inspect or refresh history.`,
@@ -154,7 +191,21 @@ export function createCodingSession(
     createConversation: (cwd: string) =>
       open(() => api.createConversation(cwd), "create", null),
     openConversation: (id: string) =>
-      open(() => api.openConversation(id), "open", id),
+      open((signal) => api.openConversation(id, signal), "open", id),
+    /** A blank landing at once: a pending open is abandoned, never awaited.
+     * A pending create is never withdrawn (false): it opens what it created. */
+    startNew() {
+      if (!supersede()) return false;
+      update({
+        active: null,
+        pending: null,
+        openingError: null,
+        reopened: false,
+        openingGeneration: state.openingGeneration + 1,
+        draft: createInputDraft(),
+      });
+      return true;
+    },
     clearOpeningError: () => update({ openingError: null }),
     async browse(path: string) {
       const revision = ++browseRevision;

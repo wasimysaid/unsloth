@@ -129,7 +129,15 @@ export interface JournalCut {
 export type EntryAnchor = "latest" | { before: string } | { after: string };
 export interface CodingRow {
   id: string;
-  kind: "user" | "assistant" | "tool" | "notice" | "plan" | "child";
+  /** `reasoning` is the provider's public reasoning text, never private analysis. */
+  kind:
+    | "user"
+    | "assistant"
+    | "reasoning"
+    | "tool"
+    | "notice"
+    | "plan"
+    | "child";
   child?: ChildAttempt;
   text?: string;
   entry_id?: string | null;
@@ -155,6 +163,7 @@ export interface CodingRow {
     quiet: boolean;
     row_group: { key: string; label: string; item: string } | null;
     semantic_content?: unknown;
+    /** Native `ToolDisplayKind` (snake_case); presentation never guesses it from names. */
     display_kind?: string | null;
     subagent?: ChildPresentation | null;
     output_profile?: ToolOutputProfile | null;

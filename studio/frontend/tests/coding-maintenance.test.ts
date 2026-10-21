@@ -5,6 +5,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { CodingHttpError } from "../src/features/coding/errors.ts";
 import * as codingInput from "../src/features/coding/input.ts";
+import * as mentionMenu from "../src/features/coding/mention-menu.ts";
+import * as pendingSubmission from "../src/features/coding/pending-submission.ts";
+import * as runSession from "../src/features/coding/run-session.ts";
+import * as transcriptModel from "../src/features/coding/transcript-model.ts";
 import * as answerFocus from "../src/features/coding/answer-focus.ts";
 import * as boundedContent from "../src/features/coding/bounded-content.ts";
 import * as transcriptReader from "../src/features/coding/transcript-reader.ts";
@@ -18,9 +22,11 @@ import {
 } from "../src/features/coding/runtime-maintenance.ts";
 import {
   codingCanContinue,
+  codingCanEdit,
   codingInterruptedRequest,
   codingRunCompletion,
   codingRunLabel,
+  codingSendBlockedReason,
   createCodingRun,
 } from "../src/features/coding/run-session.ts";
 import type * as RuntimeControls from "../src/features/coding/runtime-controls.tsx";
@@ -64,19 +70,38 @@ const composer = loadWithStubs<typeof Composer>(
       Dialog: "dialog", DialogContent: "dialog-content",
       DialogDescription: "dialog-description", DialogTitle: "dialog-title",
     },
+    "@/components/ui/dropdown-menu": {
+      DropdownMenu: "menu", DropdownMenuContent: "menu-content",
+      DropdownMenuItem: "menu-item", DropdownMenuTrigger: "menu-trigger",
+    },
     "@assistant-ui/react": {
       ComposerPrimitive: { Root: "root", Input: "input", Send: "send" },
       useComposerRuntime: () => ({ getState: () => ({ text: "" }) }),
     },
-    "lucide-react": { ArrowUp: "icon", AtSign: "icon", ImagePlus: "icon", Square: "icon", X: "icon" },
+    "@assistant-ui/tap": { flushResourcesSync: (run: () => void) => run() },
+    "react-dom": { flushSync: (run: () => void) => run() },
+    "lucide-react": {
+      ArrowUp: "icon", AtSign: "icon", Bot: "icon", FileText: "icon",
+      Folder: "icon", LoaderCircle: "icon",
+      Paperclip: "icon", Plus: "icon", Sparkles: "icon", Square: "icon",
+      Target: "icon", X: "icon",
+    },
     react: {
       useEffect: () => {},
       useRef: (current: unknown) => ({ current }),
       useState: (initial: unknown) => [initial, () => {}],
       useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) => snapshot(),
     },
-    "./api": { discoverCodingSkills: async () => ({ skills: [] }) },
+    "./api": {
+      discoverCodingSkills: async () => ({ skills: [] }),
+      discoverCodingSubagents: async () => ({ subagents: [] }),
+      discoverCodingFiles: async () => ({ files: [], truncated: false }),
+    },
     "./input": codingInput,
+    "./mention-list": { MentionList: "mention-list", mentionOptionId: () => "" },
+    "./mention-menu": mentionMenu,
+    "./pending-submission": pendingSubmission,
+    "./run-session": runSession,
   },
 );
 const controls = loadWithStubs<typeof RuntimeControls>(
@@ -125,12 +150,13 @@ test("idle restart is explicit, replaces generation and reports deliberate reope
   );
   assert.match(text(rendered), /all hosted conversations/);
   assert.match(text(rendered), /not hot reload/);
-  assert.ok(
-    nodes(rendered).some(
-      (node) =>
-        node.type === "summary" &&
-        /focus-visible:ring/.test(String(node.props.className)),
-    ),
+  // Progressive disclosure lives in the header's Session popover; the panel
+  // itself is a labelled region whose heading states the runtime condition.
+  assert.equal(rendered.type, "section");
+  assert.equal(rendered.props["aria-label"], "Mimir runtime maintenance");
+  assert.match(
+    text(nodes(rendered).find((node) => node.type === "h3")),
+    /Mimir runtime ·\s+running/,
   );
   await (restart.props.onClick as () => void)();
   // JSX handler intentionally returns void; settle the real controller mutation.
@@ -532,19 +558,23 @@ for (const ownerGeneration of [1, 2, 100]) {
         conversationGeneration?: number;
         runtimeStatus: CodingRuntimeStatus | null;
         onRuntimeLost?: () => void;
+        draft: ReturnType<typeof codingInput.createInputDraft>;
         children: unknown;
       }) => StubElement;
     }>(new URL("../src/features/coding/coding-surface.tsx", import.meta.url), {
       "react/jsx-runtime": stubJsxRuntime(),
       "@/components/ui/button": { Button: "button" },
+      "@/components/ui/popover": {
+        Popover: "popover", PopoverContent: "popover-content",
+        PopoverTrigger: "popover-trigger",
+      },
       "@assistant-ui/react": {
         AssistantRuntimeProvider: "provider",
         ThreadPrimitive: primitive,
         ComposerPrimitive: primitive,
-        MessagePrimitive: primitive,
         useExternalStoreRuntime: () => ({}),
       },
-      "lucide-react": { ArrowDown: "icon", ArrowUp: "icon", Square: "icon" },
+      "lucide-react": { ArrowDown: "icon" },
       react: {
         createContext: (current: unknown) => ({ current, Provider: "answer-focus-provider" }),
         useContext: (context: { current: unknown }) => context.current,
@@ -578,7 +608,6 @@ for (const ownerGeneration of [1, 2, 100]) {
           return {};
         },
       },
-      "./presentation": {},
       "./answer-focus": answerFocus,
       "./bounded-content": boundedContent,
       "./transcript-reader": transcriptReader,
@@ -600,10 +629,17 @@ for (const ownerGeneration of [1, 2, 100]) {
           );
           return run;
         },
+        codingCanEdit,
         codingRunCompletion,
         codingRunLabel,
+        codingSendBlockedReason,
       },
-      "./tool-report": { ToolReport: "tool" },
+      "./transcript": {
+        AnswerFocus: { Provider: "answer-focus-provider" },
+        TranscriptBlocks: "blocks",
+      },
+      "./transcript-model": transcriptModel,
+      "./tool-report": { DisclosureMemory: "disclosures" },
       "./unsent-draft": { CodingUnsentDraft: "draft" },
       "./recovery-controls": { CodingRecoveryControls: "recovery" },
       "./child-inspector": { ChildActivityRows: "children", ChildInspector: "child-inspector" },
@@ -622,6 +658,7 @@ for (const ownerGeneration of [1, 2, 100]) {
         conversationGeneration: ownerGeneration,
         runtimeStatus,
         onRuntimeLost,
+        draft: codingInput.createInputDraft(),
         children: null,
       });
     };
@@ -706,6 +743,7 @@ for (const ownerGeneration of [1, 2, 100]) {
     const unfenced = surface.CodingSurface({
       conversationId: "saved",
       runtimeStatus: running(ownerGeneration + 1),
+      draft: codingInput.createInputDraft(),
       children: null,
     });
     assert.match(

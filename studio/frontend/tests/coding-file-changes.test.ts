@@ -11,7 +11,10 @@ import {
   reportedUnifiedDiff,
   reportedUnifiedDiffSections,
 } from "../src/features/coding/file-changes.ts";
-import { groupCodingRows } from "../src/features/coding/presentation.ts";
+import {
+  projectTranscript,
+  latestWindow,
+} from "../src/features/coding/transcript-model.ts";
 import type { CodingRow } from "../src/features/coding/run-types.ts";
 
 const changed = (overrides: Partial<FileChangeFile> = {}): FileChangeFile => ({
@@ -222,7 +225,11 @@ test("repeated edits remain separate even with the same native group and path", 
     }),
     true,
   );
-  const projected = groupCodingRows([first, second]);
+  const [group] = projectTranscript([first, second], latestWindow());
+  assert.equal(group.kind, "activity");
+  if (group.kind !== "activity") return;
+  // One chronological activity tree, two separate invocations, rows unmodified.
+  const projected = group.items.map((item) => item.row);
   assert.equal(projected.length, 2);
   assert.deepEqual(
     projected.map((item) => item.tool?.invocation_id),
@@ -233,11 +240,13 @@ test("repeated edits remain separate even with the same native group and path", 
     ["call-one", "call-two"],
   );
   assert.equal(projected[1].historical, true);
-  assert.equal(projected[0].grouped, undefined);
+  assert.equal(projected[0], first);
   assert.deepEqual(
     projected[0].tool?.output_profile,
     first.tool?.output_profile,
   );
+  // Same path edited twice is one distinct reported file.
+  assert.equal(group.summary.text, "Called 2 tools");
 });
 test("structured effects count toward the ephemeral transcript budget and no-profile output remains real", () => {
   const withProfile = row("one", changed());
@@ -248,7 +257,11 @@ test("structured effects count toward the ephemeral transcript budget and no-pro
     tool: { ...withProfile.tool, output_profile: null },
   };
   assert.equal(codingRowSize(noProfile), "Actual output".length);
-  assert.equal(groupCodingRows([noProfile])[0].tool?.output, "Actual output");
+  const [only] = projectTranscript([noProfile], latestWindow());
+  assert.equal(
+    only.kind === "activity" ? only.items[0].row.tool?.output : null,
+    "Actual output",
+  );
 });
 
 function sectionOracle(file: FileChangeFile, expected: string): string[] {

@@ -2,6 +2,7 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 import { Button } from "@/components/ui/button";
+import { LoaderCircle } from "lucide-react";
 import type { NativePlan, PlanDecision } from "./plan-types";
 import {
   type CodingRun,
@@ -60,15 +61,15 @@ export function PlanCard({
   const explanation = historical ? undefined : "coding-plan-action-explanation";
   return (
     <details
-      className="min-w-0 shrink-0 rounded-xl border border-border/60 bg-background text-sm"
+      className="min-w-0 shrink-0 rounded-2xl border border-border/60 bg-background text-sm dark:bg-card"
       data-testid={
         historical ? "coding-historical-plan" : "coding-current-plan"
       }
       data-plan-id={plan.id}
     >
-      <summary className="cursor-pointer break-words rounded-xl px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <summary className="cursor-pointer break-words rounded-2xl px-3.5 py-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         <span className="font-medium">
-          {historical ? "Historical plan" : "Current native plan"}: {plan.name}
+          {historical ? "Plan" : "Current plan"}: {plan.name}
         </span>
         <span className="ml-2 text-xs text-muted-foreground">
           {planLabels[plan.status] ?? plan.status}
@@ -82,10 +83,11 @@ export function PlanCard({
         }
         tabIndex={0}
       >
-        <p className="break-all font-mono text-[11px] text-muted-foreground">
-          Plan {plan.id}
-          {plan.path ? ` · ${plan.path}` : ""}
-        </p>
+        {plan.path && (
+          <p className="break-all font-mono text-[11px] text-muted-foreground">
+            {plan.path}
+          </p>
+        )}
         {historical && (
           <p className="text-xs text-muted-foreground">
             Saved native lifecycle record · not current workspace contents.
@@ -160,63 +162,83 @@ export function PlanCard({
   );
 }
 
+/** Native mode only: never flips before ordered native state reports it. A
+ * pending request is marked on its segment; nothing else is dimmed or disabled,
+ * so keyboard focus stays put while native state settles. */
 export function CodingModeControl({
   state,
   run,
 }: { state: CodingRunState | null; run: CodingRun | null }) {
   const reason = codingModeControlReason(state);
   const mode = state?.native?.configuration.mode;
+  const requested =
+    state?.planControl?.kind === "mode" ? state.planControl.mode : null;
+  const stale = Boolean(
+    mode &&
+      (state?.connection !== "connected" ||
+        state.recovering ||
+        state.disconnected),
+  );
   return (
-    <div className="space-y-1 text-xs">
-      <fieldset
-        disabled={Boolean(reason)}
-        className="flex flex-wrap items-center gap-3"
-        aria-describedby="coding-mode-explanation"
-      >
-        <legend className="mb-1 font-medium">Coding mode</legend>
-        {(["build", "plan"] as const).map((value) => (
+    <fieldset
+      aria-describedby="coding-mode-explanation"
+      data-requested-mode={requested ?? undefined}
+      className="flex h-8 min-w-0 shrink-0 items-center rounded-full bg-muted p-0.5 text-xs dark:bg-accent"
+    >
+      <legend className="sr-only">Coding mode</legend>
+      {(["build", "plan"] as const).map((value) => {
+        const checked = mode === value;
+        const pending = requested === value && !checked;
+        return (
           <label
             key={value}
-            className="flex cursor-pointer items-center gap-1.5 has-[:disabled]:cursor-not-allowed"
+            title={
+              reason ??
+              (value === "plan"
+                ? "Plan: native read-only planning"
+                : "Build: native execution")
+            }
+            className={`relative inline-flex h-7 items-center gap-1 rounded-full px-2.5 font-medium transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring ${checked ? "bg-background text-foreground shadow-sm dark:bg-card" : "text-muted-foreground hover:text-foreground"} ${reason ? "cursor-not-allowed" : "cursor-pointer"}`}
           >
             <input
               type="radio"
               name="coding-mode"
               value={value}
-              checked={mode === value}
-              onChange={() => void run?.setMode(value)}
-              className="size-4 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              checked={checked}
+              aria-disabled={Boolean(reason) || undefined}
+              aria-busy={pending || undefined}
+              onChange={() => {
+                if (!reason) void run?.setMode(value);
+              }}
+              // Covers its segment (not sr-only): a 1px radio left the label
+              // intercepting pointer clicks meant for the radio.
+              className="absolute inset-0 m-0 cursor-[inherit] appearance-none rounded-full opacity-0"
             />
+            {pending && (
+              <LoaderCircle
+                className="size-3 animate-spin"
+                aria-hidden="true"
+              />
+            )}
             {value === "build" ? "Build" : "Plan"}
           </label>
-        ))}
-        <output data-testid="coding-plan-mode" aria-live="polite">
-          Native mode: {mode ?? "not connected"}
-          {mode &&
-          (state?.connection !== "connected" ||
-            state.recovering ||
-            state.disconnected)
-            ? " · last observed, reconnecting"
-            : ""}
-        </output>
-      </fieldset>
-      <p id="coding-mode-explanation" className="text-muted-foreground">
+        );
+      })}
+      <output
+        className="sr-only"
+        data-testid="coding-plan-mode"
+        aria-live="polite"
+      >
+        Native mode: {mode ?? "not connected"}
+        {stale ? " · last observed, reconnecting" : ""}
+        {requested && requested !== mode
+          ? ` · ${requested} requested, awaiting native state`
+          : ""}
+      </output>
+      <span id="coding-mode-explanation" className="sr-only">
         {reason ??
           "Plan is native read-only planning. Mode selection never accepts a plan or rewrites running work."}
-      </p>
-      {state?.planControlError && (
-        <p role="alert" className="break-words text-destructive">
-          {state.planControlError}
-        </p>
-      )}
-      {state?.planControlNotice && (
-        <output
-          data-testid="coding-plan-reconciliation"
-          className="block break-words"
-        >
-          {state.planControlNotice}
-        </output>
-      )}
-    </div>
+      </span>
+    </fieldset>
   );
 }

@@ -54,13 +54,29 @@ class RuntimeRestart(BaseModel):
     scope: Literal["all_hosted_conversations"]
 
 
-MAX_IMAGE_BYTES = 512 * 1024
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024
 
 
 class SkillMention(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     name: str = Field(min_length = 1, max_length = 512)
     path: str | None = Field(default = None, min_length = 1, max_length = 32768)
+    start: int = Field(ge = 0, strict = True)
+    end: int = Field(gt = 0, strict = True)
+
+
+class SubagentMention(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    name: str = Field(min_length = 1, max_length = 512)
+    start: int = Field(ge = 0, strict = True)
+    end: int = Field(gt = 0, strict = True)
+
+
+class FileMention(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    path: str = Field(min_length = 1, max_length = 32768)
+    kind: Literal["file", "directory"]
     start: int = Field(ge = 0, strict = True)
     end: int = Field(gt = 0, strict = True)
 
@@ -77,6 +93,8 @@ class PromptSubmission(BaseModel):
     text: str = Field(min_length = 1, max_length = 65536)
     overlap_confirmed: bool = Field(default = False, strict = True)
     skill_mentions: list[SkillMention] = Field(default_factory = list, max_length = 64)
+    subagent_mentions: list[SubagentMention] = Field(default_factory = list, max_length = 64)
+    file_mentions: list[FileMention] = Field(default_factory = list, max_length = 64)
     images: list[PromptImage] = Field(default_factory = list, max_length = 4)
 
     @model_validator(mode = "after")
@@ -86,13 +104,29 @@ class PromptSubmission(BaseModel):
         encoded = self.text.encode("utf-8")
         if len(encoded) > 65536:
             raise ValueError("Coding prompt text must be at most 65536 UTF-8 bytes.")
+        for mentions in (self.skill_mentions, self.subagent_mentions):
+            previous_end = 0
+            for mention in mentions:
+                if mention.start < previous_end or mention.end <= mention.start or mention.end > len(encoded):
+                    raise ValueError("Mention ranges must be ordered, non-overlapping UTF-8 byte ranges in the exact text.")
+                if encoded[mention.start:mention.end] != ("@" + mention.name).encode("utf-8"):
+                    raise ValueError("A mention range must match its exact qualified @name.")
+                previous_end = mention.end
         previous_end = 0
-        for mention in self.skill_mentions:
+        for mention in self.file_mentions:
+            if any(ord(char) < 32 or ord(char) == 127 for char in mention.path) or len(mention.path.encode("utf-8")) > 32768:
+                raise ValueError("File references require a bounded path without control characters.")
             if mention.start < previous_end or mention.end <= mention.start or mention.end > len(encoded):
-                raise ValueError("Skill mention ranges must be ordered, non-overlapping UTF-8 byte ranges in the exact text.")
-            if encoded[mention.start:mention.end] != ("@" + mention.name).encode("utf-8"):
-                raise ValueError("A skill mention range must match its exact qualified @name.")
+                raise ValueError("File ranges must be ordered, non-overlapping UTF-8 byte ranges in the exact text.")
+            path = mention.path if mention.kind == "file" else mention.path.rstrip("/") + "/"
+            if encoded[mention.start:mention.end] not in (("@" + path).encode("utf-8"), ('@"' + path + '"').encode("utf-8")):
+                raise ValueError("A file range must match its exact selected @path.")
             previous_end = mention.end
+        mentions = sorted([*self.skill_mentions, *self.subagent_mentions, *self.file_mentions], key = lambda mention: mention.start)
+        if len(mentions) > 64:
+            raise ValueError("A coding prompt accepts at most 64 selected mentions.")
+        if any(left.end > right.start for left, right in zip(mentions, mentions[1:])):
+            raise ValueError("Selected mention ranges must not overlap.")
         total = 0
         for image in self.images:
             try:
@@ -100,8 +134,8 @@ class PromptSubmission(BaseModel):
             except (ValueError, binascii.Error) as exc:
                 raise ValueError("Image data must be valid base64, not a URL or host file path.") from exc
             total += len(raw)
-            if not raw or total > MAX_IMAGE_BYTES:
-                raise ValueError("Coding images must be nonempty and total at most 512 KiB.")
+            if not raw or len(raw) > MAX_IMAGE_BYTES or total > MAX_TOTAL_IMAGE_BYTES:
+                raise ValueError("Coding images must be nonempty, at most 10 MiB each and 20 MiB total.")
             signatures = {
                 "image/png": raw.startswith(b"\x89PNG\r\n\x1a\n"),
                 "image/jpeg": raw.startswith(b"\xff\xd8\xff"),
@@ -442,6 +476,20 @@ async def conversation_skills(conversation_id: str, request: Request):
     # Discover the retained native controller's effective project metadata only.
     # This does not load skill bodies or implicitly open/grant another owner.
     return await _command(request, "skills", {"conversation_id": conversation_id})
+
+
+@router.get("/conversations/{conversation_id}/subagents")
+async def conversation_subagents(conversation_id: str, request: Request):
+    return await _command(request, "subagents", {"conversation_id": conversation_id})
+
+
+@router.get("/conversations/{conversation_id}/files")
+async def conversation_files(conversation_id: str, request: Request,
+                             query: str = Query(default = "", max_length = 1024),
+                             max_results: int = Query(default = 40, ge = 1, le = 40)):
+    if len(query.encode("utf-8")) > 1024 or any(ord(char) < 32 or ord(char) == 127 for char in query):
+        raise HTTPException(422, "File search requires at most 1024 UTF-8 bytes without control characters.")
+    return await _command(request, "files", {"conversation_id": conversation_id, "query": query, "max_results": max_results})
 
 
 @router.post("/conversations/{conversation_id}/prompts", status_code = 202)

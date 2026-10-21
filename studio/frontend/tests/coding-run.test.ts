@@ -24,7 +24,10 @@ import {
   type SubmissionStorage,
   pendingSubmissionStorageKey,
 } from "../src/features/coding/pending-submission.ts";
-import { memorySubmissionStorage } from "./coding-storage-fixture.ts";
+import {
+  memoryImageStorage,
+  memorySubmissionStorage,
+} from "./coding-storage-fixture.ts";
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 const storageName = pendingSubmissionStorageKey("conversation");
@@ -127,8 +130,10 @@ function harness(
       });
     },
   };
+  const images = memoryImageStorage();
   const run = createCodingRun("conversation", api, () => "key", {
     storage: () => storage,
+    imageStorage: () => images,
     reconnectDelay,
   });
   run.connect();
@@ -1328,7 +1333,7 @@ test("delivery identity is durable before HTTP and survives reload without autom
     const record = h.storage.getItem(storageName);
     assert.ok(record);
     assert.deepEqual(JSON.parse(record), {
-      version: 1,
+      version: 2,
       conversation_id: "conversation",
       key,
       text,
@@ -1601,7 +1606,7 @@ test("persisted pending identities are conversation-scoped and recovering reset 
   h.storage.setItem(
     pendingSubmissionStorageKey("other"),
     JSON.stringify({
-      version: 1,
+      version: 2,
       conversation_id: "other",
       key: "other-key",
       text: "Other prompt",

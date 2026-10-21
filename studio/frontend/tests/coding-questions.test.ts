@@ -330,12 +330,15 @@ test("mode selection preserves the current question draft without deciding its p
     "build",
     "No optimistic mode change",
   );
-  assert.equal(
+  assert.deepEqual(
     h.run.getSnapshot().answerTarget,
-    null,
-    "Reconstruction invalidates old question controls",
+    stale,
+    "A mode-only command keeps the ordered view; question controls stay live",
   );
+  assert.equal(h.run.getSnapshot().planControl?.kind, "mode");
   assert.deepEqual(h.run.getSnapshot().answerForms[0].answers, answers);
+  // Any later fresh capture (here an explicit reconnect) does replace them.
+  h.run.connect();
   state.configuration.mode = "plan";
   await h.start(state);
   const fresh = currentTarget(h.run);

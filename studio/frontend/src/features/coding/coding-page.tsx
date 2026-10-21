@@ -4,6 +4,11 @@
 import { useAppShellReadySignal } from "@/components/app-readiness";
 import { Button } from "@/components/ui/button";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
@@ -25,10 +30,13 @@ import { Link } from "@tanstack/react-router";
 import {
   ArrowLeft,
   Code2,
-  Folder,
+  FolderOpen,
+  Info,
   LoaderCircle,
   Plus,
   RefreshCw,
+  Settings2,
+  TriangleAlert,
 } from "lucide-react";
 import {
   useCallback,
@@ -43,8 +51,10 @@ import { codingApi, codingRuntimeApi, mcpSettingsApi } from "./api";
 import { createRuntimeMaintenance } from "./runtime-maintenance";
 import { CodingRuntimeControls } from "./runtime-controls";
 import { CodingSurface } from "./coding-surface";
+import { ConversationList, projectName } from "./conversation-list";
 import { createMcpSettings } from "./mcp-settings";
 import { MimirSettings } from "./mimir-settings";
+import { ProjectChooser, recentProjects } from "./project-chooser";
 import { ProjectFolderDialog } from "./project-folder-dialog";
 import { restoreProjectPickerFocus } from "./project-picker-focus";
 import { createCodingSession } from "./session";
@@ -54,14 +64,19 @@ function CodingSidebar({
   session,
   state,
   onNew,
+  onOpen,
   focusFallback,
 }: {
   session: CodingSession;
   state: CodingSessionState;
-  onNew: (invoker: HTMLElement) => void;
+  onNew: () => void;
+  onOpen: (id: string) => void;
   focusFallback: RefObject<HTMLButtonElement | null>;
 }) {
   const { isMobile, setOpenMobile } = useSidebar();
+  const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(
+    null,
+  );
   return (
     <Sidebar collapsible="offcanvas" className="font-heading">
       <SidebarHeader className="gap-4 p-4">
@@ -79,10 +94,11 @@ function CodingSidebar({
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              disabled={state.opening || Boolean(state.openingUncertainty)}
-              onClick={(event) => {
+              // A pending create opens what it creates; it is never withdrawn.
+              disabled={state.pending?.operation === "create"}
+              onClick={() => {
                 if (isMobile) setOpenMobile(false);
-                onNew(event.currentTarget);
+                onNew();
               }}
             >
               <Plus className="size-4" aria-hidden="true" />
@@ -91,7 +107,7 @@ function CodingSidebar({
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
-      <SidebarContent>
+      <SidebarContent ref={setScrollElement}>
         <SidebarGroup>
           <SidebarGroupLabel className="flex items-center justify-between">
             <span>Coding conversations</span>
@@ -126,49 +142,25 @@ function CodingSidebar({
                   No coding conversations yet.
                 </p>
               )}
-            <SidebarMenu aria-label="Saved coding conversations">
-              {state.conversations.map((conversation) => (
-                <SidebarMenuItem key={conversation.id}>
-                  <SidebarMenuButton
-                    className="h-auto min-h-12 items-start py-2"
-                    isActive={state.active?.id === conversation.id}
-                    aria-current={
-                      state.active?.id === conversation.id ? "true" : undefined
-                    }
-                    disabled={
-                      state.opening ||
-                      Boolean(
-                        state.openingUncertainty &&
-                          !state.openingUncertainty.inspected,
-                      )
-                    }
-                    onClick={async () => {
-                      if (await session.openConversation(conversation.id)) {
-                        if (isMobile) setOpenMobile(false);
-                      }
-                    }}
-                    title={`Reopen ${conversation.cwd}`}
-                    aria-describedby="coding-project-disclosure"
-                  >
-                    <Code2
-                      className="mt-0.5 size-4 shrink-0"
-                      aria-hidden="true"
-                    />
-                    <span className="flex min-w-0 flex-col gap-0.5">
-                      <span className="truncate">
-                        {conversation.title || "Coding conversation"}
-                      </span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {conversation.cwd}
-                      </span>
-                      <span className="truncate font-mono text-[10px] text-muted-foreground">
-                        {conversation.id}
-                      </span>
-                    </span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
+            <ConversationList
+              conversations={state.conversations}
+              scrollElement={scrollElement}
+              activeId={state.active?.id}
+              pendingId={state.pending?.id}
+              // A newer open supersedes a pending one; only a pending
+              // create or an uninspected uncertain one blocks opening.
+              disabled={
+                state.pending?.operation === "create" ||
+                Boolean(
+                  state.openingUncertainty &&
+                    !state.openingUncertainty.inspected,
+                )
+              }
+              onOpen={(id) => {
+                if (isMobile) setOpenMobile(false);
+                onOpen(id);
+              }}
+            />
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
@@ -201,6 +193,120 @@ function CodingSidebar({
     </Sidebar>
   );
 }
+
+const runtimeHealthy = (status: string | undefined) =>
+  !status || ["running", "not_started"].includes(status);
+
+function SessionDetails({
+  session,
+  state,
+  maintenance,
+  runtime,
+  onSettings,
+}: {
+  session: CodingSession;
+  state: CodingSessionState;
+  maintenance: ReturnType<typeof createRuntimeMaintenance>;
+  runtime: ReturnType<
+    ReturnType<typeof createRuntimeMaintenance>["getSnapshot"]
+  >;
+  onSettings: () => void;
+}) {
+  const active = state.active;
+  const attention =
+    !runtimeHealthy(runtime.status?.state) ||
+    Boolean(runtime.error || runtime.statusError);
+  return (
+    <Popover>
+      <PopoverTrigger asChild={true}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 gap-1.5 rounded-full px-2.5 text-xs"
+          aria-label={
+            attention
+              ? "Session details · runtime needs attention"
+              : "Session details"
+          }
+          data-testid="coding-session-details"
+        >
+          {attention ? (
+            <TriangleAlert
+              className="size-4 text-destructive"
+              aria-hidden="true"
+            />
+          ) : (
+            <Info className="size-4" aria-hidden="true" />
+          )}
+          <span className="max-sm:hidden">
+            {attention
+              ? `Runtime ${runtime.restarting ? "restarting" : (runtime.status?.state ?? "unavailable")}`
+              : "Session"}
+          </span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="max-h-[min(36rem,80dvh)] w-[min(26rem,calc(100vw-1.5rem))] gap-4 overflow-y-auto rounded-[21px] border border-border/60 p-4 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.16)] dark:bg-card"
+      >
+        {active ? (
+          <section
+            className="min-w-0 space-y-1.5 text-xs"
+            aria-label="Open coding conversation"
+          >
+            <h3 className="text-sm font-medium">
+              {active.title || "Coding conversation"}
+            </h3>
+            <p className="break-all font-mono">{active.cwd}</p>
+            <p
+              className="break-all font-mono text-muted-foreground"
+              data-testid="coding-conversation-id"
+            >
+              {active.id}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-auto whitespace-normal rounded-full text-left"
+              data-testid="coding-reopen-saved"
+              aria-disabled={
+                state.pending?.operation === "create" ||
+                Boolean(
+                  state.openingUncertainty &&
+                    !state.openingUncertainty.inspected,
+                )
+              }
+              aria-describedby="coding-project-disclosure"
+              onClick={() => void session.openConversation(active.id)}
+            >
+              Reopen saved conversation
+            </Button>
+          </section>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            No coding conversation is open.
+          </p>
+        )}
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {PROJECT_DISCLOSURE}
+        </p>
+        <CodingRuntimeControls maintenance={maintenance} state={runtime} />
+        <Button
+          variant="ghost"
+          size="sm"
+          className="justify-start rounded-full"
+          onClick={onSettings}
+        >
+          <Settings2 className="size-4" aria-hidden="true" /> Mimir Settings
+        </Button>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+const PROJECT_DISCLOSURE =
+  "Mimir uses the host folder as its working directory, not an upload or sandbox. Opening or reopening trusts project configuration and extensions for this native controller only; no shared trust decision is saved.";
 
 export function CodingPage() {
   const [maintenance] = useState(() =>
@@ -238,8 +344,10 @@ export function CodingPage() {
     void session.refreshConversations();
     return () => session.cancelBrowse();
   }, [session]);
+  const choosing =
+    state.pending?.operation === "create" || Boolean(state.openingUncertainty);
   const chooseFolder = (invoker: HTMLElement) => {
-    if (state.opening || state.openingUncertainty) return;
+    if (choosing) return;
     folderInvoker.current = invoker;
     session.clearOpeningError();
     setFolderOpen(true);
@@ -255,140 +363,118 @@ export function CodingPage() {
       <CodingSidebar
         session={session}
         state={state}
-        onNew={chooseFolder}
+        onNew={() => session.startNew()}
+        onOpen={(id) => void session.openConversation(id)}
         focusFallback={sidebarToggle}
       />
       <SidebarInset className="min-w-0 overflow-hidden">
-        <header className="flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-3 sm:px-5">
+        <header className="flex h-12 shrink-0 items-center gap-1.5 px-2 sm:px-4">
           <SidebarTrigger
             ref={sidebarToggle}
             aria-label="Toggle coding sidebar"
           />
-          <Code2 className="size-4 text-muted-foreground" aria-hidden="true" />
-          <span className="font-heading text-sm font-medium">Coding</span>
-          <nav
-            className="ml-auto flex flex-wrap gap-1"
-            aria-label="Coding views"
-          >
+          {state.active ? (
             <Button
+              ref={projectChooser}
+              type="button"
+              variant="ghost"
               size="sm"
-              variant={tab === "conversation" ? "secondary" : "ghost"}
-              aria-pressed={tab === "conversation"}
-              onClick={() => setTab("conversation")}
+              className="h-8 min-w-0 max-w-[min(32rem,60vw)] justify-start gap-2 rounded-full px-2.5"
+              disabled={choosing}
+              aria-label={`Choose another project · current ${state.active.cwd}`}
+              aria-describedby="coding-project-disclosure"
+              title="Every folder selection opens a new conversation"
+              data-testid="coding-opened-conversation"
+              onClick={(event) => chooseFolder(event.currentTarget)}
             >
-              Conversation
+              <FolderOpen className="size-4 shrink-0" aria-hidden="true" />
+              <span className="truncate font-heading text-sm font-medium">
+                {state.active.title || projectName(state.active.cwd)}
+              </span>
+              <span
+                className="truncate font-mono text-[11px] font-normal text-muted-foreground max-md:hidden"
+                data-testid="coding-canonical-cwd"
+              >
+                {state.active.cwd}
+              </span>
             </Button>
+          ) : (
+            <span className="flex items-center gap-2 px-1.5 font-heading text-sm font-medium">
+              <Code2
+                className="size-4 text-muted-foreground"
+                aria-hidden="true"
+              />
+              Coding
+            </span>
+          )}
+          {state.pending && (
+            <LoaderCircle
+              className="size-4 shrink-0 animate-spin text-muted-foreground"
+              aria-label={
+                state.pending.operation === "create"
+                  ? "Creating conversation"
+                  : "Opening conversation"
+              }
+            />
+          )}
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <SessionDetails
+              session={session}
+              state={state}
+              maintenance={maintenance}
+              runtime={runtime}
+              onSettings={() => setTab("settings")}
+            />
             <Button
               size="sm"
               variant={tab === "settings" ? "secondary" : "ghost"}
+              className="h-8 gap-1.5 rounded-full px-2.5 text-xs"
               aria-pressed={tab === "settings"}
-              onClick={() => setTab("settings")}
+              onClick={() =>
+                setTab(tab === "settings" ? "conversation" : "settings")
+              }
             >
-              Mimir Settings
+              <Settings2 className="size-4" aria-hidden="true" />
+              <span className="max-sm:sr-only">Mimir Settings</span>
             </Button>
-          </nav>
+          </div>
         </header>
-        <CodingRuntimeControls maintenance={maintenance} state={runtime} />
+        <p id="coding-project-disclosure" className="sr-only">
+          {PROJECT_DISCLOSURE}
+        </p>
         {tab === "settings" && (
           <MimirSettings settings={settings} conversation={state.active} />
         )}
         <main
-          className={`min-h-0 min-w-0 flex-1 flex-col overflow-y-auto px-4 py-4 sm:px-8 ${tab === "conversation" ? "flex" : "hidden"}`}
-          aria-busy={state.opening}
+          className={`min-h-0 min-w-0 flex-1 flex-col ${tab === "conversation" ? "flex" : "hidden"}`}
+          aria-busy={Boolean(state.pending)}
+          aria-label="Coding conversation"
           hidden={tab !== "conversation"}
         >
-          <div className="mx-auto flex min-h-min w-full max-w-2xl flex-1 flex-col gap-4">
-            <section
-              className="shrink-0 space-y-2 text-center"
-              aria-label="Coding conversation"
-            >
-              {!state.active && (
-                <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-muted">
-                  <Code2 className="size-6" aria-hidden="true" />
-                </div>
-              )}
-              <h1
-                className={`font-heading font-semibold tracking-tight ${state.active ? "text-base sm:text-lg" : "text-2xl sm:text-3xl"}`}
-              >
-                {state.active
-                  ? "Your coding conversation is open"
-                  : "Build with Mimir"}
-              </h1>
-              {!state.active && (
-                <p className="mx-auto max-w-lg text-sm leading-relaxed text-muted-foreground">
-                  Choose a project folder to open a native coding conversation,
-                  or explicitly reopen one from the sidebar.
-                </p>
-              )}
-              {state.active && (
-                <div
-                  className="space-y-1 rounded-xl border border-border/70 px-3 py-2 text-left"
-                  data-testid="coding-opened-conversation"
-                >
-                  {state.active.title && (
-                    <p
-                      className="truncate text-sm font-medium"
-                      title={state.active.title}
-                    >
-                      {state.active.title}
-                    </p>
-                  )}
-                  <p
-                    className="truncate font-mono text-xs"
-                    title={state.active.cwd}
-                    data-testid="coding-canonical-cwd"
-                  >
-                    {state.active.cwd}
-                  </p>
-                  <p
-                    className="break-all font-mono text-xs text-muted-foreground"
-                    data-testid="coding-conversation-id"
-                  >
-                    {state.active.id}
-                  </p>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-auto whitespace-normal text-left"
-                    data-testid="coding-reopen-saved"
-                    aria-disabled={
-                      state.opening ||
-                      Boolean(
-                        state.openingUncertainty &&
-                          !state.openingUncertainty.inspected,
-                      )
-                    }
-                    aria-describedby="coding-project-disclosure"
-                    onClick={() =>
-                      void session.openConversation(state.active!.id)
-                    }
-                  >
-                    Reopen saved conversation
-                  </Button>
-                </div>
-              )}
+          {(state.reopened ||
+            state.pending ||
+            state.openingUncertainty ||
+            (!folderOpen && state.openingError)) && (
+            <div className="mx-auto w-full max-w-3xl shrink-0 space-y-1 px-3 pt-1 text-xs sm:px-6">
               {state.reopened && (
                 <output
                   data-testid="coding-reopened"
-                  className="block text-xs text-muted-foreground"
+                  className="block text-muted-foreground"
                 >
                   Reopened saved conversation · no work automatically resumed.
                 </output>
               )}
-              {state.opening && (
-                <output className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
-                  <LoaderCircle
-                    className="size-4 animate-spin"
-                    aria-hidden="true"
-                  />{" "}
-                  Opening native conversation…
+              {state.pending && (
+                <output className="block text-muted-foreground">
+                  {state.pending.operation === "create"
+                    ? "Creating conversation…"
+                    : "Opening conversation…"}
                 </output>
               )}
               {state.openingUncertainty && (
                 <output
                   data-testid="coding-opening-reconciliation"
-                  className="block text-sm text-muted-foreground"
+                  className="block rounded-2xl border border-border/60 bg-muted/40 px-3.5 py-2.5"
                 >
                   {state.openingUncertainty.inspected
                     ? "Shared native history inspected. Opening remains unconfirmed; deliberately reopen a saved identity from the sidebar. No create/open command was replayed."
@@ -399,54 +485,42 @@ export function CodingPage() {
                 <p
                   role="alert"
                   data-testid="coding-opening-error"
-                  className="break-words text-sm text-destructive"
+                  className="break-words rounded-2xl border border-destructive/30 bg-destructive/5 px-3.5 py-2.5 text-destructive"
                 >
                   {state.openingError}
                 </p>
               )}
-            </section>
-            <CodingSurface
-              key={`${state.active?.id ?? "unopened"}:${state.openingGeneration}`}
-              conversationId={state.active?.id ?? null}
-              conversationGeneration={state.active?.runtime_generation}
-              runtimeStatus={runtime.status}
-              onRuntimeLost={inspectFreshRuntime}
-            >
-              {/* The host project chooser intentionally sits beneath the composer, not in its toolbar. */}
-              <div
-                className="flex min-w-0 flex-wrap items-center justify-between gap-2"
-                data-testid="coding-project-chooser"
-              >
-                <Button
-                  ref={projectChooser}
-                  type="button"
-                  variant="outline"
-                  disabled={state.opening || Boolean(state.openingUncertainty)}
-                  aria-describedby="coding-project-disclosure"
-                  onClick={(event) => chooseFolder(event.currentTarget)}
-                >
-                  <Folder className="size-4" aria-hidden="true" />
-                  {state.active
-                    ? "Choose another project"
-                    : "Choose project folder"}
-                </Button>
-                <p className="min-w-0 break-all text-xs text-muted-foreground">
-                  {state.active
-                    ? "Every folder selection opens a new conversation"
-                    : "Working directory · not an upload or sandbox"}
+            </div>
+          )}
+          <CodingSurface
+            key={`${state.active?.id ?? "unopened"}:${state.openingGeneration}`}
+            conversationId={state.active?.id ?? null}
+            conversationGeneration={state.active?.runtime_generation}
+            runtimeStatus={runtime.status}
+            onRuntimeLost={inspectFreshRuntime}
+            draft={state.draft}
+            projectChooser={
+              state.active ? null : (
+                <ProjectChooser
+                  triggerRef={projectChooser}
+                  projects={recentProjects(state.conversations)}
+                  disabled={choosing}
+                  onChoose={(cwd) => void session.createConversation(cwd)}
+                  onBrowse={chooseFolder}
+                />
+              )
+            }
+            empty={
+              <div className="m-auto flex max-w-md flex-col items-center gap-2 px-4 text-center">
+                <h1 className="font-heading text-2xl font-semibold tracking-tight sm:text-3xl">
+                  What should we build?
+                </h1>
+                <p className="text-sm text-muted-foreground">
+                  Pick a project below, then describe the task.
                 </p>
               </div>
-              <p
-                id="coding-project-disclosure"
-                className="text-xs leading-relaxed text-muted-foreground"
-              >
-                Mimir uses the host folder as its working directory, not an
-                upload or sandbox. Opening or reopening trusts project
-                configuration and extensions for this native controller only; no
-                shared trust decision is saved.
-              </p>
-            </CodingSurface>
-          </div>
+            }
+          />
         </main>
       </SidebarInset>
       <ProjectFolderDialog

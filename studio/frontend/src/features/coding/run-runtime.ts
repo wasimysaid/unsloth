@@ -5,52 +5,49 @@ import type {
   ExternalStoreAdapter,
   ThreadMessageLike,
 } from "@assistant-ui/react";
+import { parseCodingCommand } from "./command-types.ts";
 import type { CodingInputDraft } from "./input.ts";
 import {
-  type PresentationRow,
-  groupCodingRows,
-  readingRowKey,
-} from "./presentation.ts";
-import type { CodingRun, CodingRunState } from "./run-session.ts";
+  type CodingRun,
+  type CodingRunState,
+  codingCanEdit,
+} from "./run-session.ts";
+import {
+  type TranscriptBlock,
+  type TranscriptProjection,
+  createTranscriptProjection,
+  transcriptWindow,
+} from "./transcript-model.ts";
 
-/** assistant-ui projects native rows; Mimir owns rich input and execution. */
+const blockText = (block: TranscriptBlock) =>
+  block.kind === "activity"
+    ? block.summary.text
+    : block.row.text ||
+      block.row.tool?.title ||
+      block.row.tool?.name ||
+      "Native activity";
+
+/** assistant-ui owns the composer and run flags; Mimir owns rows and execution.
+ * `isDisabled` means the text cannot be edited at all. Whether it can be sent
+ * is `codingSendBlockedReason`, enforced by the composer and by `run.send`. */
 export function codingRunAdapter(
   state: CodingRunState | null,
   run: CodingRun | null,
   draft?: CodingInputDraft,
-): ExternalStoreAdapter<PresentationRow> {
+  projection: TranscriptProjection = createTranscriptProjection(),
+  canEdit = codingCanEdit(state, run),
+): ExternalStoreAdapter<TranscriptBlock> {
   return {
-    isDisabled:
-      !state ||
-      state.connection !== "connected" ||
-      state.recovering ||
-      state.submitting ||
-      state.native?.pending_user_request === true ||
-      state.configuring ||
-      state.configurationUncertain ||
-      Boolean(
-        state.stopping ||
-          state.uncertainSubmission ||
-          state.storageError ||
-          state.reconcilingAction ||
-          state.planControl ||
-          state.goalChanging ||
-          state.reconcilingGoal ||
-          state.commandBusy ||
-          state.uncertainCommand ||
-          state.overlapWarning,
-      ),
+    isDisabled: !canEdit,
     isLoading: state?.connection === "loading",
     isRunning: Boolean(state?.native?.active_request || state?.stopping),
-    messages: groupCodingRows(state?.rows ?? []),
-    convertMessage(row): ThreadMessageLike {
+    messages: projection.project(state?.rows ?? [], transcriptWindow(state)),
+    convertMessage(block): ThreadMessageLike {
       return {
-        id: row.tool?.invocation_id || row.answer ? readingRowKey(row) : row.id,
-        role: row.kind === "user" ? "user" : "assistant",
-        content:
-          row.text || row.tool?.title || row.tool?.name || "Native activity",
-        metadata: { custom: { nativeRow: row } },
-        ...(row.kind !== "user"
+        id: block.key,
+        role: block.kind === "user" ? "user" : "assistant",
+        content: blockText(block),
+        ...(block.kind !== "user"
           ? {
               status: { type: "complete" as const, reason: "unknown" as const },
             }
@@ -70,7 +67,19 @@ export function codingRunAdapter(
         .filter((part) => part.type === "text")
         .map((part) => part.text)
         .join("\n");
-      if (await run.send(text, draft?.input(text))) draft?.clear();
+      const extras = draft?.input(text);
+      // This message owns these associations from now on; its outcome must
+      // never clear a newer draft. Every refusal keeps them in run state.
+      // A slash command takes no rich input, so its images stay attached.
+      if (parseCodingCommand(text)) draft?.syncText("");
+      else draft?.clear();
+      try {
+        await run.send(text, extras);
+      } catch (reason) {
+        // The composer gates Send on `codingSendBlockedReason`; a state change
+        // racing that gate must not lose text the runtime already cleared.
+        run.retainUnsent({ text, ...extras }, reason);
+      }
     },
     onCancel: async () => {
       await run?.stop();

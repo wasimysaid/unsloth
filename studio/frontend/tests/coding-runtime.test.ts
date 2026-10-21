@@ -5,7 +5,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { ExternalStoreThreadRuntimeCore } from "../node_modules/@assistant-ui/core/dist/runtimes/external-store/external-store-thread-runtime-core.js";
-import { nativeMessageRow } from "../src/features/coding/presentation.ts";
+import {
+  projectTranscript,
+  latestWindow,
+} from "../src/features/coding/transcript-model.ts";
 import { codingRunAdapter } from "../src/features/coding/run-runtime.ts";
 import {
   type CodingRunState,
@@ -135,9 +138,16 @@ test("installed external runtime projects native state and forwards exact submis
     codingRunAdapter(run.getSnapshot(), run),
   );
   assert.equal(runtime.isDisabled, false);
-  assert.equal(runtime.messages[0].id, "entry");
+  const [projected] = projectTranscript(run.getSnapshot().rows, latestWindow());
+  assert.equal(runtime.messages[0].id, projected.key);
+  assert.equal(projected.key, "row:entry");
+  assert.equal(
+    "row" in projected ? projected.row : null,
+    run.getSnapshot().rows[0],
+    "the projected block carries the unmodified native row",
+  );
   assert.equal(runtime.messages[0].content[0].type, "text");
-  await runtime.append({ ...input, parentId: "entry" });
+  await runtime.append({ ...input, parentId: "row:entry" });
   assert.deepEqual(calls, [
     { id: "conversation", submission_key: "submission", text: "Native input" },
   ]);
@@ -152,6 +162,7 @@ test("installed external runtime projects native state and forwards exact submis
 test("installed runtime upcoming assistant placeholder is not a native transcript row", () => {
   const state: CodingRunState = {
     connection: "connected",
+    authority: "view",
     recovering: false,
     older: false,
     viewingEarlier: false,
@@ -228,17 +239,18 @@ test("installed runtime upcoming assistant placeholder is not a native transcrip
     2,
     "shipped artifact creates an upcoming assistant placeholder",
   );
-  const user = nativeMessageRow(runtime.messages[0]);
-  assert.equal(user?.id, "native-user");
-  // Same guard as NativeMessage: null is intentionally invisible, while a
-  // missing undefined row used to crash when the renderer accessed row.tool.
-  assert.doesNotThrow(() =>
-    runtime.messages.map((message) => {
-      const row = nativeMessageRow(message);
-      return row === null ? null : (row.tool ?? row.text);
-    }),
+  const projected = projectTranscript(state.rows, latestWindow("request"));
+  assert.deepEqual(
+    projected.map((block) => [block.kind, block.key]),
+    [["user", "row:native-user"]],
   );
-  assert.equal(nativeMessageRow(runtime.messages[1]), null);
+  assert.equal(runtime.messages[0].id, "row:native-user");
+  // The transcript renders projected blocks, never runtime messages, so the
+  // shipped placeholder matches no native block and renders nothing.
+  assert.ok(
+    !projected.some((block) => block.key === runtime.messages[1].id),
+    "the placeholder is not a native transcript row",
+  );
   assert.deepEqual(
     state.rows.map((row) => row.id),
     ["native-user"],
@@ -261,6 +273,13 @@ test("coding route stays authenticated and excludes general-chat execution and t
     "project-folder-dialog.tsx",
     "model-selection.ts",
     "events.ts",
+    "transcript-model.ts",
+    "transcript.tsx",
+    "tool-report.tsx",
+    "coding-composer.tsx",
+    "mention-menu.ts",
+    "mention-list.tsx",
+    "input.ts",
   ]) {
     const contents = source(`../src/features/coding/${name}`);
     assert.doesNotMatch(

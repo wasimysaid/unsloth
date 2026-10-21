@@ -1,53 +1,162 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 import { Button } from "@/components/ui/button";
-import { Bot, X } from "lucide-react";
+import { Bot, LoaderCircle, X } from "lucide-react";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import {
+  type ChildAttempt,
+  type ChildIdentity,
   childDescription,
   childKey,
   childStatusLabel,
   sameChild,
+  terminalChild,
 } from "./child-types";
 import type { ChildView } from "./child-view";
+import type { CodingRow } from "./run-types";
 import { ToolReport } from "./tool-report";
 
-export function ChildActivityRows({ view }: { view: ChildView }) {
-  const state = useSyncExternalStore(view.subscribe, view.getSnapshot);
-  if (!state.attempts.length) return null;
+function ChildButton({
+  view,
+  child,
+  open,
+  connected,
+}: {
+  view: ChildView;
+  child: ChildAttempt;
+  open: boolean;
+  connected: boolean;
+}) {
+  const live = !child.historical && !terminalChild(child);
   return (
-    <section aria-label="Delegated work" className="space-y-2">
-      <h2 className="text-xs font-medium text-muted-foreground">
-        Delegated work · inspection only
-      </h2>
-      {state.attempts.map((child) => (
-        <button
-          type="button"
+    <button
+      type="button"
+      data-testid="coding-child-row"
+      data-child-handle={child.handle}
+      data-child-attempt={child.attempt}
+      data-reading-control={`child:${child.handle}:${child.attempt}`}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      className="group/child flex w-full min-w-0 items-center gap-2.5 rounded-lg py-1 pr-2 text-left text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-expanded:text-foreground"
+      onClick={() => void view.open(child)}
+    >
+      <Bot aria-hidden="true" className="size-4 shrink-0" />
+      <span className="min-w-0 truncate">
+        <span className="text-foreground">Subagent</span>{" "}
+        {childDescription(child)}
+      </span>
+      <span className="min-w-0 shrink-[3] truncate text-xs">
+        {childStatusLabel(child, connected)}
+      </span>
+      {live && (
+        <LoaderCircle
+          className="size-3.5 shrink-0 animate-spin"
+          aria-hidden="true"
+        />
+      )}
+      <span className="ml-auto shrink-0 text-xs opacity-0 transition-opacity group-hover/child:opacity-100 group-focus-visible/child:opacity-100">
+        Inspect
+      </span>
+    </button>
+  );
+}
+
+/** A delegated attempt in its chronological transcript slot. The native
+ * attempt observation, when present, is newer than the saved row. */
+export function ChildActivityRow({
+  view,
+  row,
+  identity,
+}: {
+  view: ChildView;
+  row: CodingRow;
+  identity: ChildIdentity;
+}) {
+  const state = useSyncExternalStore(view.subscribe, view.getSnapshot);
+  const observed = state.attempts.find((attempt) =>
+    sameChild(attempt, identity),
+  );
+  const run = row.tool?.subagent;
+  const child: ChildAttempt = observed ??
+    row.child ?? {
+      handle: identity.handle,
+      attempt: identity.attempt,
+      status: run?.status ?? "queued",
+      completion_pending: false,
+      cut: null,
+      description: run?.description,
+      profile: run?.agent,
+      model: run?.model,
+      presentation: run ?? null,
+      historical: true,
+    };
+  return (
+    <ChildButton
+      view={view}
+      child={child}
+      connected={state.connected}
+      open={Boolean(state.inspection && sameChild(child, state.inspection))}
+    />
+  );
+}
+
+/** Opens the inspector on the exact attempt a tool invocation acted on. */
+export function ChildInspectLink({
+  view,
+  identity,
+}: {
+  view: ChildView;
+  identity: ChildIdentity;
+}) {
+  const state = useSyncExternalStore(view.subscribe, view.getSnapshot);
+  return (
+    <button
+      type="button"
+      data-testid="coding-child-row"
+      data-child-handle={identity.handle}
+      data-child-attempt={identity.attempt}
+      data-reading-control={`child-link:${identity.handle}:${identity.attempt}`}
+      aria-haspopup="dialog"
+      aria-expanded={Boolean(
+        state.inspection && sameChild(identity, state.inspection),
+      )}
+      aria-label={`Inspect subagent attempt ${identity.attempt}`}
+      className="shrink-0 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-expanded:text-foreground"
+      onClick={() => void view.open(identity)}
+    >
+      Inspect
+    </button>
+  );
+}
+
+/** Live attempts the native view reported before any transcript row names them. */
+export function ChildActivityRows({
+  view,
+  placed,
+}: {
+  view: ChildView;
+  placed: ReadonlySet<string>;
+}) {
+  const state = useSyncExternalStore(view.subscribe, view.getSnapshot);
+  const unplaced = state.attempts.filter(
+    (child) =>
+      !child.historical &&
+      !placed.has(`child:${child.handle}:${child.attempt}`),
+  );
+  if (!unplaced.length && !state.omitted) return null;
+  return (
+    <section aria-label="Delegated work" className="space-y-0.5">
+      {unplaced.map((child) => (
+        <ChildButton
           key={childKey(child)}
-          data-testid="coding-child-row"
-          data-child-handle={child.handle}
-          data-child-attempt={child.attempt}
-          aria-haspopup="dialog"
-          aria-expanded={Boolean(
-            state.inspection && sameChild(child, state.inspection),
-          )}
-          className="flex w-full min-w-0 items-start gap-2 rounded-xl border border-border/60 px-3 py-2 text-left text-xs hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={() => void view.open(child)}
-        >
-          <Bot aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">
-            <span className="block font-medium">
-              {childDescription(child)} · attempt {child.attempt}
-            </span>
-            <span className="block text-muted-foreground">
-              {childStatusLabel(child, state.connected)}
-            </span>
-          </span>
-          <span className="shrink-0 text-muted-foreground">Inspect</span>
-        </button>
+          view={view}
+          child={child}
+          connected={state.connected}
+          open={Boolean(state.inspection && sameChild(child, state.inspection))}
+        />
       ))}
       {state.omitted && (
-        <p className="text-xs">
+        <p className="text-xs text-muted-foreground">
           Older agent rows omitted from this bounded projection. Load earlier
           native history to inspect older work.
         </p>
@@ -128,7 +237,7 @@ export function ChildInspector({ view }: { view: ChildView }) {
       data-testid="coding-child-inspector"
       data-child-handle={child.handle}
       data-child-attempt={child.attempt}
-      className="absolute inset-0 z-20 m-0 flex h-full w-full min-h-0 min-w-0 max-w-none flex-col rounded-xl border border-border bg-background p-0 text-foreground shadow-sm lg:relative lg:inset-auto lg:w-104 lg:shrink-0"
+      className="absolute inset-0 z-20 m-0 flex h-full w-full min-h-0 min-w-0 max-w-none flex-col rounded-2xl border border-border/70 bg-background p-0 text-foreground shadow-[0_2px_8px_-2px_rgba(0,0,0,0.16)] lg:relative lg:inset-auto lg:w-104 lg:shrink-0 dark:bg-card"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -154,7 +263,7 @@ export function ChildInspector({ view }: { view: ChildView }) {
           </Button>
         </div>
         <p className="break-all font-mono text-[11px]">
-          {child.handle} · Attempt {child.attempt}
+          Attempt {child.attempt}
         </p>
         <output className="block text-xs font-medium" aria-live="polite">
           {status}
@@ -242,7 +351,7 @@ export function ChildInspector({ view }: { view: ChildView }) {
           {outcome ? (
             <>
               <p className="break-all font-mono">
-                {outcome.handle} · Attempt {outcome.attempt} · {outcome.status}
+                Attempt {outcome.attempt} · {outcome.status}
               </p>
               {outcome.result !== null && (
                 <pre
@@ -325,10 +434,10 @@ export function ChildInspector({ view }: { view: ChildView }) {
           {inspection.rows.map((row) => (
             <div
               key={row.id}
-              className="min-w-0 space-y-1 break-words rounded-lg border border-border/50 p-2"
+              className="min-w-0 space-y-1 break-words rounded-xl border border-border/40 px-2 py-1"
             >
               {row.tool ? (
-                <ToolReport row={row} />
+                <ToolReport row={row} itemKey={`child-row:${row.id}`} />
               ) : (
                 <>
                   <p className="font-medium text-muted-foreground">

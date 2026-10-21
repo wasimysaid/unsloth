@@ -13,13 +13,25 @@ database. Providers and credentials remain configured on the Mimir host.
 ## Installed assistant-ui contract
 
 React **0.12.28**, Core **0.1.17**, Store **0.2.9** are lockfile-pinned.
-`run-runtime.ts` uses the shipped `ExternalStoreAdapter<PresentationRow>` converter,
+`run-runtime.ts` uses the shipped `ExternalStoreAdapter<TranscriptBlock>` converter,
 `messages`, `isDisabled`, `isLoading`, `isRunning`, `onNew`, and `onCancel`.
-`ThreadPrimitive.Messages` renders those external rows; `ComposerPrimitive` forwards
-text through the authenticated API. No `setMessages`, local optimistic turns,
-attachment/tool-result executor, edit/reload adapter or remote transcript store is
-provided. The shipped runtime's transient upcoming-assistant placeholder has no
-native row and is intentionally invisible, not a fabricated transcript entry.
+`isDisabled` means the prompt cannot be *edited* (no confirmed owner, or failed
+delivery storage); whether it can be *sent* is `codingSendBlockedReason`, one rule
+for the Send button, Enter, the adapter and `run.send`. Text stays editable while
+mode, model, goal or command work settles. Sending consumes that message's rich
+input (mentions, images) from the draft at once, so its later acceptance by HTTP
+or by ordered native state can never clear a newer draft; every refusal keeps the
+consumed input in run state (restorable, or retryable when delivery is
+uncertain). A send refused after the shipped composer cleared its text is
+retained the same way, never lost.
+
+The transcript is rendered from `transcript-model.ts` blocks keyed by native
+presentation identity, not through `ThreadPrimitive.Messages` (which keys message
+components by list index, so expansion state could move between rows on prepend or
+eviction). `ComposerPrimitive` forwards text through the authenticated API. No
+`setMessages`, local optimistic turns, attachment/tool-result executor, edit/reload
+adapter or remote transcript store is provided. The shipped runtime's transient
+upcoming-assistant placeholder carries no native block and renders nothing.
 Shipped-artifact tests exercise the actual runtime, including running before the
 first native reply.
 
@@ -33,12 +45,16 @@ All `/api/coding` routes use established Studio auth, including IDs and fetch SS
 - `GET /conversations/{id}/overlap` reads native canonical-folder overlap against
   other retained, busy owners; it never opens an owner or changes project identity.
 - `POST /conversations/{id}/prompts` accepts `{submission_key,text}` plus optional
-  `skill_mentions`, `images` and `overlap_confirmed`, and returns native
+  `skill_mentions`, `subagent_mentions`, `file_mentions`, `images` and
+  `overlap_confirmed`, and returns native
   conversation/submission/request identities. Confirmation defaults to false;
   the host refuses newly overlapping work before native admission with a structured
   `overlap_required` warning. Transport retries are disabled.
 - `GET /conversations/{id}/skills` discovers the already-open controller's effective
   native skill metadata. It neither loads skill bodies nor creates another registry.
+- `GET /conversations/{id}/files?query=…&max_results=40` returns native host search
+  results `{files:[{path,kind:"file"|"directory"}],truncated}`: canonical
+  project-relative paths only, never file contents.
 - `POST /conversations/{id}/requests/{request_id}/cancel` targets exactly that native
   request. Acknowledgment is not terminal cleanup. It never closes the owner.
 - `POST /conversations/{id}/entries` reads a native immutable root or child `cut`, with
@@ -71,12 +87,23 @@ output is expandable and keyboard-operable; clipping is labeled. Public presenta
 content is authoritative, not model-only output. Starts/results of one invocation
 share a compact chronological slot; repeated invocations remain separate. Historical
 reports are labeled and are not claims about the current filesystem. There are no
-Apply/Revert controls or tool-selection pills.
+Apply/Revert controls or tool-selection pills. See **Transcript projection** below.
 
 ## Native mode and plan decisions (#239)
 
-Build/Plan radios show only `state.configuration.mode` from the ordered native view.
-They never optimistically change mode, accept a plan, or rewrite running work.
+The compact Build/Plan segment (native radios inside the composer) shows only
+`state.configuration.mode` from the ordered native view. It never optimistically
+changes mode, accepts a plan, or rewrites running work; a requested mode is marked
+on its own segment (`data-requested-mode`) and nothing else is dimmed or disabled.
+
+A **mode-only** command keeps the existing event stream: after a definite
+acknowledgment the ordered native `state` item settles it, including one that
+arrived before the reply. A definite refusal needs no reconstruction (the open view
+is still authoritative). An uncertain reply waits for the same ordered evidence.
+Only if no confirmation arrives within a bound (5 s) is one fresh captured view
+read, without replaying the command. Stop, the event stream and the draft stay
+usable throughout; Send, plan decisions, model and goal changes wait. Plan
+decisions still reconstruct a fresh captured view, as below.
 `POST /conversations/{id}/mode` sends only `{mode}` to native configuration.
 `POST /conversations/{id}/plan-actions` sends `{plan_id,revision,decision}` to native
 admission; decisions are `implement`, `implement_fresh`, and `save_and_stop`, not
@@ -89,7 +116,8 @@ The expandable current plan preserves native identity, status, path and Markdown
 Saved lifecycle rows use the same renderer as inspection-only historical records,
 without actionable controls. Clipping is disclosed. Controls explain busy/refused
 states, action failures and reconnect uncertainty in text. After a mode/plan command,
-reconstruct a fresh captured view before permitting another choice. Lost responses
+reconstruct a fresh captured view before permitting another choice (a mode-only
+command settles from ordered state instead, as above). Lost responses
 never trigger command replay. Late responses to a detached surface do not reconnect
 it. A subsequent choice must address the currently captured native revision;
 native stale validation is still required for races after browser checks.
@@ -154,7 +182,10 @@ Project changes create distinct conversations; reconnect retains native identity
 
 ## Child-attempt inspection (#241)
 
-Native agent-icon rows open a right-hand, inspection-only panel; no launch,
+Native agent-icon rows sit in their chronological transcript slot (exact
+`(handle, attempt)` identity from a child row or a tool's subagent presentation;
+live attempts not yet named by any row are listed after the transcript) and open a
+right-hand, inspection-only panel; no launch,
 continue, steer, or individual Stop is exposed. On narrow screens the dismissible
 panel fills the transcript width, leaving connection feedback and the **main-session
 Stop** available below. Enter/Space activate native buttons, Escape dismisses from
@@ -184,27 +215,55 @@ Stable selectors: `coding-child-row` and `coding-child-inspector` carry
 dialog. `--workload children` in the coding-route driver exercises actual native
 delegation with a deterministic protocol provider, not real-model acceptance.
 
-## Skill mentions and images (#242)
+## Skill and subagent mentions and images (#242)
 
 `coding-composer.tsx` retains the shipped assistant-ui text field/Send ownership.
 `input.ts` tracks only ephemeral draft associations, not execution or history.
-Selecting a skill inserts its exact qualified `@name`, preserving the native disk
-`path` where supplied (plugin names are not shortened). Edits shift intact ranges
-or invalidate touched/extended tokens. JS UTF-16 offsets are converted to half-open
-native UTF-8 byte ranges against the exact untrimmed text at submission. Typing a
-short display name alone does not invent a native skill reference or load its body.
+`@` at a token start opens one floating combobox grouped **Skills**, **Subagents**
+and **Files** (`GET /conversations/{id}/skills` and `/subagents`, discovered
+independently so one failing never hides the other; Files is a debounced, aborted-on-
+change host search for the typed query, listed in server order and never
+re-filtered in the browser). Focus stays in the prompt
+(`aria-activedescendant`); Arrow keys move over selectable options, Enter/Tab select
+the active one, Escape dismisses that token, and Enter with no selectable match
+falls through to ordinary Send. In Plan mode a subagent whose native
+`plan_eligible` is false stays listed but disabled with that reason.
 
-Images can be selected or pasted, inspected and removed before Send. Supported
-PNG/JPEG/WebP/GIF images are bounded to four, 512 KiB aggregate original bytes, and
-4096×4096 dimensions. GIF is image input, not a promise to forward every animation
-frame. Browser checks give immediate feedback; authenticated Studio validates the
-transport shape/bytes and the plugin independently decodes and enforces bounds.
-Native provider image refusal and request failures remain explicit. Images are
-base64 bytes, never user-supplied host paths or remote URLs; no upload store exists.
-Include text with attachments. Existing 1 MiB private frame bounds remain in place.
+A selection inserts its exact `@name` (skill: qualified name plus native disk
+`path` where supplied; subagent: native name) or native file reference and records
+a typed `DraftMention` (`kind: "skill" | "subagent" | "file"`). File references use
+the native TUI grammar without escapes: `@path`, or `@"path with spaces"` when the
+visible path contains whitespace; directories are written `path/`. A path that
+grammar cannot carry (a quote together with whitespace, `#`, control characters)
+stays listed but disabled. Native identity comes only from that
+selection, never from typed text. Edits shift intact ranges or invalidate
+touched/extended tokens; undo and other unreported edits are inferred from the text
+diff, and any token that occurs twice is dropped rather than guessed. Chips remove
+exactly their identity and token. JS UTF-16 offsets become half-open native UTF-8
+byte ranges at submission: `skill_mentions:[{name,path?,start,end}]`,
+`subagent_mentions:[{name,start,end}]` and `file_mentions:[{path,kind,start,end}]`
+(the range covers the whole visible reference, quotes included; `path` stays the
+exact catalog path), at most 64 together. Selecting a subagent selects context; it
+never launches work. Native loads referenced file context host-side; the browser
+never reads file bodies.
 
-Every send snapshots text, exact skill identities/paths/ranges and original image
-bytes once under its native submission key. Uncertain delivery retries that whole
+Images can be selected, pasted or dropped, inspected and removed before Send.
+Supported PNG/JPEG/WebP/GIF images are bounded to four, **10 MiB each, 20 MiB
+total** original bytes, and 4096×4096 dimensions. Count/size feedback is given
+before reading; each image is then read and validated on its own while typing
+continues (only Send waits). These reads, and their refusal/failure messages,
+belong to the input draft that started them (`draft.attach`), not to a composer:
+Send waits on the draft's `reading`, wherever that draft is shown. Thumbnails and
+the inspector use the image's own base64 `data:` URL; the only object URL is the
+temporary one used to decode, revoked as soon as decoding ends. GIF is image input, not a promise to forward every
+animation frame. Browser checks give immediate feedback; authenticated Studio
+validates the transport shape/bytes and the plugin independently decodes and
+enforces bounds. Native provider image refusal and request failures remain
+explicit. Images are base64 bytes, never user-supplied host paths or remote URLs;
+no upload store exists. Include text with attachments.
+
+Every send snapshots text, exact skill/subagent/file identities and ranges and
+original image bytes once under its native submission key. Uncertain delivery retries that whole
 snapshot, not the current composer. A definite pre-admission rejection retains
 **Restore rejected input**; neither it nor a preview creates an accepted transcript
 row. Native acceptance/reconciliation clears draft associations. Cross-reload durable
@@ -221,7 +280,16 @@ Before project selection or complete capture, the composer is disabled. Enter an
 Send forward text; queued requests remain native. Before **any** prompt HTTP send,
 `pending-submission.ts` writes and verifies one conversation-scoped delivery record
 in localStorage under `unsloth:coding:pending-submission:${encodeURIComponent(id)}`:
-`{version:1, conversation_id:id, key, text}`. It is not a transcript store. The record
+`{version:2, conversation_id:id, key, text, skill_mentions?, subagent_mentions?,
+file_mentions?}`. That is the only record schema; with images it carries an
+`image_manifest` of `{mime_type,length,sha256}` and the exact bytes are written first
+to IndexedDB under the same name, because megabyte images exceed localStorage quota.
+Without durable IndexedDB an image send fails closed before HTTP (its input is kept
+restorable; text-only prompts still send). Persistence is revalidated before HTTP:
+if detach, reconnect or owner loss happened while saving, nothing is sent, a fresh
+record is withdrawn and the input is kept as known-unsent. A retry after reload
+reads the bytes back and sends them only if every digest matches; otherwise it
+refuses and sends nothing different. It is not a transcript store. The record
 is removed only after confirmed acceptance/native request identity or explicit
 pre-admission rejection; read/write/readback/cleanup failures disable sending.
 If storage fails before HTTP, the eagerly-cleared assistant-ui composer text is
@@ -430,9 +498,12 @@ read, not an apply mechanism. Extensions/maintenance sections are supplied by #2
 
 ## Next-request model picker (#244)
 
-The composer bottom-right trigger opens native model configuration; its heading
-opens the searchable, provider-navigable list in the same popover. Selecting a model
-returns to configuration without dismissal. Shared Studio popover/button/slider
+The composer bottom-right trigger (model name, muted effort) opens a compact
+configuration popover: the reasoning slider for the selected model and a model line
+that opens the searchable list in the same popover, with Starred and per-provider
+tabs and an icon-only refresh. A missing selection or failed catalog read shows one
+short line with **Retry** / **Choose another**; there is no catalog-details panel.
+Selecting a model returns to configuration without dismissal. Shared Studio popover/button/slider
 primitives are presentation only. Keyboard Tab remains ordinary focus navigation;
 Escape returns from search to configuration or dismisses to the trigger.
 
@@ -497,6 +568,108 @@ CPU-only compositions without inference can set
 Local lifecycle HTTP operations require the current private workflow key and exact
 incarnation, not an ordinary browser credential. Process loss/failed native drain
 is not clean release: retained protections remain a visible recovery obligation.
+
+## Transcript projection and layout (UI refresh)
+
+`transcript-model.ts` projects immutable native rows into chronological blocks:
+user bubbles, Markdown reply text (the shared pure `MarkdownPreview`), accepted
+answers, plans, notices, semantic public answers/reports, subagent lifecycle rows,
+and **activity groups**. Consecutive tool and `reasoning` rows of one request form
+one icon-led tree; reply text, a new request or a semantic answer ends it. Every
+tool invocation stays its own item with its public result, including several calls
+on one delegated attempt (e.g. a launch and a refused message); invocations that
+carry an exact `(handle, attempt)` get an **Inspect** link and form their own
+always-visible group. Only lifecycle rows of one attempt are deduplicated. Icons and summary verbs come from native `display_kind` (`shell`, `file_read`,
+`file_change`, `file_*_search`, `web`, `status`, `mcp`, …), never tool names; unknown
+kinds are counted as tools. The summary states real counts, distinct reported
+edited paths and failures ("Thought 2 times · ran 2 commands · 1 failed"); empty
+reasoning is skipped, nothing is invented. A group opens itself only while live; a
+reader's choice wins and survives remounts. Each item expands to its actual bounded
+output, typed file-change diff and native identities.
+
+`reasoning` rows are native `Summary` thinking only, shown as a "Thought process"
+disclosure. Liveness comes from the native `active_request`: only the tail rows of
+that request in the latest window are live, never an older request's completed
+group. A frozen historical reading window (`viewingEarlier`) infers nothing live,
+even for the still-active request; tool rows show their supplied status as is. No timestamps or
+durations are synthesized.
+
+Block and item keys are native row identities: invocation and accepted-answer
+identities (which also correlate a live row with its saved row), otherwise the
+native row `id` (saved rows are `{entry}` / `{entry}:{block}`), so prepending or
+evicting history never moves a key, disclosure or reading anchor to other content.
+**Native gap:** live text, reasoning and user rows
+(`{kind}:{run}:{turn}:{attempt}:{index}`, `live:{position}`) carry no identity shared
+with their saved rows, so those blocks remount once at the saving checkpoint.
+`run-session.ts` reuses derived row objects by reference so unchanged blocks keep
+identity and memoized components skip work.
+
+Layout: a quiet header (project switcher, Session details popover with conversation
+ID/cwd/reopen, trust disclosure and runtime maintenance, Mimir Settings), a
+full-height transcript, and a bottom dock with only actionable notices (disconnect,
+errors, recovery, reconciliation), current plan and goal disclosures, the composer
+(+ menu: images, mention, goal; Build/Plan; model; Send/Stop) and a one-line footer
+(run status → model details popover with **Diagnostics…**; a context ring whose
+hover shows only used / limit / remaining tokens; Commands). Request identities and
+bounded native diagnostics live only in the Diagnostics dialog.
+Stable selectors added: `coding-activity-group`, `coding-reasoning`,
+`coding-mention-list`, `coding-composer-surface`, `coding-session-details`,
+`coding-event-details`, `coding-context-usage`. `coding-running-model` and
+`coding-next-model` live in the run-details popover, `coding-request-id` in the
+Diagnostics dialog; `coding-conversation-id`
+and `coding-reopen-saved` in Session details.
+
+## Navigation, landing and Stop authority (interaction refresh)
+
+`session.ts` holds one `PendingOpening {operation:"create"|"open", id}`. Opening a
+saved conversation is supersedable: a newer open or **New coding conversation**
+aborts the older request (`AbortSignal`) and bumps the navigation revision, so its
+late reply never replaces the newer view (a superseded open that did succeed only
+refreshes the list). A pending create is not supersedable, because it may already
+own a native conversation; uncertain creates still block until inspected. Saved
+session buttons carry `data-conversation-id` and `aria-busy` and stay clickable
+while another open is pending.
+
+**New coding conversation** returns at once to a blank landing composer
+(`active: null`); no folder dialog opens. While a create is pending it is disabled
+and `startNew()` refuses (returns false), so the create is neither orphaned nor
+repeated; it opens what it created. An uncertain create keeps its reconciliation on
+the landing, which cannot create another copy. The landing composer is editable but
+not sendable ("Choose a project to start."); its **Choose project** menu lists
+recent project folders and **Choose project folder…**. Choosing creates the
+conversation with the existing native canonical-folder authority.
+
+The session owns the composer draft of the current view (`state.draft`: text,
+selected mentions, images, images still being read and attachment errors). The landing stays editable while its create is
+pending, and the conversation created from the landing takes over that same
+draft object as it is when the create lands, edits and images added meanwhile
+included. Opening any conversation, a create started from an open conversation,
+and New each start a fresh draft, so no conversation inherits a draft meant for
+another; an uncertain create leaves the draft on the landing. A new composer whose
+field is empty shows its draft's text; one that already has text is never
+overwritten.
+
+`CodingRunState.authority` names the subscription whose ordered start/reset
+capture this view holds. `codingStopTarget(state)` is the only Stop gate: once a
+capture names an `active_request`, Stop targets exactly that request even while
+history is still read or native recovery is in progress; before any capture, after
+detach/owner loss, while stopping or reconciling an action it has no target, so a
+stale generation or another conversation is never cancelled.
+
+## Saved conversation list
+
+The sidebar mounts only the saved rows near its viewport (`conversation-list.tsx`,
+`@tanstack/react-virtual` on the sidebar's own `SidebarContent` scroll container).
+Every row has a fixed slot (`h-13` plus the 1px menu gap, scaled with the UI font
+size) and the list keeps the height of the whole inventory, so each saved
+conversation is reachable by scrolling. Mounted rows keep `data-conversation-id`,
+`aria-current`, `aria-busy`, the cwd title and the disclosure description, and add
+`aria-posinset`/`aria-setsize`. Tab still moves through the mounted rows; Arrow
+Up/Down, Page Up/Down, Home and End move focus across the whole list, focusing a
+row only once it is mounted, and the focused row stays mounted while scrolled away.
+A newly active conversation is scrolled into view once, not on later refreshes or
+events. Rows outside the window are not in the DOM, so find-in-page and DOM
+selectors only see mounted rows until the list is scrolled to them.
 
 ## Long-conversation reading (#253)
 

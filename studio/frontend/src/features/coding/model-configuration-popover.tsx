@@ -12,21 +12,25 @@ import { Slider } from "@/components/ui/slider";
 import {
   ArrowLeft,
   Check,
-  ChevronDown,
   ChevronRight,
+  LoaderCircle,
+  RefreshCw,
   Star,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { codingModelApi } from "./api";
 import {
+  STARRED_GROUP,
   filterCodingModels,
   findCodingModel,
+  modelGroups,
   modelIdentity,
   readCodingFavorites,
 } from "./model-selection";
 import type {
   CodingConfiguration,
   CodingConfigurationChange,
+  CodingModelChoice,
   CodingProviderChoice,
 } from "./model-selection";
 
@@ -37,6 +41,69 @@ function initialFavorites() {
   } catch {
     return new Set<string>();
   }
+}
+
+/** One native catalog choice. Long native labels wrap inside the choice (the
+ * shared Button is `whitespace-nowrap`), never under the Favorite control. */
+export function ModelChoiceRow({
+  provider,
+  model,
+  selected,
+  favorite,
+  disabled,
+  onSelect,
+  onFavorite,
+}: {
+  provider: string;
+  model: CodingModelChoice;
+  selected: boolean;
+  favorite: boolean;
+  disabled: boolean;
+  onSelect: () => void;
+  onFavorite: () => void;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-1 rounded-xl hover:bg-muted/50">
+      <Button
+        type="button"
+        variant="ghost"
+        disabled={disabled}
+        data-provider={provider}
+        data-model={model.id}
+        aria-pressed={selected}
+        className="h-auto min-h-10 min-w-0 flex-1 shrink justify-start gap-2 whitespace-normal rounded-xl px-2 py-1.5 text-left"
+        onClick={onSelect}
+      >
+        <Check
+          className={`size-3.5 shrink-0 ${selected ? "" : "invisible"}`}
+          aria-hidden="true"
+        />
+        <span className="min-w-0 flex-1">
+          <span className="block [overflow-wrap:anywhere]">
+            {model.name}
+            {selected && <span className="ml-1 text-[10px]">· Selected</span>}
+          </span>
+          <span className="block break-all text-[10px] text-muted-foreground">
+            {provider}/{model.id}
+          </span>
+        </span>
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        className="shrink-0"
+        aria-label={`Favorite ${provider}/${model.id}`}
+        aria-pressed={favorite}
+        onClick={onFavorite}
+      >
+        <Star
+          className={`size-3.5 ${favorite ? "fill-current" : ""}`}
+          aria-hidden="true"
+        />
+      </Button>
+    </div>
+  );
 }
 
 /** Selection is native next-request configuration, not a browser prompt option. */
@@ -67,9 +134,9 @@ export function CodingModelPicker({
     refresh: false,
   });
   const [search, setSearch] = useState("");
-  const [providerId, setProviderId] = useState<string | null>(null);
-  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [tab, setTab] = useState<string | null>(null);
   const [favorites, setFavorites] = useState(initialFavorites);
+  const listId = useId();
   const heading = useRef<HTMLButtonElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const back = useRef<HTMLButtonElement>(null);
@@ -93,7 +160,7 @@ export function CodingModelPicker({
     // Do not carry a different conversation's inventory into this controller.
     setCatalog([]);
     setCatalogRead(false);
-    setProviderId(null);
+    setTab(null);
   }, [conversationId]);
   useEffect(() => {
     if (!open || !conversationId) return;
@@ -109,16 +176,14 @@ export function CodingModelPicker({
         if (!controller.signal.aborted) {
           setCatalog(choices);
           setCatalogRead(true);
-          // A removed provider must not leave navigation stuck in an empty group.
-          setProviderId((id) =>
-            choices.some((item) => item.id === id) ? id : null,
-          );
         }
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted)
           setCatalogError(
-            `${reason instanceof Error ? reason.message : "Mimir's catalog could not be read."} ${request.refresh ? "Refresh was not confirmed. Previous inventory is retained; read it again or explicitly retry refresh." : "Previous inventory and selection have not been replaced."}`,
+            reason instanceof Error
+              ? reason.message
+              : "Models could not be loaded.",
           );
       })
       .finally(() => {
@@ -171,13 +236,7 @@ export function CodingModelPicker({
       /* Favorites still work for this view if browser storage is unavailable. */
     }
   }
-  const visible = filterCodingModels(
-    catalog,
-    search,
-    providerId,
-    favorites,
-    favoritesOnly,
-  );
+  const groups = modelGroups(filterCodingModels(catalog, search), favorites);
   const modelLabel =
     selected?.model.name ?? configuration?.model ?? "Choose model";
   return (
@@ -199,18 +258,20 @@ export function CodingModelPicker({
           size="sm"
           disabled={!conversationId || !configuration}
           aria-label="Configure next coding request"
-          title="Model and reasoning for the next native request to begin execution"
           data-testid="coding-model-trigger"
-          className="min-w-0 max-w-[min(24rem,calc(100%-3.5rem))] gap-1.5 text-xs"
+          className="h-9 min-w-0 max-w-[min(18rem,42vw)] gap-1.5 rounded-full px-3 text-sm font-medium data-[state=open]:bg-muted"
         >
           <span className="truncate">{modelLabel}</span>
-          {unavailable && <span className="shrink-0">· Unavailable</span>}
-          {configuration?.reasoning && (
-            <span className="shrink-0 text-muted-foreground">
-              · {configuration.reasoning}
+          {unavailable && (
+            <span className="shrink-0 text-xs text-destructive">
+              Unavailable
             </span>
           )}
-          <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
+          {configuration?.reasoning && (
+            <span className="shrink-0 font-normal text-muted-foreground max-sm:hidden">
+              {configuration.reasoning}
+            </span>
+          )}
         </Button>
       </PopoverTrigger>
       <PopoverContent
@@ -218,7 +279,7 @@ export function CodingModelPicker({
         align="end"
         sideOffset={8}
         collisionPadding={16}
-        className="w-88 min-h-0 gap-3 border border-border shadow-lg"
+        className="w-[min(18rem,calc(100vw-2rem))] min-h-0 gap-2 rounded-[21px] border border-border/60 p-3 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.16)] dark:bg-card"
         data-testid="coding-model-picker"
         aria-label="Next coding request configuration"
         onOpenAutoFocus={(event) => {
@@ -234,52 +295,38 @@ export function CodingModelPicker({
           }
         }}
       >
-        <p className="text-xs font-medium text-muted-foreground">
-          Next-request selection
-        </p>
         {page === "configuration" ? (
           <>
-            <Button
-              ref={heading}
-              type="button"
-              variant="ghost"
-              aria-label="Choose coding model"
-              className="h-auto min-h-10 w-full justify-between gap-2 px-2 text-left"
-              onClick={() => setPage("models")}
-            >
-              <span className="min-w-0">
-                <span className="block break-words font-medium">
-                  {modelLabel}
-                </span>
-                <span className="block break-all text-xs font-normal text-muted-foreground">
-                  {configuration?.provider &&
-                    `${configuration.provider}/${configuration.model}`}
-                </span>
-              </span>
-              <ChevronRight className="size-4 shrink-0" aria-hidden="true" />
-            </Button>
-            {selected && (
-              <p className="break-all text-xs text-muted-foreground">
-                API model: {selected.model.api_model}
-              </p>
-            )}
-            {!configuration?.model && (
-              <output className="block text-xs">
-                Choose a model from Mimir's catalog.
-              </output>
-            )}
-            {levels.length > 0 && (
-              <div
-                className="space-y-3 rounded-lg bg-muted/50 p-3"
-                data-testid="coding-reasoning-control"
+            <div className="min-w-0">
+              {levels.length > 0 && (
+                <p className="px-1 text-base font-semibold capitalize">
+                  {levels[valueIndex] ?? effort ?? "Default"}
+                </p>
+              )}
+              <Button
+                ref={heading}
+                type="button"
+                variant="ghost"
+                aria-label="Choose coding model"
+                className={`h-auto min-h-8 max-w-full justify-start gap-1 rounded-xl px-1 py-1 text-left ${levels.length > 0 ? "text-sm font-normal text-muted-foreground" : "text-base font-semibold"}`}
+                onClick={() => setPage("models")}
               >
-                <div className="flex items-center justify-between gap-2 text-xs">
-                  <span>Reasoning effort</span>
-                  <output>
-                    {levels[valueIndex] ?? effort ?? "Not offered"}
-                  </output>
-                </div>
-                {effortIndex >= 0 ? (
+                <span className="min-w-0 truncate">{modelLabel}</span>
+                <ChevronRight
+                  className="size-3.5 shrink-0"
+                  aria-hidden="true"
+                />
+                {(configuring || loading) && (
+                  <LoaderCircle
+                    className="size-3.5 shrink-0 animate-spin"
+                    aria-label={configuring ? "Applying" : "Loading models"}
+                  />
+                )}
+              </Button>
+            </div>
+            {levels.length > 0 &&
+              (effortIndex >= 0 ? (
+                <div data-testid="coding-reasoning-control">
                   <Slider
                     aria-label="Reasoning effort"
                     min={0}
@@ -296,179 +343,130 @@ export function CodingModelPicker({
                       else setDraftIndex(null);
                     }}
                   />
-                ) : (
-                  <p className="text-xs">
-                    The configured effort is not offered by this model. Switch
-                    models to use a native default; no effort was substituted.
-                  </p>
-                )}
-                <div
-                  className="flex flex-wrap justify-between gap-x-2 gap-y-1 text-[10px] text-muted-foreground"
-                  aria-hidden="true"
-                >
-                  {levels.map((level) => (
-                    <span key={level}>{level}</span>
-                  ))}
                 </div>
-                <p className="text-[11px] text-muted-foreground">
-                  Mimir default: {selected?.model.default_reasoning ?? "none"}
+              ) : (
+                <p className="px-1 text-xs text-muted-foreground">
+                  This model doesn't offer the configured effort. Choose a model
+                  to use its default.
                 </p>
-              </div>
-            )}
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              Applies when the next request begins, including queued input. Work
-              already running keeps its model and effort.
-            </p>
+              ))}
           </>
         ) : (
           <>
-            <Button
-              ref={back}
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="justify-start px-1"
-              onClick={() => setPage("configuration")}
-            >
-              <ArrowLeft className="size-3.5" aria-hidden="true" /> Back to
-              model configuration
-            </Button>
-            <Input
-              ref={searchInput}
-              aria-label="Search coding models"
-              placeholder="Search models or providers…"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "ArrowDown") {
-                  event.preventDefault();
-                  document
-                    .querySelector<HTMLButtonElement>(
-                      '[data-testid="coding-model-list"] button[data-model]:not(:disabled)',
-                    )
-                    ?.focus();
-                }
-              }}
-            />
-            <nav
-              aria-label="Model providers"
-              className="flex max-h-32 shrink-0 flex-wrap gap-1 overflow-y-auto"
-            >
+            <div className="flex min-w-0 items-center gap-1">
+              <Button
+                ref={back}
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="shrink-0 rounded-full"
+                aria-label="Back to model configuration"
+                onClick={() => setPage("configuration")}
+              >
+                <ArrowLeft className="size-4" aria-hidden="true" />
+              </Button>
+              <nav
+                aria-label="Model providers"
+                className="flex min-w-0 flex-1 gap-1 overflow-x-auto"
+              >
+                {groups.map((group) => (
+                  <Button
+                    key={group.key}
+                    type="button"
+                    variant={tab === group.key ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-7 shrink-0 rounded-full px-2.5 text-xs"
+                    aria-current={tab === group.key ? "true" : undefined}
+                    data-provider-nav={group.key}
+                    onClick={() => {
+                      setTab(group.key);
+                      document
+                        .getElementById(`${listId}-${group.key}`)
+                        ?.scrollIntoView({ block: "start" });
+                    }}
+                  >
+                    {group.key === STARRED_GROUP && (
+                      <Star
+                        className="size-3 fill-current"
+                        aria-hidden="true"
+                      />
+                    )}
+                    {group.name}
+                  </Button>
+                ))}
+              </nav>
+            </div>
+            <div className="flex items-center gap-1">
+              <Input
+                ref={searchInput}
+                aria-label="Search coding models"
+                placeholder="Search models"
+                className="h-9 rounded-full"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    document
+                      .querySelector<HTMLButtonElement>(
+                        '[data-testid="coding-model-list"] button[data-model]:not(:disabled)',
+                      )
+                      ?.focus();
+                  }
+                }}
+              />
               <Button
                 type="button"
-                variant={providerId === null ? "secondary" : "ghost"}
-                size="sm"
-                aria-pressed={providerId === null}
-                onClick={() => setProviderId(null)}
+                variant="ghost"
+                size="icon-sm"
+                className="shrink-0 rounded-full"
+                aria-label="Refresh model list"
+                disabled={blocked}
+                onClick={() => setRequest({ refresh: true })}
               >
-                All providers
+                <RefreshCw
+                  className={`size-3.5 ${refreshing ? "animate-spin" : ""}`}
+                  aria-hidden="true"
+                />
               </Button>
-              {catalog.map((provider) => (
-                <Button
-                  key={provider.id}
-                  type="button"
-                  variant={providerId === provider.id ? "secondary" : "ghost"}
-                  size="sm"
-                  className="h-auto min-h-8 max-w-full whitespace-normal break-words text-left"
-                  aria-pressed={providerId === provider.id}
-                  data-provider-nav={provider.id}
-                  onClick={() => setProviderId(provider.id)}
-                  title={provider.id}
-                >
-                  {provider.name}
-                  <span className="text-[10px] text-muted-foreground">
-                    {provider.id}
-                  </span>
-                </Button>
-              ))}
-            </nav>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              aria-pressed={favoritesOnly}
-              className="justify-start px-1"
-              onClick={() => setFavoritesOnly(!favoritesOnly)}
-            >
-              <Star className="size-3.5" aria-hidden="true" /> Favorites
-            </Button>
+            </div>
             <div
-              className="max-h-64 min-h-0 overflow-y-auto overscroll-contain"
+              className="max-h-[min(18rem,45dvh)] min-h-0 space-y-2 overflow-y-auto overscroll-contain"
               data-testid="coding-model-list"
               aria-label="Coding models"
             >
-              {visible.map((provider) => (
+              {groups.map((group) => (
                 <section
-                  key={provider.id}
-                  aria-label={`${provider.name} (${provider.id})`}
-                  className="mb-3 space-y-1"
+                  key={group.key}
+                  id={`${listId}-${group.key}`}
+                  aria-label={group.name}
+                  className="space-y-0.5"
                 >
-                  <h3 className="break-words px-1 text-xs font-medium text-muted-foreground">
-                    {provider.name} · {provider.id}
+                  <h3 className="px-2 text-xs font-medium text-muted-foreground">
+                    {group.name}
                   </h3>
-                  {provider.models.map((model) => {
-                    const key = modelIdentity(provider.id, model.id);
-                    const isSelected = key === identity;
+                  {group.models.map(({ provider, model }) => {
+                    const key = modelIdentity(provider, model.id);
                     return (
-                      <div
-                        key={key}
-                        className="flex min-w-0 items-center gap-1 rounded-lg hover:bg-muted/50"
-                      >
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          disabled={blocked}
-                          data-provider={provider.id}
-                          data-model={model.id}
-                          aria-pressed={isSelected}
-                          className="h-auto min-h-12 min-w-0 flex-1 justify-start gap-2 px-2 text-left"
-                          onClick={() =>
-                            void apply(
-                              { provider: provider.id, model: model.id },
-                              true,
-                            )
-                          }
-                        >
-                          <Check
-                            className={`size-3.5 shrink-0 ${isSelected ? "" : "invisible"}`}
-                            aria-hidden="true"
-                          />
-                          <span className="min-w-0">
-                            <span className="block break-words">
-                              {model.name}
-                              {isSelected && (
-                                <span className="ml-1 text-[10px]">
-                                  · Selected
-                                </span>
-                              )}
-                            </span>
-                            <span className="block break-all text-[10px] text-muted-foreground">
-                              {provider.id}/{model.id}
-                            </span>
-                          </span>
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          className="shrink-0"
-                          aria-label={`Favorite ${provider.id}/${model.id}`}
-                          aria-pressed={favorites.has(key)}
-                          onClick={() => toggleFavorite(provider.id, model.id)}
-                        >
-                          <Star
-                            className={`size-3.5 ${favorites.has(key) ? "fill-current" : ""}`}
-                            aria-hidden="true"
-                          />
-                        </Button>
-                      </div>
+                      <ModelChoiceRow
+                        key={`${group.key}:${key}`}
+                        provider={provider}
+                        model={model}
+                        selected={key === identity}
+                        favorite={favorites.has(key)}
+                        disabled={blocked}
+                        onSelect={() =>
+                          void apply({ provider, model: model.id }, true)
+                        }
+                        onFavorite={() => toggleFavorite(provider, model.id)}
+                      />
                     );
                   })}
                 </section>
               ))}
-              {!loading && visible.length === 0 && (
-                <p className="p-2 text-xs">
-                  No matching models in Mimir's catalog.
+              {!loading && groups.length === 0 && (
+                <p className="p-2 text-xs text-muted-foreground">
+                  No matching models.
                 </p>
               )}
             </div>
@@ -477,98 +475,63 @@ export function CodingModelPicker({
         {(unavailable ||
           (catalogRead && !selected && configuration?.model)) && (
           <div
-            className="space-y-2 rounded-lg border border-border p-2 text-xs"
+            className="space-y-2 rounded-2xl bg-destructive/5 p-3 text-xs"
             data-testid="coding-model-unavailable"
           >
-            <p className="font-medium">Selected model unavailable</p>
-            <p className="break-all">
-              {configuration?.provider}/{configuration?.model}
+            <p className="font-medium text-destructive">
+              Selected model unavailable
             </p>
-            <p>
-              {unavailable ??
-                "This identity is absent from the refreshed inventory. It has not been replaced."}
-            </p>
-            <p>
-              History remains readable. No provider or model was substituted.
-            </p>
+            {unavailable && <p>{unavailable}</p>}
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
+                className="rounded-full"
                 disabled={blocked}
                 onClick={() => void apply({})}
               >
-                Retry selected model
+                Retry
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={disabled || configuring}
-                onClick={() => setPage("models")}
-              >
-                Choose replacement
-              </Button>
+              {page === "configuration" && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="rounded-full"
+                  disabled={disabled || configuring}
+                  onClick={() => setPage("models")}
+                >
+                  Choose another
+                </Button>
+              )}
             </div>
           </div>
         )}
-        {page === "configuration" && selected && !unavailable && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={blocked}
-            onClick={() => void apply({})}
-          >
-            Retry selected model
-          </Button>
-        )}
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          Inventory only, not a health, credentials or compatibility check.
-          Provider setup and downloads stay in their existing workflows.
-        </p>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={blocked}
-          onClick={() => setRequest({ refresh: true })}
-        >
-          Refresh model choices
-        </Button>
-        {loading && (
-          <output className="block text-xs">
-            {refreshing
-              ? "Refreshing native model choices…"
-              : "Reading Mimir catalog…"}
-          </output>
-        )}
         {catalogError && (
-          <div className="space-y-2 text-xs">
-            <p role="alert">{catalogError}</p>
+          <div role="alert" className="flex items-center gap-2 px-1 text-xs">
+            <span className="min-w-0 flex-1 text-destructive">
+              {catalogError}
+            </span>
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               size="sm"
+              className="shrink-0 rounded-full"
               disabled={blocked}
               onClick={() => setRequest({ refresh: false })}
             >
-              Read current inventory
+              Retry
             </Button>
           </div>
         )}
-        {configuring && (
-          <output className="block text-xs">Configuring next request…</output>
-        )}
         {disabled && (
-          <output className="block text-xs">
-            Reconnect and reconstruct native state before changing
-            configuration.
+          <output className="block px-1 text-xs text-muted-foreground">
+            Available once the conversation reconnects.
           </output>
         )}
         {error && (
-          <p role="alert" className="break-words text-xs text-destructive">
+          <p role="alert" className="break-words px-1 text-xs text-destructive">
             {error}
           </p>
         )}
