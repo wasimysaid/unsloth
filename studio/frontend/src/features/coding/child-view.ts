@@ -1,12 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
-import { sameChild, terminalChild } from "./child-types.ts";
+import { childKey, sameChild, terminalChild } from "./child-types.ts";
+import {
+  interruptEntryContent,
+  readCompleteEntryPage,
+  replaceEntryContent,
+} from "./entry-content.ts";
+import { trimSavedEntries } from "./entry-window.ts";
+import { codingRowSize } from "./file-changes.ts";
+import { applyTextDelta, type TextDelta } from "./live-rows.ts";
+import { createViewNotifications } from "./view-notifications.ts";
 import type {
   ChildAttempt,
   ChildIdentity,
   ChildInspection,
 } from "./child-types.ts";
-import type { CodingRow, EntryPage, JournalCut, RunApi } from "./run-types.ts";
+import type {
+  CodingRow,
+  EntryAnchor,
+  EntryPage,
+  JournalCut,
+  RunApi,
+} from "./run-types.ts";
 
 const MAX_ATTEMPTS = 512;
 const MAX_ROWS = 200;
@@ -20,36 +35,13 @@ const validIdentity = (child: ChildIdentity) =>
   child.handle.length > 0 &&
   Number.isSafeInteger(child.attempt) &&
   child.attempt > 0;
-const sameCut = (a: JournalCut, b: JournalCut) =>
-  JSON.stringify(a) === JSON.stringify(b);
-function boundRows(source: CodingRow[]) {
-  let rows = [...source];
-  let bytes = rows.reduce(
-    (n, row) => n + (row.text?.length ?? 0) + (row.tool?.output.length ?? 0),
-    0,
-  );
-  let omitted = false;
-  while (rows.length > MAX_ROWS || (bytes > MAX_TEXT && rows.length > 1)) {
-    const removed = rows[0];
-    rows = rows.filter(
-      (row) =>
-        row.id !== removed.id &&
-        !(removed.entry_id && row.entry_id === removed.entry_id),
-    );
-    bytes = rows.reduce(
-      (n, row) => n + (row.text?.length ?? 0) + (row.tool?.output.length ?? 0),
-      0,
-    );
-    omitted = true;
-  }
-  return { rows, omitted };
-}
 
 /** A read-only, ephemeral projection of the parent's ordered native child view.
  * Transcripts are read lazily at its captured cuts; no child scheduler or polling. */
 export function createChildView(
   id: string,
-  api: Pick<RunApi, "readEntries" | "readChild">,
+  api: Pick<RunApi, "readEntries" | "readPublicEntry" | "readChild">,
+  onReopen?: (error: unknown) => void,
 ) {
   let state: {
     attempts: ChildAttempt[];
@@ -63,16 +55,18 @@ export function createChildView(
     omitted: false,
   };
   let saved: CodingRow[] = [];
-  let provisional: CodingRow[] = [];
+  const live = new Map<string, CodingRow[]>();
+  const liveRows = (identity: ChildIdentity | null = state.inspection) =>
+    identity ? (live.get(childKey(identity)) ?? []) : [];
   let abort: AbortController | null = null;
   let generation = 0;
   let historyRevision = 0;
-  const listeners = new Set<() => void>();
-  const update = (patch: Partial<typeof state>) => {
+  const notifications = createViewNotifications();
+  const update = (patch: Partial<typeof state>, deferred = false) => {
     state = { ...state, ...patch };
-    for (const listener of listeners) listener();
+    notifications.notify(deferred);
   };
-  function put(child: ChildAttempt, historical = false) {
+  function put(child: ChildAttempt, historical = false, deferred = false) {
     if (!validIdentity(child))
       throw new Error("Invalid native child attempt identity.");
     if (
@@ -111,17 +105,20 @@ export function createChildView(
     let omitted = state.omitted;
     while (attempts.length > MAX_ATTEMPTS) {
       const remove = attempts.findIndex(
-        (item) => !state.inspection || !sameChild(item, state.inspection),
+        (item) =>
+          item.historical &&
+          !liveRows(item).length &&
+          (!state.inspection || !sameChild(item, state.inspection)),
       );
       if (remove < 0) break;
       attempts.splice(remove, 1);
       omitted = true;
     }
-    update({ attempts, omitted });
+    update({ attempts, omitted }, deferred);
   }
-  function history(rows: CodingRow[]) {
+  function history(rows: CodingRow[], deferred = false) {
     for (const row of rows) {
-      if (row.child) put(row.child, true);
+      if (row.child) put(row.child, true, deferred);
       const run = row.tool?.subagent;
       // Agent-looking tools without exact native attempt identity are not children.
       if (run?.attempt && run.agent_id)
@@ -138,6 +135,7 @@ export function createChildView(
             presentation: run,
           },
           true,
+          deferred,
         );
     }
   }
@@ -150,12 +148,63 @@ export function createChildView(
     state.inspection &&
     sameChild(state.inspection, identity) &&
     !abort?.signal.aborted;
-  function verify(page: EntryPage, cut: JournalCut) {
-    if (!sameCut(page.cut, cut) || !Array.isArray(page.rows))
-      throw new Error("Native child history did not match the captured cut.");
-  }
-  function publish() {
+  const report = (error: unknown) => {
+    if (
+      error instanceof Error &&
+      "requiresReopen" in error &&
+      error.requiresReopen === true
+    )
+      onReopen?.(error);
+    if (state.inspection)
+      update({ inspection: { ...state.inspection, error: failure(error) } });
+  };
+  const readPage = (
+    cut: JournalCut,
+    anchor: EntryAnchor,
+    identity: ChildIdentity,
+    g: number,
+  ) =>
+    readCompleteEntryPage(
+      api,
+      id,
+      cut,
+      anchor,
+      abort!.signal,
+      (ref, rows) => {
+        if (!current(g, identity)) return;
+        saved = replaceEntryContent(saved, ref, rows);
+        if (state.inspection!.earlier) {
+          const bounded = trimSavedEntries(
+            replaceEntryContent(state.inspection!.rows, ref, rows),
+            MAX_ROWS,
+            MAX_TEXT,
+          );
+          update({
+            inspection: {
+              ...state.inspection!,
+              rows: bounded.rows,
+              first: bounded.omitted
+                ? (bounded.rows.find((row) => row.entry_id)?.entry_id ?? null)
+                : state.inspection!.first,
+              older: state.inspection!.older || bounded.omitted,
+              bounded: state.inspection!.bounded || bounded.omitted,
+            },
+          });
+        } else publish();
+      },
+      (error) => {
+        if (current(g, identity)) report(error);
+      },
+    );
+  function publish(deferred = false) {
     if (!state.inspection || state.inspection.earlier) return;
+    const provisional = liveRows();
+    const bounded = trimSavedEntries(
+      saved,
+      MAX_ROWS - provisional.length,
+      MAX_TEXT - provisional.reduce((n, row) => n + codingRowSize(row), 0),
+    );
+    saved = bounded.rows;
     const rows: CodingRow[] = [];
     for (const row of [...saved, ...provisional]) {
       const index = rows.findIndex(
@@ -167,31 +216,21 @@ export function createChildView(
       if (index < 0) rows.push(row);
       else rows[index] = { ...row, id: rows[index].id };
     }
-    const bounded = boundRows(rows);
-    if (bounded.omitted) {
-      const keep = (row: CodingRow) =>
-        bounded.rows.some(
-          (retained) =>
-            retained.id === row.id ||
-            (row.tool?.invocation_id &&
-              retained.tool?.invocation_id === row.tool.invocation_id),
-        );
-      saved = saved.filter(keep);
-      provisional = provisional.filter(keep);
-    }
-    update({
-      inspection: {
-        ...state.inspection,
-        rows: bounded.rows,
-        // Page from the retained native entry, not the original page boundary.
-        // When all saved entries were removed, reload this same captured cut.
-        first: bounded.omitted
-          ? (saved.find((row) => row.entry_id)?.entry_id ?? null)
-          : state.inspection.first,
-        older: state.inspection.older || bounded.omitted,
-        bounded: state.inspection.bounded || bounded.omitted,
+    update(
+      {
+        inspection: {
+          ...state.inspection,
+          rows,
+          // Paging starts at the first retained complete entry.
+          first: bounded.omitted
+            ? (saved.find((row) => row.entry_id)?.entry_id ?? null)
+            : state.inspection.first,
+          older: state.inspection.older || bounded.omitted,
+          bounded: state.inspection.bounded || bounded.omitted,
+        },
       },
-    });
+      deferred,
+    );
   }
   async function details(identity: ChildIdentity, g: number) {
     const detail = await api.readChild(
@@ -242,27 +281,29 @@ export function createChildView(
     const revision = ++historyRevision;
     let page: EntryPage;
     try {
-      page = await api.readEntries(id, cut, "latest", abort?.signal);
+      page = await readPage(cut, "latest", identity, g);
     } catch (error) {
       if (current(g, identity) && revision === historyRevision) throw error;
       return; // Superseded failures cannot obscure a newer page or navigation.
     }
     if (!current(g, identity) || revision !== historyRevision) return;
-    verify(page, cut);
     if (page.newer)
       throw new Error("The native latest child page omitted newer history.");
     saved = page.rows.map((row) => ({ ...row, historical: true }));
     // Initial reads are older than activity arriving during the read. Checkpoints
     // prune their pre-cut suffix before reading, never erase post-cut activity.
-    provisional = provisional.filter(
-      (row) =>
-        !row.tool?.invocation_id ||
-        !saved.some(
-          (item) =>
-            item.tool &&
-            item.tool.invocation_id === row.tool?.invocation_id &&
-            ["completed", "failed"].includes(item.tool.status),
-        ),
+    live.set(
+      childKey(identity),
+      liveRows(identity).filter(
+        (row) =>
+          !row.tool?.invocation_id ||
+          !saved.some(
+            (item) =>
+              item.tool &&
+              item.tool.invocation_id === row.tool?.invocation_id &&
+              ["completed", "failed"].includes(item.tool.status),
+          ),
+      ),
     );
     update({
       inspection: {
@@ -283,11 +324,10 @@ export function createChildView(
     abort = new AbortController();
     const g = ++generation;
     saved = [];
-    provisional = [];
     update({
       inspection: {
         ...identity,
-        rows: [],
+        rows: liveRows(identity),
         outcome: null,
         cut: child.cut,
         loading: true,
@@ -302,8 +342,7 @@ export function createChildView(
     try {
       await Promise.all([latest(identity, child.cut, g), details(identity, g)]);
     } catch (error) {
-      if (current(g, identity))
-        update({ inspection: { ...state.inspection!, error: failure(error) } });
+      if (current(g, identity)) report(error);
     } finally {
       if (current(g, identity))
         update({ inspection: { ...state.inspection!, loading: false } });
@@ -314,22 +353,17 @@ export function createChildView(
     abort?.abort();
     abort = null;
     saved = [];
-    provisional = [];
     update({ inspection: null });
   }
   return {
     getSnapshot: () => state,
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
+    subscribe: notifications.subscribe,
     history,
     capture(children: ChildAttempt[], rows: CodingRow[]) {
       const identity = state.inspection;
       // Preserve only the inspected old immutable attempt across reconstruction.
       const retained = selected();
+      live.clear();
       update({ attempts: [], omitted: false });
       for (const child of children) put(child);
       history(rows);
@@ -338,6 +372,7 @@ export function createChildView(
       return identity ? open(identity) : Promise.resolve();
     },
     setConnected(connected: boolean) {
+      const inspection = state.inspection;
       if (!connected) {
         ++generation;
         abort?.abort();
@@ -346,7 +381,14 @@ export function createChildView(
         connected,
         inspection:
           state.inspection && !connected
-            ? { ...state.inspection, loading: false, loadingEarlier: false }
+            ? {
+                ...state.inspection,
+                loading: false,
+                loadingEarlier: false,
+                rows: interruptEntryContent(state.inspection.rows, () => {
+                  if (inspection) void open(inspection);
+                }),
+              }
             : state.inspection,
       });
     },
@@ -357,29 +399,34 @@ export function createChildView(
         return Promise.resolve();
       const g = generation;
       return details(identity, g).catch((error) => {
-        if (current(g, identity))
-          update({
-            inspection: { ...state.inspection!, error: failure(error) },
-          });
+        if (current(g, identity)) report(error);
       });
     },
     activity(identity: ChildIdentity, rows: CodingRow[]) {
       if (!validIdentity(identity))
         throw new Error("Invalid native child activity identity.");
-      if (
-        !state.inspection ||
-        !sameChild(identity, state.inspection) ||
-        state.inspection.earlier
-      )
-        return;
+      const provisional = [...liveRows(identity)];
       for (const row of rows) {
         const index = provisional.findIndex((item) => item.id === row.id);
         if (index < 0) provisional.push(row);
         else provisional[index] = row;
       }
-      publish();
+      live.set(childKey(identity), provisional);
+      if (state.inspection && sameChild(identity, state.inspection))
+        publish(true);
     },
-    checkpoint(identity: ChildIdentity, cut: JournalCut, live: string[]) {
+    textDelta(identity: ChildIdentity, event: TextDelta) {
+      if (!validIdentity(identity))
+        throw new Error("Invalid native child activity identity.");
+      live.set(childKey(identity), applyTextDelta(liveRows(identity), event));
+      if (state.inspection && sameChild(identity, state.inspection))
+        publish(true);
+    },
+    checkpoint(
+      identity: ChildIdentity,
+      cut: JournalCut,
+      invocations: string[],
+    ) {
       if (
         !validIdentity(identity) ||
         typeof cut.journal !== "object" ||
@@ -390,6 +437,14 @@ export function createChildView(
         );
       const child = state.attempts.find((item) => sameChild(item, identity));
       if (child) put({ ...child, cut }, Boolean(child.historical));
+      live.set(
+        childKey(identity),
+        liveRows(identity).filter(
+          (row) =>
+            row.tool?.invocation_id &&
+            invocations.includes(row.tool.invocation_id),
+        ),
+      );
       if (
         !state.inspection ||
         !sameChild(identity, state.inspection) ||
@@ -397,15 +452,8 @@ export function createChildView(
       )
         return Promise.resolve();
       const g = generation;
-      provisional = provisional.filter(
-        (row) =>
-          row.tool?.invocation_id && live.includes(row.tool.invocation_id),
-      );
       return latest(identity, cut, g).catch((error) => {
-        if (current(g, identity))
-          update({
-            inspection: { ...state.inspection!, error: failure(error) },
-          });
+        if (current(g, identity)) report(error);
       });
     },
     open,
@@ -431,21 +479,22 @@ export function createChildView(
         },
       });
       try {
-        const page = await api.readEntries(
-          id,
+        const page = await readPage(
           inspection.cut,
           inspection.first ? { before: inspection.first } : "latest",
-          abort?.signal,
+          inspection,
+          g,
         );
         if (!current(g, inspection) || revision !== historyRevision) return;
-        verify(page, inspection.cut);
         if (
           page.older &&
           (!page.first_id || page.first_id === inspection.first)
         )
           throw new Error("Earlier child history made no progress.");
-        const bounded = boundRows(
+        const bounded = trimSavedEntries(
           page.rows.map((row) => ({ ...row, historical: true })),
+          MAX_ROWS,
+          MAX_TEXT,
         );
         update({
           inspection: {
@@ -461,9 +510,7 @@ export function createChildView(
         });
       } catch (error) {
         if (current(g, inspection) && revision === historyRevision)
-          update({
-            inspection: { ...state.inspection!, error: failure(error) },
-          });
+          report(error);
       } finally {
         if (current(g, inspection) && revision === historyRevision)
           update({
@@ -477,6 +524,7 @@ export function createChildView(
     },
     detach() {
       close();
+      live.clear();
       update({ connected: false });
     },
   };

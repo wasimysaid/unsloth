@@ -42,6 +42,7 @@ export type TranscriptBlock =
   | { kind: "answer"; key: string; row: CodingRow }
   | { kind: "plan"; key: string; row: CodingRow }
   | { kind: "notice"; key: string; row: CodingRow }
+  | { kind: "content_ref"; key: string; row: CodingRow }
   | { kind: "semantic"; key: string; row: CodingRow }
   | { kind: "child"; key: string; row: CodingRow; child: ChildIdentity }
   | {
@@ -254,6 +255,8 @@ export function projectTranscript(
         row,
         child: { handle: row.child.handle, attempt: row.child.attempt },
       });
+    } else if (row.kind === "content_ref") {
+      blocks.push({ kind: "content_ref", key: readingRowKey(row), row });
     } else if (row.tool) {
       blocks.push({ kind: "semantic", key: readingRowKey(row), row });
     } else if (row.answer) {

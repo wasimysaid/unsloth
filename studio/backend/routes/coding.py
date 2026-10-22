@@ -240,6 +240,14 @@ class HistorySelection(BaseModel):
     max_bytes: int = Field(default = 262144, ge = 1024, le = 262144)
 
 
+class PublicEntrySelection(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    cut: JournalCut
+    entry_id: str = Field(min_length = 1, max_length = 128)
+    offset: int = Field(ge = 0, le = 9007199254740991, strict = True)
+    max_bytes: int = Field(default = 65536, ge = 1024, le = 262144, strict = True)
+
+
 def _http_error(exc: CodingRuntimeError) -> HTTPException:
     if exc.code == "overlap_required":
         return HTTPException(status_code = 409, detail = {
@@ -572,6 +580,12 @@ async def inspect_diagnostics(conversation_id: str, kind: Literal["context", "to
 async def read_entries(conversation_id: str, body: HistorySelection, request: Request,
                        generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
     return await _command(request, "read_entries", {"conversation_id": conversation_id, **body.model_dump()}, generation = generation)
+
+
+@router.post("/conversations/{conversation_id}/public-entry")
+async def read_public_entry(conversation_id: str, body: PublicEntrySelection, request: Request,
+                            generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
+    return await _command(request, "read_public_entry", {"conversation_id": conversation_id, **body.model_dump()}, generation = generation)
 
 
 @router.get("/conversations/{conversation_id}/children/{handle}/attempts/{attempt}")

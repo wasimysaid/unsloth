@@ -40,6 +40,47 @@ function client(
   return { api, requests };
 }
 
+test("public entry chunks use exact cut, byte offset, generation and abort signal without replay", async () => {
+  const response = {
+    conversation_id: "conversation/id",
+    cut: { journal: { child: "agent" }, leaf: "end" },
+    entry_id: "entry",
+    offset: 7,
+    total_bytes: 90,
+    data: "漢🙂",
+    next_offset: 14,
+  };
+  const c = client(() => Response.json(response));
+  const signal = new AbortController().signal;
+  const reference = { cut: response.cut, entry_id: "entry", total_bytes: 90 };
+  assert.deepEqual(
+    await c.api
+      .createCodingRunApi(7)
+      .readPublicEntry("conversation/id", reference, 7, signal),
+    response,
+  );
+  assert.deepEqual(c.requests, [
+    {
+      path: "/api/coding/conversations/conversation%2Fid/public-entry",
+      init: {
+        method: "POST",
+        headers: {
+          "X-Mimir-Runtime-Generation": "7",
+          "Content-Type": "application/json",
+        },
+        signal,
+        body: JSON.stringify({
+          cut: response.cut,
+          entry_id: "entry",
+          offset: 7,
+          max_bytes: 65536,
+        }),
+      },
+      options: { retryNetworkErrors: false },
+    },
+  ]);
+});
+
 test("mode and plan decisions are separate authenticated non-replayed commands with exact revision", async () => {
   const c = client(() => Response.json({ conversation_id: "conversation/id" }));
   await c.api.createCodingRunApi(7).setMode("conversation/id", "plan");

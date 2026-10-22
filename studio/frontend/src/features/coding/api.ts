@@ -470,6 +470,23 @@ export function createCodingRunApi(openingGeneration: number): RunApi {
       );
       return await response.json();
     },
+    async readPublicEntry(id, reference, offset, signal) {
+      const response = await codingRequest(
+        `/conversations/${encodeURIComponent(id)}/public-entry`,
+        {
+          method: "POST",
+          headers: { ...generationHeaders, "Content-Type": "application/json" },
+          signal,
+          body: JSON.stringify({
+            cut: reference.cut,
+            entry_id: reference.entry_id,
+            offset,
+            max_bytes: 65536,
+          }),
+        },
+      );
+      return await response.json();
+    },
     async readEntries(id, cut, anchor, signal) {
       const response = await codingRequest(
         `/conversations/${encodeURIComponent(id)}/entries`,

@@ -519,30 +519,141 @@ async def test_view_start_in_same_pipe_read_is_not_lost():
     await runtime._shutdown_task
 
 
+def _native_frame(payload) -> bytes:
+    data = json.dumps(payload, separators = (",", ":")).encode()
+    return struct.pack(">I", len(data)) + data
+
+
 @pytest.mark.asyncio
-async def test_slow_view_gets_explicit_reconstruction_error_not_partial_suffix():
+async def test_mid_turn_replay_burst_reaches_actively_draining_sse_view_in_exact_order(coding_app):
+    # Returning to a running conversation replays every native item since the
+    # last checkpoint in the same pipe read as the view reply, before the SSE
+    # body can drain anything. That is ordinary delivery, not a slow consumer.
+    app, headers = coding_app
+    stream = asyncio.StreamReader()
+    runtime = CodingRuntime()
+    runtime._generation = 1
+    view = "replay-view"
+    start = {"subscription": view, "position": 1, "event": {"type": "start", "recovering": False}}
+    replay, text = [], ""
+    for position in range(2, 332):
+        text += "delta "
+        replay.append({"subscription": view, "position": position, "event": {
+            "type": "activity", "rows": [{"id": "assistant:run:1:1:0", "kind": "assistant", "text": text}]}})
+    live = [{"subscription": view, "position": position, "event": {"type": "state", "state": {"marker": position}}}
+            for position in range(332, 432)]
+    closed = {"subscription": view, "event": {"type": "closed"}}
+    commands = []
+    class Writer:
+        def write(self, data):
+            command = json.loads(data[4:])
+            commands.append(command["method"])
+            if command["method"] == "view":
+                stream.feed_data(b"".join([_native_frame({"id": command["id"], "result": start}),
+                                           *map(_native_frame, replay)]))
+            elif command["method"] == "close_view":
+                stream.feed_data(_native_frame({"id": command["id"], "result": {"closed": True}}))
+        async def drain(self):
+            pass
+    runtime.process = SimpleNamespace(stdout = stream, stdin = Writer(), returncode = None)
+    app.state.coding_runtime = runtime
+    reader = asyncio.create_task(runtime._read_responses())
+    async def live_suffix():
+        # Live items keep arriving while the subscriber is still draining the replay.
+        while view not in runtime._subscriptions:
+            await asyncio.sleep(0)
+        for index in range(0, len(live), 10):
+            stream.feed_data(b"".join(map(_native_frame, live[index:index + 10])))
+            await asyncio.sleep(0)
+        stream.feed_data(_native_frame(closed))
+    feeder = asyncio.create_task(live_suffix())
+    try:
+        async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+            response = await asyncio.wait_for(client.get("/api/coding/conversations/running/events"), timeout = 30)
+        await asyncio.wait_for(feeder, timeout = 5)
+    finally:
+        feeder.cancel()
+        reader.cancel()
+        await asyncio.gather(feeder, reader, return_exceptions = True)
+    assert response.status_code == 200
+    assert "event: disconnected" not in response.text, "A replay burst became a reconnect loop"
+    envelopes = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+    assert envelopes == [{**item, "observation_epoch": runtime.observation_epoch}
+                         for item in (start, *replay, *live, closed)]
+    assert commands == ["view", "close_view"]
+    assert not runtime._subscriptions and not runtime._overflowed
+
+
+async def _admitted_views(runtime, stream, names):
+    replies = []
+    for identifier, name in enumerate(names, start = 1):
+        replies.append(asyncio.get_running_loop().create_future())
+        runtime._pending[identifier] = replies[-1]
+        runtime._opening_views.add(identifier)
+        stream.feed_data(_native_frame({"id": identifier, "result": {"subscription": name}}))
+    await asyncio.wait_for(asyncio.gather(*replies), timeout = 2)
+    runtime._opening_views.clear()
+    return [runtime._subscriptions[name] for name in names]
+
+
+@pytest.mark.asyncio
+async def test_stalled_view_is_bounded_by_retained_bytes_without_blocking_replies_or_other_views(monkeypatch):
+    import core.coding_runtime as module
+    monkeypatch.setattr(module, "VIEW_BUFFER_BYTES", 64 * 1024)
     stream = asyncio.StreamReader()
     runtime = CodingRuntime()
     runtime.process = SimpleNamespace(stdout = stream, stdin = None, returncode = 0,
                                       wait = AsyncMock(return_value = 0))
-    queue = asyncio.Queue(maxsize = 2)
-    runtime._subscriptions["view-1"] = queue
-    barrier = asyncio.get_running_loop().create_future()
-    runtime._pending[1] = barrier
-    for position in range(4):
-        data = json.dumps({"subscription": "view-1", "position": position, "event": {"type": "state"}}).encode()
-        stream.feed_data(struct.pack(">I", len(data)) + data)
-    data = json.dumps({"id": 1, "result": {}}).encode()
-    stream.feed_data(struct.pack(">I", len(data)) + data)
     reader = asyncio.create_task(runtime._read_responses())
-    await barrier
-    failure = await queue.get()
-    assert isinstance(failure, CodingRuntimeError)
-    assert "Reconnect" in failure.message
-    assert queue.empty()
+    stalled, healthy = await _admitted_views(runtime, stream, ["stalled", "healthy"])
+    reply = asyncio.get_running_loop().create_future()
+    runtime._pending[9] = reply
+    item = lambda view, position: {"subscription": view, "position": position, "event": {
+        "type": "activity", "rows": [{"id": "live:1", "kind": "assistant", "text": "x" * 4096}]}}
+    # One pipe read: a stalled view's backlog, an unrelated view and a Stop reply.
+    stream.feed_data(b"".join([*(_native_frame(item("stalled", n)) for n in range(1, 40)),
+                               _native_frame(item("healthy", 1)),
+                               _native_frame({"id": 9, "result": {"cancel_requested": True}}),
+                               _native_frame(item("stalled", 40))]))
+    assert await asyncio.wait_for(reply, timeout = 2) == {"cancel_requested": True}
+    failure = stalled.get_nowait()
+    assert isinstance(failure, CodingRuntimeError) and "Reconnect" in failure.message
+    assert stalled.empty() and stalled.bytes == 0, "The stalled backlog was released, not retained"
+    assert "stalled" in runtime._overflowed, "No partial suffix after the explicit failure"
+    assert healthy.get_nowait() == item("healthy", 1)
+    assert healthy.empty() and healthy.bytes == 0
     stream.feed_eof()
     await reader
-    assert runtime._shutdown_task is not None
+    await runtime._shutdown_task
+
+
+@pytest.mark.asyncio
+async def test_aggregate_view_pressure_fails_the_largest_backlog_not_the_active_view(monkeypatch):
+    import core.coding_runtime as module
+    monkeypatch.setattr(module, "VIEW_BUFFER_BYTES", 64 * 1024)
+    monkeypatch.setattr(module, "TOTAL_VIEW_BUFFER_BYTES", 80 * 1024)
+    stream = asyncio.StreamReader()
+    runtime = CodingRuntime()
+    runtime.process = SimpleNamespace(stdout = stream, stdin = None, returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
+    reader = asyncio.create_task(runtime._read_responses())
+    backlog, active = await _admitted_views(runtime, stream, ["backlog", "active"])
+    item = lambda view, position, size: {"subscription": view, "position": position, "event": {
+        "type": "activity", "rows": [{"id": "live:1", "kind": "assistant", "text": "x" * size}]}}
+    cost = len(_native_frame(item("backlog", 1, 5000))) - 4 + module.VIEW_ITEM_OVERHEAD
+    # Each view stays within its own bound; only their sum exceeds the aggregate.
+    assert 9 * cost <= module.VIEW_BUFFER_BYTES and 12 * cost <= module.TOTAL_VIEW_BUFFER_BYTES < 13 * cost
+    barrier = asyncio.get_running_loop().create_future()
+    runtime._pending[9] = barrier
+    stream.feed_data(b"".join([*(_native_frame(item("backlog", n, 5000)) for n in range(1, 10)),
+                               *(_native_frame(item("active", n, 5000)) for n in range(1, 5)),
+                               _native_frame({"id": 9, "result": {}})]))
+    await asyncio.wait_for(barrier, timeout = 2)
+    assert isinstance(backlog.get_nowait(), CodingRuntimeError) and backlog.empty()
+    assert [active.get_nowait()["position"] for _ in range(4)] == [1, 2, 3, 4]
+    assert "active" not in runtime._overflowed
+    stream.feed_eof()
+    await reader
     await runtime._shutdown_task
 
 

@@ -9,6 +9,7 @@ import * as jsxRuntime from "react/jsx-runtime";
 import * as answerFocus from "../src/features/coding/answer-focus.ts";
 import * as boundedContent from "../src/features/coding/bounded-content.ts";
 import * as childTypes from "../src/features/coding/child-types.ts";
+import * as markdownParagraph from "../src/features/coding/markdown-paragraph.ts";
 import type * as Transcript from "../src/features/coding/transcript.tsx";
 import type * as ToolReport from "../src/features/coding/tool-report.tsx";
 import type { CodingRow } from "../src/features/coding/run-types.ts";
@@ -40,6 +41,7 @@ const stubs: Record<string, unknown> = {
   "./answer-focus": answerFocus,
   "./bounded-content": boundedContent,
   "./child-types": childTypes,
+  "./markdown-paragraph": markdownParagraph,
   "./file-change-report": { FileChangeReport: () => null },
   "./plan-card": { PlanCard: () => null },
 };
@@ -48,6 +50,10 @@ const toolReport = loadWithStubs<typeof ToolReport>(
   stubs,
 );
 stubs["./tool-report"] = toolReport;
+stubs["./entry-content-status"] = loadWithStubs(
+  new URL("../src/features/coding/entry-content-status.tsx", import.meta.url),
+  stubs,
+);
 stubs["./child-inspector"] = loadWithStubs(
   new URL("../src/features/coding/child-inspector.tsx", import.meta.url),
   stubs,
@@ -69,6 +75,78 @@ const childView = {
     opened.push(identity);
   },
 };
+
+test("multi-megabyte literal paragraph renders complete native text without a document parser", () => {
+  const text =
+    "EVAL_TRANSPORT_BEGIN " + "é中文😀z ".repeat(180000) + "EVAL_TRANSPORT_END";
+  const row: CodingRow = {
+    id: "large",
+    entry_id: null,
+    request_id: "r",
+    kind: "assistant",
+    text,
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(transcript.TranscriptBlocks, {
+      blocks: projectTranscript([row], latestWindow("r")),
+      childView: null,
+    }),
+  );
+  const paragraph = markup.match(
+    /<p[^>]*data-native-paragraph=""[^>]*>([\s\S]*?)<\/p>/,
+  )?.[1];
+  assert.ok(paragraph);
+  assert.ok((paragraph.match(/<span>/g)?.length ?? 0) > 500);
+  assert.equal(paragraph.replace(/<\/?span>/g, ""), text);
+  assert.equal(markup.includes("data-markdown"), false);
+});
+
+test("formatted prose continues through the Markdown renderer", () => {
+  for (const text of [
+    "**bold**",
+    "_italic_",
+    "a\\nb",
+    "[link](https://example.com)",
+    "x@example.com",
+    "    indented code",
+    "漢_🙂_字",
+  ]) {
+    const row: CodingRow = { id: "formatted", kind: "assistant", text };
+    const markup = renderToStaticMarkup(
+      React.createElement(transcript.TranscriptBlocks, {
+        blocks: projectTranscript([row], latestWindow()),
+        childView: null,
+      }),
+    );
+    assert.match(markup, /data-markdown/, text);
+    assert.doesNotMatch(markup, /data-native-paragraph/, text);
+  }
+});
+
+test("unresolved saved entries render explicit content feedback and a retry without claiming clipped transcript content", () => {
+  const row: CodingRow = {
+    id: "entry",
+    entry_id: "entry",
+    request_id: null,
+    kind: "content_ref",
+    content_ref: {
+      cut: { journal: "root", leaf: "entry" },
+      entry_id: "entry",
+      total_bytes: 9999999,
+    },
+    content: { status: "error", error: "Read failed", retry: () => {} },
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(transcript.TranscriptBlocks, {
+      blocks: projectTranscript([row], latestWindow()),
+      childView: null,
+    }),
+  );
+  assert.match(markup, /Saved entry content is not loaded/);
+  assert.match(markup, /Read failed/);
+  assert.match(markup, /Retry loading entry/);
+  assert.doesNotMatch(markup, /Content clipped|Native activity|disabled/);
+});
 
 test("both subagent invocations render with their public result and an inspector link", () => {
   const subagent = {

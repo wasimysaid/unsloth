@@ -11,6 +11,15 @@ import {
   parseCodingCommand,
 } from "./command-types.ts";
 import { CodingOverlapError } from "./errors.ts";
+import {
+  interruptEntryContent,
+  readCompleteEntryPage,
+  replaceEntryContent,
+  resolveEntryPage,
+} from "./entry-content.ts";
+import { trimEntryPage, trimSavedEntries } from "./entry-window.ts";
+import { applyTextDelta, type TextDelta } from "./live-rows.ts";
+import { createViewNotifications } from "./view-notifications.ts";
 import { codingRowSize } from "./file-changes.ts";
 import type { CodingImage, CodingInput, CodingInputExtras } from "./input.ts";
 import type { CodingConfigurationChange } from "./model-selection.ts";
@@ -34,6 +43,8 @@ import {
 import type {
   AnswerTarget,
   CodingRow,
+  ContentReference,
+  EntryAnchor,
   EntryPage,
   GoalAction,
   GoalChange,
@@ -60,10 +71,6 @@ export interface QuestionAnswerForm {
 }
 export interface CodingRunState {
   connection: "loading" | "connected" | "disconnected";
-  /** The subscription whose own native state names this view's requests.
-   * Request controls (Stop) need it, not rebuilt history; a new watcher,
-   * disconnect, owner loss or detach revokes it. */
-  authority: string | null;
   native: NativeState | null;
   rows: CodingRow[];
   recovering: boolean;
@@ -151,10 +158,12 @@ export function createCodingRun(
     options.imageStorage,
   );
   const commandStore = pendingCommandStore(id, options.storage);
-  const childView = createChildView(id, api);
+  const childView = createChildView(id, api, (error) => {
+    requireRuntimeReopen();
+    update({ error: errorText(error) });
+  });
   let state: CodingRunState = {
     connection: "loading",
-    authority: null,
     native: null,
     rows: [],
     recovering: false,
@@ -217,11 +226,13 @@ export function createCodingRun(
   let runtimeLost = false;
   let saved: CodingRow[] = [];
   let provisional: CodingRow[] = [];
+  let contentAbort = new AbortController();
   let liveInvocations = new Set<string>();
   let cut: JournalCut | null = null;
   let firstEntry: string | null = null;
   let latestOlder = false;
   let historyWindow: EntryPage | null = null;
+  let historyTrimEdge: "start" | "end" = "start";
   // A bounded reading snapshot, retained only while away. It protects the reader
   // when the latest window evicts an entry or a reconnect captures a newer page.
   let readingWindow: EntryPage | null = null;
@@ -244,10 +255,10 @@ export function createCodingRun(
   // before an operation's outcome cannot reconcile that operation's uncertainty.
   let configurationEpoch = 0;
   let abort: AbortController | null = null;
-  const listeners = new Set<() => void>();
-  const update = (patch: Partial<CodingRunState>) => {
+  const notifications = createViewNotifications();
+  const update = (patch: Partial<CodingRunState>, deferred = false) => {
     state = { ...state, ...patch };
-    for (const listener of listeners) listener();
+    notifications.notify(deferred);
   };
   const sameQuestion = (left: AnswerTarget, right: AnswerTarget) =>
     left.request_id === right.request_id &&
@@ -263,7 +274,7 @@ export function createCodingRun(
         sameQuestion(form.target, target) ? { ...form, ...patch } : form,
       ),
     });
-  const reconcileAnswers = (freshCapture = false) => {
+  const reconcileAnswers = (freshCapture = false, deferred = false) => {
     if (state.connection !== "connected" || state.recovering || !subscription)
       return;
     const pending = state.native?.user_request;
@@ -352,7 +363,7 @@ export function createCodingRun(
       ];
     }
     // These are bounded, ephemeral form drafts, not a transcript/history store.
-    update({ answerTarget: target, answerForms: forms.slice(-8) });
+    update({ answerTarget: target, answerForms: forms.slice(-8) }, deferred);
     answersAwaitCapture = false;
   };
   const clearPending = (key: string, recovered: boolean) => {
@@ -486,7 +497,19 @@ export function createCodingRun(
     }
     return rowsByIdentity;
   };
-  const publishRows = () => {
+  const publishRows = (deferred = false) => {
+    const bounded = trimSavedEntries(
+      saved,
+      MAX_ROWS - provisional.length,
+      MAX_TEXT -
+        provisional.reduce((size, row) => size + codingRowSize(row), 0),
+    );
+    saved = bounded.rows;
+    if (bounded.omitted) {
+      latestOlder = true;
+      firstEntry = saved.find((row) => row.entry_id)?.entry_id ?? firstEntry;
+      if (!historyWindow && readingWindow) historyWindow = readingWindow;
+    }
     if (liveRowsFor !== liveInvocations) {
       liveRows = new WeakMap();
       liveRowsFor = liveInvocations;
@@ -511,41 +534,16 @@ export function createCodingRun(
       }
       return live;
     });
-    let bytes = rows.reduce((size, row) => size + codingRowSize(row), 0);
-    let omitted = false;
-    while (rows.length > MAX_ROWS || (bytes > MAX_TEXT && rows.length > 1)) {
-      const row = rows.shift();
-      if (!row) break;
-      bytes -= codingRowSize(row);
-      const keep = (item: CodingRow) =>
-        item.id !== row.id &&
-        !(row.entry_id && item.entry_id === row.entry_id) &&
-        !(
-          row.tool?.invocation_id &&
-          item.tool?.invocation_id === row.tool.invocation_id
-        );
-      saved = saved.filter(keep);
-      provisional = provisional.filter(keep);
-      for (let i = rows.length - 1; i >= 0; i--) {
-        if (!keep(rows[i])) {
-          const removed = rows.splice(i, 1)[0];
-          bytes -= codingRowSize(removed);
-        }
-      }
-      omitted = true;
-    }
-    if (omitted) {
-      latestOlder = true;
-      firstEntry = saved.find((row) => row.entry_id)?.entry_id ?? firstEntry;
-      if (!historyWindow && readingWindow) historyWindow = readingWindow;
-    }
-    childView.history(historyWindow ? historyWindow.rows : rows);
-    update({
-      rows: historyWindow ? mergeRows(historyWindow.rows) : rows,
-      older: historyWindow ? historyWindow.older : latestOlder,
-      viewingEarlier: historyWindow !== null,
-      newer: historyWindow?.newer ?? false,
-    });
+    childView.history(historyWindow ? historyWindow.rows : rows, deferred);
+    update(
+      {
+        rows: historyWindow ? mergeRows(historyWindow.rows) : rows,
+        older: historyWindow ? historyWindow.older : latestOlder,
+        viewingEarlier: historyWindow !== null,
+        newer: historyWindow?.newer ?? false,
+      },
+      deferred,
+    );
     // Follow the currently displayed reading rows until an actual eviction or
     // reconnect requires freezing them. Never revive the initial pause snapshot.
     if (readingWindow && !historyWindow && cut)
@@ -561,14 +559,63 @@ export function createCodingRun(
       [...state.rows].reverse().find((row) => row.entry_id)?.entry_id ??
       captured.leaf,
   });
-  const verifyPage = (page: EntryPage, expected: JournalCut) => {
-    if (
-      JSON.stringify(page.cut) !== JSON.stringify(expected) ||
-      !Array.isArray(page.rows)
-    )
-      throw new Error(
-        "Native history did not match the captured view cut. Reconnect to reconstruct.",
-      );
+  const contentCallbacks = (
+    signal: AbortSignal,
+  ): [
+    (reference: ContentReference, rows: CodingRow[]) => void,
+    (error: unknown) => void,
+  ] => [
+    (reference, rows) => {
+      if (signal.aborted) return;
+      saved = replaceEntryContent(saved, reference, rows);
+      if (historyWindow)
+        Object.assign(
+          historyWindow,
+          trimEntryPage(
+            {
+              ...historyWindow,
+              rows: replaceEntryContent(historyWindow.rows, reference, rows),
+            },
+            MAX_ROWS,
+            MAX_TEXT,
+            historyTrimEdge,
+          ),
+        );
+      if (readingWindow)
+        Object.assign(
+          readingWindow,
+          trimEntryPage(
+            {
+              ...readingWindow,
+              rows: replaceEntryContent(readingWindow.rows, reference, rows),
+            },
+            MAX_ROWS,
+            MAX_TEXT,
+            "start",
+          ),
+        );
+      publishRows();
+    },
+    (error) => {
+      if (signal.aborted) return;
+      requireRuntimeReopen();
+      update({ error: errorText(error) });
+    },
+  ];
+  const readPage = (
+    captured: JournalCut,
+    anchor: EntryAnchor,
+    signal: AbortSignal,
+  ) => {
+    const lifetime = AbortSignal.any([signal, contentAbort.signal]);
+    return readCompleteEntryPage(
+      api,
+      id,
+      captured,
+      anchor,
+      lifetime,
+      ...contentCallbacks(lifetime),
+    );
   };
   async function capture(
     root: { cut: JournalCut; live_invocations: string[] },
@@ -577,9 +624,8 @@ export function createCodingRun(
     retainedWindow: EntryPage | null,
     retainedIntentRevision: number,
   ) {
-    const page = await api.readEntries(id, root.cut, "latest", signal);
+    const page = await readPage(root.cut, "latest", signal);
     if (signal.aborted) return;
-    verifyPage(page, root.cut);
     if (page.newer)
       throw new Error("The native latest page omitted newer history.");
     saved = page.rows.map((row) => ({ ...row, historical: true }));
@@ -595,6 +641,17 @@ export function createCodingRun(
         JSON.stringify(root.cut.journal)
         ? retainedWindow
         : null;
+    if (historyWindow) {
+      const lifetime = AbortSignal.any([signal, contentAbort.signal]);
+      historyWindow = resolveEntryPage(
+        api,
+        id,
+        historyWindow,
+        historyWindow.cut,
+        lifetime,
+        ...contentCallbacks(lifetime),
+      );
+    }
     update({ recovering, loadingEarlier: false });
     publishRows();
   }
@@ -608,18 +665,16 @@ export function createCodingRun(
       return;
     if (cut.leaf !== root.cut.leaf) {
       if (cut.leaf === null) {
-        const page = await api.readEntries(id, root.cut, "latest", signal);
+        const page = await readPage(root.cut, "latest", signal);
         if (signal.aborted) return;
-        verifyPage(page, root.cut);
         saved = page.rows;
         firstEntry = page.first_id;
         latestOlder = page.older;
       } else {
         let after = cut.leaf;
         for (let n = 0; n < 100; n++) {
-          const page = await api.readEntries(id, root.cut, { after }, signal);
+          const page = await readPage(root.cut, { after }, signal);
           if (signal.aborted) return;
-          verifyPage(page, root.cut);
           const existing = new Set(saved.map((row) => row.id));
           saved.push(...page.rows.filter((row) => !existing.has(row.id)));
           if (!firstEntry) firstEntry = page.first_id;
@@ -649,6 +704,46 @@ export function createCodingRun(
     update({ recovering: false });
     publishRows();
   }
+  function applyActivity(event: Record<string, unknown>, fresh: boolean) {
+    if (event.type === "text_delta") {
+      const delta = event as unknown as TextDelta;
+      if (delta.child) childView.textDelta(delta.child, delta);
+      else {
+        provisional = applyTextDelta(provisional, delta);
+        publishRows(true);
+      }
+      if (fresh) update({ activityVersion: state.activityVersion + 1 }, true);
+    } else if (event.type === "activity") {
+      const rows = event.rows as CodingRow[];
+      if (!Array.isArray(rows))
+        throw new Error("Invalid native activity rows.");
+      if (event.child) childView.activity(event.child as ChildIdentity, rows);
+      else {
+        for (const row of rows) {
+          const index = provisional.findIndex((item) => item.id === row.id);
+          if (index < 0) provisional.push(row);
+          else provisional[index] = row;
+        }
+        publishRows(true);
+      }
+      if (fresh && rows.length)
+        update({ activityVersion: state.activityVersion + 1 }, true);
+    } else if (event.type === "completed") {
+      const completion = event as unknown as NonNullable<
+        CodingRunState["completion"]
+      >;
+      const stopped = state.stopping === completion.request_id;
+      update({
+        completion,
+        activityVersion: state.activityVersion + (fresh ? 1 : 0),
+        stopping: stopped ? null : state.stopping,
+        reconcilingAction: stopped ? null : state.reconcilingAction,
+        retryStop:
+          state.retryStop === completion.request_id ? null : state.retryStop,
+        error: stopped ? null : state.error,
+      });
+    } else throw new Error("Invalid native snapshot activity.");
+  }
   async function consume(
     value: unknown,
     signal: AbortSignal,
@@ -673,14 +768,16 @@ export function createCodingRun(
         "Invalid native view envelope. Reconnect to reconstruct.",
       );
     const event = view.event;
+    const epoch = view.observation_epoch ?? null;
     if (
       position !== null &&
-      (view.subscription !== subscription || view.position <= position)
+      (view.subscription !== subscription ||
+        view.position <= position ||
+        epoch !== observationEpoch)
     )
       throw new Error(
         "Native view items were not ordered. Reconnect to reconstruct.",
       );
-    const epoch = view.observation_epoch ?? null;
     // Reset rebuilds the transcript branch, not this runtime's observation
     // lifetime. Its already-seen delivery can be replayed after reconnect too.
     if (epoch !== observationEpoch) {
@@ -693,6 +790,8 @@ export function createCodingRun(
     position = view.position;
     subscription = view.subscription;
     if (event.type === "start" || event.type === "reset") {
+      contentAbort.abort();
+      contentAbort = new AbortController();
       answersAwaitCapture = true;
       const native = event.state as NativeState;
       if (native.info.id !== id)
@@ -708,7 +807,6 @@ export function createCodingRun(
       cut = null;
       update({
         native,
-        authority: view.subscription,
         // A same-conversation reconnect keeps the existing projection visibly
         // busy until capture, preserving mounted expansion/focus state. A reset
         // must hide the superseded branch immediately.
@@ -733,6 +831,11 @@ export function createCodingRun(
       // Child metadata/cuts apply synchronously. Optional inspection reads are
       // cancellable and revision-guarded, never a dependency of main-session Stop.
       void childView.capture((event.children ?? []) as ChildAttempt[], saved);
+      const activity = event.activity ?? [];
+      if (!Array.isArray(activity))
+        throw new Error("Invalid native snapshot activity.");
+      for (const item of activity)
+        applyActivity(item as Record<string, unknown>, false);
       // A recovering capture still owns a fresh inspection read generation.
       // Leave it offline until the root checkpoint; do not abort it a second time.
       if (!event.recovering) childView.setConnected(true);
@@ -797,50 +900,28 @@ export function createCodingRun(
         );
         childView.setConnected(true);
       }
-    } else if (event.type === "activity") {
-      if (freshObservation && (event.rows as CodingRow[]).length)
-        update({ activityVersion: state.activityVersion + 1 });
-      if (event.child) {
-        childView.activity(
-          event.child as ChildIdentity,
-          event.rows as CodingRow[],
-        );
-      } else {
-        for (const row of event.rows as CodingRow[]) {
-          const index = provisional.findIndex((item) => item.id === row.id);
-          if (index < 0) provisional.push(row);
-          else provisional[index] = row;
-        }
-        publishRows();
-      }
-    } else if (event.type === "completed") {
-      const completion = event as unknown as CodingRunState["completion"];
-      if (!completion) throw new Error("Invalid native completion.");
-      const stopped = state.stopping === completion.request_id;
-      update({
-        completion,
-        activityVersion: state.activityVersion + (freshObservation ? 1 : 0),
-        stopping: stopped ? null : state.stopping,
-        reconcilingAction: stopped ? null : state.reconcilingAction,
-        retryStop:
-          state.retryStop === completion.request_id ? null : state.retryStop,
-        error: stopped ? null : state.error,
-      });
+    } else if (
+      ["activity", "text_delta", "completed"].includes(event.type as string)
+    ) {
+      applyActivity(event, freshObservation);
     }
     if (signal.aborted) return;
     // Numeric/structural diagnostics travel outside public transcript activity.
     if (state.native && ("usage" in event || "compression" in event)) {
-      update({
-        native: {
-          ...state.native,
-          ...("usage" in event
-            ? { usage: event.usage as NativeState["usage"] }
-            : {}),
-          ...("compression" in event
-            ? { compression: event.compression as NativeState["compression"] }
-            : {}),
+      update(
+        {
+          native: {
+            ...state.native,
+            ...("usage" in event
+              ? { usage: event.usage as NativeState["usage"] }
+              : {}),
+            ...("compression" in event
+              ? { compression: event.compression as NativeState["compression"] }
+              : {}),
+          },
         },
-      });
+        event.type === "text_delta" || event.type === "activity",
+      );
     }
     const accepted =
       state.uncertainSubmission &&
@@ -879,12 +960,17 @@ export function createCodingRun(
       reconcilePlanControl();
       void reconcileCommand();
     }
-    reconcileAnswers(answersAwaitCapture);
+    reconcileAnswers(
+      answersAwaitCapture,
+      event.type === "text_delta" || event.type === "activity",
+    );
     settleMode();
   }
   function requireRuntimeReopen() {
     if (runtimeLost) return;
     runtimeLost = true;
+    contentAbort.abort();
+    childView.setConnected(false);
     // Retire cached/in-flight maintenance evidence before publishing owner loss.
     options.onRuntimeLost?.();
     ++incarnation;
@@ -894,7 +980,6 @@ export function createCodingRun(
     abort = null;
     update({
       connection: "disconnected",
-      authority: null,
       disconnected: true,
       reopenRequired: true,
       answerTarget: null,
@@ -916,7 +1001,6 @@ export function createCodingRun(
     subscription = null;
     update({
       connection: "loading",
-      authority: null,
       answerTarget: null,
       error: state.reconcilingAction ? state.error : null,
       loadingEarlier: false,
@@ -940,7 +1024,11 @@ export function createCodingRun(
       .catch((reason: unknown) => {
         if (controller.signal.aborted || current !== incarnation) return;
         controller.abort();
-        if (reason instanceof Error && "viewInvalidated" in reason && reason.viewInvalidated === true) {
+        if (
+          reason instanceof Error &&
+          "viewInvalidated" in reason &&
+          reason.viewInvalidated === true
+        ) {
           // Compatible reopen revoked only this view's capabilities. Keep the
           // projection/drafts and recapture read-only, without owner-loss feedback.
           connect();
@@ -951,10 +1039,12 @@ export function createCodingRun(
         childView.setConnected(false);
         update({
           connection: "disconnected",
-          authority: null,
           answerTarget: null,
           disconnected: true,
           reopenRequired: requiresReopen,
+          rows: requiresReopen
+            ? state.rows
+            : interruptEntryContent(state.rows, connect),
           error: errorText(reason),
         });
         // Every attempt obtains a new atomic capture. Never replay an event cursor
@@ -1384,15 +1474,13 @@ export function createCodingRun(
     const current = incarnation;
     const captured = previousWindow?.cut ?? cut;
     const intentRevision = readingIntentRevision;
-    const retained = previousWindow?.rows ?? state.rows;
     const label = direction === "before" ? "Earlier" : "Newer";
     update({ loadingEarlier: true, error: null });
     try {
-      const page = await api.readEntries(
-        id,
+      const page = await readPage(
         captured,
         direction === "before" ? { before: anchor } : { after: anchor },
-        abort?.signal,
+        abort!.signal,
       );
       if (
         current !== incarnation ||
@@ -1401,49 +1489,31 @@ export function createCodingRun(
         (!previousWindow && cut !== captured)
       )
         return;
-      verifyPage(page, captured);
       const edge = direction === "before" ? page.first_id : page.last_id;
       if (!page.rows.length || !edge || edge === anchor)
         throw new Error(
           `${label} history is incomplete: the native page made no progress. Retry loading ${label.toLowerCase()} history or reconnect for a fresh capture.`,
         );
-      if (
-        page.rows.length > MAX_ROWS ||
-        page.rows.reduce((n, row) => n + codingRowSize(row), 0) > MAX_TEXT
-      )
-        throw new Error(
-          `${label} history is incomplete: the native page exceeded the presentation bound. Reconnect for a fresh bounded capture.`,
-        );
+      const retained = previousWindow?.rows ?? state.rows;
       const seen = new Set<string>();
       const combined =
         direction === "before"
           ? [...page.rows, ...retained]
           : [...retained, ...page.rows];
-      const rows = mergeRows(
+      const combinedRows = mergeRows(
         combined.filter((row) => {
           if (seen.has(row.id)) return false;
           seen.add(row.id);
           return true;
         }),
       ).map((row) => ({ ...row, historical: true }));
-      let size = rows.reduce((n, row) => n + codingRowSize(row), 0);
-      let trimmed = false;
-      // Drop whole saved entries from the opposite edge: never present half an
-      // entry as complete. Both directions remain accessible at this immutable cut.
-      while (rows.length > MAX_ROWS || size > MAX_TEXT) {
-        const edgeRow = direction === "before" ? rows.at(-1) : rows[0];
-        if (!edgeRow) break;
-        do {
-          const removed = direction === "before" ? rows.pop() : rows.shift();
-          if (removed) size -= codingRowSize(removed);
-        } while (
-          rows.length &&
-          edgeRow.entry_id &&
-          (direction === "before" ? rows.at(-1) : rows[0])?.entry_id ===
-            edgeRow.entry_id
-        );
-        trimmed = true;
-      }
+      historyTrimEdge = direction === "before" ? "end" : "start";
+      const { rows, omitted: trimmed } = trimSavedEntries(
+        combinedRows,
+        MAX_ROWS,
+        MAX_TEXT,
+        historyTrimEdge,
+      );
       historyWindow = {
         cut: captured,
         rows,
@@ -1483,12 +1553,7 @@ export function createCodingRun(
     },
     childView,
     getSnapshot: () => state,
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
+    subscribe: notifications.subscribe,
     connect,
     requireRuntimeReopen,
     async continueInterruptedWork() {
@@ -1496,7 +1561,9 @@ export function createCodingRun(
       if (!request || !codingCanContinue(state)) return;
       update({ continuationRequested: request.id });
       const sent = await submit(
-        { text: `Continue the interrupted work from request ${request.id}. Review saved history and the current project state first; do not blindly repeat commands or assume prior actions completed.` },
+        {
+          text: `Continue the interrupted work from request ${request.id}. Review saved history and the current project state first; do not blindly repeat commands or assume prior actions completed.`,
+        },
         makeKey(),
       );
       // Uncertain delivery stays locked to its new key, not another continuation.
@@ -1618,7 +1685,7 @@ export function createCodingRun(
       reconnectTimer = null;
       abort?.abort();
       abort = null;
-      update({ answerTarget: null, authority: null });
+      update({ answerTarget: null });
       childView.detach();
     },
     /** Mode-only: the reply is not authority. The already-ordered native view
@@ -2016,12 +2083,21 @@ export function createCodingRun(
 }
 export type CodingRun = ReturnType<typeof createCodingRun>;
 
-/** The exact native request Stop may target now, or null. History capture or
- * native recovery does not withhold it; only the current view's own state can. */
+/** The exact native request Stop may target now, or null: the active request
+ * this opened owner last reported. Capture, recovery, a lost or delayed view and
+ * navigation keep it, since native judges a stale cancel and request IDs are never
+ * reused. Observed completion, a newer native state, or owner loss/a new runtime
+ * incarnation retires it; requests are routed only to this opening's generation. */
 export function codingStopTarget(state: CodingRunState | null): string | null {
-  if (!state?.authority || state.stopping || state.reconcilingAction)
+  if (
+    !state ||
+    state.reopenRequired ||
+    state.stopping ||
+    state.reconcilingAction
+  )
     return null;
-  return state.native?.active_request ?? null;
+  const request = state.native?.active_request ?? null;
+  return request && state.completion?.request_id !== request ? request : null;
 }
 
 export function codingInterruptedRequest(state: CodingRunState | null) {

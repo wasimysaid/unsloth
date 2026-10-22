@@ -37,6 +37,9 @@ function harness() {
     async readChild() {
       return { child: null, outcome: null };
     },
+    async readPublicEntry() {
+      throw new Error("No referenced entry expected in this fixture.");
+    },
     async readEntries(_id, cut) {
       return await new Promise<EntryPage>((resolve, reject) =>
         reads.push({ cut, resolve, reject }),
@@ -69,6 +72,9 @@ test("local trimming keeps historical pagination contiguous, including when no s
     const view = createChildView("parent", {
       async readChild() {
         return { child: null, outcome: null };
+      },
+      async readPublicEntry() {
+        throw new Error("No referenced entry expected in this fixture.");
       },
       async readEntries(_id, capture, anchor) {
         anchors.push(anchor);

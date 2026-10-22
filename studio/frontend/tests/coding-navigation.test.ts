@@ -252,6 +252,9 @@ function runHarness(entries: () => Promise<EntryPage>) {
         cancel_requested: true,
       };
     },
+    async readPublicEntry() {
+      throw new Error("No referenced entry expected in this fixture.");
+    },
     async readEntries(_id, _cut, _anchor, signal) {
       if (signal) signals.push(signal);
       return entries();
@@ -330,13 +333,15 @@ test("Stop targets the active request while native history is still recovering",
   h.run.detach();
 });
 
-test("a new view has no Stop target until it names one; nothing stale is cancelled", async () => {
+test("a fresh view keeps Stop on the exact request this owner last named; native judges it", async () => {
   const h = runHarness(async () => page());
   await h.start(false);
   assert.equal(codingStopTarget(h.run.getSnapshot()), "R");
-  h.run.connect(); // A fresh subscription; the previous view's request is not authority.
-  assert.equal(codingStopTarget(h.run.getSnapshot()), null);
+  h.run.connect(); // A fresh subscription is not a new owner or another request.
+  assert.equal(h.run.getSnapshot().connection, "loading");
+  assert.equal(codingStopTarget(h.run.getSnapshot()), "R");
   await h.run.stop();
-  assert.deepEqual(h.cancelled, []);
+  assert.deepEqual(h.cancelled, ["R"], "exactly the known request, once");
+  assert.equal(codingStopTarget(h.run.getSnapshot()), null, "Stopping…");
   h.run.detach();
 });

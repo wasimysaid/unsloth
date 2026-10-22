@@ -53,6 +53,9 @@ function harness() {
     async checkOverlap() {
       throw new Error("Child inspection must not submit work");
     },
+    async readPublicEntry() {
+      throw new Error("No referenced entry expected in this fixture.");
+    },
     async readEntries(_id, cut) {
       return {
         cut,
@@ -170,6 +173,7 @@ test("recovering reset keeps a selected inspector usable after root checkpoint",
     cut: next,
     live_invocations: [],
   });
+  await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(h.run.childView.getSnapshot().inspection?.cut, next);
   h.run.detach();
 });

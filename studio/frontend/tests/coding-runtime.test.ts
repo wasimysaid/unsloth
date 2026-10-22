@@ -96,6 +96,9 @@ test("installed external runtime projects native state and forwards exact submis
         cancel_requested: true,
       };
     },
+    async readPublicEntry() {
+      throw new Error("No referenced entry expected in this fixture.");
+    },
     async readEntries(_id, cut) {
       return {
         cut,
@@ -162,7 +165,6 @@ test("installed external runtime projects native state and forwards exact submis
 test("installed runtime upcoming assistant placeholder is not a native transcript row", () => {
   const state: CodingRunState = {
     connection: "connected",
-    authority: "view",
     recovering: false,
     older: false,
     viewingEarlier: false,
@@ -356,6 +358,9 @@ test("installed composer.send retains a recoverable unsent draft when submission
         request_id: request,
         cancel_requested: true,
       };
+    },
+    async readPublicEntry() {
+      throw new Error("No referenced entry expected in this fixture.");
     },
     async readEntries(_id, cut) {
       return {

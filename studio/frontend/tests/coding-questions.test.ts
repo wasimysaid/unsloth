@@ -106,6 +106,9 @@ function harness() {
         cancel_requested: true,
       };
     },
+    async readPublicEntry() {
+      throw new Error("No referenced entry expected in this fixture.");
+    },
     async readEntries(_id, cut) {
       return {
         cut,

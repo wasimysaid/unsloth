@@ -477,6 +477,9 @@ for (const ownerGeneration of [1, 2, 100]) {
           cancel_requested: true,
         };
       },
+      readPublicEntry: async () => {
+        throw new Error("No referenced entry expected in this fixture.");
+      },
       readEntries: async (_id, cut) => ({
         cut,
         rows: [],
@@ -1077,6 +1080,9 @@ test("stream process loss retires cached cleanup and pre-loss reads before expos
       },
       cancel: async () => {
         throw new Error("No cancellation replay");
+      },
+      readPublicEntry: async () => {
+        throw new Error("No referenced entry expected in this fixture.");
       },
       readEntries: async () => {
         throw new Error("No entries replay");

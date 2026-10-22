@@ -27,6 +27,38 @@ TERMINATE_TIMEOUT = 10
 # development build. This setup bound never extends execution-command deadlines.
 INSTALL_TIMEOUT = 600
 PLUGIN_ID = "studio.frontend"
+# Undelivered view items are bounded by the memory they retain, never by count:
+# a view opened mid-turn legitimately replays every native item since the last
+# checkpoint before its SSE body drains anything. A parsed item retains about
+# 1.5 KiB of Python objects beyond its wire bytes.
+VIEW_ITEM_OVERHEAD = 1536
+VIEW_BUFFER_BYTES = 2 * MAX_FRAME
+TOTAL_VIEW_BUFFER_BYTES = 8 * MAX_FRAME
+
+
+class ViewQueue(asyncio.Queue):
+    """One view's ordered, undelivered items with their retained bytes.
+
+    Unbounded in count, so the response reader never awaits a view consumer.
+    """
+    def _init(self, maxsize):
+        super()._init(maxsize)
+        self.bytes = 0
+        self._cost = 0
+
+    def _put(self, item):
+        self._queue.append((item, self._cost))
+        self.bytes += self._cost
+        self._cost = 0
+
+    def _get(self):
+        item, cost = self._queue.popleft()
+        self.bytes -= cost
+        return item
+
+    def offer(self, item, size: int) -> None:
+        self._cost = size + VIEW_ITEM_OVERHEAD
+        self.put_nowait(item)
 
 
 class CodingRuntimeError(Exception):
@@ -50,7 +82,7 @@ class CodingRuntime:
         self._write_lock = asyncio.Lock()
         self._pending: dict[int, asyncio.Future] = {}
         self._opening_views: set[int] = set()
-        self._subscriptions: dict[str, asyncio.Queue] = {}
+        self._subscriptions: dict[str, ViewQueue] = {}
         self._overflowed: set[str] = set()
         self._abandoned_views: set[int] = set()
         self._cleanup_tasks: set[asyncio.Task] = set()
@@ -373,6 +405,25 @@ class CodingRuntime:
             self._cleanup_tasks.add(task)
             task.add_done_callback(self._cleanup_tasks.discard)
 
+    def _bound_views(self, subscription: str) -> None:
+        # Never await a view here: this reader also delivers Stop and every other
+        # reply. A consumer that stopped draining loses only its own view; under
+        # aggregate pressure the largest backlog goes, never a draining neighbour.
+        if self._subscriptions[subscription].bytes > VIEW_BUFFER_BYTES:
+            self._overflow(subscription)
+        while sum(queue.bytes for queue in self._subscriptions.values()) > TOTAL_VIEW_BUFFER_BYTES:
+            self._overflow(max(self._subscriptions, key = lambda key: self._subscriptions[key].bytes))
+
+    def _overflow(self, subscription: str) -> None:
+        queue = self._subscriptions[subscription]
+        while not queue.empty():
+            queue.get_nowait()
+        queue.put_nowait(CodingRuntimeError(
+            "disconnected", "The native view exceeded the delivery buffer. Reconnect for a fresh native view.",
+        ))
+        # Retain the failure, not a partial suffix masquerading as complete.
+        self._overflowed.add(subscription)
+
     async def _read_responses(self) -> None:
         assert self.process and self.process.stdout
         try:
@@ -385,18 +436,11 @@ class CodingRuntime:
                 if not isinstance(payload, dict):
                     raise ValueError("invalid response envelope")
                 if isinstance(payload.get("subscription"), str):
-                    queue = self._subscriptions.get(payload["subscription"])
-                    if queue is not None and payload["subscription"] not in self._overflowed:
-                        if queue.full():
-                            while not queue.empty():
-                                queue.get_nowait()
-                            queue.put_nowait(CodingRuntimeError(
-                                "disconnected", "The native view exceeded the delivery buffer. Reconnect for a fresh native view.",
-                            ))
-                            # Retain the failure, not a partial suffix masquerading as complete.
-                            self._overflowed.add(payload["subscription"])
-                        else:
-                            queue.put_nowait(payload)
+                    subscription = payload["subscription"]
+                    queue = self._subscriptions.get(subscription)
+                    if queue is not None and subscription not in self._overflowed:
+                        queue.offer(payload, size)
+                        self._bound_views(subscription)
                     continue
                 if type(payload.get("id")) is not int:
                     raise ValueError("invalid response identity")
@@ -445,10 +489,11 @@ class CodingRuntime:
                         # existing subscription; replacing it strands the SSE reader.
                         # Register before waking the command caller: a native start may
                         # immediately follow the response in the very same pipe read.
-                        queue = asyncio.Queue(maxsize = 128)
+                        queue = ViewQueue()
                         self._subscriptions[result["subscription"]] = queue
                         if "event" in result:
-                            queue.put_nowait(result)
+                            queue.offer(result, size)
+                            self._bound_views(result["subscription"])
                     future.set_result(result)
                 else:
                     future.set_exception(CodingRuntimeError("protocol", "Invalid Mimir response."))
@@ -556,6 +601,10 @@ class CodingRuntime:
         return key, self._subscriptions[key]
 
     async def unsubscribe(self, subscription: str) -> None:
+        queue = self._subscriptions.get(subscription)
+        if queue is not None:
+            while not queue.empty():
+                queue.get_nowait()
         self._subscriptions.pop(subscription, None)
         self._overflowed.discard(subscription)
         if self._failure or self._closing:

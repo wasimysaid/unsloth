@@ -44,6 +44,9 @@ function harness() {
   let retained: ChildOutcome | null = null;
   let detailChild: ChildAttempt | null = null;
   const view = createChildView("parent", {
+    async readPublicEntry() {
+      throw new Error("No referenced entry expected in this fixture.");
+    },
     async readEntries(id, cut, anchor): Promise<EntryPage> {
       reads.push({ id, cut, anchor });
       return {
@@ -74,6 +77,148 @@ function harness() {
     },
   };
 }
+
+test("child latest and earlier history use complete entry resolution while uninspected deltas keep their exact base", async () => {
+  const cut = child().cut!;
+  const rows: CodingRow[] = [
+    { id: "full", entry_id: "entry", kind: "assistant", text: "complete 漢🙂" },
+  ];
+  const data = JSON.stringify(rows);
+  const ref = {
+    cut,
+    entry_id: "entry",
+    total_bytes: new TextEncoder().encode(data).length,
+  };
+  const view = createChildView("parent", {
+    async readChild() {
+      return { child: null, outcome: null };
+    },
+    async readPublicEntry(id, reference, offset) {
+      assert.deepEqual(reference, { ...ref, cut: reference.cut });
+      assert.ok(["attempt-1", "attempt-2"].includes(reference.cut.leaf!));
+      return {
+        conversation_id: id,
+        ...reference,
+        offset,
+        data,
+        next_offset: null,
+      };
+    },
+    async readEntries(_id, captured, anchor) {
+      const latest = anchor === "latest";
+      const referenced = !latest || captured.leaf === "attempt-2";
+      return {
+        cut: captured,
+        rows: !referenced
+          ? [
+              {
+                id: "saved",
+                entry_id: "saved",
+                kind: "assistant",
+                text: "latest",
+              },
+            ]
+          : [
+              {
+                id: "entry",
+                entry_id: "entry",
+                request_id: null,
+                kind: "content_ref",
+                content_ref: { ...ref, cut: captured },
+              },
+            ],
+        older: latest,
+        newer: !latest,
+        first_id: referenced ? "entry" : "saved",
+        last_id: referenced ? "entry" : "saved",
+      };
+    },
+  });
+  await view.capture([child(), child(2)], []);
+  view.setConnected(true);
+  const row = {
+    id: "live",
+    entry_id: null,
+    request_id: "child-request",
+    kind: "assistant" as const,
+  };
+  view.textDelta(child(2), {
+    type: "text_delta",
+    row,
+    offset: 0,
+    delta: "漢🙂",
+  });
+  await view.open(child());
+  view.textDelta(child(2), {
+    type: "text_delta",
+    row,
+    offset: 7,
+    delta: " tail",
+  });
+  await view.open(child(2));
+  assert.equal(
+    view.getSnapshot().inspection?.rows.find((item) => item.id === "live")
+      ?.text,
+    "漢🙂 tail",
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(
+    view.getSnapshot().inspection?.rows.find((item) => item.id === "full")
+      ?.text,
+    "complete 漢🙂",
+  );
+  await view.open(child());
+  await view.loadEarlier();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    view.getSnapshot().inspection?.rows.map((item) => item.text),
+    ["complete 漢🙂"],
+  );
+  assert.equal(
+    view
+      .getSnapshot()
+      .inspection?.rows.some((item) => item.kind === "content_ref"),
+    false,
+  );
+  view.detach();
+});
+
+test("uninspected child activity stays complete across selection and close/reopen", async () => {
+  const h = harness();
+  await h.view.capture([child()], []);
+  h.setRows([]);
+  h.view.activity(child(), [
+    { id: "live-1", kind: "assistant", text: "x".repeat(600000) },
+    { id: "live-2", kind: "reasoning", text: "y".repeat(600000) },
+  ]);
+  await h.view.open(child());
+  assert.deepEqual(
+    h.view.getSnapshot().inspection?.rows.map((row) => row.id),
+    ["live-1", "live-2"],
+  );
+  h.view.close();
+  await h.view.open(child());
+  assert.deepEqual(
+    h.view.getSnapshot().inspection?.rows.map((row) => row.id),
+    ["live-1", "live-2"],
+  );
+  h.view.detach();
+});
+
+test("child single saved entry is retained in full even when it exceeds the window", async () => {
+  const h = harness();
+  h.setRows([
+    { id: "a", entry_id: "only", kind: "assistant", text: "x".repeat(400000) },
+    { id: "b", entry_id: "only", kind: "reasoning", text: "y".repeat(400000) },
+  ]);
+  await h.view.capture([child()], []);
+  await h.view.open(child());
+  assert.deepEqual(
+    h.view.getSnapshot().inspection?.rows.map((row) => row.id),
+    ["a", "b"],
+  );
+  h.view.detach();
+});
 
 test("captured native children are compact and lazy; inspection reads only exact captured cut and outcome", async () => {
   const h = harness();
@@ -272,6 +417,9 @@ test("late reads after navigating attempts or dismissing cannot resurrect wrong 
     async readChild() {
       return { child: null, outcome: null };
     },
+    async readPublicEntry() {
+      throw new Error("No referenced entry expected in this fixture.");
+    },
     async readEntries(_id, cut) {
       if (pending) {
         pending = false;
@@ -309,7 +457,7 @@ test("late reads after navigating attempts or dismissing cannot resurrect wrong 
   assert.equal(view.getSnapshot().inspection, null);
 });
 
-test("large live transcripts are bounded and disclose omission", async () => {
+test("large live transcripts retain every provisional row without a false omission notice", async () => {
   const h = harness();
   h.setRows([]);
   await h.view.capture([child()], []);
@@ -324,8 +472,15 @@ test("large live transcripts are bounded and disclose omission", async () => {
   );
   const inspection = h.view.getSnapshot().inspection;
   assert.ok(inspection);
-  assert.ok(inspection.rows.length <= 128);
-  assert.equal(h.view.getSnapshot().inspection?.bounded, true);
+  assert.deepEqual(
+    inspection.rows.map((row) => row.id),
+    Array.from({ length: 500 }, (_, n) => String(n)),
+  );
+  assert.equal(
+    inspection.rows.reduce((n, row) => n + (row.text?.length ?? 0), 0),
+    500 * 4096,
+  );
+  assert.equal(h.view.getSnapshot().inspection?.bounded, false);
   h.view.detach();
 });
 

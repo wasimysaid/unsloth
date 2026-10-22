@@ -137,7 +137,14 @@ export interface CodingRow {
     | "tool"
     | "notice"
     | "plan"
-    | "child";
+    | "child"
+    | "content_ref";
+  content_ref?: ContentReference;
+  content?: {
+    status: "loading" | "error";
+    error: string | null;
+    retry: () => void;
+  };
   child?: ChildAttempt;
   text?: string;
   entry_id?: string | null;
@@ -169,6 +176,17 @@ export interface CodingRow {
     output_profile?: ToolOutputProfile | null;
     historical?: boolean;
   };
+}
+export interface ContentReference {
+  cut: JournalCut;
+  entry_id: string;
+  total_bytes: number;
+}
+export interface PublicEntryChunk extends ContentReference {
+  conversation_id: string;
+  offset: number;
+  data: string;
+  next_offset: number | null;
 }
 export interface EntryPage {
   cut: JournalCut;
@@ -243,6 +261,12 @@ export interface RunApi {
     request_id: string;
     cancel_requested: boolean;
   }>;
+  readPublicEntry(
+    id: string,
+    reference: ContentReference,
+    offset: number,
+    signal?: AbortSignal,
+  ): Promise<PublicEntryChunk>;
   readEntries(
     id: string,
     cut: JournalCut,

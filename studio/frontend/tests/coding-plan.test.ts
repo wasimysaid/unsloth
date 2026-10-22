@@ -85,6 +85,9 @@ function harness(modeSettleDelay = 5000) {
     async cancel() {
       throw new Error("Plan actions must never simulate Stop.");
     },
+    async readPublicEntry() {
+      throw new Error("No referenced entry expected in this fixture.");
+    },
     async readEntries(_id, cut) {
       return {
         cut,

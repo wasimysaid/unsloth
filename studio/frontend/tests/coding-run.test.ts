@@ -6,6 +6,7 @@ import {
   codingRunCompletion,
   codingRunLabel,
   codingCanContinue,
+  codingStopTarget,
   createCodingRun,
 } from "../src/features/coding/run-session.ts";
 import type {
@@ -111,6 +112,9 @@ function harness(
         cancel_requested: true,
       };
     },
+    async readPublicEntry() {
+      throw new Error("No referenced entry expected in this fixture.");
+    },
     async readEntries(_id, cut, anchor) {
       reads.push({ cut, anchor });
       return {
@@ -173,6 +177,572 @@ function harness(
     failWatch: (reason: unknown) => failWatch(reason),
   };
 }
+
+test("5000 exact Unicode deltas notify once per render budget while Stop stays immediate", async (t) => {
+  const h = harness();
+  await h.start(native("request"));
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let notifications = 0;
+  const release = h.run.subscribe(() => notifications++);
+  const row = {
+    id: "stream",
+    entry_id: null,
+    request_id: "request",
+    kind: "assistant",
+  };
+  for (let n = 0; n < 5000; n++)
+    await h.event({ type: "text_delta", row, offset: n * 7, delta: "漢🙂" });
+  assert.equal(
+    h.run.getSnapshot().rows.find((item) => item.id === row.id)?.text,
+    "漢🙂".repeat(5000),
+  );
+  assert.equal(h.run.getSnapshot().activityVersion, 5000);
+  t.diagnostic(
+    `5000 deltas produced ${notifications} immediate subscriber notifications`,
+  );
+  assert.equal(notifications, 0);
+  t.mock.timers.tick(16);
+  assert.equal(notifications, 1);
+  assert.equal(codingStopTarget(h.run.getSnapshot()), "request");
+  await h.run.stop();
+  assert.deepEqual(h.cancellations, [
+    { id: "conversation", request: "request" },
+  ]);
+  assert.equal(h.run.getSnapshot().stopping, "request");
+  assert.equal(notifications, 2);
+  release();
+  h.run.detach();
+});
+
+test("5000 inspected child deltas share a render budget without losing uninspected state", async (t) => {
+  const h = harness();
+  const child = { handle: "agent", attempt: 1 };
+  await h.event({
+    type: "start",
+    state: native("request"),
+    recovering: false,
+    root: { cut: { journal: "root", leaf: null }, live_invocations: [] },
+    children: [
+      { ...child, status: "running", completion_pending: false, cut: null },
+    ],
+  });
+  await h.run.childView.open(child);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let parentNotifications = 0;
+  let childNotifications = 0;
+  const releaseParent = h.run.subscribe(() => parentNotifications++);
+  const releaseChild = h.run.childView.subscribe(() => childNotifications++);
+  const row = {
+    id: "child-stream",
+    entry_id: null,
+    request_id: "child-request",
+    kind: "reasoning",
+  };
+  for (let n = 0; n < 5000; n++)
+    await h.event({
+      type: "text_delta",
+      child,
+      row,
+      offset: n * 7,
+      delta: "漢🙂",
+    });
+  assert.equal(
+    h.run.childView.getSnapshot().inspection?.rows[0].text,
+    "漢🙂".repeat(5000),
+  );
+  assert.equal(parentNotifications, 0);
+  assert.equal(childNotifications, 0);
+  t.mock.timers.tick(16);
+  assert.equal(parentNotifications, 1);
+  assert.equal(childNotifications, 1);
+  releaseParent();
+  releaseChild();
+  h.run.detach();
+});
+
+function referencePage(cut: JournalCut, entry: string): EntryPage {
+  const rows: CodingRow[] = [
+    {
+      id: `${entry}-row`,
+      entry_id: entry,
+      request_id: null,
+      kind: "assistant",
+      text: `${entry} 漢🙂 complete`,
+    },
+  ];
+  return {
+    cut,
+    rows: [
+      {
+        id: entry,
+        entry_id: entry,
+        request_id: null,
+        kind: "content_ref",
+        content_ref: {
+          cut,
+          entry_id: entry,
+          total_bytes: new TextEncoder().encode(JSON.stringify(rows)).length,
+        },
+      },
+    ],
+    older: false,
+    newer: false,
+    first_id: entry,
+    last_id: entry,
+  };
+}
+const referenceRead: RunApi["readPublicEntry"] = async (id, ref, offset) => {
+  assert.equal(offset, 0);
+  const data = JSON.stringify([
+    {
+      id: `${ref.entry_id}-row`,
+      entry_id: ref.entry_id,
+      request_id: null,
+      kind: "assistant",
+      text: `${ref.entry_id} 漢🙂 complete`,
+    },
+  ]);
+  return { conversation_id: id, ...ref, offset, data, next_offset: null };
+};
+
+for (const direction of ["before", "after"] as const) {
+  test(`${direction} pagination preserves content resolved while its page was pending`, async () => {
+    const h = harness();
+    let releaseContent!: () => void;
+    const contentGate = new Promise<void>((resolve) => {
+      releaseContent = resolve;
+    });
+    h.api.readPublicEntry = async (...args) => {
+      await contentGate;
+      return referenceRead(...args);
+    };
+    h.api.readEntries = async (_id, cut, anchor) => {
+      if (direction === "before")
+        return { ...referencePage(cut, "target"), older: true };
+      if (anchor === "latest")
+        return {
+          cut,
+          rows: [
+            {
+              id: "latest",
+              entry_id: "latest",
+              kind: "assistant",
+              text: "latest",
+            },
+          ],
+          first_id: "latest",
+          last_id: "latest",
+          older: true,
+          newer: false,
+        };
+      const page = referencePage(cut, "target");
+      return {
+        ...page,
+        rows: [
+          ...page.rows,
+          {
+            id: "large",
+            entry_id: "large",
+            kind: "assistant",
+            text: "x".repeat(2 * 1024 * 1024 + 1),
+          },
+        ],
+        last_id: "large",
+        older: true,
+        newer: true,
+      };
+    };
+    await h.start();
+    if (direction === "after") {
+      await h.run.loadEarlier();
+      assert.equal(h.run.getSnapshot().newer, true);
+    }
+    assert.equal(h.run.getSnapshot().rows[0].kind, "content_ref");
+    let releasePage!: (page: EntryPage) => void;
+    h.api.readEntries = async () =>
+      new Promise<EntryPage>((resolve) => {
+        releasePage = resolve;
+      });
+    const pending =
+      direction === "before" ? h.run.loadEarlier() : h.run.loadNewer();
+    releaseContent();
+    await tick();
+    assert.ok(
+      h.run
+        .getSnapshot()
+        .rows.some((row) => row.text === "target 漢🙂 complete"),
+    );
+    releasePage({
+      cut: { journal: "root", leaf: "cut1" },
+      rows: [
+        {
+          id: "adjacent",
+          entry_id: "adjacent",
+          kind: "assistant",
+          text: "adjacent",
+        },
+      ],
+      first_id: "adjacent",
+      last_id: "adjacent",
+      older: false,
+      newer: false,
+    });
+    await pending;
+    assert.ok(
+      h.run
+        .getSnapshot()
+        .rows.some((row) => row.text === "target 漢🙂 complete"),
+    );
+    assert.equal(
+      h.run.getSnapshot().rows.some((row) => row.kind === "content_ref"),
+      false,
+    );
+    h.run.detach();
+  });
+}
+
+for (const path of [
+  "capture",
+  "checkpoint-latest",
+  "checkpoint-after",
+  "earlier",
+  "newer",
+] as const) {
+  test(`${path} uses complete-page resolution without losing a referenced entry`, async () => {
+    const h = harness();
+    h.api.readPublicEntry = referenceRead;
+    h.api.readEntries = async (_id, cut, anchor) => {
+      const entry =
+        typeof anchor === "object" && "before" in anchor
+          ? "earlier"
+          : typeof anchor === "object" && "after" in anchor
+            ? "newer"
+            : "capture";
+      if (path === "capture" || cut.leaf === "checkpoint" || entry === path)
+        return referencePage(cut, "target");
+      return {
+        cut,
+        rows: [
+          {
+            id: entry,
+            entry_id: entry,
+            kind: "assistant",
+            text:
+              path === "newer" && entry === "earlier"
+                ? "x".repeat(2 * 1024 * 1024 + 1)
+                : entry,
+          },
+        ],
+        first_id: entry,
+        last_id: entry,
+        older: true,
+        newer: entry === "earlier",
+      };
+    };
+    await h.event({
+      type: "start",
+      state: native(),
+      recovering: false,
+      root: {
+        cut: {
+          journal: "root",
+          leaf: path === "checkpoint-latest" ? null : "initial",
+        },
+        live_invocations: [],
+      },
+    });
+    if (path.startsWith("checkpoint"))
+      await h.event({
+        type: "checkpoint",
+        cut: { journal: "root", leaf: "checkpoint" },
+        live_invocations: [],
+      });
+    else if (path !== "capture") {
+      await h.run.loadEarlier();
+      if (path === "newer") await h.run.loadNewer();
+    }
+    await tick();
+    assert.ok(
+      h.run
+        .getSnapshot()
+        .rows.some((row) => row.text === "target 漢🙂 complete"),
+    );
+    assert.equal(
+      h.run.getSnapshot().rows.some((row) => row.kind === "content_ref"),
+      false,
+    );
+    assert.equal(h.run.getSnapshot().connection, "connected");
+    h.run.detach();
+  });
+}
+
+test("content references resolve without delaying capture or Stop", async () => {
+  const h = harness();
+  const cut = { journal: "root" as const, leaf: "cut1" };
+  const complete = [
+    {
+      id: "large-row",
+      entry_id: "entry",
+      request_id: null,
+      kind: "assistant",
+      text: "漢🙂",
+    },
+  ];
+  const data = JSON.stringify(complete);
+  const total = new TextEncoder().encode(data).length;
+  h.setRows([
+    {
+      id: "entry",
+      entry_id: "entry",
+      request_id: null,
+      kind: "content_ref",
+      content_ref: { cut, entry_id: "entry", total_bytes: total },
+    } as unknown as CodingRow,
+  ]);
+  let resolve!: (value: unknown) => void;
+  let reads = 0;
+  Object.assign(h.api, {
+    readPublicEntry: async () => {
+      reads++;
+      return await new Promise((done) => {
+        resolve = done;
+      });
+    },
+  });
+  await h.start(native("request"));
+  assert.equal(h.run.getSnapshot().connection, "connected");
+  assert.equal(codingStopTarget(h.run.getSnapshot()), "request");
+  await h.run.stop();
+  assert.deepEqual(h.cancellations, [
+    { id: "conversation", request: "request" },
+  ]);
+  resolve({
+    conversation_id: "conversation",
+    cut,
+    entry_id: "entry",
+    offset: 0,
+    total_bytes: total,
+    data,
+    next_offset: null,
+  });
+  await tick();
+  assert.deepEqual(
+    h.run.getSnapshot().rows.map((row) => row.text),
+    ["漢🙂"],
+  );
+  assert.equal(reads, 1);
+  h.run.detach();
+});
+
+test("failed content stays retryable while native streaming and Send remain available", async () => {
+  const h = harness();
+  h.api.readEntries = async (_id, cut) => referencePage(cut, "entry");
+  h.api.readPublicEntry = async () => {
+    throw new Error("chunk unavailable");
+  };
+  await h.start();
+  await tick();
+  assert.equal(h.run.getSnapshot().connection, "connected");
+  assert.equal(h.run.getSnapshot().rows[0].content?.status, "error");
+  assert.match(
+    h.run.getSnapshot().rows[0].content?.error ?? "",
+    /chunk unavailable/,
+  );
+  await h.event({
+    type: "text_delta",
+    row: { id: "live", entry_id: null, request_id: "r", kind: "assistant" },
+    offset: 0,
+    delta: "live",
+  });
+  assert.equal(h.run.getSnapshot().rows.at(-1)?.text, "live");
+  assert.equal(await h.run.send("next input"), true);
+  assert.equal(h.submissions.length, 1);
+  await h.event({ type: "state", state: native("request") });
+  assert.equal(codingStopTarget(h.run.getSnapshot()), "request");
+  await h.run.stop();
+  assert.deepEqual(h.cancellations, [
+    { id: "conversation", request: "request" },
+  ]);
+  h.api.readPublicEntry = referenceRead;
+  h.run.getSnapshot().rows[0].content?.retry();
+  await tick();
+  assert.equal(h.run.getSnapshot().rows[0].text, "entry 漢🙂 complete");
+  h.run.detach();
+});
+
+test("disconnect turns pending content into explicit retry feedback while preserving Stop and fresh capture recovery", async () => {
+  const h = harness(undefined, () => 60000);
+  h.api.readEntries = async (_id, cut) => referencePage(cut, "entry");
+  let signal: AbortSignal | undefined;
+  h.api.readPublicEntry = async (_id, _ref, _offset, received) => {
+    signal = received;
+    return await new Promise<never>(() => {});
+  };
+  await h.start(native("request"));
+  h.failWatch(new Error("stream interrupted"));
+  await tick();
+  assert.equal(signal?.aborted, true);
+  assert.equal(h.run.getSnapshot().rows[0].content?.status, "error");
+  assert.match(h.run.getSnapshot().rows[0].content?.error ?? "", /interrupted/);
+  assert.equal(codingStopTarget(h.run.getSnapshot()), "request");
+  h.api.readPublicEntry = referenceRead;
+  h.run.getSnapshot().rows[0].content?.retry();
+  await h.start(native("request"));
+  await tick();
+  assert.equal(h.run.getSnapshot().connection, "connected");
+  assert.equal(h.run.getSnapshot().rows[0].text, "entry 漢🙂 complete");
+  h.run.detach();
+});
+
+test("reference owner loss propagates deliberate reopen without permitting stale Stop", async () => {
+  const h = harness();
+  h.api.readEntries = async (_id, cut) => referencePage(cut, "entry");
+  h.api.readPublicEntry = async () => {
+    throw new CodingHttpError(409, "runtime changed", true);
+  };
+  await h.start(native("request"));
+  await tick();
+  assert.equal(h.run.getSnapshot().reopenRequired, true);
+  assert.equal(h.run.getSnapshot().connection, "disconnected");
+  assert.equal(codingStopTarget(h.run.getSnapshot()), null);
+  assert.match(h.run.getSnapshot().error ?? "", /runtime changed/);
+  h.run.detach();
+});
+
+test("reset aborts old entry reads and a late failed result cannot change the replacement branch", async () => {
+  const h = harness();
+  h.api.readEntries = async (_id, cut) =>
+    referencePage(cut, cut.leaf === "cut1" ? "old" : "new");
+  let reject!: (error: Error) => void;
+  let oldSignal: AbortSignal | undefined;
+  h.api.readPublicEntry = async (...args) => {
+    if (args[1].entry_id === "old") {
+      oldSignal = args[3];
+      return await new Promise((_resolve, fail) => {
+        reject = fail;
+      });
+    }
+    return referenceRead(...args);
+  };
+  await h.start();
+  await h.event({
+    type: "reset",
+    state: native(),
+    recovering: false,
+    root: { cut: { journal: "root", leaf: "new-cut" }, live_invocations: [] },
+  });
+  await tick();
+  assert.equal(oldSignal?.aborted, true);
+  assert.equal(h.run.getSnapshot().rows[0].text, "new 漢🙂 complete");
+  reject(new CodingHttpError(409, "obsolete failure", true));
+  await tick();
+  assert.equal(h.run.getSnapshot().reopenRequired, false);
+  assert.equal(h.run.getSnapshot().rows[0].text, "new 漢🙂 complete");
+  h.run.detach();
+});
+
+test("compact capture seeds exact UTF8 text deltas and reset replaces the base", async () => {
+  const h = harness();
+  const row = {
+    id: "live-text",
+    kind: "assistant",
+    entry_id: null,
+    request_id: "request",
+  };
+  await h.event({
+    type: "start",
+    state: native("request"),
+    recovering: false,
+    root: { cut: { journal: "root", leaf: null }, live_invocations: [] },
+    activity: [{ type: "text_delta", row, offset: 0, delta: "漢🙂" }],
+  });
+  await h.event({ type: "text_delta", row, offset: 7, delta: " tail" });
+  assert.equal(
+    h.run.getSnapshot().rows.find((item) => item.id === row.id)?.text,
+    "漢🙂 tail",
+  );
+  await assert.rejects(
+    h.event({ type: "text_delta", row, offset: 7, delta: "duplicate" }),
+    /offset/i,
+  );
+  await h.event({
+    type: "reset",
+    state: native("request"),
+    recovering: false,
+    root: { cut: { journal: "root", leaf: null }, live_invocations: [] },
+    activity: [{ type: "text_delta", row, offset: 0, delta: "new" }],
+  });
+  assert.equal(
+    h.run.getSnapshot().rows.find((item) => item.id === row.id)?.text,
+    "new",
+  );
+  h.run.detach();
+});
+
+test("compact capture seeds uninspected child text before later deltas even without a saved child cut", async () => {
+  const h = harness();
+  const child = { handle: "agent", attempt: 1 };
+  const row = {
+    id: "child-text",
+    entry_id: null,
+    request_id: "child-request",
+    kind: "reasoning",
+  };
+  await h.event({
+    type: "start",
+    state: native("request"),
+    recovering: false,
+    root: { cut: { journal: "root", leaf: null }, live_invocations: [] },
+    children: [
+      { ...child, status: "running", completion_pending: false, cut: null },
+    ],
+    activity: [{ type: "text_delta", child, row, offset: 0, delta: "漢🙂" }],
+  });
+  await h.event({ type: "text_delta", child, row, offset: 7, delta: " tail" });
+  await h.run.childView.open(child);
+  assert.equal(
+    h.run.childView
+      .getSnapshot()
+      .inspection?.rows.find((item) => item.id === row.id)?.text,
+    "漢🙂 tail",
+  );
+  assert.equal(
+    h.run.getSnapshot().rows.some((item) => item.id === row.id),
+    false,
+  );
+  h.run.detach();
+});
+
+test("one saved multirow entry and all provisional text survive display-window pressure", async () => {
+  const h = harness();
+  h.setRows([
+    {
+      id: "one",
+      entry_id: "entry",
+      kind: "assistant",
+      text: "x".repeat(1500000),
+    },
+    {
+      id: "two",
+      entry_id: "entry",
+      kind: "assistant",
+      text: "y".repeat(1500000),
+    },
+  ]);
+  await h.start(native("request"));
+  await h.event({
+    type: "activity",
+    rows: [
+      { id: "live-one", kind: "assistant", text: "a".repeat(2200000) },
+      { id: "live-two", kind: "reasoning", text: "b".repeat(2200000) },
+    ],
+  });
+  assert.deepEqual(
+    h.run.getSnapshot().rows.map((item) => item.id),
+    ["one", "two", "live-one", "live-two"],
+  );
+  h.run.detach();
+});
 
 test("local preparation comes from native state; retry does not replay and cleanup stays protected", async () => {
   const h = harness();
@@ -391,11 +961,18 @@ test("disconnect never reports stopped and detach only cancels viewing", async (
     codingRunLabel(h.run.getSnapshot()),
     /work may still be running/,
   );
+  // An explicit Stop still reaches the exact known request; it is not settlement.
   await h.run.stop();
-  assert.deepEqual(h.cancellations, []);
+  assert.deepEqual(h.cancellations, [
+    { id: "conversation", request: "running" },
+  ]);
+  assert.equal(
+    codingRunLabel(h.run.getSnapshot()),
+    "Disconnected · stopping unconfirmed",
+  );
   h.run.detach();
   assert.equal(h.signal()?.aborted, true);
-  assert.deepEqual(h.cancellations, []);
+  assert.equal(h.cancellations.length, 1, "detach only cancels viewing");
 });
 
 test("uncertain prompt retry reuses original submission identity and is reconciled by native request state", async () => {
@@ -637,7 +1214,7 @@ test("reconnect preserves historical navigation while capture is pending; reset 
       type: "reset",
       state: native(),
       recovering: false,
-      root: { cut: { journal: "other", leaf: "cut3" }, live_invocations: [] },
+      root: { cut: { journal: "root", leaf: "cut3" }, live_invocations: [] },
     });
     assert.equal(h.run.getSnapshot().older, false);
     assert.equal(h.run.getSnapshot().newer, false);
@@ -1191,16 +1768,30 @@ test("stale configuration refusal requires deliberate owner reopen without mutat
     let calls = 0;
     h.api.configure = async () => {
       calls++;
-      throw new CodingHttpError(409, "Earlier runtime incarnation. Deliberately reopen.", true);
+      throw new CodingHttpError(
+        409,
+        "Earlier runtime incarnation. Deliberately reopen.",
+        true,
+      );
     };
-    await assert.rejects(h.run.configure({ reasoning: "high" }), /Deliberately reopen/);
+    await assert.rejects(
+      h.run.configure({ reasoning: "high" }),
+      /Deliberately reopen/,
+    );
     assert.equal(h.run.getSnapshot().reopenRequired, true);
     assert.equal(h.run.getSnapshot().connection, "disconnected");
     assert.deepEqual(h.run.getSnapshot().native, before);
     h.run.connect();
-    assert.equal(h.signal(), signal, "view retry must not reacquire a replacement owner");
+    assert.equal(
+      h.signal(),
+      signal,
+      "view retry must not reacquire a replacement owner",
+    );
     assert.equal(signal?.aborted, true);
-    await assert.rejects(h.run.configure({ reasoning: "low" }), /reconstructed/);
+    await assert.rejects(
+      h.run.configure({ reasoning: "low" }),
+      /reconstructed/,
+    );
     assert.equal(calls, 1);
     assert.deepEqual(h.submissions, []);
     assert.deepEqual(h.cancellations, []);
@@ -1826,27 +2417,38 @@ for (const status of ["saved", "completed", "failed"]) {
   });
 }
 
-test("oversized older page remains actionable incomplete history instead of exceeding memory bound", async () => {
+test("oversized older entry remains complete and supports newer navigation", async () => {
   const h = harness();
-  h.api.readEntries = async (_id, cut, anchor) => ({
-    cut,
-    rows: [
-      {
-        id: "row",
-        kind: "assistant",
-        text: anchor === "latest" ? "Saved" : "x".repeat(2 * 1024 * 1024 + 1),
-      },
-    ],
-    older: true,
-    newer: anchor !== "latest",
-    first_id: anchor === "latest" ? "row" : "older-row",
-    last_id: "row",
-  });
+  const text = "x".repeat(2 * 1024 * 1024 + 1);
+  h.api.readEntries = async (_id, cut, anchor) => {
+    const entry = anchor === "latest" ? "row" : "older-row";
+    return {
+      cut,
+      rows: [
+        {
+          id: entry,
+          entry_id: entry,
+          kind: "assistant",
+          text: anchor === "latest" ? "Saved" : text,
+        },
+      ],
+      older: false,
+      newer: anchor !== "latest",
+      first_id: entry,
+      last_id: entry,
+      ...(anchor === "latest" ? { older: true } : {}),
+    };
+  };
   await h.start();
   await h.run.loadEarlier();
-  assert.equal(h.run.getSnapshot().viewingEarlier, false);
-  assert.equal(h.run.getSnapshot().rows[0].text, "Saved");
-  assert.match(h.run.getSnapshot().error ?? "", /incomplete/);
+  assert.equal(h.run.getSnapshot().viewingEarlier, true);
+  assert.deepEqual(
+    h.run.getSnapshot().rows.map((row) => row.id),
+    ["older-row"],
+  );
+  assert.equal(h.run.getSnapshot().rows[0].text, text);
+  assert.equal(h.run.getSnapshot().newer, true);
+  assert.equal(h.run.getSnapshot().error, null);
   h.run.detach();
 });
 
@@ -2498,4 +3100,189 @@ test("native capacity rejection after overlap continuation preserves the known-u
     assert.equal(h.cancellations.length, 0);
     h.run.detach();
   }
+});
+
+const lost = () => new Error("The native event stream disconnected.");
+const statuses = (
+  active: string | null,
+  ...requests: [string, string, string][]
+): NativeState => ({
+  ...native(active),
+  requests: requests.map(([id, status, submission_key]) => ({
+    id,
+    status,
+    submission_key,
+  })) as NativeState["requests"],
+});
+
+test("a lost event stream keeps Stop on the exact last observed request; fresh native state settles it", async () => {
+  const h = harness(memorySubmissionStorage(), () => 60_000);
+  await h.start(native("R"));
+  h.failWatch(lost());
+  await tick();
+  const disconnected = h.run.getSnapshot();
+  assert.equal(disconnected.connection, "disconnected");
+  assert.equal(codingStopTarget(disconnected), "R");
+  await h.run.stop();
+  assert.deepEqual(h.cancellations, [{ id: "conversation", request: "R" }]);
+  assert.equal(h.run.getSnapshot().stopping, "R");
+  assert.match(codingRunLabel(h.run.getSnapshot()), /stopping unconfirmed/);
+  h.run.connect();
+  await h.start(statuses(null, ["R", "cancelled", "key"]));
+  assert.equal(
+    h.run.getSnapshot().stopping,
+    null,
+    "native settlement, not the ACK",
+  );
+  assert.equal(codingStopTarget(h.run.getSnapshot()), null);
+  assert.equal(h.cancellations.length, 1, "Stop is never replayed");
+  h.run.detach();
+});
+
+test("a delayed fresh view keeps Stop on the known request until native names another", async () => {
+  const h = harness(memorySubmissionStorage(), () => 60_000);
+  await h.start(native("R"));
+  h.failWatch(lost());
+  await tick();
+  h.run.connect(); // The new stream is admitted but delivers nothing yet.
+  assert.equal(h.run.getSnapshot().connection, "loading");
+  assert.equal(codingStopTarget(h.run.getSnapshot()), "R");
+  await h.start(
+    statuses("S", ["R", "completed", "key"], ["S", "running", "next"]),
+  );
+  assert.equal(codingStopTarget(h.run.getSnapshot()), "S");
+  await h.run.stop();
+  assert.deepEqual(
+    h.cancellations,
+    [{ id: "conversation", request: "S" }],
+    "never the settled predecessor",
+  );
+  h.run.detach();
+});
+
+test("an observed completion retires the Stop target even if the stream drops before newer state", async () => {
+  const h = harness(memorySubmissionStorage(), () => 60_000);
+  await h.start(native("R"));
+  await h.event({
+    type: "completed",
+    request_id: "R",
+    stop_reason: "stop",
+    error: null,
+  });
+  h.failWatch(lost());
+  await tick();
+  assert.equal(h.run.getSnapshot().native?.active_request, "R");
+  assert.equal(codingStopTarget(h.run.getSnapshot()), null);
+  await h.run.stop();
+  assert.deepEqual(h.cancellations, []);
+  h.run.detach();
+});
+
+for (const loss of ["runtime generation changed", "cancel requires reopen"]) {
+  test(`owner loss (${loss}) retires the known Stop target without retargeting or replay`, async () => {
+    const h = harness(memorySubmissionStorage(), () => 60_000);
+    await h.start(native("R"));
+    h.failWatch(lost());
+    await tick();
+    assert.equal(codingStopTarget(h.run.getSnapshot()), "R");
+    if (loss === "runtime generation changed") {
+      // CodingSurface calls this when runtime status reports another generation.
+      h.run.requireRuntimeReopen();
+    } else {
+      h.api.cancel = async (id, request) => {
+        h.cancellations.push({ id, request });
+        throw new CodingHttpError(
+          409,
+          "This conversation belongs to an earlier runtime incarnation.",
+          true,
+        );
+      };
+      await h.run.stop();
+    }
+    const state = h.run.getSnapshot();
+    assert.equal(state.reopenRequired, true);
+    assert.equal(codingStopTarget(state), null);
+    const attempts = h.cancellations.length;
+    await h.run.stop();
+    assert.equal(
+      h.cancellations.length,
+      attempts,
+      "no cancel into another incarnation",
+    );
+    assert.equal(attempts, loss === "runtime generation changed" ? 0 : 1);
+    h.run.detach();
+  });
+}
+
+test("a view replaced by a pending same-owner reopen keeps Stop; a detached late reply changes nothing", async () => {
+  const h = harness(memorySubmissionStorage(), () => 60_000);
+  await h.start(native("R"));
+  h.failWatch(
+    Object.assign(new Error("The native view was replaced."), {
+      viewInvalidated: true,
+    }),
+  );
+  await tick();
+  assert.equal(h.run.getSnapshot().connection, "loading");
+  assert.equal(h.run.getSnapshot().reopenRequired, false);
+  assert.equal(codingStopTarget(h.run.getSnapshot()), "R");
+  let reply!: (value: { cancel_requested: boolean }) => void;
+  h.api.cancel = async (id, request) => {
+    h.cancellations.push({ id, request });
+    const { cancel_requested } = await new Promise<{
+      cancel_requested: boolean;
+    }>((resolve) => {
+      reply = resolve;
+    });
+    return { conversation_id: id, request_id: request, cancel_requested };
+  };
+  const stopping = h.run.stop();
+  const signal = h.signal();
+  h.run.detach(); // The reopened owner is published to a new surface.
+  const detached = h.run.getSnapshot();
+  reply({ cancel_requested: false });
+  await stopping;
+  await tick();
+  assert.deepEqual(h.cancellations, [{ id: "conversation", request: "R" }]);
+  assert.equal(signal?.aborted, true);
+  assert.equal(h.signal(), signal, "no reconciliation watcher after detach");
+  assert.equal(h.run.getSnapshot(), detached);
+});
+
+test("durable submission recovery survives a lost stream and Stop without replaying the prompt", async () => {
+  const storage = memorySubmissionStorage();
+  storage.setItem(
+    storageName,
+    JSON.stringify({
+      version: 2,
+      conversation_id: "conversation",
+      key: "durable-key",
+      text: "Durable prompt",
+    }),
+  );
+  const h = harness(storage, () => 60_000);
+  assert.equal(h.run.getSnapshot().uncertainSubmission?.key, "durable-key");
+  await h.start(statuses("R", ["R", "running", "earlier-key"]));
+  h.failWatch(lost());
+  await tick();
+  assert.equal(codingStopTarget(h.run.getSnapshot()), "R");
+  await h.run.stop();
+  assert.deepEqual(h.cancellations, [{ id: "conversation", request: "R" }]);
+  assert.equal(h.run.getSnapshot().uncertainSubmission?.key, "durable-key");
+  assert.notEqual(storage.getItem(storageName), null);
+  h.run.connect();
+  await h.start(
+    statuses(
+      null,
+      ["R", "cancelled", "earlier-key"],
+      ["D", "completed", "durable-key"],
+    ),
+  );
+  const recovered = h.run.getSnapshot();
+  assert.equal(recovered.stopping, null);
+  assert.equal(recovered.uncertainSubmission, null);
+  assert.equal(recovered.deliveryRecovered, true);
+  assert.equal(storage.getItem(storageName), null);
+  assert.deepEqual(h.submissions, [], "recovery never resubmits");
+  h.run.detach();
 });

@@ -15,6 +15,7 @@ import {
 import type { ChildView } from "./child-view";
 import type { CodingRow } from "./run-types";
 import { ToolReport } from "./tool-report";
+import { EntryContentStatus } from "./entry-content-status";
 
 function ChildButton({
   view,
@@ -436,7 +437,9 @@ export function ChildInspector({ view }: { view: ChildView }) {
               key={row.id}
               className="min-w-0 space-y-1 break-words rounded-xl border border-border/40 px-2 py-1"
             >
-              {row.tool ? (
+              {row.kind === "content_ref" ? (
+                <EntryContentStatus row={row} />
+              ) : row.tool ? (
                 <ToolReport row={row} itemKey={`child-row:${row.id}`} />
               ) : (
                 <>

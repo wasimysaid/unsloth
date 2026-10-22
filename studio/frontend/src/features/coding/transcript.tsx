@@ -24,6 +24,8 @@ import { boundedContentKeyDown } from "./bounded-content";
 import { ChildActivityRow, ChildInspectLink } from "./child-inspector";
 import type { ChildView } from "./child-view";
 import { PlanCard } from "./plan-card";
+import { EntryContentStatus } from "./entry-content-status";
+import { isLiteralParagraph, literalParagraphRuns } from "./markdown-paragraph";
 import type { CodingRow } from "./run-types";
 import { ReasoningReport, ToolReport, useDisclosure } from "./tool-report";
 import type { ActivityItem, TranscriptBlock } from "./transcript-model";
@@ -142,7 +144,18 @@ function ProseBlock({
     >
       {text.trim() && (
         <Bounded text={text}>
-          <MarkdownPreview markdown={text} className={prose} />
+          {isLiteralParagraph(text) ? (
+            <p
+              className={`${prose} [overflow-wrap:anywhere]`}
+              data-native-paragraph=""
+            >
+              {literalParagraphRuns(text).map((run, index) => (
+                <span key={index}>{run}</span>
+              ))}
+            </p>
+          ) : (
+            <MarkdownPreview markdown={text} className={prose} />
+          )}
         </Bounded>
       )}
       <Clipped row={block.row} />
@@ -353,6 +366,12 @@ const BlockView = memo(function BlockView({
           <PlanCard plan={block.row.plan} historical={true} />
         </div>
       ) : null;
+    case "content_ref":
+      return (
+        <div data-reading-key={block.key}>
+          <EntryContentStatus row={block.row} />
+        </div>
+      );
     case "notice":
       return (
         <div

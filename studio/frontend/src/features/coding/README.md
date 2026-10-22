@@ -649,12 +649,15 @@ another; an uncertain create leaves the draft on the landing. A new composer who
 field is empty shows its draft's text; one that already has text is never
 overwritten.
 
-`CodingRunState.authority` names the subscription whose ordered start/reset
-capture this view holds. `codingStopTarget(state)` is the only Stop gate: once a
-capture names an `active_request`, Stop targets exactly that request even while
-history is still read or native recovery is in progress; before any capture, after
-detach/owner loss, while stopping or reconciling an action it has no target, so a
-stale generation or another conversation is never cancelled.
+`codingStopTarget(state)` is the only Stop gate. It targets the exact
+`active_request` this opened owner last reported, including while history is read,
+native recovery runs, or the event stream is lost, delayed or being rebuilt: cancel
+needs only the exact conversation, request and opening generation, never a live
+view, and native answers a stale request with `cancel_requested:false`. Observed
+completion or newer native state retargets it; there is no target before any
+capture, while stopping or reconciling an action, or after owner loss/a new runtime
+incarnation, so a successor, stale generation or another conversation is never
+cancelled.
 
 ## Saved conversation list
 
