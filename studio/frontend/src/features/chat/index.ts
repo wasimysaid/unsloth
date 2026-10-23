@@ -4,7 +4,6 @@
 export { ChatPage, validateChatSearch, type ChatSearch } from "./chat-page";
 export { isRenderableRenderHtmlToolPart } from "./artifacts/html-fences";
 export {
-  addScanFolder,
   browseFolders,
   ChatThreadDeletedError,
   deleteChatAttachment,
@@ -21,12 +20,10 @@ export {
   listLoras,
   listModels,
   listRecommendedFolders,
-  listScanFolders,
   loadModel,
   unloadModel,
   notifyChatHistoryUpdated,
   notifyChatProjectsUpdated,
-  removeScanFolder,
   subscribeChatHistoryUpdated,
   revealCachedModel,
   revealFineTunedModel,
@@ -38,7 +35,8 @@ export {
   type ChatAttachmentRecord,
   type KvCacheEstimate,
   type LocalModelInfo,
-  type ScanFolderInfo,
+  CHAT_HISTORY_UPDATED_EVENT,
+  fetchSidebarThreadRows,
 } from "./api/chat-api";
 export type {
   ApiMonitorEntry,
@@ -59,14 +57,21 @@ export {
   type InferenceParams,
   type Preset,
 } from "./chat-settings-sheet";
-export { useChatRuntimeStore } from "./stores/chat-runtime-store";
+export {
+  syncKeepModelsLoaded,
+  useChatRuntimeStore,
+} from "./stores/chat-runtime-store";
 export { openFolderAsProject, useOpeningFolder } from "./utils/open-folder-as-project";
+export { requestReplyFinishedPermission } from "./utils/reply-finished-notification";
+export { forgetAgentsMd } from "./utils/agents-md";
+export { refreshContextUsage } from "./utils/refresh-context-usage";
 export {
   hydrateModelDisclaimerPreference,
   refreshModelDisclaimerPreference,
   saveModelDisclaimerPreference,
 } from "./sync-model-disclaimer-preference";
 export {
+  ChatComposerFocusableContext,
   pythonToolRunsInStudio,
   useChatActive,
   useInComparePane,
@@ -141,6 +146,28 @@ export {
   useForkBoundaryStore,
   type ForkBoundaryState,
 } from "./stores/fork-boundary-store";
+export { rewindChatThread } from "./api/rewind-api";
+export {
+  type RewindDialogRequest,
+  useRewindDialogStore,
+} from "./stores/rewind-dialog-store";
+export {
+  collectRewindTurnIds,
+  defaultRewindMode,
+  isRewindCommand,
+  type RewindMode,
+  type RewindResult,
+  rewindChangedCount,
+  rewindPickerEntries,
+  rewindSkippedCount,
+  rewindTouchesConversation,
+  rewindTouchesFiles,
+} from "./utils/rewind";
+export {
+  isCompactCommand,
+  requestThreadCompaction,
+  useCompactRequestStore,
+} from "./stores/compact-request-store";
 export {
   folderRingKey,
   planKey,
@@ -212,6 +239,10 @@ export type {
   SidebarOrganizeBy,
 } from "./stores/sidebar-organization-store";
 export { useChatPreferencesStore } from "./stores/chat-preferences-store";
+export {
+  type ContextTruncation,
+  promptWasShortened,
+} from "./utils/context-truncation";
 export { SectionNameDialog } from "./components/section-name-dialog";
 export { removeCustomSectionWithUndo } from "./stores/remove-custom-section";
 export {
@@ -226,6 +257,7 @@ export {
   PROMPT_QUEUE_RUN_FAILED_EVENT,
   PROMPT_QUEUE_STOP_EVENT,
   requestLocalPromptQueueStop,
+  requestScopedLocalPromptQueueStop,
   type PromptQueueRunFailedEventDetail,
   type PromptQueueStopEventDetail,
 } from "./utils/prompt-queue-boundary";
@@ -284,6 +316,9 @@ export {
 } from "./utils/queued-chat-run-settings";
 export {
   PLUS_MENU_ORDER,
+  normalizePlusMenuOrder,
+  keepSavedSlot,
+  splitPlusMenuItems,
   usePlusMenuPrefsStore,
   type PlusMenuItemId,
 } from "./stores/plus-menu-prefs-store";
@@ -296,6 +331,7 @@ export { ModelLoadDescription } from "./components/model-load-status";
 export { chatModelLoaded } from "./lib/chat-model-loaded";
 export type { ChatModelLoadedInput } from "./lib/chat-model-loaded";
 export {
+  buildExternalModelId,
   customProviderDisplayName,
   isCustomProviderType,
   isDecisionConnection,
@@ -357,6 +393,7 @@ export {
   getSidebarItemThreadIds,
   recordedSandboxSessionIds,
   regenerateChatTitle,
+  regenerateChatTitleWithToast,
   sandboxSessionIdsHolding,
   type ConversationExportFormat,
 } from "./components/chat-row-menu";
@@ -369,9 +406,10 @@ export { BulkExportItems, exportThreads } from "./components/bulk-export-items";
 export { useFileProjectInSection } from "./hooks/use-file-project-in-section";
 export { pickAndImportChats } from "./utils/import-chats";
 export { useForkInFlight } from "./utils/fork-in-flight";
-export { showForkCreatedToast } from "./utils/fork-toast";
+export { showForkCreatedToast, showForkFailedToast } from "./utils/fork-toast";
 export { clearAllChats, countAllChats } from "./utils/clear-all-chats";
 export { stopRecoveredRun } from "./utils/chat-generation-recovery";
+export { readIncompleteInfo } from "./utils/continuation";
 export { offerToDeleteKeptSandboxes } from "./utils/offer-kept-sandbox-files";
 export { pasteClipboardFiles } from "./utils/clipboard-files";
 export {
@@ -430,6 +468,7 @@ export {
 export { allRecordedSandboxSessionIds } from "./utils/recorded-sandbox-session";
 export {
   markChatThreadDeleted,
+  onChatThreadsDeleted,
   removeChatThreadTombstones,
 } from "./utils/chat-thread-tombstones";
 export { emitChatAttachmentDeleted } from "./utils/chat-attachment-events";
@@ -438,6 +477,7 @@ export { resolveReasoningGroupDuration } from "./utils/reasoning-duration";
 export {
   reasoningFollowsPreference,
   reasoningTailCapped,
+  reasoningTailFlexBox,
   resolveReasoningOpen,
   startsNewReasoningRound,
 } from "./utils/reasoning-visibility";
@@ -466,7 +506,10 @@ export {
   downloadChatExport,
 } from "./utils/export-chat-history";
 export {
-  clearNewChatDraft,
+  adoptLegacyDraft,
+  latestDraft,
+  publishDraft,
+  subscribeDraft,
   composerDraftKey,
   composerPasteDraftKey,
   readComposerDraft,
@@ -510,10 +553,28 @@ export {
   type SidebarItem,
 } from "./hooks/use-chat-sidebar-items";
 export {
+  fetchSidebarRowPage,
+  readAllSidebarRowIds,
+  readAllSidebarRows,
+  useSidebarRowPages,
+  type SidebarRowPages,
+  type SidebarRowSlot,
+} from "./hooks/use-sidebar-row-pages";
+export {
+  SIDEBAR_PAGE_SIZE,
+  holdRowsPastLoadedChats,
+  mergeManualOrderTail,
+  settledManualOrder,
+  sidebarRowQuery,
+  type SidebarRowQuery,
+} from "./utils/sidebar-row-query";
+export {
   createChatProject,
   deleteChatProject,
   moveChatItemToProject,
+  projectActivityAt,
   renameChatProject,
+  sortProjectsByActivity,
   updateChatProjectInstructions,
   useChatProjects,
 } from "./hooks/use-chat-projects";

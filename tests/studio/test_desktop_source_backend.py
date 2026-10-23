@@ -167,28 +167,44 @@ class SourceBackendTests(unittest.TestCase):
                 }
             (bundle / "manifest.json").write_text(json.dumps({"schema": 1, "packages": packages}))
             (bundle / "verify.py").write_text((ROOT / "studio/source_backend.py").read_text())
-            command = (
+            bootstrap_start = "_bootstrap_packaged_mlx_override() {"
+            bootstrap = bootstrap_start + sh.split(bootstrap_start, 1)[1].split("\n}\n", 1)[0] + "\n}\n"
+            command = bootstrap + (
+                "OS=linux; _ARCH=x86_64; "
                 "TAURI_MODE=true; STUDIO_LOCAL_INSTALL=false; PACKAGE_NAME=unsloth; "
                 '_VENV_PY="$TEST_PYTHON"; UNSLOTH_DESKTOP_BACKEND_VERSION=2026.9.12; '
+                'VENV_DIR="$TEST_VENV"; uv() { echo probe >> "$TEST_PROBES"; return 0; }; '
                 '_unsloth_desktop_install_spec=""'
                 + block
-                + 'printf \'%s\\n%s\\n\' "$_unsloth_release_install_spec" "$_zoo_release_install_spec"'
+                + 'printf \'%s\\n%s\\n\' "$_unsloth_release_install_spec" "$_unsloth_zoo_install_spec"'
             )
             import os
 
-            env = {**os.environ, "TEST_PYTHON": sys.executable}
+            probes = bundle / "probes.txt"
+            marker = bundle / "unsloth_feed_ceiling.json"
+            env = {
+                **os.environ,
+                "TEST_PYTHON": sys.executable,
+                "TEST_VENV": str(bundle),
+                "TEST_PROBES": str(probes),
+            }
             env.pop("UNSLOTH_SOURCE_BACKEND_DIR", None)
             default = subprocess.run(
                 ["sh", "-c", command], env = env, capture_output = True, text = True, check = True
             )
             self.assertEqual(
-                default.stdout.splitlines(), ["unsloth>=2026.9.12", "unsloth-zoo>=2026.10.3"]
+                default.stdout.splitlines(), ["unsloth>=2026.9.12", "unsloth-zoo>=2026.10.7"]
             )
+            self.assertEqual(probes.read_text().splitlines(), ["probe"])
+            probes.write_text("")
+            marker.write_text('{"requested": "2026.9.12", "available": "2026.9.1"}')
             env["UNSLOTH_SOURCE_BACKEND_DIR"] = str(bundle)
             selected = subprocess.run(
                 ["sh", "-c", command], env = env, capture_output = True, text = True, check = True
             )
             self.assertEqual(selected.stdout.splitlines(), list(source_backend.wheel_paths(bundle)))
+            self.assertEqual(probes.read_text(), "")
+            self.assertFalse(marker.exists())
             (bundle / packages["unsloth"]["wheel"]).write_bytes(b"tampered")
             failed = subprocess.run(["sh", "-c", command], env = env, capture_output = True, text = True)
             self.assertNotEqual(failed.returncode, 0)
@@ -222,13 +238,19 @@ class SourceBackendTests(unittest.TestCase):
             script = (
                 "$ErrorActionPreference='Stop'; function Exit-InstallFailure { param($m) throw $m }; "
                 "$TauriMode=$true; $StudioLocalInstall=$false; $PackageName='unsloth'; "
-                "$VenvPython=$env:TEST_PYTHON; "
+                "$VenvPython=$env:TEST_PYTHON; $VenvDir=$env:TEST_VENV; "
+                "$script:UvExe = { Add-Content -LiteralPath $env:TEST_PROBES -Value 'probe'; "
+                "$global:LASTEXITCODE=0 }; "
                 + block
-                + "Write-Output ($_unslothReleaseInstallSpec + '|' + $_zooReleaseInstallSpec)"
+                + "Write-Output ($_unslothReleaseInstallSpec + '|' + $_unslothZooInstallSpec)"
             )
+            probes = bundle / "probes.txt"
+            marker = bundle / "unsloth_feed_ceiling.json"
             env = {
                 **os.environ,
                 "TEST_PYTHON": sys.executable,
+                "TEST_VENV": str(bundle),
+                "TEST_PROBES": str(probes),
                 "UNSLOTH_DESKTOP_BACKEND_VERSION": "2026.9.12",
             }
             env.pop("UNSLOTH_SOURCE_BACKEND_DIR", None)
@@ -239,7 +261,10 @@ class SourceBackendTests(unittest.TestCase):
                 text = True,
                 check = True,
             )
-            self.assertEqual(default.stdout.strip(), "unsloth>=2026.9.12|unsloth-zoo>=2026.10.3")
+            self.assertEqual(default.stdout.strip(), "unsloth>=2026.9.12|unsloth-zoo>=2026.10.7")
+            self.assertEqual(probes.read_text().splitlines(), ["probe"])
+            probes.write_text("")
+            marker.write_text('{"requested": "2026.9.12", "available": "2026.9.1"}')
             env["UNSLOTH_SOURCE_BACKEND_DIR"] = str(bundle)
             selected = subprocess.run(
                 ["pwsh", "-NoProfile", "-Command", script],
@@ -249,6 +274,8 @@ class SourceBackendTests(unittest.TestCase):
                 check = True,
             )
             self.assertEqual(selected.stdout.strip(), "|".join(source_backend.wheel_paths(bundle)))
+            self.assertEqual(probes.read_text(), "")
+            self.assertFalse(marker.exists())
             (bundle / packages["unsloth-zoo"]["wheel"]).write_bytes(b"tampered")
             failed = subprocess.run(
                 ["pwsh", "-NoProfile", "-Command", script], env = env, capture_output = True, text = True
@@ -256,13 +283,61 @@ class SourceBackendTests(unittest.TestCase):
             self.assertNotEqual(failed.returncode, 0)
             self.assertIn("checksum mismatch", failed.stderr)
 
+    def test_unix_source_mlx_bootstrap_waits_for_verified_wheel(self):
+        import os
+
+        sh = (ROOT / "install.sh").read_text()
+        start = "_bootstrap_packaged_mlx_override() {"
+        function = start + sh.split(start, 1)[1].split("\n}\n", 1)[0] + "\n}\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            override = directory / "packaged-override.txt"
+            override.write_text("transformers>=5.0\n")
+            python = directory / "python"
+            python.write_text('#!/bin/sh\nprintf "%s\\n" "$TEST_OVERRIDE"\n')
+            python.chmod(0o755)
+            capture = directory / "calls.txt"
+            source_wheel = directory / "unsloth-1.0-py3-none-any.whl"
+            command = (
+                'OS=macos; _ARCH=arm64; SKIP_TORCH=false; PACKAGE_NAME=unsloth; '
+                '_VENV_PY="$TEST_PYTHON"; _OVERRIDES_FILE=""; C_WARN=warn; unset UV_OVERRIDE; '
+                'substep() { :; }; '
+                'run_install_cmd_retry() { printf "%s\\n" "$@" >> "$TEST_CAPTURE"; }; '
+                + function
+                + '_bootstrap_packaged_mlx_override; '
+                + 'test ! -s "$TEST_CAPTURE" || exit 73; '
+                + '_bootstrap_packaged_mlx_override "$TEST_SOURCE_WHEEL"'
+            )
+            result = subprocess.run(
+                ["sh", "-c", command],
+                env = {
+                    **os.environ,
+                    "UNSLOTH_SOURCE_BACKEND_DIR": str(directory),
+                    "TEST_OVERRIDE": str(override),
+                    "TEST_PYTHON": str(python),
+                    "TEST_CAPTURE": str(capture),
+                    "TEST_SOURCE_WHEEL": str(source_wheel),
+                    "TMPDIR": str(directory),
+                },
+                capture_output = True,
+                text = True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            args = capture.read_text().splitlines()
+            self.assertEqual(args[-1], str(source_wheel))
+            self.assertIn("--no-deps", args)
+        selector = sh.split('_source_zoo_spec=""', 1)[1].split(
+            'if [ "$_MIGRATED" = true ]; then', 1
+        )[0]
+        self.assertIn('_bootstrap_packaged_mlx_override "$_unsloth_release_install_spec"', selector)
+
     def test_source_wheel_uv_bootstrap_avoids_system_pip_on_every_runner(self):
         workflow = (ROOT / ".github/workflows/release-desktop.yml").read_text()
         checkout = workflow.index("- name: Checkout backend tag for source wheel")
         build = workflow.index("- name: Build pinned desktop source backend wheels", checkout)
         setup = workflow[workflow.index("- name: Setup uv for source wheels", checkout) : build]
         self.assertRegex(setup, r"uses: astral-sh/setup-uv@[0-9a-f]{40}")
-        self.assertIn("version: '0.8.17'", setup)
+        self.assertIn("version: '0.13.4'", setup)
         self.assertIn("if: ${{ inputs.source_backend }}", setup)
         self.assertNotIn("runner.os", setup)
         self.assertNotIn("matrix.artifact", setup)

@@ -2,21 +2,25 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 import {
+  createContext,
+  type ReactElement,
   type ReactNode,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { ChevronLeftIcon, ChevronRightIcon, PlusIcon, XIcon } from "lucide-react";
+import { PlusIcon, XIcon } from "lucide-react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   AttachmentIcon,
   FileDatabaseIcon,
-  FolderAttachmentIcon,
   Folder02Icon,
+  FolderAttachmentIcon,
+  PlusSignIcon,
 } from "@hugeicons/core-free-icons";
 import {
   AttachmentKindIcon,
@@ -31,12 +35,6 @@ import {
   AttachmentCardPreview,
   attachmentPreview,
 } from "@/components/assistant-ui/attachment-card-preview";
-import { LocalFileDialog } from "@/components/assistant-ui/attachment-document-dialog";
-import {
-  MAX_DOCUMENT_PREVIEW_BYTES,
-  documentKind,
-  isMarkdown,
-} from "@/components/file-viewer";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Tooltip,
@@ -44,8 +42,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Tick02Icon } from "@/lib/tick-icon";
-import { ChevronDownStandardIcon } from "@/lib/chevron-icons";
-import { useAui } from "@assistant-ui/react";
+import {
+  ChevronDownStandardIcon,
+  ChevronUpStandardIcon,
+} from "@/lib/chevron-icons";
+import { useChatPreferencesStore } from "@/features/chat/stores/chat-preferences-store";
+import { useAui, useAuiState } from "@assistant-ui/react";
 import { cn } from "@/lib/utils";
 import {
   PENDING_CHAT_ATTACHMENT_KEY,
@@ -62,7 +64,6 @@ import {
   annotationsOfFile,
   attachmentFileKind,
   isPastedTextFile,
-  isTextAttachment,
   isThreadIncognito,
   subscribeChatHistoryUpdated,
 } from "@/features/chat";
@@ -81,10 +82,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   announceProjectSourcesUpdated,
-  getDocumentFileUrl,
   invalidateProjectSources,
   listKnowledgeBases,
-  listLinkedFolders,
   subscribeKnowledgeBasesChanged,
   listProjectDocuments,
   listThreadDocuments,
@@ -102,7 +101,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { STAGE_LABELS } from "./document-status-chip";
-import { useDocumentPreviewStore } from "./preview-store";
 import {
   type KnowledgeBaseFocus,
   KnowledgeBaseDialog,
@@ -112,6 +110,8 @@ import {
   SUPPORTED_SOURCES_HINT,
   isSupportedSourceName,
 } from "./source-drop-policy";
+import { RagDocumentTrigger } from "./rag-document-trigger";
+import { fetchSourceFile } from "./source-file";
 import { EXPIRY_GRACE_MS } from "./staged-source";
 import {
   type RagUploadItem,
@@ -120,6 +120,8 @@ import {
   useRagDocuments,
 } from "./use-rag-documents";
 import { useSourceDrop } from "./use-source-drop";
+import { useUploadQueue } from "./use-upload-queue";
+import { groupByLinkedFolder, useLinkedFolderNames } from "./linked-folder-groups";
 
 // Refetched after any KB mutation so a rename shows at once.
 function useKnowledgeBaseName(kbId: string | null): string | null {
@@ -254,51 +256,6 @@ function isRagIndexable(file: File): boolean {
   return isSupportedSourceName(file.name);
 }
 
-/** Display names of a project's linked folders, read once per set of folder ids. */
-function useLinkedFolderNames(
-  projectId: string | null,
-  folderIds: string,
-): ReadonlyMap<string, string> {
-  const [names, setNames] = useState<ReadonlyMap<string, string>>(new Map());
-  useEffect(() => {
-    if (!projectId || !folderIds) return;
-    let cancelled = false;
-    listLinkedFolders({ type: "project", id: projectId })
-      .then((folders) => {
-        if (cancelled) return;
-        setNames(new Map(folders.map((f) => [f.id, f.displayName])));
-      })
-      .catch(() => {
-        // The card falls back to a generic label.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, folderIds]);
-  return names;
-}
-
-/** Splits project documents into loose files and per-folder groups. A linked folder can
- * hold thousands of files, so it is drawn as one card rather than one card per file. */
-function groupByLinkedFolder(docs: TrackedDocument[]): {
-  loose: TrackedDocument[];
-  folders: [string, TrackedDocument[]][];
-} {
-  const loose: TrackedDocument[] = [];
-  const folders = new Map<string, TrackedDocument[]>();
-  for (const doc of docs) {
-    const folderId = doc.linkedFolderId;
-    if (!folderId) {
-      loose.push(doc);
-      continue;
-    }
-    const group = folders.get(folderId);
-    if (group) group.push(doc);
-    else folders.set(folderId, [doc]);
-  }
-  return { loose, folders: [...folders] };
-}
-
 function isProcessing(doc: TrackedDocument): boolean {
   return doc.status === "pending" || doc.status === "running";
 }
@@ -315,6 +272,28 @@ function ProjectBadge() {
   );
 }
 
+// Inline 16px: the font-scaled size-4 is 15px, an odd inset that sits off centre in the 32px circle.
+const HEADER_ICON = { width: 16, height: 16 } as const;
+
+const CompactCardsContext = createContext(false);
+
+/** The chat the files bar last showed, across remounts. */
+let panelThreadItemId: string | null = null;
+
+function HeaderTip({ label, children }: { label: string; children: ReactElement }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild={true}>{children}</TooltipTrigger>
+      <TooltipContent side="bottom" className="max-w-[calc(260px*var(--ui-space-scale,1))]">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+const PILL =
+  "inline-flex h-8 max-w-[calc(14rem*var(--ui-space-scale,1))] items-center gap-1.5 rounded-full px-3 text-ui-13 transition-colors";
+
 function LinkedFolderCard({
   name,
   docs,
@@ -322,15 +301,36 @@ function LinkedFolderCard({
   name: string | undefined;
   docs: TrackedDocument[];
 }) {
+  const compact = useContext(CompactCardsContext);
   const indexing = docs.filter(isProcessing).length;
   const label = name ?? "Linked folder";
   const count = `${docs.length} ${docs.length === 1 ? "file" : "files"}`;
+  const title = `${label}: ${count}, kept in sync and shared with every chat in this project. Manage it in the project's Sources tab.`;
+  if (compact) {
+    return (
+      <div
+        title={title}
+        className={cn("unsloth-files-item unsloth-files-pill shrink-0 cursor-default", PILL, CARD_EDGE)}
+      >
+        {indexing > 0 ? (
+          <Spinner className="size-3.5 shrink-0" />
+        ) : (
+          <HugeiconsIcon icon={Folder02Icon} strokeWidth={1.75} className="size-4 shrink-0" />
+        )}
+        <span className="truncate">{label}</span>
+        <span className="shrink-0 text-muted-foreground tabular-nums">
+          {indexing > 0 ? `${indexing}/${docs.length}` : docs.length}
+        </span>
+        <span className="sr-only">linked folder, shared with the project</span>
+      </div>
+    );
+  }
   return (
-    <div className={cn("relative", CARD_SLOT)}>
+    <div className={cn("unsloth-files-item relative", CARD_SLOT)}>
       <ProjectBadge />
       <div
-        title={`${label}: ${count}, kept in sync and shared with every chat in this project. Manage it in the project's Sources tab.`}
-        className={cn("flex overflow-hidden rounded-[15px]", CARD_SIZE, CARD_EDGE)}
+        title={title}
+        className={cn("flex overflow-hidden rounded-lg", CARD_SIZE, CARD_EDGE)}
       >
         <FileCardBody
           name={label}
@@ -374,37 +374,8 @@ function forgetThumbnail(id: string): void {
   thumbnailSizes.delete(id);
 }
 
-/** The stored source as a File, or null past `maxBytes` (0 = no cap). */
-async function fetchSourceFile(
-  doc: TrackedDocument,
-  maxBytes: number,
-): Promise<File | null> {
-  const response = await fetch(await getDocumentFileUrl(doc.id));
-  if (!response.ok) return null;
-  if (maxBytes && Number(response.headers.get("content-length")) > maxBytes) {
-    void response.body?.cancel();
-    return null;
-  }
-  const blob = await response.blob();
-  if (blob.size === 0 || (maxBytes && blob.size > maxBytes)) return null;
-  // Linked-folder documents are named by their relative path.
-  const name = doc.filename.split("/").pop() ?? doc.filename;
-  // Most types are served as octet-stream; an empty type lets the extension decide the kind.
-  const type = blob.type === "application/octet-stream" ? "" : blob.type;
-  return new File([blob], name, { type });
-}
-
 const fetchThumbnailFile = (doc: TrackedDocument) =>
   fetchSourceFile(doc, MAX_THUMBNAIL_BYTES);
-
-/** Whether the attachment viewer can show this source: pages, markdown or text. */
-function isViewableSource(name: string): boolean {
-  return (
-    documentKind(name) !== null ||
-    isMarkdown(name) ||
-    isTextAttachment(name, undefined)
-  );
-}
 
 function loadThumbnailFile(doc: TrackedDocument): Promise<File | null> {
   const cached = thumbnailFiles.get(doc.id);
@@ -490,12 +461,14 @@ function DocumentCard({
   doc,
   shared,
   onRemove,
+  onRetry,
 }: {
   doc: TrackedDocument;
   shared: boolean;
   onRemove?: () => void;
+  onRetry?: () => void;
 }) {
-  const openPreview = useDocumentPreviewStore((s) => s.openPreview);
+  const compact = useContext(CompactCardsContext);
   const kind = attachmentFileKind(doc.filename, undefined);
   const processing = isProcessing(doc);
   const failed = doc.status === "failed";
@@ -522,26 +495,9 @@ function DocumentCard({
   );
   const ready = doc.status === "completed" && !pending;
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
-  const thumbnail = useDocumentThumbnail(doc, ready, slot);
-  // PDFs open the source preview, which can jump to a page. Without a chunk it has no text for
-  // anything else, so other files open in the attachment viewer, read on click.
-  const isPdf = kind === "pdf";
-  const viewable = !isPdf && isViewableSource(doc.filename);
-  const thumbnailFile = thumbnail?.kind === "file" ? thumbnail.file : null;
-  const loadSource = useCallback(async (): Promise<Blob> => {
-    // The thumbnail's copy when there is one; past its cap, up to the viewer's own limit, the
-    // same one the Library holds to. Past that the viewer says it can't preview.
-    const file =
-      thumbnailFile ?? (await fetchSourceFile(doc, MAX_DOCUMENT_PREVIEW_BYTES));
-    if (!file) throw new Error(`Couldn't preview ${doc.filename}`);
-    const textual =
-      documentKind(file.name, file.type) === null && !isMarkdown(file.name, file.type);
-    // Served as octet-stream: the viewer reads text only when the type says so.
-    return textual ? new File([file], file.name, { type: "text/plain" }) : file;
-    // The id names the stored file; the rest of the row changes with progress frames.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc.id, thumbnailFile]);
-  const canOpen = ready && (isPdf || viewable);
+  const thumbnail = useDocumentThumbnail(doc, ready && !compact, slot);
+  // Every indexed file opens: RagDocumentTrigger picks the browser, the viewer or a new tab.
+  const canOpen = ready;
   const preview =
     thumbnail?.kind === "image" ? (
       <img
@@ -560,31 +516,110 @@ function DocumentCard({
         }
       />
     ) : undefined;
+  const removable = onRemove && !processing;
+  const buttonProps = {
+    type: "button",
+    disabled: !canOpen,
+    title:
+      doc.error ??
+      (shared
+        ? `${doc.filename}: shared with every chat in this project`
+        : doc.filename),
+    "aria-label": [
+      canOpen ? `Preview ${doc.filename}` : doc.filename,
+      processing ? `${stageLabel}${percent != null ? ` ${percent}%` : ""}` : null,
+      failed ? "couldn't index" : null,
+      shared ? "shared with the project" : null,
+    ]
+      .filter(Boolean)
+      .join(", "),
+  } as const;
+  const removeButton = removable ? (
+    <button
+      type="button"
+      onClick={onRemove}
+      aria-label={`Remove ${doc.filename}`}
+      className={cn(
+        "absolute flex size-5 items-center justify-center rounded-full bg-foreground text-background opacity-0 shadow-sm transition-opacity focus-visible:opacity-100 group-hover/attachment-card:opacity-100 group-focus-within/attachment-card:opacity-100 [@media(pointer:coarse)]:opacity-100",
+        compact ? "top-1/2 right-1.5 -translate-y-1/2" : "top-1.5 right-1.5",
+      )}
+    >
+      {/* Inline 12px: the font-scaled svg size rules give 11.25px, an odd inset that sits off centre. */}
+      <XIcon className="stroke-[2.5px]" style={{ width: 12, height: 12 }} />
+    </button>
+  ) : null;
+  const wrapDialog = (trigger: ReactElement) =>
+    ready ? (
+      <RagDocumentTrigger documentId={doc.id} filename={doc.filename}>
+        {trigger}
+      </RagDocumentTrigger>
+    ) : (
+      trigger
+    );
+  if (compact) {
+    return (
+      <div ref={setSlot} className="unsloth-files-item unsloth-files-pill-item flex shrink-0 items-center gap-1">
+        <div className="group/attachment-card relative flex min-w-0">
+          {wrapDialog(
+            <button
+              {...buttonProps}
+              className={cn(
+                "unsloth-files-pill",
+                PILL,
+                "text-left disabled:cursor-default",
+                CARD_EDGE,
+                canOpen && CARD_SURFACE,
+                canOpen && "cursor-pointer",
+                failed && "border-destructive/40 text-destructive",
+              )}
+            >
+              {processing ? (
+                <Spinner className="size-3.5 shrink-0" />
+              ) : (
+                <AttachmentKindIcon kind={kind} className="size-4 shrink-0" />
+              )}
+              <span
+                className={cn(
+                  "truncate",
+                  removable &&
+                    "group-hover/attachment-card:[mask-image:linear-gradient(to_left,transparent_1.25rem,black_2.5rem)] group-focus-within/attachment-card:[mask-image:linear-gradient(to_left,transparent_1.25rem,black_2.5rem)]",
+                )}
+              >
+                {doc.filename}
+              </span>
+              {processing && percent != null ? (
+                <span className="shrink-0 text-muted-foreground tabular-nums">{percent}%</span>
+              ) : null}
+              {shared ? (
+                <HugeiconsIcon
+                  icon={Folder02Icon}
+                  strokeWidth={2}
+                  className="size-3 shrink-0 text-muted-foreground"
+                  aria-hidden={true}
+                />
+              ) : null}
+            </button>,
+          )}
+          {removeButton}
+        </div>
+        {failed && onRetry ? (
+          <button
+            type="button"
+            onClick={onRetry}
+            aria-label={`Retry ${doc.filename}`}
+            className="unsloth-files-panel-action h-8 px-3 text-ui-12"
+          >
+            Retry
+          </button>
+        ) : null}
+      </div>
+    );
+  }
   const card = (
       <button
-        type="button"
-        disabled={!canOpen}
-        onClick={
-          isPdf
-            ? () => openPreview({ documentId: doc.id, filename: doc.filename })
-            : undefined
-        }
-        title={
-          doc.error ??
-          (shared
-            ? `${doc.filename}: shared with every chat in this project`
-            : doc.filename)
-        }
-        aria-label={[
-          canOpen ? `Preview ${doc.filename}` : doc.filename,
-          processing ? `${stageLabel}${percent != null ? ` ${percent}%` : ""}` : null,
-          failed ? "couldn't index" : null,
-          shared ? "shared with the project" : null,
-        ]
-          .filter(Boolean)
-          .join(", ")}
+        {...buttonProps}
         className={cn(
-          "flex overflow-hidden rounded-[15px] text-left transition-colors disabled:cursor-default",
+          "flex overflow-hidden rounded-lg text-left transition-colors disabled:cursor-default",
           CARD_SIZE,
           CARD_EDGE,
           canOpen && CARD_SURFACE,
@@ -604,28 +639,23 @@ function DocumentCard({
     <div
       ref={setSlot}
       className={cn(
-        "group/attachment-card relative",
+        "unsloth-files-item group/attachment-card relative",
         CARD_SLOT,
       )}
     >
-      {viewable && ready ? (
-        <LocalFileDialog name={doc.filename.split("/").pop() ?? doc.filename} load={loadSource}>
-          {card}
-        </LocalFileDialog>
-      ) : (
-        card
-      )}
+      {wrapDialog(card)}
       {shared ? <ProjectBadge /> : null}
-      {onRemove && !processing ? (
+      {failed && onRetry ? (
         <button
           type="button"
-          onClick={onRemove}
-          aria-label={`Remove ${doc.filename}`}
-          className="absolute top-1.5 right-1.5 flex size-5 items-center justify-center rounded-full bg-foreground text-background opacity-0 shadow-sm transition-opacity focus-visible:opacity-100 group-hover/attachment-card:opacity-100 group-focus-within/attachment-card:opacity-100 [@media(pointer:coarse)]:opacity-100"
+          onClick={onRetry}
+          aria-label={`Retry ${doc.filename}`}
+          className="absolute bottom-9 left-1/2 -translate-x-1/2 rounded-full bg-foreground px-2.5 py-0.5 text-ui-11 text-background shadow-sm"
         >
-          <XIcon className="size-3 stroke-[2.5px]" />
+          Retry
         </button>
       ) : null}
+      {removeButton}
     </div>
   );
 }
@@ -637,6 +667,10 @@ function AddFilesCard({
   disabled: boolean;
   onClick: () => void;
 }) {
+  const compact = useContext(CompactCardsContext);
+  if (compact) {
+    return null;
+  }
   return (
     <div className={CARD_SLOT}>
       <button
@@ -644,7 +678,7 @@ function AddFilesCard({
         disabled={disabled}
         onClick={onClick}
         className={cn(
-          "unsloth-files-add-card flex flex-col items-center justify-center gap-1.5 rounded-[15px] border border-dashed border-[color-mix(in_oklab,var(--foreground)_calc(20%*var(--contrast-edge-gain,1)),transparent)] text-ui-12 text-muted-foreground transition-colors hover:border-[color-mix(in_oklab,var(--foreground)_calc(35%*var(--contrast-edge-gain,1)),transparent)] hover:text-foreground",
+          "unsloth-files-add-card flex flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-[color-mix(in_oklab,var(--foreground)_calc(20%*var(--contrast-edge-gain,1)),transparent)] text-ui-12 text-muted-foreground transition-colors hover:border-[color-mix(in_oklab,var(--foreground)_calc(35%*var(--contrast-edge-gain,1)),transparent)] hover:text-foreground",
           CARD_SIZE,
         )}
       >
@@ -686,16 +720,17 @@ function ChatFilesPanel({
   dropDisabledReason?: string;
   children?: ReactNode;
 }) {
+  const collapsed = useChatPreferencesStore((s) => s.filesPanelCollapsed);
+  const setCollapsed = useChatPreferencesStore((s) => s.setFilesPanelCollapsed);
+  // Show all leaves the saved collapse alone, so Show less returns to the cards it started from.
+  const [showAll, setShowAll] = useState(false);
+  const compact = collapsed || showAll;
   const stripRef = useRef<HTMLDivElement>(null);
-  const [scroll, setScroll] = useState({ back: false, forward: false });
+  const [overflowing, setOverflowing] = useState(false);
   const measure = useCallback(() => {
     const el = stripRef.current;
     if (!el) return;
-    const back = el.scrollLeft > 1;
-    const forward = el.scrollWidth - el.clientWidth - el.scrollLeft > 1;
-    setScroll((prev) =>
-      prev.back === back && prev.forward === forward ? prev : { back, forward },
-    );
+    setOverflowing(el.scrollWidth - el.clientWidth > 1);
   }, []);
   useLayoutEffect(() => {
     const el = stripRef.current;
@@ -703,20 +738,14 @@ function ChatFilesPanel({
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(el);
-    // Adding a card does not resize the strip.
+    // Adding a card or swapping cards for pills does not resize the strip.
     const mutations = new MutationObserver(measure);
-    mutations.observe(el, { childList: true });
+    mutations.observe(el, { childList: true, subtree: true });
     return () => {
       observer.disconnect();
       mutations.disconnect();
     };
   }, [measure]);
-  const page = (direction: 1 | -1) => {
-    const el = stripRef.current;
-    if (!el) return;
-    el.scrollBy({ left: direction * el.clientWidth * 0.8, behavior: "smooth" });
-  };
-  const overflowing = scroll.back || scroll.forward;
   // Drops here are indexed; elsewhere they attach to the message. The page handler skips
   // prevented drops, and the desktop's window-wide handler skips registered targets.
   const ignoreDrop = useCallback(() => {}, []);
@@ -738,6 +767,7 @@ function ChatFilesPanel({
       ref={acceptsDrop ? nativeDropTarget : undefined}
       aria-label={title}
       className="unsloth-files-panel"
+      data-collapsed={children && compact ? "true" : undefined}
       data-dragging={acceptsDrop && dragging ? "true" : undefined}
       {...(acceptsDrop ? dropProps : {})}
     >
@@ -777,48 +807,73 @@ function ChatFilesPanel({
         {note}
         <div className="ml-auto flex shrink-0 items-center gap-1">
           {headerControls}
-          {overflowing ? (
-            <>
+          {children ? (
+            <HeaderTip label={compact ? "Expand files" : "Collapse files"}>
               <button
                 type="button"
-                className="unsloth-files-panel-icon-btn"
-                onClick={() => page(-1)}
-                disabled={!scroll.back}
-                aria-label="Scroll files back"
+                // A narrow glyph: 4px from Add files reads as crowded next to the X.
+                className="unsloth-files-panel-icon-btn ml-3"
+                onClick={() => {
+                  setCollapsed(!compact);
+                  setShowAll(false);
+                }}
+                aria-expanded={!compact}
+                aria-label={compact ? "Expand files" : "Collapse files"}
               >
-                <ChevronLeftIcon className="size-4" />
+                <HugeiconsIcon
+                  // The panel opens upward from the composer, so up expands and down collapses.
+                  icon={compact ? ChevronUpStandardIcon : ChevronDownStandardIcon}
+                  strokeWidth={1.75}
+                  style={HEADER_ICON}
+                />
               </button>
-              <button
-                type="button"
-                className="unsloth-files-panel-icon-btn"
-                onClick={() => page(1)}
-                disabled={!scroll.forward}
-                aria-label="Scroll files forward"
-              >
-                <ChevronRightIcon className="size-4" />
-              </button>
-            </>
+            </HeaderTip>
           ) : null}
           {onClose ? (
-            <button
-              type="button"
-              className="unsloth-files-panel-icon-btn"
-              onClick={onClose}
-              aria-label={closeLabel ?? "Close"}
-              title={closeLabel}
-            >
-              <XIcon className="size-4" />
-            </button>
+            <HeaderTip label={closeLabel ?? "Close"}>
+              <button
+                type="button"
+                className="unsloth-files-panel-icon-btn"
+                onClick={onClose}
+                aria-label={closeLabel ?? "Close"}
+              >
+                <XIcon style={HEADER_ICON} />
+              </button>
+            </HeaderTip>
           ) : null}
         </div>
       </div>
       {children ? (
-        <div
-          ref={stripRef}
-          onScroll={measure}
-          className="unsloth-files-panel-strip"
-        >
-          {children}
+        <div className="unsloth-files-panel-row" data-show-all={showAll ? "true" : undefined}>
+          <div
+            ref={stripRef}
+            className="unsloth-files-panel-strip"
+            data-show-all={showAll ? "true" : undefined}
+          >
+            <CompactCardsContext.Provider value={compact}>
+              {children}
+            </CompactCardsContext.Provider>
+            {showAll ? (
+              <button
+                type="button"
+                className="unsloth-files-panel-action"
+                aria-expanded={true}
+                onClick={() => setShowAll(false)}
+              >
+                Show less
+              </button>
+            ) : null}
+          </div>
+          {overflowing && !showAll ? (
+            <button
+              type="button"
+              className="unsloth-files-panel-show-all"
+              aria-expanded={false}
+              onClick={() => setShowAll(true)}
+            >
+              Show all
+            </button>
+          ) : null}
         </div>
       ) : null}
     </section>
@@ -930,6 +985,8 @@ export function ThreadDocumentsBar({
   const ragSource = useChatRuntimeStore((s) => s.ragSource);
   const setRagSource = useChatRuntimeStore((s) => s.setRagSource);
   const setRagEnabled = useChatRuntimeStore((s) => s.setRagEnabled);
+  const ragPanelHidden = useChatRuntimeStore((s) => s.ragPanelHidden);
+  const setRagPanelHidden = useChatRuntimeStore((s) => s.setRagPanelHidden);
   const ragToolDisabled = useRagToolDisabled();
   const projectAttachmentDefault = useChatRuntimeStore(
     (s) => s.projectAttachmentTarget,
@@ -972,18 +1029,16 @@ export function ThreadDocumentsBar({
     [],
   );
 
-  // Mirrors chat-adapter's rag_scope: an active KB replaces the project scope,
-  // but a KB preference left over while the pill is off does not.
   const threadProjectId = useThreadProjectId(effectiveThreadId);
   // Attaching before the row has been read would file the file by guess.
   const projectUnresolved = threadProjectId === undefined;
   // A host where the vector extension cannot load answers 503 to every project
   // source request, so do not open a scope it can only fail.
   const ragUnavailable = useRagAvailabilityStore((s) => s.isUnavailable());
+  // Retrieval keeps the project beside a KB (#9485), so it is always watched for indexing.
+  const watchedProjectId = ragUnavailable ? null : (threadProjectId ?? null);
   const projectId =
-    (ragEnabled && ragSource.type === "kb") || ragUnavailable
-      ? null
-      : (threadProjectId ?? null);
+    ragEnabled && ragSource.type === "kb" ? null : watchedProjectId;
   // This chat's own choice if it made one, otherwise the saved default. Keeps a
   // pick in one chat from redirecting every other chat in the project.
   const projectAttachmentTarget =
@@ -1007,6 +1062,8 @@ export function ThreadDocumentsBar({
     loading: threadListLoading,
     upload,
     remove,
+    retry,
+    canRetry,
   } = useRagDocuments(
     effectiveThreadId && ragEnabled && ragSource.type === "thread"
       ? { type: "thread", threadId: effectiveThreadId }
@@ -1018,8 +1075,11 @@ export function ThreadDocumentsBar({
   // from another chat is visible rather than silently in effect. Retrieval already
   // combines both scopes (core/rag/tool.py).
   const projectLister = useCallback(
-    () => (projectId ? listProjectDocuments(projectId) : Promise.resolve([])),
-    [projectId],
+    () =>
+      watchedProjectId
+        ? listProjectDocuments(watchedProjectId)
+        : Promise.resolve([]),
+    [watchedProjectId],
   );
   const {
     documents: projectDocuments,
@@ -1028,14 +1088,16 @@ export function ThreadDocumentsBar({
     loading: projectListLoading,
     upload: uploadToProject,
     remove: removeFromProject,
+    retry: retryProject,
+    canRetry: canRetryProject,
   } = useRagDocuments(
-    projectId ? { type: "project", projectId } : null,
+    watchedProjectId ? { type: "project", projectId: watchedProjectId } : null,
     projectLister,
   );
 
   // Tell the composer whether any doc is still indexing, so it can hold a queued send until
-  // retrieval covers them (Composer.enqueueSend). For KB / RAG-off scope is null, so both lists are
-  // empty and this reads false. From the hooks, not the rows: work started in the Sources panel is
+  // retrieval covers them (Composer.enqueueSend). A KB or RAG off leaves only the project watched,
+  // which reads false without one. From the hooks, not the rows: work started in the Sources panel is
   // in flight before either instance has a row for it, and a job already running on a reopened
   // project arrives with the first list, so hold until that lands. Both scopes hold on their first
   // list, for the same reason: reopening a chat whose own attachment was still indexing lists
@@ -1123,6 +1185,22 @@ export function ThreadDocumentsBar({
     [ensureThreadId, projectId, sharesWithProject, upload, uploadToProject],
   );
 
+  // Keyed by the list item id, stable while a new chat materializes, so only a real switch drops the queue.
+  const threadItemId = useAuiState(({ threadListItem }) => threadListItem.id);
+  // A hidden panel comes back in the next chat. Keyed outside the component: sending the first
+  // message moves the composer, which remounts this bar in the same chat.
+  useEffect(() => {
+    if (panelThreadItemId !== null && panelThreadItemId !== threadItemId) {
+      useChatRuntimeStore.getState().setRagPanelHidden(false);
+    }
+    panelThreadItemId = threadItemId;
+  }, [threadItemId]);
+  const { enqueue: queueAttach, queued } = useUploadQueue<RagUploadItem>(
+    attach,
+    uploading || projectUploading,
+    `${threadItemId}:${projectId ?? ""}`,
+  );
+
   // Only files added or dropped here are indexed; composer attachments stay with the message.
   const attachIndexable = useCallback(
     (files: File[]) => {
@@ -1136,9 +1214,11 @@ export function ThreadDocumentsBar({
           { description: SUPPORTED_SOURCES_HINT },
         );
       }
-      if (indexable.length > 0) attach(indexable);
+      if (indexable.length > 0) {
+        queueAttach(indexable.map((file) => ({ kind: "file" as const, file })));
+      }
     },
-    [attach],
+    [queueAttach],
   );
   const pickFiles = useCallback(() => {
     openFilePicker(RAG_SOURCE_UPLOAD_ACCEPT, attachIndexable);
@@ -1251,7 +1331,10 @@ export function ThreadDocumentsBar({
       <LinkedFolderCard name={folderNames.get(folderId)} docs={docs} />
     </div>
   ));
-  const fileCount = documents.length + projectDocuments.length;
+  const fileCount = documents.length + (projectId ? projectDocuments.length : 0);
+  useEffect(() => {
+    useChatRuntimeStore.getState().setRagPanelFileCount(fileCount);
+  }, [fileCount]);
   const countSuffix = fileCount === 1 ? "1 file" : `${fileCount} files`;
   // Every branch, always the first fragment child: an "Add" must open after the source
   // moves, and deleting the active KB in it must not remount it.
@@ -1275,6 +1358,9 @@ export function ThreadDocumentsBar({
   // A KB source uploads via the KB dialog, not here; show which KB is active.
   if (ragEnabled && ragSource.type === "kb") {
     const kbId = ragSource.kbId;
+    if (ragPanelHidden) {
+      return kbDialog;
+    }
     return (
       <>
         {kbDialog}
@@ -1283,8 +1369,8 @@ export function ThreadDocumentsBar({
           key="kb"
           icon={FileDatabaseIcon}
           title={activeKbName ? `Knowledge base: ${activeKbName}` : "Knowledge base"}
-          onClose={() => setRagEnabled(false)}
-          closeLabel="Stop chatting with files"
+          onClose={() => setRagPanelHidden(true)}
+          closeLabel="Hide files"
           headerControls={
             <button
               ref={kbChipRef}
@@ -1300,16 +1386,19 @@ export function ThreadDocumentsBar({
     );
   }
   // project sources stay visible with Docs off because retrieval uses them; thread scope is inert.
+  // Hiding keeps retrieval; turning on Chat with files or opening another chat shows them again.
   if (!ragEnabled) {
     return (
       <>
         {kbDialog}
-        {projectDocuments.length > 0 ? (
+        {projectDocuments.length > 0 && !ragPanelHidden ? (
           <ChatFilesPanel
             key="project"
             icon={FolderAttachmentIcon}
             title={ragToolDisabled ? "Project sources not used" : "Project sources"}
             count={countSuffix}
+            onClose={() => setRagPanelHidden(true)}
+            closeLabel="Hide sources"
             note={
               <span
                 className="hidden truncate text-ui-12 text-muted-foreground @[32rem]/files-panel:inline"
@@ -1340,15 +1429,17 @@ export function ThreadDocumentsBar({
     );
   }
 
-  // block attachments until the chat's project is known to avoid guessing their scope.
-  const busy = uploading || projectUploading || projectUnresolved;
+  // Block attachments until the chat's project is known; the scope stays locked until the queue drains.
+  const busy = projectUnresolved;
+  const scopeLocked = busy || uploading || projectUploading || queued > 0;
   // Still claim a drop while busy, or it falls through and attaches to the message instead.
-  const busyReason = !busy
-    ? undefined
-    : projectUnresolved
-      ? "Still loading this chat's project. Try again in a moment."
-      : "Still uploading. Drop the files again once it finishes.";
+  const busyReason = busy
+    ? "Still loading this chat's project. Try again in a moment."
+    : undefined;
 
+  if (ragPanelHidden) {
+    return kbDialog;
+  }
   return (
     <>
       {kbDialog}
@@ -1359,10 +1450,10 @@ export function ThreadDocumentsBar({
         titleSuffix="(RAG)"
         count={countSuffix}
         info="Add or drop documents, spreadsheets, slides, e-books, email or code. The model searches them as you chat and cites what it uses."
-        onDropItems={attach}
+        onDropItems={queueAttach}
         dropDisabledReason={busyReason}
-        onClose={() => setRagEnabled(false)}
-        closeLabel="Stop chatting with files"
+        onClose={() => setRagPanelHidden(true)}
+        closeLabel="Hide files"
         note={
           ragToolDisabled && fileCount > 0 ? (
             <span
@@ -1378,27 +1469,31 @@ export function ThreadDocumentsBar({
             {/* Only a project chat has two scopes to choose between. */}
             {projectId ? (
               <AttachmentTargetMenu
-                disabled={busy}
+                disabled={scopeLocked}
                 sharesWithProject={sharesWithProject}
                 onSelect={(target) =>
                   setThreadProjectAttachmentTarget(effectiveThreadId, target)
                 }
               />
             ) : null}
-            <button
-              type="button"
-              disabled={busy}
-              onClick={pickFiles}
-              className="unsloth-files-panel-action"
-              title={
+            <HeaderTip
+              label={
                 busyReason ??
                 (sharesWithProject
                   ? "Add files for retrieval, shared with every chat in this project"
                   : "Add files for retrieval in this chat")
               }
             >
-              Add files
-            </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={pickFiles}
+                className="unsloth-files-panel-action"
+              >
+                <HugeiconsIcon icon={PlusSignIcon} className="size-4" />
+                Add files
+              </button>
+            </HeaderTip>
           </>
         }
       >
@@ -1413,9 +1508,23 @@ export function ThreadDocumentsBar({
               doc={doc}
               shared={true}
               onRemove={
-                doc.id.startsWith("pending_") || isLinkedFolderManaged(doc)
+                isLinkedFolderManaged(doc) ||
+                (doc.id.startsWith("pending_") && doc.status !== "failed")
                   ? undefined
-                  : () => setRemovingShared(doc)
+                  : doc.status === "failed"
+                    ? // Never indexed, so no other chat loses anything: no confirmation.
+                      () => void removeFromProject(doc.id)
+                    : () => setRemovingShared(doc)
+              }
+              onRetry={
+                canRetryProject(doc.id)
+                  ? () => {
+                      if (projectId) invalidateProjectSources(projectId);
+                      void retryProject(doc.id).finally(() => {
+                        if (projectId) announceProjectSourcesUpdated(projectId);
+                      });
+                    }
+                  : undefined
               }
             />
           </div>
@@ -1429,10 +1538,11 @@ export function ThreadDocumentsBar({
               doc={doc}
               shared={false}
               onRemove={
-                doc.id.startsWith("pending_")
+                doc.id.startsWith("pending_") && doc.status !== "failed"
                   ? undefined
                   : () => void remove(doc.id)
               }
+              onRetry={canRetry(doc.id) ? () => void retry(doc.id) : undefined}
             />
           </div>
         ))}

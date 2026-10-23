@@ -86,7 +86,6 @@ class DesktopIconTests(unittest.TestCase):
             "macos/32x32.png": "791d080e9e7d2f3bf2164bdbeea7ba416b7f9e6c4c06e892ade72b06563fd0fc",
             "macos/128x128.png": "216dcc4b8b6113bbf93b9483d039188965c01b398020d184dd89fd75cb1b1eed",
             "icon.icns": "6d4887812a19e536981f4c1e58b4248d73889b2f176284d3b533e6fefa1de919",
-            "tray-icon.png": "674c28314aa7420468f4cdbb3ef11f7221ae73df876cb72b25ca434c09e1b96a",
             "tray-icon@2x.png": "7fd387bb458e46b97e177071f3d200790637caab21a2b0ed8f10ab8877b2844e",
             "tray-icon-dark.png": "e285c66288dd7b5000312ed06ff76b2c994d9e54587d213cc273664d21806e34",
             "tray-icon-light.png": "e8af3f3d4bf319d95177805c7dfacd605d4b1ecbc65a3a83b6c042436a1b0b93",
@@ -94,6 +93,7 @@ class DesktopIconTests(unittest.TestCase):
         for name, digest in preserved.items():
             with self.subTest(name=name):
                 self.assertEqual(hashlib.sha256((TAURI / "icons" / name).read_bytes()).hexdigest(), digest)
+        self.assertFalse((TAURI / "icons/tray-icon.png").exists())
         self.assertEqual(self.config("macos")["bundle"]["icon"], [
             "icons/macos/32x32.png", "icons/macos/128x128.png", "icons/icon.icns",
         ])

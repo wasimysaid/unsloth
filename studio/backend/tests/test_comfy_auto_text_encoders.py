@@ -205,6 +205,36 @@ def test_backend_takes_the_comfy_encoder_for_a_local_dit(tmp_path, monkeypatch):
     assert picked == [str(Path(te))]
 
 
+@pytest.mark.parametrize("confirmed, takes_comfy", [(False, True), (True, False)])
+def test_an_automatic_default_takes_the_comfy_encoder_until_its_hosted_file_is_confirmed(
+    tmp_path, monkeypatch, confirmed, takes_comfy
+):
+    from core.inference import diffusion, diffusion_te_prequant as tp
+
+    models = _comfy_tree(tmp_path)
+    te = _encoder_file(models / "text_encoders" / "qwen_2.5_vl_7b_fp8_scaled.safetensors")
+    base = _base(tmp_path)
+    fam = types.SimpleNamespace(
+        name = "qwen-image", single_file_is_pipeline = False, pipeline_only = False, te_quant_auto = "int8"
+    )
+    hosted = {"text_encoder": object()}
+    monkeypatch.setattr(tp, "te_prequant_sources_for_base", lambda *a, **k: hosted)
+    monkeypatch.setattr(tp, "te_prequant_sources_confirmed", lambda sources, **k: confirmed)
+    backend = diffusion.DiffusionBackend.__new__(diffusion.DiffusionBackend)
+    monkeypatch.setattr(backend, "_target_for_ordinal", lambda *a: None, raising = False)
+    picked = diffusion.DiffusionBackend._comfy_text_encoders(
+        backend,
+        fam,
+        "single_file",
+        str(models / "diffusion_models"),
+        "dit.safetensors",
+        base,
+        None,
+        local_files_only = True,
+    )
+    assert picked == ([str(Path(te))] if takes_comfy else [])
+
+
 @pytest.mark.parametrize("env, kind", [("0", "single_file"), (None, "pipeline")])
 def test_backend_opt_out_and_pipeline_loads_keep_the_base_repo(tmp_path, monkeypatch, env, kind):
     picked, _ = _backend_pick(tmp_path, monkeypatch, env = env, kind = kind)
@@ -238,5 +268,46 @@ def test_download_plan_drops_the_base_encoder_a_comfy_file_replaces(tmp_path, mo
         model_kind = "single_file",
         allow_device_probe = False,
         memory_verdict = False,
+        # z-image defaults to its hosted int8 ConvRot encoder, which a bf16 file never displaces; pin the dense one
+        text_encoder_quant = "none",
     )
     assert "text_encoder" in seen["skip_te_components"]
+
+
+def test_the_mlx_plan_keeps_the_base_encoder_it_always_opens(tmp_path, monkeypatch):
+    """The MLX loader reads the base repo's text_encoder/, so its plan never trades it for a single file."""
+    from core.inference import diffusion
+    from core.inference import mlx_diffusion_backend as mb
+
+    models = tmp_path / "ComfyUI" / "models"
+    for name in ("diffusion_models", "text_encoders", "vae", "loras"):
+        (models / name).mkdir(parents = True, exist_ok = True)
+    (models / "diffusion_models" / "z-image-turbo-Q4_K_M.gguf").write_bytes(b"x")
+    te = _encoder_file(models / "text_encoders" / "qwen_3_4b.safetensors")
+    base = _base(tmp_path)
+    seen = []
+
+    def _estimate(*args, **kwargs):
+        seen.append(tuple(kwargs["skip_te_components"]))
+        return 0, []
+
+    monkeypatch.setattr(
+        diffusion.DiffusionBackend, "_estimate_download_bytes", staticmethod(_estimate)
+    )
+    monkeypatch.setattr(diffusion, "_resolve_base_repo", lambda *a, **k: base)
+    backend = diffusion.DiffusionBackend.__new__(diffusion.DiffusionBackend)
+    monkeypatch.setattr(diffusion, "get_diffusion_backend", lambda: backend)
+    pick = dict(
+        gguf_filename = "z-image-turbo-Q4_K_M.gguf",
+        model_kind = "gguf",
+        allow_device_probe = False,
+    )
+    backend.download_plan(
+        str(models / "diffusion_models"), memory_verdict = False, text_encoder_quant = "none", **pick
+    )
+    mb.MlxDiffusionBackend().download_plan(str(models / "diffusion_models"), **pick)
+    mb.MlxDiffusionBackend().download_plan(
+        str(models / "diffusion_models"), text_encoder_files = [te], **pick
+    )
+    assert "text_encoder" in seen[0]
+    assert all("text_encoder" not in skip for skip in seen[1:])

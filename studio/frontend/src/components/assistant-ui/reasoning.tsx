@@ -5,6 +5,7 @@
 
 /* eslint-disable react-refresh/only-export-components */
 
+import { ChevronDownStandardIcon } from "@/lib/chevron-icons";
 import { CodeHighlightModeContext } from "@/components/assistant-ui/code-highlight-context";
 import {
   MarkdownText,
@@ -32,6 +33,7 @@ import {
   clearReasoningRound,
   foldIsActive,
   reasoningTailCapped,
+  reasoningTailFlexBox,
   resolveReasoningGroupDuration,
   resolveReasoningOpen,
   setReasoningRoundOpen,
@@ -64,7 +66,6 @@ import {
 } from "@assistant-ui/react";
 import { copyToClipboard } from "@/lib/copy-to-clipboard";
 import { type VariantProps, cva } from "class-variance-authority";
-import { ChevronDownIcon } from "lucide-react";
 import { Tick02Icon } from "@/lib/tick-icon";
 import { Copy01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -212,7 +213,7 @@ function ReasoningTrigger({
       data-slot="reasoning-trigger"
       data-active={active ? "" : undefined}
       className={cn(
-        "aui-reasoning-trigger group/trigger flex min-h-5 min-w-0 cursor-pointer items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground",
+        "aui-reasoning-trigger group/trigger flex min-h-5 min-w-0 cursor-pointer items-center gap-2 text-trace-foreground text-sm transition-colors hover:text-foreground",
         className,
       )}
       {...props}
@@ -240,12 +241,13 @@ function ReasoningTrigger({
       </span>
       {/* Outside the label so it reads while the block is still working and closed. */}
       {foldedSummary ? (
-        <span className="whitespace-nowrap leading-none text-muted-foreground/70">
+        <span className="whitespace-nowrap leading-none">
           {"\u00b7 "}
           {foldedSummary}
         </span>
       ) : null}
-      <ChevronDownIcon
+      <HugeiconsIcon
+        icon={ChevronDownStandardIcon}
         data-slot="reasoning-trigger-chevron"
         className={cn(
           "aui-reasoning-trigger-chevron size-3.5 shrink-0",
@@ -266,7 +268,7 @@ function ReasoningContent({
 }: ComponentProps<typeof CollapsibleContent> & { streaming?: boolean }) {
   // Colour and size live on ReasoningText: the folded-round path skips this wrapper.
   const shared = cn(
-    "aui-reasoning-content relative overflow-hidden outline-none",
+    "aui-reasoning-content relative min-w-0 overflow-hidden supports-[overflow:clip]:overflow-x-visible supports-[overflow:clip]:overflow-y-clip outline-none",
     "group/collapsible-content ease-out",
     "data-[state=closed]:pointer-events-none",
   );
@@ -330,10 +332,7 @@ function ReasoningText({
       data-slot="reasoning-text"
       data-streaming={streaming ? "" : undefined}
       className={cn(
-        // Same muted colour and size as the header above it, so only the answer is at full
-        // foreground. Flush with the header, no cap and no fade; the thread's own
-        // follow-scroll tracks it while it streams.
-        "aui-reasoning-text relative z-0 pt-4 pb-0 text-sm text-muted-foreground leading-relaxed",
+        "aui-reasoning-text relative z-0 pt-4 pb-0 text-sm text-trace-foreground leading-relaxed",
         "[&_p]:my-0 [&_p+p]:mt-4 [&_ul]:my-4 [&_ol]:my-4 [&_pre]:my-4",
         !virtualized &&
           cn(
@@ -526,34 +525,51 @@ function ReasoningBody({
   );
 }
 
-// The newest lines of a live trace in a fixed box (#11703), clipped at the top rather than an inner
-// scroller, which split the reading anchor across two containers and wrote its own scroll (#11704).
+function useTailFlexBox(capped: boolean, streaming: boolean): boolean {
+  const [flexBox, setFlexBox] = useState(capped);
+  const next = reasoningTailFlexBox({ capped, streaming, previous: flexBox });
+  if (next !== flexBox) {
+    setFlexBox(next);
+  }
+  return next;
+}
+
+// A fixed box (#11703): the newest lines while streaming, the start once finished. Clipped, not an inner
+// scroller, which split the reading anchor across two containers (#11704).
 function ReasoningTail({
-  capped,
-  onShowFull,
+  cappable,
+  expanded,
+  streaming,
+  onExpandedChange,
   children,
 }: {
-  capped: boolean;
-  onShowFull: () => void;
+  streaming: boolean;
+  cappable: boolean;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
   children: ReactNode;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
+  const capped = cappable && !expanded;
+  // Sticky while expanded: an unbounded box cannot measure its cap, and a trace only grows.
   const [overflowing, setOverflowing] = useState(false);
   useLayoutEffect(() => {
     const box = boxRef.current;
     const content = box?.firstElementChild as HTMLElement | null | undefined;
-    if (!capped || !box || !content) {
+    if (!cappable) {
       setOverflowing(false);
       return;
     }
+    if (!capped || !box || !content) return;
     const check = () => setOverflowing(content.offsetHeight > box.clientHeight);
     const observer = new ResizeObserver(check);
     observer.observe(content);
     observer.observe(box);
     check();
     return () => observer.disconnect();
-  }, [capped]);
+  }, [cappable, capped]);
   const clipped = capped && overflowing;
+  const flexBox = useTailFlexBox(capped, streaming);
   return (
     <>
       <div
@@ -562,39 +578,49 @@ function ReasoningTail({
         data-capped={capped ? "" : undefined}
         data-overflowing={clipped ? "" : undefined}
         onFocus={(event) => {
-          // Clipped lines cannot scroll into view: a link focused up there shows the full trace.
+          // Clipped lines cannot scroll into view: a link focused in them expands the trace.
+          const target = event.target.getBoundingClientRect();
+          const box = event.currentTarget.getBoundingClientRect();
           if (
             clipped &&
-            event.target.getBoundingClientRect().top <
-              event.currentTarget.getBoundingClientRect().top
+            (streaming ? target.top < box.top : target.bottom > box.bottom)
           )
-            onShowFull();
+            onExpandedChange(true);
         }}
         className={cn(
+          // The child rule stays on too: it is inert outside a flex box and toggling it restyles every row.
+          cappable && "[&>*]:shrink-0",
+          cappable && flexBox && "flex flex-col",
+          // A mask paints only inside its box: bleed into the side padding so list markers survive.
           capped &&
-            "flex max-h-[min(18rem,40vh)] flex-col justify-end overflow-hidden [&>*]:shrink-0",
+            "-mx-[calc(1.25rem*var(--ui-space-scale,1))] min-w-0 max-h-[min(18rem,40vh)] overflow-hidden px-[calc(1.25rem*var(--ui-space-scale,1))] supports-[overflow:clip]:overflow-x-visible supports-[overflow:clip]:overflow-y-clip",
+          capped && (streaming ? "justify-end" : "justify-start"),
           clipped &&
-            "[mask-image:linear-gradient(to_bottom,transparent,black_3rem)]",
+            (streaming
+              ? "[mask-image:linear-gradient(to_bottom,transparent,black_3rem)]"
+              : "[mask-image:linear-gradient(to_top,transparent,black_3rem)]"),
         )}
       >
         {children}
       </div>
-      {clipped && (
+      {cappable && overflowing && (
         <button
           type="button"
           data-slot="reasoning-show-full"
-          onClick={(event) => {
-            // The button unmounts with the cap: keep keyboard focus on this block's header.
-            if (event.currentTarget === document.activeElement)
-              boxRef.current
-                ?.closest('[data-slot="reasoning-root"]')
-                ?.querySelector<HTMLElement>('[data-slot="reasoning-trigger"]')
-                ?.focus({ preventScroll: true });
-            onShowFull();
-          }}
-          className="mt-2 cursor-pointer font-medium text-muted-foreground text-xs transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          aria-expanded={expanded}
+          onClick={() => onExpandedChange(!expanded)}
+          className="mt-2 inline-flex cursor-pointer items-center gap-1.5 font-medium text-muted-foreground text-xs transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         >
-          Show full thinking
+          {expanded ? "Collapse thinking" : "Expand thinking"}
+          <HugeiconsIcon
+            icon={ChevronDownStandardIcon}
+            aria-hidden={true}
+            className={cn(
+              "size-3.5 shrink-0 transition-transform duration-200 ease-out",
+              // Below the trace, so Collapse points up at what it folds away; -180, not 180, turns a quarter.
+              expanded ? "-rotate-180" : "-rotate-90",
+            )}
+          />
         </button>
       )}
     </>
@@ -792,6 +818,7 @@ const ReasoningGroupBlock = ({
 
   // null until toggled by hand, then it outranks the setting for the round.
   const [override, setOverride] = useState<boolean | null>(null);
+  const [tailExpanded, setTailExpanded] = useState(false);
   const [duration, setDuration] = useState<number>(0);
   const startTimeRef = useRef<number | null>(null);
 
@@ -814,6 +841,7 @@ const ReasoningGroupBlock = ({
     setWasStreaming(isReasoningStreaming);
     if (startsNewReasoningRound(isReasoningStreaming, wasStreaming)) {
       setOverride(null);
+      setTailExpanded(false);
     }
   }
 
@@ -822,6 +850,7 @@ const ReasoningGroupBlock = ({
   if (lastVisibility !== visibility) {
     setLastVisibility(visibility);
     setOverride(null);
+    setTailExpanded(false);
   }
 
   // Whatever the setting says, until this block is toggled by hand.
@@ -833,7 +862,7 @@ const ReasoningGroupBlock = ({
 
   // Fold mode keeps its rounds inline: the lead's box could not hold the rounds folded after it.
   // A closing block keeps the cap it had while open: a hand close must not re-cap a full trace.
-  const cappedNow = !foldLead && reasoningTailCapped({ visibility, override });
+  const cappedNow = !foldLead && reasoningTailCapped({ visibility });
   const [closingCapped, setClosingCapped] = useState(cappedNow);
   if (isOpen && closingCapped !== cappedNow) {
     setClosingCapped(cappedNow);
@@ -914,8 +943,13 @@ const ReasoningGroupBlock = ({
         ref={reasoningContentRef}
       >
         <ReasoningTail
-          capped={capped}
-          onShowFull={() => handleOpenChange(true)}
+          cappable={capped}
+          expanded={tailExpanded}
+          streaming={isReasoningStreaming}
+          onExpandedChange={(expanded) => {
+            setTailExpanded(expanded);
+            if (expanded) handleOpenChange(true);
+          }}
         >
           <ReasoningBody
             transcript={transcript}
@@ -925,7 +959,7 @@ const ReasoningGroupBlock = ({
               messageHasRenderableRenderHtmlTool
             }
             isStreaming={isReasoningStreaming}
-            bounded={capped}
+            bounded={capped && !tailExpanded}
           >
             {children}
           </ReasoningBody>

@@ -67,8 +67,13 @@ from storage.studio_db import (
     get_chat_project,
     get_chat_thread,
     get_chat_message,
+    next_message_created_at,
     list_chat_attachments_page,
     list_chat_projects,
+    list_chat_sidebar_rows,
+    lookup_chat_sidebar_row_ids,
+    SidebarCursorError,
+    SIDEBAR_ROWS_MAX_LIMIT,
     list_chat_legacy_imports,
     list_chat_settings,
     list_chat_messages,
@@ -77,6 +82,7 @@ from storage.studio_db import (
     list_chat_threads,
     remap_chat_thread_document_ids,
     set_chat_project_working_folder,
+    ProjectWorkingFolderConflictError,
     sync_chat_messages,
     update_chat_project,
     update_chat_thread,
@@ -285,6 +291,8 @@ class ChatThreadPatch(BaseModel):
     title: Optional[str] = None
     # Apply only while the row still holds this title, so a rename beats a background rewrite.
     expectedTitle: Optional[str] = None
+    # Title regeneration must not move an old conversation up in Last modified.
+    preserveTitleModifiedAt: bool = False
     # Apply only while this is still the opening user message, so a title from a deleted one is rejected.
     expectedOpeningMessageId: Optional[str] = None
     modelType: Optional[Literal["base", "lora", "model1", "model2"]] = None
@@ -330,11 +338,16 @@ class ChatProject(BaseModel):
     archived: bool = False
     createdAt: int
     updatedAt: int
+    lastActivityAt: Optional[int] = None
 
 
 class ChatProjectWorkingFolder(BaseModel):
     model_config = ConfigDict(extra = "forbid", populate_by_name = True)
     native_path_lease: str = Field(alias = "nativePathLease", min_length = 1)
+
+
+class ChatProjectCreate(ChatProject):
+    nativePathLease: Optional[str] = Field(default = None, min_length = 1)
 
 
 class ChatAgentsMd(BaseModel):
@@ -361,6 +374,47 @@ class ChatThreadListResponse(BaseModel):
 
 class ChatProjectListResponse(BaseModel):
     projects: list[ChatProject]
+
+
+class ChatSidebarRowsRequest(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+
+    archived: bool = False
+    projectId: Optional[str] = None
+    unfiledOnly: bool = False
+    includeIds: Optional[list[str]] = None
+    excludeIds: list[str] = Field(default_factory = list)
+    sort: Literal["updated", "manual"] = "updated"
+    manualOrder: Optional[list[str]] = None
+    limit: int = Field(default = 20, ge = 1, le = SIDEBAR_ROWS_MAX_LIMIT)
+    cursor: Optional[str] = Field(default = None, max_length = 4096)
+
+
+class ChatSidebarRow(BaseModel):
+    """One sidebar row, shaped as the frontend's SidebarItem."""
+
+    id: str
+    type: Literal["single", "compare"]
+    threadIds: list[str]
+    title: str
+    createdAt: int
+    updatedAt: int
+    modifiedAt: Optional[int] = None
+    modelIds: Optional[list[str]] = None
+    isFork: Optional[bool] = None
+    threadTitles: Optional[list[str]] = None
+    projectId: Optional[str] = None
+
+
+class ChatSidebarRowsResponse(BaseModel):
+    rows: list[ChatSidebarRow]
+    nextCursor: Optional[str] = None
+    hasMore: bool
+    total: int
+
+
+class ChatSidebarThreadRowsResponse(BaseModel):
+    rowIdByThreadId: dict[str, str]
 
 
 class ChatMessageListResponse(BaseModel):
@@ -496,6 +550,10 @@ class ChatSettingsPayload(BaseModel):
     # Last-used params per checkpoint id. Deep-merged per key, so patching one
     # model cannot drop another's.
     inferenceParamsByModel: Optional[dict[str, ChatInferenceSettings]] = None
+    # Per model id, keys of the entry above removed before this patch merges; never stored.
+    forgetInferenceParamsByModel: Optional[
+        dict[str, Annotated[list[str], Field(max_length = 64)]]
+    ] = Field(default = None, max_length = 1_000)
     rememberParamsPerModel: Optional[bool] = None
     customPresets: Optional[list[ChatPreset]] = None
     activePreset: Optional[str] = None
@@ -558,6 +616,8 @@ class ChatSettingsPayload(BaseModel):
     # contextPolicy/headroom are the per-request overrides for UNSLOTH_CONTEXT_POLICY and
     # ROLLING_COMPACTION_HEADROOM_RATIO.
     autoCompactEnabled: Optional[bool] = None
+    # Off: a chat or Deep Research run stops once no tab follows it (state/unattended_runs.py).
+    keepRunningWhenTabClosed: Optional[bool] = None
     contextPolicy: Optional[Literal["inherit", "checkpoint", "rolling"]] = None
     compactionHeadroomRatio: Optional[float] = Field(default = None, ge = 0.0, le = 0.9)
 
@@ -671,6 +731,48 @@ def list_threads(
     return ChatThreadListResponse(threads = [thread_from_row(t) for t in threads])
 
 
+@router.post(
+    "/sidebar/rows",
+    response_model = ChatSidebarRowsResponse,
+    response_model_exclude_unset = True,
+)
+def list_sidebar_rows(
+    payload: ChatSidebarRowsRequest, current_subject: str = Depends(get_current_subject)
+):
+    """One page of sidebar rows, compare pairs grouped before the limit."""
+    try:
+        page = list_chat_sidebar_rows(
+            archived = payload.archived,
+            project_id = payload.projectId,
+            unfiled_only = payload.unfiledOnly,
+            include_ids = payload.includeIds,
+            exclude_ids = payload.excludeIds,
+            sort = payload.sort,
+            manual_order = payload.manualOrder,
+            limit = payload.limit,
+            cursor = payload.cursor,
+        )
+    except SidebarCursorError as exc:
+        raise HTTPException(status_code = 400, detail = str(exc)) from exc
+    return ChatSidebarRowsResponse(**page)
+
+
+_SIDEBAR_THREAD_ROWS_MAX = 500
+
+
+@router.get("/sidebar/thread-rows", response_model = ChatSidebarThreadRowsResponse)
+def sidebar_thread_rows(
+    thread_ids: list[str] = Query(default_factory = list),
+    current_subject: str = Depends(get_current_subject),
+):
+    if len(thread_ids) > _SIDEBAR_THREAD_ROWS_MAX:
+        raise HTTPException(
+            status_code = 400,
+            detail = f"At most {_SIDEBAR_THREAD_ROWS_MAX} thread ids per request",
+        )
+    return ChatSidebarThreadRowsResponse(rowIdByThreadId = lookup_chat_sidebar_row_ids(thread_ids))
+
+
 def _missing_project_error(project_id: Optional[str]) -> HTTPException:
     """The row references a project that is gone, whether the check or the write noticed it."""
     return HTTPException(status_code = 404, detail = f"Project {project_id} not found")
@@ -716,6 +818,7 @@ def patch_thread(
 ):
     patch = payload.model_dump(exclude_unset = True)
     expected_title = patch.pop("expectedTitle", None)
+    preserve_title_modified_at = patch.pop("preserveTitleModifiedAt", False)
     expected_opening_message_id = patch.pop("expectedOpeningMessageId", None)
     for field in ("title", "modelType", "modelId", "archived", "createdAt", "updatedAt"):
         if field in patch and patch[field] is None:
@@ -728,6 +831,7 @@ def patch_thread(
             thread_id,
             patch,
             expected_title = expected_title,
+            preserve_title_modified_at = preserve_title_modified_at,
             expected_opening_message_id = expected_opening_message_id,
             settings_write = settings_write,
         )
@@ -903,7 +1007,32 @@ def _remove_thread_rag_data(thread_ids, *, cutoff: "str | None" = None) -> None:
             logger.warning("Could not remove the uploaded documents for %s", thread_id)
 
 
-def _copy_thread_rag_documents(source_thread_id: str, thread_id: str) -> bool:
+def _fork_document_cutoff(
+    source_thread_id: str, branch_message_id: Optional[str], client_now_ms: int
+) -> Optional[str]:
+    """Uploads made once the source moved past the fork point stay behind; None at the tip.
+
+    Message times come from the browser's clock and upload times from this server's, so the
+    cutoff is shifted by the skew the fork request itself shows (its browser ``createdAt``
+    against server now)."""
+    import time
+    from datetime import datetime, timezone
+
+    if not branch_message_id:
+        return None
+    next_at = next_message_created_at(source_thread_id, branch_message_id)
+    if next_at is None:
+        return None
+    skew_ms = int(time.time() * 1000) - client_now_ms
+    return datetime.fromtimestamp((next_at + skew_ms) / 1000, timezone.utc).isoformat()
+
+
+def _copy_thread_rag_documents(
+    source_thread_id: str,
+    thread_id: str,
+    *,
+    created_before: Optional[str] = None,
+) -> bool:
     """Copy the source's uploads into the fork. False when the fork should warn that some were
     left behind."""
     try:
@@ -913,7 +1042,7 @@ def _copy_thread_rag_documents(source_thread_id: str, thread_id: str) -> bool:
         if not rag_db.rag_available():
             return not conversation_archive.thread_has_documents(source_thread_id)
         document_ids, missed = conversation_archive.copy_thread_documents(
-            source_thread_id, thread_id
+            source_thread_id, thread_id, created_before = created_before
         )
         if get_chat_thread(thread_id) is None:
             conversation_archive.delete_thread_documents(thread_id)
@@ -953,6 +1082,7 @@ async def _remove_sandboxes(thread_ids, delete_files: bool) -> "tuple[int, list[
             # with a tool call possibly running in here, so its folder is not this delete's to take.
             if get_chat_thread(thread_id) is not None:
                 continue
+            _drop_file_history(thread_id)
             # A fork clones the message content, cards and all, so the source
             # chat's files are still on screen in a chat the user kept.
             if delete_files and sandbox_is_referenced_elsewhere(thread_id):
@@ -1175,18 +1305,39 @@ def delete_attachment(
 def list_projects(
     include_archived: bool = Query(False), current_subject: str = Depends(get_current_subject)
 ):
+    # Backfill only projects without a recorded root; the rest are ensured where their files are used.
     return ChatProjectListResponse(
         projects = [
-            ChatProject(**(ensure_chat_project_workspace(project["id"]) or project))
+            ChatProject(
+                **{
+                    **(
+                        project
+                        if project.get("rootPath")
+                        else (ensure_chat_project_workspace(project["id"]) or project)
+                    ),
+                    "lastActivityAt": project["lastActivityAt"],
+                }
+            )
             for project in list_chat_projects(include_archived = include_archived)
         ]
     )
 
 
 @router.post("/projects", response_model = ChatProject)
-def save_project(payload: ChatProject, current_subject: str = Depends(get_current_subject)):
+def save_project(payload: ChatProjectCreate, current_subject: str = Depends(get_current_subject)):
+    lease = getattr(payload, "nativePathLease", None)
+    if lease is not None and not is_owner_context():
+        raise HTTPException(status_code = 403, detail = "Only the owner can use a local folder.")
     try:
-        return ChatProject(**upsert_chat_project(payload.model_dump()))
+        project = payload.model_dump(exclude = {"nativePathLease"})
+        if lease is None:
+            return ChatProject(**upsert_chat_project(project))
+        working_folder = _resolve_project_working_folder(lease)
+        return ChatProject(**upsert_chat_project(project, working_folder = working_folder))
+    except HTTPException:
+        raise
+    except ProjectWorkingFolderConflictError as exc:
+        raise HTTPException(status_code = 409, detail = str(exc)) from exc
     except ProjectWorkspaceError as exc:
         # A project is the only thing Unsloth writes to Documents, so only this error and only its own path: the same
         # upsert also opens the database, which lives elsewhere.
@@ -1197,6 +1348,17 @@ def save_project(payload: ChatProject, current_subject: str = Depends(get_curren
             "folder is writable, or set UNSLOTH_STUDIO_PROJECTS_HOME to another "
             "location.",
             event = "chat_history.create_project_workspace_failed",
+            log = logger,
+        ) from exc
+    except Exception as exc:
+        if lease is None:
+            raise
+        # The grant is spent: HTTPException keeps CORS so the webview does not resend it (#13131).
+        raise log_and_http_error(
+            exc,
+            500,
+            "Could not create the project.",
+            event = "chat_history.create_project_with_folder_failed",
             log = logger,
         ) from exc
 
@@ -1276,7 +1438,7 @@ def _resolve_project_working_folder(lease: str) -> tuple[str, tuple[int, int]]:
         ):
             raise HTTPException(
                 status_code = 400,
-                detail = "Studio's own folders cannot be used as a project folder.",
+                detail = "Unsloth's own folders cannot be used as a project folder.",
             )
     if not os.access(path, os.W_OK):
         raise HTTPException(status_code = 400, detail = "The folder is not writable.")
@@ -1846,6 +2008,66 @@ class ChatThreadForkCountsResponse(BaseModel):
     counts: dict[str, int]
 
 
+def _drop_file_history(thread_id: str) -> None:
+    try:
+        from core.inference import file_history
+        file_history.store().delete_chat(thread_id)
+    except Exception:
+        logger.warning("Could not remove the file history of %s", thread_id, exc_info = True)
+
+
+class ChatRewindRequest(BaseModel):
+    # The user messages being rewound, from the chosen one to the tip of the selected branch.
+    turn_ids: list[Annotated[str, Field(min_length = 1, max_length = 256)]] = Field(max_length = 5000)
+    dry_run: bool = False
+    force: bool = False
+
+
+@router.post("/threads/{thread_id}/rewind")
+def rewind_thread_files(
+    thread_id: str,
+    payload: ChatRewindRequest,
+    current_subject: str = Depends(get_current_subject),
+):
+    """Put back the files this chat's tool calls changed during ``turn_ids``. Moving the
+    conversation itself is the client's: it edits the chosen message, which keeps the old branch."""
+    from core.inference import file_history, tools
+    from hub.services.models import account_access
+    from state import active_generations
+
+    if get_chat_thread(thread_id) is None:
+        raise HTTPException(status_code = 404, detail = f"Thread {thread_id} not found")
+    if not payload.dry_run and thread_id in active_generations.active_thread_ids(
+        account_access.account_scope()
+    ):
+        raise HTTPException(
+            status_code = 409, detail = "This chat is still generating. Rewind it once it finishes."
+        )
+
+    def walk(workdir: str):
+        return tools._history_snapshot(tools._snapshot_workdir_files(workdir))
+
+    def busy(workdir: str) -> bool:
+        with tools._calls_lock:
+            return any(os.path.realpath(w) == workdir for w in tools._workdir_calls)
+
+    try:
+        report = file_history.store().rewind(
+            thread_id,
+            payload.turn_ids,
+            walk,
+            dry_run = payload.dry_run,
+            force = payload.force,
+            busy = busy,
+        )
+    except file_history.RewindBusy as exc:
+        raise HTTPException(status_code = 409, detail = str(exc)) from exc
+    if report.undo_turn_id:
+        from core import library
+        library.invalidate_listing()
+    return report.as_dict()
+
+
 @router.post("/threads/{thread_id}/fork", response_model = ChatForkResponse)
 def fork_thread(
     thread_id: str,
@@ -1901,7 +2123,12 @@ def fork_thread(
     warning: Optional[str] = None
     if source.get("openaiCodeExecContainerId") or source.get("anthropicCodeExecContainerId"):
         warning = "Sandbox starts fresh in fork; files from parent are not carried over."
-    if not _copy_thread_rag_documents(thread_id, payload.newThreadId):
+    created_before = _fork_document_cutoff(
+        thread_id, forked.get("forkedFromMessageId"), payload.createdAt
+    )
+    if not _copy_thread_rag_documents(
+        thread_id, payload.newThreadId, created_before = created_before
+    ):
         warning = " ".join(
             filter(None, [warning, "Documents attached to the parent chat were not copied."])
         )

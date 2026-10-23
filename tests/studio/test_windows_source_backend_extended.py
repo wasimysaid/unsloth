@@ -40,16 +40,18 @@ def _run_selector(
         "function Exit-InstallFailure { param($Message) "
         "[Console]::Error.WriteLine($Message); exit 71 }; "
         "$TauriMode=$true; $StudioLocalInstall=$false; $PackageName='unsloth'; "
+        "$VenvDir=$env:TEST_VENV; "
         f"{verifier} "
         + _selector()
-        + (after or "Write-Output ($_unslothReleaseInstallSpec + '|' + $_zooReleaseInstallSpec)")
+        + (after or "Write-Output ($_unslothReleaseInstallSpec + '|' + $_unslothZooInstallSpec)")
     )
-    return subprocess.run(
-        ["pwsh", "-NoProfile", "-NonInteractive", "-Command", script],
-        env = env,
-        capture_output = True,
-        text = True,
-    )
+    with tempfile.TemporaryDirectory() as tmp:
+        return subprocess.run(
+            ["pwsh", "-NoProfile", "-NonInteractive", "-Command", script],
+            env = {**env, "TEST_VENV": tmp},
+            capture_output = True,
+            text = True,
+        )
 
 
 class WindowsExtendedSourceBackendTests(unittest.TestCase):

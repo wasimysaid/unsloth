@@ -4,20 +4,25 @@ This is an opt-in mode on `wasimysaid/unsloth`'s dedicated
 `release/desktop-source-backend` branch. It does **not** change the upstream
 release flow, and it is not `install.sh --local` / `install.ps1 --local` (those
 require a development checkout and Windows checks for `pyproject.toml`).
-The branch records upstream zoo commit `286e49527fb50cf32e6a0632373239a87c0cb565`
+The branch records upstream zoo commit `411a4360c0c6eede28eb447272fc334597886528`
 (observed upstream HEAD at this branch refresh); the workflow requires an
 explicit full SHA value and records the actual selected SHA in each release bundle.
 
-For a future authorized release, create the desktop release tag on the fork as
-usual, then **explicitly** dispatch `.github/workflows/release-desktop.yml`
-against the branch, not the tag or main. For example, after separately
-verifying the tag and the immutable zoo commit:
+A later authorized dispatch requires an existing `studio_version` tag and its
+GitHub release on the fork. To include the newly synced unsloth code, that tag
+must point to the synced branch commit. Reusing an older tag builds the older
+unsloth wheel even when the dispatch branch has newer code. Tag pushes can
+trigger Docker builds, so do not create or push tags during branch preparation.
+
+Dispatch `.github/workflows/release-desktop.yml` against the branch, not the tag
+or main. The following example uses a placeholder version that must be newer
+than the published desktop version. Verify the tag and immutable zoo commit first:
 
 ```sh
 gh workflow run release-desktop.yml --repo wasimysaid/unsloth \
   --ref release/desktop-source-backend \
   -f studio_version=v0.1.52-beta -f source_backend=true \
-  -f zoo_sha=286e49527fb50cf32e6a0632373239a87c0cb565 \
+  -f zoo_sha=411a4360c0c6eede28eb447272fc334597886528 \
   -f draft=true
 ```
 If the source tag's `unsloth` package version differs from its
@@ -25,9 +30,11 @@ If the source tag's `unsloth` package version differs from its
 in source mode this input is an expected **wheel version**, not a PyPI download.
 A mismatched wheel version fails the build before signing.
 
-**Do not run this command just to prepare the branch.** The normal release
-procedure controls draft/publishing, signing approvals and tag creation. In
-source mode the workflow checks out the branch for installer/Tauri code, checks
+**Do not run this command just to prepare the branch.** `draft=true` builds and
+validates artifacts without uploading them to the release. It does not create
+a draft GitHub release. The normal release procedure controls publishing,
+signing approvals, and tag creation. In source mode the workflow checks out
+the branch for installer/Tauri code, checks
 out the named release tag separately for the unsloth wheel and checks out the
 exact zoo SHA for its wheel. It records the two source SHAs and wheel SHA-256s
 in the bundled `source-backend/manifest.json`. Each build matrix leg builds its
@@ -40,9 +47,13 @@ packages continue to follow the usual platform installer.
 A production app whose bundle has this manifest selects the pinned wheel pair
 for both first install/repair and in-app `studio update`, including no-torch
 updates. A missing/invalid source bundle fails rather than falling back to
-PyPI. The source bundle lives in the app's Tauri resources and therefore follows
-app updates; keep later app updates on this fork's source-backed channel. The
-normal release (source_backend=false, the default) continues to use the tagged
+PyPI. The source bundle lives in the app's Tauri resources and is replaced by
+app updates. This branch still uses the upstream desktop updater endpoint, not
+a separate fork channel. Installing an upstream app update can therefore
+replace the source-backed app with a normal PyPI-backed app. To keep testing
+the fork's pinned wheels, install another authorized source-backed fork build
+instead of accepting an upstream app update. The normal release
+(source_backend=false, the default) continues to use the tagged
 code and normal PyPI backend semantics; manually using `--local` still uses the
 checkout and the existing zoo git route. Do not dispatch this workflow or
 publish a release as part of branch preparation.
