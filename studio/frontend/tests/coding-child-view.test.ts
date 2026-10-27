@@ -197,6 +197,29 @@ test("uninspected child activity stays complete across selection and close/reope
   h.view.detach();
 });
 
+test("child saved results retain their invocation's arguments", async () => {
+  const h = harness();
+  const tool: NonNullable<CodingRow["tool"]> = {
+    invocation_id: "search-invocation", call_id: "search-call", request_id: null,
+    name: "search_paths_by_glob", title: "Find files", status: "saved",
+    argument: "**/*.rs", output: "", clipped: false, quiet: false,
+    row_group: null, display_kind: "file_path_search",
+  };
+  h.setRows([
+    { id: "call", entry_id: "call-entry", kind: "tool", tool },
+    { id: "result", entry_id: "result-entry", kind: "tool",
+      tool: { ...tool, argument: null, status: "completed", output: "src/main.rs" } },
+  ]);
+  await h.view.capture([child()], []);
+  await h.view.open(child());
+  const rows = h.view.getSnapshot().inspection!.rows;
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].tool?.argument, "**/*.rs");
+  assert.equal(rows[0].tool?.output, "src/main.rs");
+  assert.equal(rows[0].tool?.status, "completed");
+  h.view.detach();
+});
+
 test("child single saved entry is retained in full even when it exceeds the window", async () => {
   const h = harness();
   h.setRows([

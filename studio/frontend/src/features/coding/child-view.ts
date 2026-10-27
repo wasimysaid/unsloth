@@ -210,7 +210,16 @@ export function createChildView(
             prior.tool?.invocation_id === row.tool.invocation_id),
       );
       if (index < 0) rows.push(row);
-      else rows[index] = { ...row, id: rows[index].id };
+      else {
+        const prior = rows[index];
+        rows[index] = {
+          ...row,
+          id: prior.id,
+          ...(row.tool && !row.tool.argument && prior.tool?.argument
+            ? { tool: { ...row.tool, argument: prior.tool.argument } }
+            : {}),
+        };
+      }
     }
     update(
       {
