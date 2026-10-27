@@ -12,13 +12,8 @@ import {
   resolvedFamilyOverrideSelection,
   taskOpaqueArtifactSupportsFamilyOverride,
 } from "../src/features/model-picker/components/model-selector/family-override.ts";
-import { readSrc, registerBundlerResolver } from "./helpers/kit.ts";
-
-// diffusion-pipeline-load-target.ts imports through the `@/` alias.
-registerBundlerResolver();
-const { diffusionPipelineLoadTarget, diffusionStagingEntries } = await import(
-  "../src/lib/diffusion-pipeline-load-target.ts"
-);
+import { diffusionPipelineLoadTarget, diffusionStagingEntries } from "../src/lib/diffusion-pipeline-load-target.ts";
+import { readSrc } from "./helpers/kit.ts";
 
 test("an explicit family selects exactly one structurally loadable artifact kind", () => {
   for (const [family, modular, want] of [
@@ -63,10 +58,19 @@ test("family options follow the backend registry, deduplicated, and every backen
     ["flux.1", "FLUX.1"],
   ]);
   const root = new URL("../../backend/core/inference/", import.meta.url);
-  const names = ["diffusion_families.py", "video_families.py"].flatMap((f) =>
-    [...readFileSync(new URL(f, root), "utf8").matchAll(/^\s+name = "([^"]+)"/gm)].map((m) => m[1]),
-  );
+  const names = ["diffusion_families.py", "video_families.py"].flatMap((f) => {
+    const source = readFileSync(new URL(f, root), "utf8");
+    const constant = (key: string) => {
+      const value = source.match(new RegExp(`^${key} = "([^"]+)"$`, "m"));
+      assert.ok(value, `${f}: ${key} is not a family-name string constant`);
+      return value[1];
+    };
+    return [
+      ...source.matchAll(/^\s+name = (?:"([^"]+)"|([A-Z][A-Z0-9_]*),$)/gm),
+    ].map(([, literal, key]) => literal ?? constant(key));
+  });
   assert.ok(names.includes("flux.1") && names.includes("ltx-2"));
+  assert.ok(names.includes("cosmos3-nano") && names.includes("cosmos3-edge"));
   const unlabeled = familyOverrideOptions(names).slice(1).filter(([value, label]) => value === label);
   assert.deepEqual(unlabeled, []);
 });
@@ -109,11 +113,11 @@ for (const page of ["features/images/images-page.tsx", "features/video/video-pag
       "displayRepoId: l.displayRepoId",
       "opaqueKind={opaqueKind}",
       "loadedModelIdOverride={selectorModelId}",
+      "diffusionStagingEntries(plan.entries, repoId, opts)",
       "!pipelineTarget.onDevice",
     ]) {
       assert.ok(text.includes(needle), needle);
     }
-    assert.match(text, /diffusionStagingEntries\(plan\.entries, repoId, \{\s*\.\.\.opts,/);
     if (page.includes("images")) assert.ok(text.includes("downloadOnly ? currentLoadAdvanced(repoId, false)"));
   });
 }

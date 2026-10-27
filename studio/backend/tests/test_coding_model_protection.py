@@ -189,7 +189,7 @@ def test_real_llama_lower_owner_guards_precede_any_destructive_side_effect(opera
     assert kw.coding_model_protection_count(backend) == 1
 
 
-@pytest.mark.parametrize("operation", ["load", "unload", "cancel", "shutdown", "locked-shutdown", "cleanup"])
+@pytest.mark.parametrize("operation", ["load", "unload", "cancel", "respawn", "shutdown", "locked-shutdown", "cleanup"])
 def test_real_orchestrator_lower_owner_guards_precede_worker_mutation(operation):
     backend = InferenceOrchestrator.__new__(InferenceOrchestrator)
     backend.active_model_name = "org/A"
@@ -198,6 +198,7 @@ def test_real_orchestrator_lower_owner_guards_precede_worker_mutation(operation)
         "load": lambda: backend.load_model(None),
         "unload": lambda: backend.unload_model("org/A"),
         "cancel": lambda: backend.cancel_load("org/A"),
+        "respawn": backend._shutdown_before_respawn,
         "shutdown": backend._shutdown_subprocess,
         "locked-shutdown": lambda: backend._shutdown_subprocess_locked(1),
         "cleanup": backend._cleanup,
@@ -258,6 +259,27 @@ def test_arbiter_cannot_handoff_a_protected_chat_even_with_forceful_eviction(mon
     kw.release_coding_model("owner")
     arb.acquire_for(arb.DIFFUSION)
     assert calls == ["alongside", "evict"]
+
+
+@pytest.mark.parametrize("resident_order", [(arb.DIFFUSION, arb.CHAT), (arb.CHAT, arb.DIFFUSION)])
+def test_arbiter_protects_parked_chat_before_evicting_any_resident(monkeypatch, resident_order):
+    backend = FakeLlama()
+    protect("owner", backend)
+    resident = dict.fromkeys(resident_order)
+    monkeypatch.setattr(arb, "_owner", arb.DIFFUSION)
+    monkeypatch.setattr(arb, "_residents", dict(resident))
+    calls = []
+    for name in resident_order:
+        monkeypatch.setitem(arb._EVICTORS, name, lambda name = name: calls.append(name))
+    assert_protected(lambda: arb.acquire_for(arb.VIDEO))
+    assert calls == []
+    assert arb.current_owner() == arb.DIFFUSION
+    assert arb.residents() == resident
+    assert kw.coding_model_protection_count(backend) == 1
+    kw.release_coding_model("owner")
+    arb.acquire_for(arb.VIDEO)
+    assert calls == list(resident_order)
+    assert arb.residents() == {arb.VIDEO: None}
 
 
 def test_forced_primary_and_extra_route_guards_refuse_before_cancelling(monkeypatch):
@@ -367,6 +389,33 @@ def test_empty_admission_disables_force_and_publishes_before_unlock(admission, m
     assert acquire(force_reload = True, force_cancel_active = True, alongside = True).backend is primary
     assert observed == ["loaded", "held"]
     assert not kw._load_lock.locked() and not kw._lifecycle_lock.locked()
+
+
+@pytest.mark.parametrize("background", [False, True])
+def test_tracked_non_evicting_load_preserves_upstream_kwargs_and_warning_context(monkeypatch, background):
+    response = {"loaded": True}
+    external_cancel = threading.Event()
+    observed = []
+
+    async def load(request, fastapi_request, subject, **kwargs):
+        assert kwargs["allow_gpu_owner_eviction"] is False
+        assert kwargs["cache_environment"] == {"HF_HOME": "/isolated-cache"}
+        assert kwargs["load_cancel_event"] is inf._running_load_attempt.cancel_event
+        assert not kwargs["load_cancel_event"].is_set()
+        assert inf._load_warnings_reach_user.get() is (not background)
+        observed.append(subject)
+        return response
+
+    monkeypatch.setattr(inf, "_load_model_impl", load)
+    assert asyncio.run(inf._run_tracked_load_model_impl(
+        LoadRequest(model_path = "org/A"), None, "subject",
+        allow_gpu_owner_eviction = False,
+        impl_kwargs = {"cache_environment": {"HF_HOME": "/isolated-cache"}, "load_cancel_event": external_cancel},
+        background = background,
+    )) is response
+    assert observed == ["subject"]
+    assert inf._running_load_attempt is None
+    assert inf._load_warnings_reach_user.get() is False
 
 
 def test_failed_admission_keeps_existing_hold_and_never_publishes_new_owner(admission, monkeypatch):

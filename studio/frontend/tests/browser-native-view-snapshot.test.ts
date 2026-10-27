@@ -110,6 +110,16 @@ const { currentEntry, useBrowserStore } = await import("../src/features/browser/
 const { refreshCoveredPage, startNativeViews } = await import(
   "../src/features/browser/native-view.ts"
 );
+const { cornerInsetScope, cornerInsets } = await import(
+  "../src/lib/toast-offset.ts"
+);
+const insetVars = new Map<string, string>();
+cornerInsetScope({
+  style: {
+    setProperty: (name: string, value: string) => insetVars.set(name, value),
+    removeProperty: (name: string) => insetVars.delete(name),
+  },
+} as unknown as HTMLElement);
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
 // apply overlay mutations before their scheduled frame
@@ -233,6 +243,30 @@ test("tooltips along the toolbar capture the page once, and it returns when the 
   }
 });
 
+test("the dialog the browser opens in over compare, projects and phones leaves its page live", async () => {
+  const stop = startNativeViews();
+  try {
+    useBrowserStore.getState().openUrl("https://example.org/overlay", { newTab: true });
+    await frame();
+    await frame();
+    const tabId = useBrowserStore.getState().activeTabId;
+    const captures = calls.filter(({ command }) => command === "browser_capture").length;
+    overlays.push({
+      getBoundingClientRect: () => rect(0, 0, 1000, 800),
+      closest: () => null,
+      querySelector: (selector: string) => (selector.startsWith("[data-native-page") ? placeholder : null),
+    });
+    await frame();
+    await frame();
+    const lastShow = calls.filter(({ command }) => command === "browser_view_show").at(-1)?.args;
+    assert.deepEqual([lastShow?.tabId, lastShow?.parked], [tabId, undefined], "shown, not parked");
+    assert.equal(calls.filter(({ command }) => command === "browser_capture").length, captures, "nothing is captured");
+  } finally {
+    stop();
+    overlays.length = 0;
+  }
+});
+
 test("a capture that never lands keeps the page on screen instead of parking it blank, and tries again", async () => {
   const stop = startNativeViews();
   try {
@@ -346,24 +380,27 @@ test("toasts move left of a page that sits beside the Run settings panel", async
   try {
     pageBox = rect(500, 100, 500, 600);
     await frame();
-    assert.equal(rootVars.get("--studio-browser-page-inset"), "500px");
+    assert.equal(insetVars.get("--studio-browser-page-inset"), "500px");
 
     // ignore pages away from the window edge because they do not constrain toasts
     pageBox = rect(400, 100, 300, 600);
     await frame();
-    assert.equal(rootVars.has("--studio-browser-page-inset"), false);
+    assert.equal(insetVars.has("--studio-browser-page-inset"), false);
 
     // include the 300px Run settings panel between the page and window edge
-    rootVars.set("--studio-chat-settings-inset", "300px");
+    cornerInsets.style.setProperty("--studio-chat-settings-inset", "300px");
     await frame();
-    assert.equal(rootVars.get("--studio-browser-page-inset"), "600px");
+    assert.equal(insetVars.get("--studio-browser-page-inset"), "600px");
 
     // omit the inset when no toast column fits; an overlapping toast will hide the page instead
     pageBox = rect(200, 100, 500, 600);
     await frame();
-    assert.equal(rootVars.has("--studio-browser-page-inset"), false);
+    assert.equal(insetVars.has("--studio-browser-page-inset"), false);
+    assert.equal(rootVars.size, 0, "the insets reach their consumers, never <html>");
   } finally {
     stop();
+    cornerInsets.style.removeProperty("--studio-chat-settings-inset");
+    cornerInsets.style.removeProperty("--studio-browser-page-inset");
     rootVars.clear();
     pageBox = rect(500, 100, 500, 600);
   }
@@ -690,6 +727,43 @@ test("a native page begun beside a temporary chat keeps it through a redirect an
   } finally {
     useChatRuntimeStore.getState().setIncognito(false);
     stop();
+  }
+});
+
+test("a temporary chat's hidden page stays temporary when it navigates while another chat is shown", async () => {
+  const { useChatRuntimeStore } = await import("@/features/chat");
+  const runtime = useChatRuntimeStore.getState();
+  const store = useBrowserStore.getState();
+  const g = globalThis as { nativeViewListener?: (event: { payload: unknown }) => void; nativeViewVisits?: unknown };
+  const shown = store.chat;
+  runtime.setIncognito(true);
+  store.showChat("single:temporary-hidden");
+  store.openUrl("https://private.example/");
+  const tabId = useBrowserStore.getState().activeTabId as string;
+  const stop = startNativeViews();
+  try {
+    await frame();
+    const visits: { url: string; temporary: boolean }[] = [];
+    g.nativeViewVisits = visits;
+    const load = (url: string, loading: boolean) =>
+      g.nativeViewListener?.({ payload: { kind: "load", tabId, url, loading } });
+    load("https://private.example/", true);
+    load("https://private.example/", false);
+    store.showChat("single:ordinary-shown");
+    runtime.setIncognito(false);
+    await frame();
+    assert.ok(useBrowserStore.getState().tabs.some((tab) => tab.id === tabId));
+    load("https://private.example/next", true);
+    load("https://private.example/next", false);
+    assert.deepEqual(visits, [
+      { url: "https://private.example/", temporary: true },
+      { url: "https://private.example/next", temporary: true },
+    ]);
+  } finally {
+    runtime.setIncognito(false);
+    delete g.nativeViewVisits;
+    stop();
+    useBrowserStore.getState().showChat(shown);
   }
 });
 

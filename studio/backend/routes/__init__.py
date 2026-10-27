@@ -30,6 +30,7 @@ _EXPORTS = {
     "research_runs_router": ("research_runs", "router"),
     "chat_generation_runs_router": ("chat_generation_runs", "router"),
     "youtube_router": ("youtube", "router"),
+    "openai_fine_tuning_router": ("openai_fine_tuning", "router"),
 }
 __all__ = list(_EXPORTS)
 

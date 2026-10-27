@@ -34,9 +34,7 @@ from ..test_diffusion_backend import fake_runtime as _fake_runtime
 def fake_runtime(_fake_runtime, monkeypatch):
     from utils import hardware
 
-    # The pipeline/torch fixture is CPU-only, so device policy must see that same
-    # host. A real nvidia-smi probe can otherwise consume the entire 10s load
-    # barrier before the fake pipeline is reached on a shared GPU machine.
+    # Match the CPU-only pipeline fixture instead of probing the shared host's GPUs.
     monkeypatch.setattr(hardware, "get_device", lambda: hardware.DeviceType.CPU)
 
 
@@ -298,7 +296,6 @@ def test_unload_does_not_cancel_foreign_generation_started_after_route_check(
     monkeypatch.setattr(gpu_arbiter, "_owner", gpu_arbiter.DIFFUSION)
     monkeypatch.setattr(gpu_arbiter, "_owner_account", accounts[unloader].account_id)
     monkeypatch.setattr(diffusion_engine_router, "get_active_diffusion_engine", lambda: backend)
-    # Replace only the model-dependent surface; reservation, cancellation and teardown are real.
     monkeypatch.setattr(
         backend,
         "status",

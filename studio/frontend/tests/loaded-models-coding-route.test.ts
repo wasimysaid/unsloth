@@ -3,7 +3,8 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import ts from "typescript";
+import ts from "@typescript/typescript6";
+import { CHAT_SETTINGS_INSET_VAR, COMPOSER_CLEARANCE_VAR, cornerInsetScope } from "../src/lib/toast-offset.ts";
 import { readSrc } from "./helpers/kit.ts";
 import { stubJsxRuntime, type StubElement } from "./helpers/module-stubs.ts";
 
@@ -67,7 +68,9 @@ function provider(desktop: boolean) {
     shouldUseCustomWindowTitlebar: () => false,
     shouldUseNativeMacWindowTitlebar: () => false,
     Z_LAYER: { OVERLAY_STACK: 1 },
-    CHAT_SETTINGS_INSET_VAR: "--chat-settings-inset",
+    CHAT_SETTINGS_INSET_VAR,
+    COMPOSER_CLEARANCE_VAR,
+    cornerInsetScope,
     WebUpdateBanner: "WebUpdateBanner",
     LlamaUpdateBanner: "LlamaUpdateBanner",
     DownloadManagerPanel: "DownloadManagerPanel",
