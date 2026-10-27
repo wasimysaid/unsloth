@@ -11,6 +11,9 @@ from __future__ import annotations
 import json
 import time
 
+from coding_run_scenarios import unfold_activity
+from coding_ui import expect_connected, expect_opened, opened_id, saved_row
+
 RETENTION_NS = 30 * 60 * 1_000_000_000
 
 
@@ -18,7 +21,7 @@ def run_retirement_scenarios(page, context, base, provider, first, second_id,
                              report, scenario, snapshot):
     from playwright.sync_api import expect
 
-    conversation = page.get_by_test_id("coding-conversation-id").inner_text()
+    conversation = opened_id(page)
     headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')")}
     clock_url = base + "/api/coding-acceptance/retention-clock"
     evidence = report.setdefault("retirement", {"kind": "controlled-clock-real-native-ownership", "clock_steps": []})
@@ -44,13 +47,13 @@ def run_retirement_scenarios(page, context, base, provider, first, second_id,
             page.wait_for_timeout(50)
 
     def switch(identifier):
-        button = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text=identifier)
+        button = saved_row(page, identifier)
         if not button.is_visible():
-            page.get_by_role("button", name="Toggle Sidebar", exact=True).click()
+            page.get_by_role("button", name="Toggle sidebar", exact=True).click()
         expect(button).to_be_visible(timeout=60000)
         button.click()
-        expect(page.get_by_test_id("coding-conversation-id")).to_have_text(identifier, timeout=60000)
-        expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+        expect_opened(page, identifier)
+        expect_connected(page)
 
     # Clock controls are authenticated even in the isolated acceptance composition.
     unauthenticated = context.request.post(clock_url, data={"advance_ns": 0})
@@ -117,21 +120,23 @@ def run_retirement_scenarios(page, context, base, provider, first, second_id,
     # Deliberate reopen reuses the same history and canonical project despite the
     # isolated saved ancestor distrust. No prompt or work is replayed.
     switch(conversation)
-    expect(page.get_by_test_id("coding-reopened")).to_contain_text("no work automatically resumed")
+    # No reopen notice exists; the restored view shows nothing running and no work.
     expect(page.get_by_test_id("coding-run-status")).to_have_text("Completed", timeout=60000)
+    expect(page.get_by_test_id("coding-working")).to_have_count(0)
     expect(page.get_by_test_id("coding-transcript")).to_contain_text("RETIREMENT_NATIVE_COMPLETED", timeout=60000)
-    expect(page.get_by_test_id("coding-canonical-cwd")).to_have_text(str(first))
+    # The footer shows the folder name; its title is the canonical cwd.
+    expect(page.get_by_test_id("coding-canonical-cwd")).to_have_attribute("title", str(first))
+    unfold_activity(page)
     row = page.locator('[data-testid="coding-tool-row"][data-call-id="retirement-write"]')
     expect(row).to_have_count(1)
-    expect(row).not_to_contain_text(" · running")
-    expect(row.locator("summary")).to_contain_text("completed")
+    expect(row).to_have_attribute("data-tool-status", "completed")
     provider.assert_no_request()
     snapshot(page, "retirement-desktop-reopened")
     page.set_viewport_size({"width": 390, "height": 844})
     snapshot(page, "retirement-narrow-reopened")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.set_viewport_size({"width": 1440, "height": 1000})
-    scenario("A6-retirement-history-trust-reopen", "Same native ID/canonical folder/history and completed file effect restored with non-persisting effective trust; no automatic provider continuation; reopened notice inspected at 1440x1000 and 390x844")
+    scenario("A6-retirement-history-trust-reopen", "Same native ID/canonical folder/history and completed file effect restored with non-persisting effective trust; no automatic provider continuation; reopened view inspected at 1440x1000 and 390x844")
 
     # Projection-only HTTP failure fixture: never claim it executed native cleanup.
     # Native failure tests separately prove retained ownership and retry semantics.
@@ -139,11 +144,11 @@ def run_retirement_scenarios(page, context, base, provider, first, second_id,
     failure = "Idle cleanup failed. Resources may still be owned; inspect native diagnostics before retrying."
     open_url = base + f"/api/coding/conversations/{conversation}/open"
     page.route(open_url, lambda route: route.fulfill(status=502, content_type="application/json", body=json.dumps({"detail": failure})), times=1)
-    saved_button = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text=conversation)
+    saved_button = saved_row(page, conversation)
     saved_button.focus()
     saved_button.press("Enter")
     expect(page.get_by_test_id("coding-opening-error")).to_contain_text(failure, timeout=60000)
-    expect(page.get_by_test_id("coding-conversation-id")).to_have_text(second_id)
+    expect_opened(page, second_id)
     snapshot(page, "retirement-desktop-cleanup-error")
     page.set_viewport_size({"width": 390, "height": 844})
     snapshot(page, "retirement-narrow-cleanup-error")

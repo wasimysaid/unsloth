@@ -15,8 +15,7 @@ export const goalActionLabels: Record<GoalAction, string> = {
 /** A completed ordinary request or a model claim never verifies a goal. */
 export function codingGoalLabel(state: CodingRunState): string {
   const goal = state.native?.goal;
-  if (state.connection !== "connected" || state.recovering)
-    return "Goal state unconfirmed";
+  if (state.connection !== "connected") return "Goal state unconfirmed";
   if (!goal) return "No autonomous goal";
   if (goal.phase === "complete")
     return goal.completion
@@ -35,7 +34,7 @@ export function goalActionDisabledReason(
   state: CodingRunState,
   action: GoalAction,
 ): string | null {
-  if (state.connection !== "connected" || state.recovering)
+  if (state.connection !== "connected")
     return "Wait for a connected, reconstructed native goal state.";
   if (state.goalChanging)
     return "A goal action is awaiting native admission. Stop remains available.";

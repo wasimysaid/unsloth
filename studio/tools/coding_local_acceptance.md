@@ -81,7 +81,7 @@ Launcher isolates `HOME`, `MIMIR_CODING_AGENT_DIR`, `UNSLOTH_STUDIO_HOME`, and H
 
 ## Required browser checks
 
-Actual rendered folder selection, native conversation/model refresh/selection, cold load UI, real native write_file/shell/read_file, exact call/invocation identities, structured file-change profile and disk hash. The shell requests a20-second sleep to create an actual inference gap. Owner hold and destructive unload409 must be observed while native shell is running. Exact native completion must release protection before ordinary `/v1` inference.
+Native conversation creation through the authenticated API (choosing a folder in the UI no longer creates one, and the landing composer would send a prompt first), opened from its rendered saved sidebar row; rendered model refresh/selection, cold load UI, real native write_file/shell/read_file, exact call/invocation identities, structured file-change profile and disk hash. The shell requests a20-second sleep to create an actual inference gap. Owner hold and destructive unload409 must be observed while native shell is running. Exact native completion must release protection before ordinary `/v1` inference.
 
 Busy scenario selects the pinned alternate identity while the main model remains resident. Require native failed state, actionable busy UI, explicit empty-configuration retry, no prompt replay, resident PID unchanged and zero holds. Restore original future selection without another prompt.
 

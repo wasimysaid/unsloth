@@ -35,6 +35,7 @@ from urllib.parse import urlparse
 import zlib
 
 from coding_provider_fixture import ProviderFixture
+from coding_ui import create_and_open, enter_plan_mode, leave_plan_mode, open_saved
 
 
 SKILL = "refresh-visual"
@@ -248,23 +249,15 @@ def main() -> int:
                 expect(page.get_by_test_id("coding-project-chooser")).to_be_visible()
                 scenario("real-auth", "Unauthenticated API rejected and route redirected; production password login accepted")
                 stage("project-open")
-                page.get_by_role("button", name="Choose project folder", exact=True).click()
-                expect(page.get_by_test_id("coding-browsed-path")).to_be_visible()
-                page.get_by_label("Host folder path", exact=True).fill(str(project))
-                page.get_by_role("button", name="Browse", exact=True).click()
-                expect(page.get_by_test_id("coding-browsed-path")).to_have_text(str(project))
-                with page.expect_response(lambda response: response.url == base + "/api/coding/conversations" and response.request.method == "POST") as opened:
-                    page.get_by_role("button", name="Open project", exact=True).click()
-                assert opened.value.status == 201, opened.value.text()
-                conversation = opened.value.json()["id"]
+                # Choosing a folder no longer creates a conversation and the landing
+                # composer would send a prompt; the idle conversation this scenario
+                # needs is created natively and opened from the saved sidebar row.
+                created, _ = create_and_open(page, context, base, headers, project)
+                conversation = created["id"]
                 report["conversation_id"] = conversation
                 headers["X-Mimir-Runtime-Generation"] = str(api("get", "/api/coding/runtime")["generation"])
-                expect(page.get_by_test_id("coding-opened-conversation")).to_be_visible()
-                expect(page.get_by_role("radio", name="Build", exact=True)).to_be_enabled()
-                page.get_by_test_id("coding-session-details").click()
-                expect(page.get_by_test_id("coding-conversation-id")).to_have_text(conversation)
+                expect(page.get_by_test_id("coding-canonical-cwd")).to_have_attribute("title", str(project))
                 snapshot("desktop-session")
-                page.keyboard.press("Escape")
                 product = [child for child in psutil.Process(server.pid).children()
                            if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
                 assert len(product) == 1
@@ -274,19 +267,23 @@ def main() -> int:
                 prompt = page.get_by_label("Coding prompt", exact=True)
                 transcript = page.get_by_test_id("coding-transcript")
                 stage("definitive-mode-clicks")
-                prompt.fill("Editable draft é 😀")
+                # Plan mode is entered with the native /plan command (it consumes the
+                # prompt) and left with the chip's "Leave plan mode" control, which
+                # must keep the draft.
                 before = network_counts(report["browser_requests"], conversation)
-                for mode in ("Plan", "Build", "Plan", "Build"):
-                    with page.expect_response(lambda response: response.url == base + prefix + "/mode" and response.request.method == "POST") as changed:
-                        page.get_by_role("radio", name=mode, exact=True).click()
-                    assert changed.value.ok, changed.value.text()
-                    expect(page.get_by_role("radio", name=mode, exact=True)).to_be_checked()
+                for _ in range(2):
+                    planned = enter_plan_mode(page, base, conversation)
+                    assert planned.ok, planned.text()
+                    expect(prompt).to_be_editable()
+                    prompt.fill("Editable draft é 😀")
+                    built = leave_plan_mode(page, base, conversation)
+                    assert built.ok, built.text()
                     expect(prompt).to_be_editable()
                     expect(prompt).to_have_value("Editable draft é 😀")
                 page.wait_for_timeout(5500)
                 after = network_counts(report["browser_requests"], conversation)
-                assert after == before, f"Definitive mode clicks reloaded browser streams/history: {before} -> {after}"
-                scenario("mode-no-reconnect", {"before": before, "after": after, "clicks": 4, "draft_retained": True, "fallback_observation_ms": 5500, "timing_claim": False})
+                assert after == before, f"Definitive mode changes reloaded browser streams/history: {before} -> {after}"
+                scenario("mode-no-reconnect", {"before": before, "after": after, "transitions": 4, "plan_entry": "/plan command", "build_entry": "Leave plan mode", "draft_retained_across": "Leave plan mode", "fallback_observation_ms": 5500, "timing_claim": False})
 
                 stage("real-mention-catalogs")
                 skills = api("get", prefix + "/skills")["skills"]
@@ -296,16 +293,18 @@ def main() -> int:
                 report["catalogs"] = {"skills": skills, "subagents": agents}
                 prompt.fill("é 😀 @")
                 menu = page.get_by_test_id("coding-mention-list")
-                expect(menu.get_by_role("group", name="Skills", exact=True)).to_be_visible()
-                expect(menu.get_by_role("group", name="Subagents", exact=True)).to_be_visible()
+                skill_option = menu.locator(f'[data-mention-kind="skill"][data-mention-name="{SKILL}"]')
+                agent_option = menu.locator('[data-mention-kind="subagent"][data-mention-name="explore"]')
+                expect(skill_option).to_be_visible()
+                expect(agent_option).to_be_visible()
                 snapshot("desktop-mentions")
                 prompt.fill("é 😀 @refresh")
-                expect(menu.locator('[data-mention-name="refresh-visual"]')).to_be_visible()
+                expect(skill_option).to_have_attribute("aria-selected", "true")
                 prompt.press("Enter")
                 expect(prompt).to_have_value(f"é 😀 @{SKILL} ")
                 prompt.press("End")
                 prompt.type("@explore")
-                expect(menu.locator('[data-mention-name="explore"]')).to_be_visible()
+                expect(agent_option).to_have_attribute("aria-selected", "true")
                 prompt.press("Enter")
                 expected_text = f"é 😀 @{SKILL} @explore Inspect the image, then write and read refresh-result.txt."
                 prompt.press("End")
@@ -313,10 +312,10 @@ def main() -> int:
                 expect(prompt).to_have_value(expected_text)
                 expect(page.get_by_label("Selected mentions", exact=True)).to_contain_text("@explore")
                 provider.assert_no_request()
-                scenario("real-mention-menu", {"groups": ["Skills", "Subagents"], "selected": [SKILL, "explore"], "utf8_prefix": "é 😀 "})
+                scenario("real-mention-menu", {"kinds": ["skill", "subagent"], "selected": [SKILL, "explore"], "utf8_prefix": "é 😀 "})
 
                 stage("large-image-native-admission")
-                page.get_by_label("Coding image files", exact=True).set_input_files({"name": "refresh-large.png", "mimeType": "image/png", "buffer": png})
+                page.get_by_label("Image files", exact=True).set_input_files({"name": "refresh-large.png", "mimeType": "image/png", "buffer": png})
                 expect(page.get_by_role("button", name="Inspect refresh-large.png", exact=True)).to_be_visible()
                 expect(prompt).to_be_editable()
                 snapshot("desktop-ready")
@@ -355,7 +354,8 @@ def main() -> int:
                 request.text(FINAL)
                 expect(page.get_by_test_id("coding-run-status")).to_have_text("Completed")
                 expect(transcript).to_contain_text(FINAL)
-                expect(transcript).to_contain_text("1 image sent with this prompt")
+                user_turn = transcript.locator("[data-native-entry]").filter(has_text=expected_text)
+                expect(user_turn).to_contain_text("1 image")
                 capture = native_capture(base, headers, conversation)
                 native_state = capture["state"]
                 report["terminal_state"] = native_state
@@ -372,7 +372,11 @@ def main() -> int:
                     line = row.locator("button[aria-expanded][aria-controls]")
                     if line.get_attribute("aria-expanded") != "true":
                         line.click()
-                    expect(row.get_by_label("Actual public tool output", exact=True)).to_contain_text(expected)
+                    # An expanded write_file row shows its native file-change report
+                    # instead of raw output.
+                    body = (row.get_by_test_id("coding-file-changes") if call == "refresh-write"
+                            else row.get_by_label("Tool output", exact=True))
+                    expect(body).to_contain_text(expected)
                 snapshot("desktop-expanded-tools")
                 scenario("native-tools-terminal-group", {"request_id": ack["request_id"], "group_summary": toggle.inner_text(), "write_output": write_output, "read_output": read_output, "file_sha256": sha256(project / "refresh-result.txt")})
 
@@ -380,11 +384,11 @@ def main() -> int:
                 provider_count = len(provider.pending)
                 page.get_by_test_id("coding-model-trigger").click()
                 expect(page.get_by_test_id("coding-model-picker")).to_be_visible()
-                page.get_by_role("button", name="Choose coding model", exact=True).click()
-                expect(page.get_by_test_id("coding-model-picker")).to_contain_text("Deterministic protocol (not a live model)")
+                page.get_by_role("button", name="Choose model", exact=True).click()
+                expect(page.get_by_test_id("coding-model-list")).to_contain_text("Deterministic protocol (not a live model)")
                 snapshot("desktop-model-picker")
-                model_geometry = page.locator("button[data-model]").evaluate_all("""rows => rows.map(row => {
-                    const label = row.querySelector('span')?.firstElementChild;
+                model_geometry = page.get_by_test_id("coding-model-list").locator("button[data-model]").evaluate_all("""rows => rows.map(row => {
+                    const label = row.querySelector(':scope > span');
                     if (!label) throw new Error('Native model choice has no rendered name');
                     const range = document.createRange(); range.selectNodeContents(label);
                     const text = range.getBoundingClientRect(), button = row.getBoundingClientRect();
@@ -399,7 +403,7 @@ def main() -> int:
                 with page.expect_response(lambda response: response.url == base + prefix + "/configuration" and response.request.method == "POST") as configured:
                     page.locator('button[data-provider="coding-acceptance"][data-model="alternate"]').click()
                 assert configured.value.ok, configured.value.text()
-                expect(page.get_by_role("button", name="Choose coding model", exact=True)).to_contain_text("Refresh alternate model")
+                expect(page.get_by_role("button", name="Choose model", exact=True)).to_contain_text("Refresh alternate model")
                 page.keyboard.press("Escape")
                 selection = native_capture(base, headers, conversation)["state"]["configuration"]
                 assert selection["provider"] == "coding-acceptance" and selection["model"] == "alternate"
@@ -409,14 +413,10 @@ def main() -> int:
                 stage("saved-reopen")
                 history_before = api("post", prefix + "/entries", data={"cut": capture["root"]["cut"], "anchor": "latest", "max_entries": 128, "max_bytes": 262144})
                 (run / "history-before.json").write_text(json.dumps(history_before, indent=2) + "\n")
-                page.get_by_test_id("coding-session-details").click()
-                with page.expect_response(lambda response: response.url == base + prefix + "/open" and response.request.method == "POST") as reopened:
-                    page.get_by_test_id("coding-reopen-saved").click()
-                assert reopened.value.ok, reopened.value.text()
-                page.keyboard.press("Escape")
-                expect(page.get_by_test_id("coding-reopened")).to_be_visible()
+                # Deliberate same-ID reopen: click the open conversation's saved row.
+                open_saved(page, base, conversation)
                 expect(transcript).to_contain_text(expected_text)
-                expect(transcript).to_contain_text("1 image sent with this prompt")
+                expect(user_turn).to_contain_text("1 image")
                 expect(transcript).to_contain_text(FINAL)
                 reopened_capture = native_capture(base, headers, conversation)
                 history_after = api("post", prefix + "/entries", data={"cut": reopened_capture["root"]["cut"], "anchor": "latest", "max_entries": 128, "max_bytes": 262144})

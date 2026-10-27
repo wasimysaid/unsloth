@@ -116,14 +116,13 @@ function harness(modeSettleDelay = 5000) {
       position: ++position,
       event: { type: "state", state: value },
     });
-  const start = (state = native(), recovering = false) =>
+  const start = (state = native()) =>
     deliver({
       subscription: "view",
       position: ++position,
       event: {
         type: "start",
         state,
-        recovering,
         root: { cut: { journal: "root", leaf: "cut" }, live_invocations: [] },
       },
     });
@@ -345,7 +344,7 @@ for (const decision of [
   });
 }
 
-test("uncertain plan acceptance reconnects but never retries; recovering cuts do not unlock actions", async () => {
+test("uncertain plan acceptance reconnects but never retries; pending capture does not unlock actions", async () => {
   const h = harness();
   await h.start();
   h.api.decidePlan = async () => {
@@ -360,12 +359,22 @@ test("uncertain plan acceptance reconnects but never retries; recovering cuts do
     status: "implementing",
     revision: "accepted-revision",
   };
-  await h.start(changed, true);
-  assert.ok(
-    h.run.getSnapshot().planControl,
-    "recovering native history still blocks actions",
-  );
-  await h.start(changed);
+  let release!: () => void;
+  const history = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const read = h.api.readEntries;
+  h.api.readEntries = async (...args) => {
+    await history;
+    return read(...args);
+  };
+  const capture = h.start(changed);
+  assert.equal(h.run.getSnapshot().connection, "loading");
+  assert.ok(h.run.getSnapshot().planControl, "pending history still blocks actions");
+  await h.run.decidePlan(plan, "implement");
+  assert.deepEqual(h.calls, ["lost-plan-ack"]);
+  release();
+  await capture;
   assert.equal(h.run.getSnapshot().planControl, null);
   assert.match(
     h.run.getSnapshot().planControlNotice ?? "",
@@ -672,5 +681,19 @@ test("pending questions and overlap drafts cannot be bypassed by plan decisions"
   await h.run.setMode("build");
   assert.deepEqual(h.calls, []);
   assert.deepEqual(h.run.getSnapshot().overlapWarning, warning);
+  h.run.detach();
+});
+
+test("/build leaves plan mode through the native mode API when the registry has no build command", async () => {
+  const h = harness();
+  await h.start();
+  const adapter = codingRunAdapter(h.run.getSnapshot(), h.run);
+  await adapter.onNew?.({
+    role: "user",
+    content: [{ type: "text", text: "/build" }],
+  } as never);
+  assert.deepEqual(h.calls, [{ id: "conversation", mode: "build" }]);
+  await h.state(built());
+  assert.equal(h.run.getSnapshot().native?.configuration.mode, "build");
   h.run.detach();
 });

@@ -4,9 +4,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CodingHttpError } from "../src/features/coding/errors.ts";
+import * as commandTypes from "../src/features/coding/command-types.ts";
 import * as codingInput from "../src/features/coding/input.ts";
 import * as mentionMenu from "../src/features/coding/mention-menu.ts";
 import * as pendingSubmission from "../src/features/coding/pending-submission.ts";
+import * as runRuntime from "../src/features/coding/run-runtime.ts";
 import * as runSession from "../src/features/coding/run-session.ts";
 import * as transcriptModel from "../src/features/coding/transcript-model.ts";
 import * as answerFocus from "../src/features/coding/answer-focus.ts";
@@ -29,7 +31,7 @@ import {
   codingSendBlockedReason,
   createCodingRun,
 } from "../src/features/coding/run-session.ts";
-import type * as RuntimeControls from "../src/features/coding/runtime-controls.tsx";
+import type * as RuntimeNotice from "../src/features/coding/runtime-notice.tsx";
 import type * as RecoveryControls from "../src/features/coding/recovery-controls.tsx";
 import {
   loadWithStubs,
@@ -70,21 +72,19 @@ const composer = loadWithStubs<typeof Composer>(
       Dialog: "dialog", DialogContent: "dialog-content",
       DialogDescription: "dialog-description", DialogTitle: "dialog-title",
     },
-    "@/components/ui/dropdown-menu": {
-      DropdownMenu: "menu", DropdownMenuContent: "menu-content",
-      DropdownMenuItem: "menu-item", DropdownMenuTrigger: "menu-trigger",
-    },
     "@assistant-ui/react": {
       ComposerPrimitive: { Root: "root", Input: "input", Send: "send" },
       useComposerRuntime: () => ({ getState: () => ({ text: "" }) }),
     },
     "@assistant-ui/tap": { flushResourcesSync: (run: () => void) => run() },
+      "@/features/native-intents": {
+        useNativeFileDrop: () => ({ ref: () => {}, dragging: false, dragHandlers: {} }),
+      },
     "react-dom": { flushSync: (run: () => void) => run() },
     "lucide-react": {
-      ArrowUp: "icon", AtSign: "icon", Bot: "icon", FileText: "icon",
-      Folder: "icon", LoaderCircle: "icon",
-      Paperclip: "icon", Plus: "icon", Sparkles: "icon", Square: "icon",
-      Target: "icon", X: "icon",
+      ArrowUp: "icon", Bot: "icon", Command: "icon", FileText: "icon",
+      Folder: "icon", LoaderCircle: "icon", Paperclip: "icon",
+      Sparkles: "icon", Square: "icon", X: "icon",
     },
     react: {
       useEffect: () => {},
@@ -97,20 +97,29 @@ const composer = loadWithStubs<typeof Composer>(
       discoverCodingSubagents: async () => ({ subagents: [] }),
       discoverCodingFiles: async () => ({ files: [], truncated: false }),
     },
+    "./command-types": commandTypes,
     "./input": codingInput,
-    "./mention-list": { MentionList: "mention-list", mentionOptionId: () => "" },
+    "./mention-list": { CompletionList: "completion-list", mentionOptionId: () => "" },
     "./mention-menu": mentionMenu,
     "./pending-submission": pendingSubmission,
+      "./run-runtime": runRuntime,
     "./run-session": runSession,
   },
 );
-const controls = loadWithStubs<typeof RuntimeControls>(
-  new URL("../src/features/coding/runtime-controls.tsx", import.meta.url),
+const notice = loadWithStubs<typeof RuntimeNotice>(
+  new URL("../src/features/coding/runtime-notice.tsx", import.meta.url),
   {
     "react/jsx-runtime": stubJsxRuntime(),
     "@/components/ui/button": { Button: "button" },
+    "lucide-react": { LoaderCircle: "icon", TriangleAlert: "icon" },
   },
 );
+const showNotice = (maintenance: ReturnType<typeof createRuntimeMaintenance>) =>
+  notice.RuntimeNotice({ maintenance, runtime: maintenance.getSnapshot() });
+const restartButton = (rendered: unknown) =>
+  nodes(rendered).find(
+    (node) => node.props["data-testid"] === "coding-runtime-restart",
+  );
 const recovery = loadWithStubs<typeof RecoveryControls>(
   new URL("../src/features/coding/recovery-controls.tsx", import.meta.url),
   {
@@ -136,31 +145,8 @@ test("idle restart is explicit, replaces generation and reports deliberate reope
   });
   await maintenance.refresh();
   assert.deepEqual(calls, ["status"]);
-  const rendered = controls.CodingRuntimeControls({
-    maintenance,
-    state: maintenance.getSnapshot(),
-  });
-  const restart = nodes(rendered).find(
-    (node) => node.props["data-testid"] === "coding-runtime-restart",
-  )!;
-  assert.equal(text(restart), "Restart whole Mimir runtime");
-  assert.equal(
-    restart.props["aria-describedby"],
-    "coding-runtime-restart-scope",
-  );
-  assert.match(text(rendered), /all hosted conversations/);
-  assert.match(text(rendered), /not hot reload/);
-  // Progressive disclosure lives in the header's Session popover; the panel
-  // itself is a labelled region whose heading states the runtime condition.
-  assert.equal(rendered.type, "section");
-  assert.equal(rendered.props["aria-label"], "Mimir runtime maintenance");
-  assert.match(
-    text(nodes(rendered).find((node) => node.type === "h3")),
-    /Mimir runtime ·\s+running/,
-  );
-  await (restart.props.onClick as () => void)();
-  // JSX handler intentionally returns void; settle the real controller mutation.
-  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(showNotice(maintenance), null, "a healthy runtime shows nothing");
+  await maintenance.restart();
   assert.deepEqual(calls, ["status", "restart", "status"]);
   assert.equal(maintenance.getSnapshot().status?.generation, 2);
   assert.match(
@@ -196,15 +182,13 @@ for (const busy of [
       maintenance.getSnapshot().error ?? "",
       /explicitly Stop.*confirmed native cleanup/,
     );
-    const rendered = controls.CodingRuntimeControls({
-      maintenance,
-      state: maintenance.getSnapshot(),
-    });
+    const rendered = showNotice(maintenance);
     assert.ok(
       nodes(rendered).some(
         (node) => node.props.role === "alert" && text(node).includes(busy),
       ),
     );
+    assert.equal(restartButton(rendered)?.props.disabled, false);
   });
 }
 
@@ -225,16 +209,7 @@ test("unknown restart blocks another action until status/generation inspection s
   });
   await maintenance.restart();
   assert.equal(maintenance.getSnapshot().restartUncertainty, true);
-  const rendered = controls.CodingRuntimeControls({
-    maintenance,
-    state: maintenance.getSnapshot(),
-  });
-  assert.equal(
-    nodes(rendered).find(
-      (node) => node.props["data-testid"] === "coding-runtime-restart",
-    )?.props["aria-disabled"],
-    true,
-  );
+  assert.equal(restartButton(showNotice(maintenance))?.props.disabled, true);
   await maintenance.restart();
   assert.equal(restarts, 1);
   inspect = true;
@@ -272,17 +247,17 @@ test("shutdown failure surfaces confirmed=false, native message and exit evidenc
     maintenance.getSnapshot().notice ?? "",
     /Whole runtime restarted/,
   );
-  const rendered = controls.CodingRuntimeControls({
-    maintenance,
-    state: maintenance.getSnapshot(),
-  });
+  const rendered = showNotice(maintenance);
   const evidence = nodes(rendered).find(
-    (node) => node.props["data-testid"] === "coding-runtime-cleanup",
+    (node) => node.props["data-testid"] === "coding-runtime-status",
   )!;
   assert.equal(evidence.props.role, "alert");
+  assert.match(text(evidence), /Incomplete shutdown/);
+  maintenance.invalidate();
+  await maintenance.refresh();
   assert.match(
-    text(evidence),
-    /not confirmed.*unknown.*forced termination.*did not settle/,
+    text(showNotice(maintenance)),
+    /didn't shut down cleanly: Native drain did not settle all work/,
   );
 });
 
@@ -358,18 +333,15 @@ test("rendered interrupted control never auto-submits and explicit click is disa
   const button = nodes(rendered).find(
     (node) => node.props["data-testid"] === "coding-continue-interrupted",
   )!;
-  assert.equal(text(button), "Continue interrupted work");
+  assert.equal(text(button), "Continue");
   assert.equal(button.props["aria-disabled"], false);
   assert.notEqual(
     button.props.disabled,
     true,
     "control remains focusable across asynchronous state changes",
   );
-  assert.equal(
-    button.props["aria-describedby"],
-    "coding-continuation-explanation",
-  );
-  assert.match(text(rendered), /new keyed prompt.*not Retry same submission/);
+  assert.match(String(button.props.title), /new prompt.*review/);
+  assert.match(text(rendered), /didn't finish/);
   (button.props.onClick as () => void)();
   assert.equal(continued, 1);
   assert.equal(codingCanContinue({ ...state, goalChanging: "pause" }), false);
@@ -422,20 +394,9 @@ test("stopping is pending native drain, not stopped, and blocks duplicate mainte
     },
   });
   await maintenance.refresh();
-  const rendered = controls.CodingRuntimeControls({
-    maintenance,
-    state: maintenance.getSnapshot(),
-  });
-  assert.match(
-    text(rendered),
-    /Stopping.*waiting for native drain.*Shutdown is not yet confirmed/,
-  );
-  assert.equal(
-    nodes(rendered).find(
-      (node) => node.props["data-testid"] === "coding-runtime-restart",
-    )?.props["aria-disabled"],
-    true,
-  );
+  const rendered = showNotice(maintenance);
+  assert.match(text(rendered), /Mimir is stopping/);
+  assert.equal(restartButton(rendered)?.props.disabled, true);
   await maintenance.restart();
   assert.equal(restarts, 0);
   assert.equal(maintenance.getSnapshot().status?.state, "stopping");
@@ -503,7 +464,6 @@ for (const ownerGeneration of [1, 2, 100]) {
       position: 1,
       event: {
         type: "start",
-        recovering: false,
         state: {
           info: {
             id: "saved",
@@ -606,6 +566,7 @@ for (const ownerGeneration of [1, 2, 100]) {
         },
       },
       "./api": {
+        codingModelApi: {},
         createCodingRunApi: (generation: number) => {
           acquiredGenerations.push(generation);
           return {};
@@ -615,7 +576,7 @@ for (const ownerGeneration of [1, 2, 100]) {
       "./bounded-content": boundedContent,
       "./transcript-reader": transcriptReader,
       "./question-card": { QuestionCard: "question-card" },
-      "./plan-card": { PlanCard: "plan-card", CodingModeControl: "mode-control" },
+      "./plan-card": { PlanCard: "plan-card" },
       "./goal-summary": { GoalSummary: "goal-summary" },
       "./run-runtime": { codingRunAdapter: () => ({}) },
       "./run-session": {
@@ -640,14 +601,16 @@ for (const ownerGeneration of [1, 2, 100]) {
       "./transcript": {
         AnswerFocus: { Provider: "answer-focus-provider" },
         TranscriptBlocks: "blocks",
+        WorkingLine: "working",
       },
       "./transcript-model": transcriptModel,
       "./tool-report": { DisclosureMemory: "disclosures" },
       "./unsent-draft": { CodingUnsentDraft: "draft" },
       "./recovery-controls": { CodingRecoveryControls: "recovery" },
-      "./child-inspector": { ChildActivityRows: "children", ChildInspector: "child-inspector" },
+      "./child-inspector": { ChildInspector: "child-inspector" },
+      "./subagent-card": { ChildActivityRows: "children" },
       "./coding-composer": composer,
-      "./command-controls": { CodingCommandControls: "commands" },
+      "./composer-footer": { CommandFeedback: "command-feedback", ComposerFooter: "footer" },
       "./input": codingInput,
       "./model-configuration-popover": { CodingModelPicker: "model-picker" },
       "./project-overlap-dialog": { ProjectOverlapDialog: "overlap" },
@@ -749,10 +712,7 @@ for (const ownerGeneration of [1, 2, 100]) {
       draft: codingInput.createInputDraft(),
       children: null,
     });
-    assert.match(
-      text(unfenced),
-      /no confirmed opening generation.*Deliberately reopen/,
-    );
+    assert.match(text(unfenced), /needs to be reopened from the sidebar/);
     assert.equal(
       nodes(unfenced).find(
         (node) => node.props["aria-label"] === "Coding prompt",
@@ -785,20 +745,7 @@ test("unconfirmed native maintenance remains blocked through inspection until pr
   await maintenance.restart();
   assert.equal(restarts, 0);
   assert.equal(maintenance.getSnapshot().restartUncertainty, true);
-  const unknown = controls.CodingRuntimeControls({
-    maintenance,
-    state: maintenance.getSnapshot(),
-  });
-  assert.equal(
-    nodes(unknown).find(
-      (node) => node.props["data-testid"] === "coding-runtime-restart",
-    )?.props["aria-disabled"],
-    true,
-  );
-  assert.match(
-    text(unknown),
-    /original process remains live.*Stop and views remain available/,
-  );
+  assert.equal(restartButton(showNotice(maintenance))?.props.disabled, true);
   await maintenance.refresh();
   assert.equal(
     restarts,
@@ -808,18 +755,10 @@ test("unconfirmed native maintenance remains blocked through inspection until pr
   status = { ...running(), state: "restart_prepared" };
   await maintenance.refresh();
   assert.equal(maintenance.getSnapshot().restartUncertainty, false);
-  const prepared = controls.CodingRuntimeControls({
-    maintenance,
-    state: maintenance.getSnapshot(),
-  });
-  const restart = nodes(prepared).find(
-    (node) => node.props["data-testid"] === "coding-runtime-restart",
-  )!;
-  assert.equal(restart.props["aria-disabled"], false);
-  assert.match(
-    text(prepared),
-    /preparation is confirmed.*process replacement is not complete.*Explicitly select/,
-  );
+  const prepared = showNotice(maintenance);
+  const restart = restartButton(prepared)!;
+  assert.equal(restart.props.disabled, false);
+  assert.match(text(prepared), /restart prepared/);
   assert.equal(restarts, 0);
   (restart.props.onClick as () => void)();
   await new Promise((resolve) => setImmediate(resolve));
@@ -907,7 +846,7 @@ for (const kind of ["create", "open"] as const) {
       });
       assert.equal(
         await (kind === "create"
-          ? session.createConversation("/project")
+          ? (session.selectProject("/project"), session.startConversation())
           : session.openConversation("saved")),
         true,
       );
@@ -1122,20 +1061,14 @@ test("stream process loss retires cached cleanup and pre-loss reads before expos
     null,
     "late pre-loss inspection cannot restore cleanup success",
   );
-  const unavailable = controls.CodingRuntimeControls({
-    maintenance,
-    state: maintenance.getSnapshot(),
-  });
-  assert.match(text(unavailable), /Runtime:\s+unavailable/);
-  assert.doesNotMatch(text(unavailable), /Cleanup\s+confirmed/);
+  assert.equal(
+    showNotice(maintenance),
+    null,
+    "no retired observation is shown as current runtime health",
+  );
   fresh.resolve({ ...running(100), state: "disconnected", cleanup: null });
   await freshRead;
-  const disconnected = controls.CodingRuntimeControls({
-    maintenance,
-    state: maintenance.getSnapshot(),
-  });
-  assert.match(text(disconnected), /Runtime:\s+disconnected/);
-  assert.doesNotMatch(text(disconnected), /Cleanup\s+confirmed/);
+  assert.match(text(showNotice(maintenance)), /Mimir runtime disconnected/);
   run.requireRuntimeReopen();
   assert.equal(
     boundaries,
@@ -1163,7 +1096,8 @@ test("failed reopen does not retire observations belonging to the unchanged owne
       inspection = maintenance.refresh();
     },
   });
-  assert.equal(await session.createConversation("/project"), true);
+  session.selectProject("/project");
+  assert.equal(await session.startConversation(), true);
   await inspection;
   api.openConversation = async () => {
     throw new CodingHttpError(404, "Saved project unavailable");
@@ -1174,364 +1108,4 @@ test("failed reopen does not retire observations belonging to the unchanged owne
   assert.equal(session.getSnapshot().openingGeneration, 1);
   assert.equal(maintenance.getSnapshot().status, status);
   assert.equal(session.getSnapshot().openingError, "Saved project unavailable");
-});
-
-import {
-  type ExtensionInventory,
-  type PluginReloadStatus,
-  createMaintenanceInspection,
-} from "../src/features/coding/maintenance.ts";
-
-const status = (
-  id: string,
-  operationId: string,
-  phase: PluginReloadStatus["status"],
-  changed = 0,
-): PluginReloadStatus => ({
-  session_id: id,
-  operation_id: operationId,
-  status: phase,
-  changed,
-  generation: 1,
-  diagnostic_count: 0,
-  error: phase === "failed" ? "reconcile-failed" : null,
-});
-const inventory = (
-  id: string,
-  reload: PluginReloadStatus | null = null,
-): ExtensionInventory => ({
-  conversation_id: id,
-  inventory: {
-    session_id: id,
-    frontend: "headless",
-    session_live_available: true,
-    runtime_live_available: true,
-    plugins: [
-      {
-        id: "disabled.package",
-        name: "Disabled package",
-        version: "1",
-        lifetime: "session",
-        installed: true,
-        selected: false,
-        enabled: false,
-        eligible: true,
-        live: false,
-        selected_frontend: false,
-        mounted: false,
-        pending: false,
-        retained: false,
-        load_failed: false,
-        runtime_failed: false,
-        missing_requirements: [],
-        mount_id: null,
-      },
-    ],
-    omitted_plugins: 0,
-    diagnostics: { catalog: 0, selection: 0, load: 0, runtime: 0 },
-    reload,
-  },
-  skills: [{ name: "native-skill", bundled: false, source: "native" }],
-  omitted_skills: 0,
-});
-const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
-
-test("inspection preserves disabled/non-live state and deferred reload never fabricates completion", async () => {
-  let current = inventory("a");
-  const calls: unknown[] = [];
-  const view = createMaintenanceInspection({
-    inspect(id) {
-      calls.push(["inspect", id]);
-      return Promise.resolve(current);
-    },
-    reload(id, operationId) {
-      calls.push(["reload", id, operationId]);
-      const deferred = status(id, operationId, "deferred");
-      current = inventory(id, deferred);
-      return Promise.resolve(deferred);
-    },
-  });
-  view.select("a");
-  await tick();
-  assert.equal(view.getSnapshot().inventory?.inventory.plugins[0].live, false);
-  await view.reload("op");
-  assert.equal(
-    view.getSnapshot().inventory?.inventory.reload?.status,
-    "deferred",
-  );
-  await view.reload("must-not-resubmit");
-  current = inventory("a", status("a", "op", "applied", 1));
-  await view.refresh();
-  assert.equal(
-    view.getSnapshot().inventory?.inventory.reload?.status,
-    "applied",
-  );
-  assert.deepEqual(calls, [
-    ["inspect", "a"],
-    ["reload", "a", "op"],
-    ["inspect", "a"],
-    ["inspect", "a"],
-  ]);
-});
-
-test("lost reload response is reconciled by exact retained identity, never automatically retried", async () => {
-  let current = inventory("a");
-  const calls: unknown[] = [];
-  const view = createMaintenanceInspection({
-    inspect(id, operationId) {
-      calls.push(["inspect", id, operationId]);
-      return Promise.resolve(current);
-    },
-    reload(id, operationId) {
-      calls.push(["reload", id, operationId]);
-      return Promise.reject(new Error("connection lost"));
-    },
-  });
-  view.select("a");
-  await tick();
-  await view.reload("lost-op");
-  assert.equal(view.getSnapshot().uncertainOperation, "lost-op");
-  await view.reload("unsafe-retry");
-  // An unrelated/latest operation does not settle the one whose reply was lost.
-  current = inventory("a", status("a", "another-op", "applied"));
-  await view.refresh();
-  assert.equal(view.getSnapshot().uncertainOperation, "lost-op");
-  current = inventory("a", status("a", "lost-op", "deferred"));
-  await view.refresh();
-  assert.equal(view.getSnapshot().uncertainOperation, null);
-  assert.equal(
-    view.getSnapshot().inventory?.inventory.reload?.status,
-    "deferred",
-  );
-  assert.equal(
-    calls.filter((call) => (call as string[])[0] === "reload").length,
-    1,
-  );
-});
-
-test("a failed inventory is stale and disables reload until refreshed; native failure remains failed", async () => {
-  let fail = false;
-  let reloads = 0;
-  let current = inventory("a");
-  const view = createMaintenanceInspection({
-    inspect() {
-      return fail
-        ? Promise.reject(new Error("raw credential must not be rendered"))
-        : Promise.resolve(current);
-    },
-    reload(id, operationId) {
-      reloads++;
-      const failed = status(id, operationId, "failed");
-      current = inventory(id, failed);
-      return Promise.resolve(failed);
-    },
-  });
-  view.select("a");
-  await tick();
-  fail = true;
-  await view.refresh();
-  await view.reload("blocked");
-  assert.equal(reloads, 0);
-  assert.ok(view.getSnapshot().error);
-  assert.ok(!view.getSnapshot().error?.includes("credential"));
-  fail = false;
-  await view.refresh();
-  await view.reload("failure");
-  assert.equal(
-    view.getSnapshot().inventory?.inventory.reload?.status,
-    "failed",
-  );
-});
-
-test("out-of-order inspection and reload replies cannot retarget another conversation", async () => {
-  let resolve!: (value: ExtensionInventory) => void;
-  let resolveReload!: (value: PluginReloadStatus) => void;
-  const view = createMaintenanceInspection({
-    inspect(id) {
-      return id === "a"
-        ? new Promise((done) => {
-            resolve = done;
-          })
-        : Promise.resolve(inventory(id));
-    },
-    reload() {
-      return new Promise((done) => {
-        resolveReload = done;
-      });
-    },
-  });
-  view.select("a");
-  view.select("b");
-  await tick();
-  resolve(inventory("a"));
-  await tick();
-  assert.equal(view.getSnapshot().inventory?.conversation_id, "b");
-  const pending = view.reload("b-op");
-  view.select("c");
-  await tick();
-  resolveReload(status("b", "b-op", "applied", 3));
-  await pending;
-  assert.equal(view.getSnapshot().inventory?.conversation_id, "c");
-  assert.equal(view.getSnapshot().inventory?.inventory.reload, null);
-});
-
-test("definite native refusal is distinct from uncertain delivery and requires a refreshed view", async () => {
-  let calls = 0;
-  const view = createMaintenanceInspection({
-    inspect(id) {
-      return Promise.resolve(inventory(id));
-    },
-    reload() {
-      calls++;
-      return Promise.reject(
-        new CodingHttpError(409, "private refusal contents"),
-      );
-    },
-  });
-  view.select("a");
-  await tick();
-  await view.reload("refused");
-  assert.equal(view.getSnapshot().uncertainOperation, null);
-  assert.equal(view.getSnapshot().error, "refusedError");
-  await view.reload("unsafe-immediate-retry");
-  assert.equal(calls, 1);
-  await view.refresh();
-  assert.equal(view.getSnapshot().error, null);
-});
-
-test("an unopened live owner has a deliberate-reopen explanation, not a trust grant", async () => {
-  const view = createMaintenanceInspection({
-    inspect() {
-      return Promise.reject(new CodingHttpError(404, "raw error"));
-    },
-    reload() {
-      throw new Error("must not reload an unopened owner");
-    },
-  });
-  view.select("foreign-live");
-  await tick();
-  assert.equal(view.getSnapshot().error, "scopeError");
-  assert.equal(view.getSnapshot().inventory, null);
-});
-
-test("unconfirmed identity survives A to B to A and view detach/remount", async () => {
-  const queries: unknown[] = [];
-  let reloads = 0;
-  const view = createMaintenanceInspection({
-    inspect(id, op) {
-      queries.push([id, op]);
-      return Promise.resolve(inventory(id));
-    },
-    reload() {
-      reloads++;
-      return Promise.reject(new Error("lost reply"));
-    },
-  });
-  const detach = view.subscribe(() => {});
-  view.select("a");
-  await tick();
-  await view.reload("lost-op");
-  view.select("b");
-  await tick();
-  view.select("a");
-  await tick();
-  assert.equal(view.getSnapshot().uncertainOperation, "lost-op");
-  assert.deepEqual(queries.at(-1), ["a", "lost-op"]);
-  detach();
-  view.select(null);
-  const detachAgain = view.subscribe(() => {});
-  view.select("a");
-  await tick();
-  await view.reload("unsafe-new-op");
-  assert.deepEqual(queries.at(-1), ["a", "lost-op"]);
-  assert.equal(reloads, 1);
-  detachAgain();
-});
-
-test("detached acknowledgment settles only its original conversation", async () => {
-  let acknowledge!: (value: PluginReloadStatus) => void;
-  const queries: unknown[] = [];
-  const view = createMaintenanceInspection({
-    inspect(id, op) {
-      queries.push([id, op]);
-      return Promise.resolve(inventory(id));
-    },
-    reload() {
-      return new Promise((done) => {
-        acknowledge = done;
-      });
-    },
-  });
-  view.select("a");
-  await tick();
-  const pending = view.reload("a-op");
-  view.select("b");
-  await tick();
-  acknowledge(status("a", "a-op", "applied"));
-  await pending;
-  assert.equal(view.getSnapshot().target, "b");
-  assert.equal(view.getSnapshot().inventory?.inventory.reload, null);
-  view.select("a");
-  await tick();
-  assert.deepEqual(queries.at(-1), ["a", undefined]);
-  assert.equal(view.getSnapshot().uncertainOperation, null);
-});
-
-test("immediate application refreshes actual plugin state and failed refresh marks it stale", async () => {
-  let current = inventory("a");
-  let fail = false;
-  const view = createMaintenanceInspection({
-    inspect() {
-      return fail
-        ? Promise.reject(new Error("read failure"))
-        : Promise.resolve(current);
-    },
-    reload(id, op) {
-      const applied = status(id, op, "applied", 1);
-      current = inventory(id, applied);
-      current.inventory.plugins[0] = {
-        ...current.inventory.plugins[0],
-        enabled: true,
-        selected: true,
-        live: true,
-      };
-      return Promise.resolve(applied);
-    },
-  });
-  view.select("a");
-  await tick();
-  await view.reload("fresh");
-  assert.equal(view.getSnapshot().inventory?.inventory.plugins[0].live, true);
-  fail = true;
-  await view.reload("read-failed");
-  assert.equal(
-    view.getSnapshot().inventory?.inventory.reload?.operation_id,
-    "read-failed",
-  );
-  assert.equal(view.getSnapshot().error, "inventoryError");
-});
-
-test("wrong native scope is rejected and reconciling remains pending", async () => {
-  let current = inventory("a", status("a", "op", "reconciling"));
-  let reloads = 0;
-  const view = createMaintenanceInspection({
-    inspect() {
-      return Promise.resolve(current);
-    },
-    reload(id, operationId) {
-      reloads++;
-      return Promise.resolve(status(id, operationId, "applied"));
-    },
-  });
-  view.select("a");
-  await tick();
-  await view.reload("unsafe");
-  assert.equal(reloads, 0);
-  current = inventory("a", status("b", "other-session", "applied"));
-  await view.refresh();
-  assert.ok(view.getSnapshot().error);
-  assert.equal(
-    view.getSnapshot().inventory?.inventory.reload?.status,
-    "reconciling",
-  );
 });

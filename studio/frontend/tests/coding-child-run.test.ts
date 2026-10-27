@@ -121,7 +121,6 @@ test("slow optional child inspection does not delay parent recapture readiness o
     type: "start",
     state: native,
     children: [child],
-    recovering: false,
     root: { cut: { journal: "root", leaf: "root-cut" }, live_invocations: [] },
   };
   await h.event(start);
@@ -146,23 +145,32 @@ test("slow optional child inspection does not delay parent recapture readiness o
   }
 });
 
-test("recovering reset keeps a selected inspector usable after root checkpoint", async () => {
+test("delayed reset keeps a selected inspector usable after root capture", async () => {
   const h = harness();
   const start = {
     type: "start",
     state: native,
     children: [child],
-    recovering: false,
     root: { cut: { journal: "root", leaf: "root-cut" }, live_invocations: [] },
   };
   await h.event(start);
   await h.run.childView.open(child);
-  await h.event({ ...start, type: "reset", recovering: true });
-  await h.event({
-    type: "checkpoint",
-    cut: { journal: "root", leaf: "root-cut" },
-    live_invocations: [],
+  let release!: () => void;
+  const history = new Promise<void>((resolve) => {
+    release = resolve;
   });
+  const read = h.api.readEntries;
+  h.api.readEntries = async (...args) => {
+    await history;
+    return read(...args);
+  };
+  const reset = h.event({ ...start, type: "reset" });
+  assert.equal(h.run.getSnapshot().connection, "loading");
+  assert.equal(h.run.childView.getSnapshot().connected, false);
+  release();
+  await reset;
+  assert.equal(h.run.getSnapshot().connection, "connected");
+  assert.equal(h.run.childView.getSnapshot().connected, true);
   const next = {
     journal: { child: child.handle },
     leaf: "child-after-recovery",
@@ -178,16 +186,17 @@ test("recovering reset keeps a selected inspector usable after root checkpoint",
   h.run.detach();
 });
 
-test("parent ordered capture routes exact child activity/checkpoints without flooding root or settling parent recovery", async () => {
+test("parent ordered capture routes exact child activity/checkpoints without flooding root or settling parent Stop", async () => {
   const h = harness();
   await h.event({
     type: "start",
     state: native,
     children: [child],
-    recovering: true,
     root: { cut: { journal: "root", leaf: "root-cut" }, live_invocations: [] },
   });
   await h.run.childView.open(child);
+  await h.run.stop();
+  assert.deepEqual(h.cancellations, [{ id: "parent", request_id: "parent-request" }]);
   await h.event({
     type: "activity",
     child: { handle: child.handle, attempt: 1 },
@@ -209,18 +218,9 @@ test("parent ordered capture routes exact child activity/checkpoints without flo
     cut: { journal: { child: child.handle }, leaf: "child-next" },
     live_invocations: [],
   });
-  assert.equal(
-    h.run.getSnapshot().recovering,
-    true,
-    "child checkpoint must not release root recovery",
-  );
-  assert.equal(h.run.childView.getSnapshot().connected, false);
-  await h.event({
-    type: "checkpoint",
-    cut: { journal: "root", leaf: "root-cut" },
-    live_invocations: [],
-  });
-  assert.equal(h.run.getSnapshot().recovering, false);
+  assert.equal(h.run.getSnapshot().connection, "connected");
+  assert.equal(h.run.getSnapshot().stopping, "parent-request");
+  assert.deepEqual(h.run.getSnapshot().rows.map((row) => row.id), ["root-text"]);
   assert.equal(h.run.childView.getSnapshot().connected, true);
   assert.equal(h.run.getSnapshot().native?.active_request, "parent-request");
   h.run.detach();
@@ -232,7 +232,6 @@ test("inspecting a terminal child and navigating continued attempts never consum
     type: "start",
     state: native,
     children: [child],
-    recovering: false,
     root: { cut: { journal: "root", leaf: "root-cut" }, live_invocations: [] },
   });
   await h.run.childView.open(child);

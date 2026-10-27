@@ -20,11 +20,9 @@ evidence directory for each run. --workload opening runs the previous opening su
 pre/post-delivery ACK loss, reconnect/reopen and Stop while native ask_user waits.
 --workload picker adds ticket-244 rendered model/reasoning/favorites/layout checks
 and a held real native provider call to distinguish running from next selection.
---extensions adds focused ticket-252 Settings scenarios before the execution suite;
-use only deterministic isolated setup, never the shared live profile. It installs
-real disabled/TUI-only packages and native HOME skills. POST response loss and
-inventory-read errors are explicitly reported browser transport injection, while
-completion and scope assertions require actual native HTTP evidence.
+Choosing a folder only selects it; the landing's Send creates a conversation and
+sends its text. Idle conversations are therefore created through the authenticated
+native HTTP API and opened deliberately from the sidebar.
 --workload file-changes verifies real write/edit/edit profiles and replay, followed
 by separately labelled synthetic rendered history edge cases. file-changes-live
 requests the same operations from the existing host provider (180-second deadline).
@@ -53,7 +51,6 @@ from coding_provider_fixture import ProviderFixture
 from coding_run_scenarios import run_scenarios
 from coding_picker_scenarios import run_picker_scenarios
 from coding_catalog_scenarios import run_catalog_scenarios
-from coding_extension_scenarios import prepare_extension_fixtures, run_extension_scenarios
 from coding_input_scenarios import prepare_input_project, input_scenarios, live_input_scenario
 from coding_recovery_scenarios import run_recovery_scenarios
 from coding_maintenance_scenarios import run_maintenance_scenarios, verify_shutdown
@@ -66,6 +63,7 @@ from coding_concurrency_scenarios import run_concurrency_scenarios
 from coding_child_scenarios import CHILD_EVENT_CAPTURE, run_child_scenarios
 from coding_file_change_scenarios import LIVE_PROFILE_OBSERVER, run_file_change_scenarios
 from coding_reading_scenarios import READING_VIEW_FAULT, run_reading_scenarios
+from coding_ui import create_and_open, expect_connected, expect_opened, open_saved, prompt, refresh_saved, saved_row, show_sidebar
 
 
 WORKLOADS = ("opening", "deterministic", "picker", "catalog", "recovery", "maintenance", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live", "reading")
@@ -99,14 +97,11 @@ def main() -> None:
     parser.add_argument("--evidence-dir", type = Path, required = True)
     parser.add_argument("--workload", choices = WORKLOADS, default = "deterministic",
                         help = "Fixture workloads use controlled HTTP provider replies with real native execution; live uses the existing native provider/credential profile and never copies credentials")
-    parser.add_argument("--extensions", action = "store_true", help = "Run ticket-252 Settings inventory and scoped reload scenarios (requires deterministic workload)")
     parser.add_argument("--browser", choices = ("chromium", "firefox"), default = "chromium")
     parser.add_argument("--chrome", default = "/usr/bin/google-chrome", help = "Chromium executable; ignored for Firefox")
     args = parser.parse_args()
     if args.workload == "commands" and args.commands_package is None:
         parser.error("--commands-package is required for contributed command acceptance")
-    if args.extensions and args.workload != "deterministic":
-        parser.error("--extensions requires --workload deterministic; shared live profiles are never modified")
     root = Path(__file__).resolve().parents[2]
     evidence = args.evidence_dir.resolve()
     if evidence.is_relative_to(root):
@@ -138,7 +133,6 @@ def main() -> None:
     provider = ProviderFixture() if args.workload in FIXTURE_WORKLOADS else None
     if provider:
         provider.configure(native, picker = args.workload in ("picker", "catalog"), images = args.workload == "inputs")
-    extension_packages = prepare_extension_fixtures(state_root, native, args.plugin_package.resolve()) if args.extensions else []
     projects = state_root / "projects"
     projects.mkdir(exist_ok = True)
     first, second, denied = [projects / name for name in ("first-project", "second-project", "os-denied")]
@@ -204,9 +198,8 @@ def main() -> None:
     # No shared configuration or trust records are modified by installation.
     try:
         with (evidence / "plugin-install.log").open("w") as output:
-            for package in [args.plugin_package.resolve(), *extension_packages]:
-                subprocess.run([str(args.mimir.resolve()), "plugin", "install", str(package)],
-                               env = env, stdout = output, stderr = subprocess.STDOUT, check = True, timeout = 240)
+            subprocess.run([str(args.mimir.resolve()), "plugin", "install", str(args.plugin_package.resolve())],
+                           env = env, stdout = output, stderr = subprocess.STDOUT, check = True, timeout = 240)
     except BaseException as exc:
         # Setup is not browser/native-workload success. Preserve source/run/hash
         # evidence even when an incompatible or stale runtime refuses installation.
@@ -319,101 +312,117 @@ def main() -> None:
             page.evaluate("tokens => { localStorage.setItem('unsloth_auth_token', tokens.access_token); localStorage.setItem('unsloth_auth_refresh_token', tokens.refresh_token); localStorage.setItem('unsloth_auth_session_mark', 'coding-acceptance'); }", tokens)
             ordinary_status_requests.clear()
             page.goto(base + "/coding")
-            expect(page.get_by_role("heading", name = "Build with Mimir")).to_be_visible()
+            headers = {"Authorization": "Bearer " + tokens["access_token"]}
+            expect(page.get_by_role("heading", name = "What should we build?")).to_be_visible()
+            expect(page.get_by_test_id("coding-opened-conversation")).to_have_text("New conversation")
             expect(page.get_by_role("button", name = "Send", exact = True)).to_be_disabled()
-            composer = page.get_by_role("group", name = "Coding composer") if page.get_by_role("group", name = "Coding composer").count() else page.locator('[aria-label="Coding composer"]')
-            composer_box = composer.bounding_box()
-            chooser_box = page.get_by_test_id("coding-project-chooser").bounding_box()
-            assert composer_box and chooser_box and chooser_box["y"] >= composer_box["y"] + composer_box["height"]
+            chooser = page.get_by_test_id("coding-project-chooser")
+            expect(chooser).to_have_text("Choose folder")
+            composer_box = page.locator('[aria-label="Coding composer"]').bounding_box()
+            chooser_box = chooser.bounding_box()
+            assert composer_box and chooser_box and chooser_box["y"] + chooser_box["height"] <= composer_box["y"]
             snapshot(page, "desktop-unopened")
-            scenario("A10-layout", "1440x1000: chooser beneath composer, Send disabled before selection")
+            scenario("A10-layout", "1440x1000: folder chip above the landing composer, Send disabled before a folder is chosen")
 
             def browse(path):
                 expect(page.get_by_role("button", name = "Browse", exact = True)).to_be_enabled(timeout = 60000)
                 page.get_by_label("Host folder path", exact = True).fill(str(path))
                 expect(page.get_by_label("Host folder path", exact = True)).to_have_value(str(path))
                 page.get_by_role("button", name = "Browse", exact = True).click()
-            def open_project(path):
-                page.get_by_role("button", name = "Choose another project" if page.get_by_test_id("coding-opened-conversation").count() else "Choose project folder", exact = True).click()
-                # The chooser starts an initial OS browse. Await its rendered path
-                # before filling so that initialization is not typing into the field.
-                expect(page.get_by_test_id("coding-browsed-path")).to_be_visible(timeout = 60000)
+            def choose_folder():
+                chooser.click()
+                page.get_by_role("menuitem", name = "Choose folder…", exact = True).click()
+                dialog = page.get_by_role("dialog")
+                expect(dialog).to_be_visible(timeout = 60000)
+                # The dialog starts an initial OS browse of the selected folder (which a
+                # previous step may have removed). Await its rendered outcome before
+                # filling so that initialization is not typing into the field.
+                expect(page.get_by_test_id("coding-browsed-path").or_(dialog.get_by_role("alert"))).to_be_visible(timeout = 60000)
+                expect(page.get_by_role("button", name = "Browse", exact = True)).to_be_enabled(timeout = 60000)
+            def select_folder(path):
+                # Choosing only selects where the next conversation runs.
+                choose_folder()
                 browse(path)
                 expect(page.get_by_test_id("coding-browsed-path")).to_have_text(str(Path(path).resolve()))
-                with page.expect_response(lambda response: response.url == base + "/api/coding/conversations" and response.request.method == "POST", timeout = 60000) as created:
-                    page.get_by_role("button", name = "Open project", exact = True).click()
-                assert created.value.status == 201
-                identifier = created.value.json()["id"]
+                page.get_by_role("button", name = "Use this folder", exact = True).click()
                 expect(page.get_by_role("dialog")).not_to_be_visible(timeout = 60000)
-                expect(page.get_by_role("heading", name = "Your coding conversation is open")).to_be_visible(timeout = 60000)
-                expect(page.get_by_test_id("coding-conversation-id")).to_have_text(identifier, timeout = 60000)
-                expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout = 60000)
-                report["conversation_ids"].append(identifier)
-                return identifier
+                expect(chooser).to_have_text(Path(path).resolve().name)
+                return Path(path).resolve()
+            def saved_ids():
+                listed = context.request.get(base + "/api/coding/conversations", headers = headers)
+                assert listed.ok, listed.status
+                return {item["id"] for item in listed.json()["conversations"]}
 
-            page.get_by_role("button", name = "Choose project folder", exact = True).click()
+            choose_folder()
             for name, path, message in (("missing", projects / "missing", "does not exist"),
                                          ("file", file_path, "not a file"),
                                          ("denied", denied, "denies access")):
                 browse(path)
                 expect(page.get_by_role("alert").filter(has_text = message)).to_be_visible()
-                expect(page.get_by_role("button", name = "Open project", exact = True)).to_be_disabled()
+                expect(page.get_by_role("button", name = "Use this folder", exact = True)).to_be_disabled()
                 snapshot(page, "desktop-" + name)
-                scenario("A6-folder-" + name, "Real host OS failure shown with actionable error; opening disabled")
+                scenario("A6-folder-" + name, "Real host OS failure shown with actionable error; folder selection disabled")
             page.get_by_role("button", name = "Cancel", exact = True).click()
-            first_id = open_project(alias)
+            expect(chooser).to_have_text("Choose folder")
+            # A conversation is created by the landing's Send together with its
+            # first prompt. Without a prompt, create natively in the selected folder.
+            selected = select_folder(alias)
+            created, _ = create_and_open(page, context, base, headers, selected)
+            first_id = created["id"]
+            report["conversation_ids"].append(first_id)
             import psutil
             product = [child for child in psutil.Process(server.pid).children()
                        if child.cmdline()[1:] == ["plugin", "run", "studio.frontend"]]
             assert len(product) == 1, "Studio must supervise exactly one native product process"
             report["supervised_pid"] = product[0].pid
-            expect(page.get_by_test_id("coding-canonical-cwd")).to_have_text(str(first))
+            cwd = page.get_by_test_id("coding-canonical-cwd")
+            expect(cwd).to_have_attribute("title", str(first))
+            expect(cwd).to_have_text(first.name)
             snapshot(page, "desktop-opened")
-            scenario("A6-canonical", "Symlink selected; native conversation reports canonical directory " + str(first))
+            scenario("A6-canonical", "Symlink browsed and selected resolves to its canonical folder; native conversation reports canonical directory " + str(first))
             for name, message in (("native-missing", "does not exist"), ("native-denied", "denies access")):
                 changing = projects / name
                 changing.mkdir(exist_ok = True)
-                page.get_by_role("button", name = "Choose another project", exact = True).click()
-                browse(changing)
-                expect(page.get_by_test_id("coding-browsed-path")).to_have_text(str(changing))
+                page.get_by_role("button", name = "New conversation", exact = True).click()
+                expect(page.get_by_test_id("coding-opened-conversation")).to_have_text("New conversation")
+                select_folder(changing)
                 if name == "native-missing":
                     changing.rmdir()
                 else:
                     changing.chmod(0)
                 try:
-                    page.get_by_role("button", name = "Open project", exact = True).click()
+                    before = saved_ids()
+                    draft = "Must not be sent: " + name
+                    prompt(page).fill(draft)
+                    with page.expect_response(lambda response: response.url == base + "/api/coding/conversations"
+                                              and response.request.method == "POST", timeout = 60000) as refused:
+                        page.get_by_role("button", name = "Send", exact = True).click()
+                    assert not refused.value.ok, refused.value.status
                     expect(page.get_by_role("alert").filter(has_text = message)).to_be_visible(timeout = 60000)
-                    expect(page.get_by_test_id("coding-conversation-id")).to_have_text(first_id)
+                    expect(page.get_by_test_id("coding-opened-conversation")).to_have_text("New conversation")
+                    expect(prompt(page)).to_have_value(draft)
+                    assert saved_ids() == before, "Refused landing Send created a native conversation"
+                    if provider:
+                        provider.assert_no_request()
+                    expect(saved_row(page, first_id)).to_be_visible()
                     snapshot(page, name)
-                    scenario("A6-" + name, "Folder changed after browsing; native opening refused with actionable error and existing conversation preserved")
+                    scenario("A6-" + name, "Folder changed after selection; the landing Send's native creation was refused with an actionable error, nothing was created or sent, the draft and the saved conversation were preserved")
                 finally:
                     if changing.exists():
                         changing.chmod(0o700)
-                page.get_by_role("button", name = "Cancel", exact = True).click()
-            second_id = open_project(second)
+                prompt(page).fill("")
+            created, _ = create_and_open(page, context, base, headers, second)
+            second_id = created["id"]
+            report["conversation_ids"].append(second_id)
             assert second_id != first_id
-            expect(page.get_by_test_id("coding-canonical-cwd")).to_have_text(str(second))
-            refresh = page.get_by_role("button", name = "Refresh coding conversations", exact = True)
-            refresh.click()
-            expect(refresh).to_be_enabled(timeout = 60000)
-            original = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text = first_id)
-            expect(original).to_be_visible()
-            with page.expect_response(lambda response: response.url == base + f"/api/coding/conversations/{first_id}/open" and response.request.method == "POST", timeout = 60000) as reopened:
-                original.click()
-            assert reopened.value.ok and reopened.value.json()["id"] == first_id
-            expect(page.get_by_test_id("coding-conversation-id")).to_have_text(first_id, timeout = 60000)
-            expect(page.get_by_test_id("coding-canonical-cwd")).to_have_text(str(first))
-            expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout = 60000)
+            expect(cwd).to_have_attribute("title", str(second))
+            original = saved_row(page, first_id)
+            reopened = open_saved(page, base, first_id)
+            expect(cwd).to_have_attribute("title", str(first))
+            expect_connected(page)
             scenario("A6-change-reopen", "Different project creates a different native identity; deliberate reopen preserves first ID and cwd")
-            if args.extensions:
-                try:
-                    run_extension_scenarios(page, context, base, provider, first_id, second_id,
-                                            report, scenario, snapshot, native = native)
-                except Exception:
-                    snapshot(page, "failed-extensions")
-                    raise
             if args.workload == "recovery":
-                saved_second = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text = second_id)
+                saved_second = saved_row(page, second_id)
                 for failure, expected_error in (("denied", "denies access"), ("missing", "does not exist")):
                     if failure == "denied":
                         second.chmod(0)
@@ -422,7 +431,7 @@ def main() -> None:
                     try:
                         saved_second.click()
                         expect(page.get_by_role("alert").filter(has_text = expected_error)).to_be_visible(timeout = 60000)
-                        expect(page.get_by_test_id("coding-conversation-id")).to_have_text(first_id)
+                        expect_opened(page, first_id)
                         snapshot(page, "recovery-saved-folder-" + failure)
                     finally:
                         if failure == "missing":
@@ -461,7 +470,7 @@ def main() -> None:
                     elif args.workload == "plan":
                         run_plan_scenarios(page, context, base, provider, first, second_id,
                                            report, scenario, snapshot,
-                                           opening_generation = reopened.value.json()["runtime_generation"])
+                                           opening_generation = reopened.json()["runtime_generation"])
                     elif args.workload == "questions":
                         run_question_scenarios(page, context, base, provider, first, second_id,
                                                report, scenario, snapshot)
@@ -497,11 +506,14 @@ def main() -> None:
             # and the replacement subscription still use the real native process.
             event_url = base + f"/api/coding/conversations/{first_id}/events"
             page.route(event_url, lambda route: route.abort("connectionreset"), times = 1)
-            original.click()
-            expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream unavailable", timeout = 60000)
-            original.click()
-            expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout = 60000)
-            expect(page.get_by_test_id("coding-conversation-id")).to_have_text(first_id)
+            show_sidebar(page)
+            with page.expect_response(lambda response: response.url == base + f"/api/coding/conversations/{first_id}/open"
+                                      and response.request.method == "POST", timeout = 60000) as faulted:
+                original.click()
+            assert faulted.value.ok
+            expect(page.get_by_test_id("coding-disconnect-banner")).to_be_visible(timeout = 60000)
+            open_saved(page, base, first_id, ready = False)
+            expect_connected(page)
             scenario("A6-same-id-view-reopen", "One browser SSE connection was fault-aborted; deliberate same-ID reopen obtained a fresh real native stream without changing identity")
             # A separate actual native process owns a third conversation. The Studio
             # process must refuse it, leave its current owner alone, then open only
@@ -530,8 +542,8 @@ def main() -> None:
                     assert "result" in result, result
                     foreign_id = result["result"]["info"]["id"]
                     report["conversation_ids"].append(foreign_id)
-                    page.get_by_role("button", name = "Refresh coding conversations", exact = True).click()
-                    owned_elsewhere = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text = foreign_id)
+                    refresh_saved(page)
+                    owned_elsewhere = saved_row(page, foreign_id)
                     expect(owned_elsewhere).to_be_visible()
                     with page.expect_response(lambda response: response.url == base + f"/api/coding/conversations/{foreign_id}/open"
                                               and response.request.method == "POST", timeout = 60000) as refusal:
@@ -540,13 +552,12 @@ def main() -> None:
                     refusal_detail = refusal.value.json()["detail"]
                     assert refusal_detail == "Conversation is in use by another process. Close that owner before reopening.", refusal_detail
                     expect(page.get_by_role("alert").filter(has_text = refusal_detail)).to_be_visible(timeout = 60000)
-                    expect(page.get_by_test_id("coding-conversation-id")).to_have_text(first_id)
+                    expect_opened(page, first_id)
                     assert foreign.poll() is None, "Studio cancelled the foreign owner"
                     snapshot(page, "desktop-lease-refusal")
                     foreign.stdin.close()
                     assert foreign.wait(timeout = 30) == 0
-                    owned_elsewhere.click()
-                    expect(page.get_by_test_id("coding-conversation-id")).to_have_text(foreign_id, timeout = 60000)
+                    open_saved(page, base, foreign_id)
                     scenario("A6-cross-process-lease", "Browser showed in-use refusal without changing current ID or cancelling foreign owner; same ID opened after confirmed native EOF cleanup")
                 finally:
                     if foreign.poll() is None:
@@ -562,17 +573,24 @@ def main() -> None:
             assert report["supervised_pid"] == product[0].pid, "Studio replaced the native owner during browser scenarios"
             scenario("A1-one-runtime", f"{len(report['conversation_ids'])} native conversations retained in one Studio-supervised product process; PID unchanged")
             page.set_viewport_size({"width": 390, "height": 844})
-            expect(page.get_by_test_id("coding-project-chooser")).to_be_visible()
+            # The folder chooser belongs to a new conversation's landing.
+            show_sidebar(page)
+            page.get_by_role("button", name = "New conversation", exact = True).click()
+            expect(chooser).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-            page.get_by_role("button", name = "Choose another project", exact = True).click()
+            chooser.click()
+            page.get_by_role("menuitem", name = "Choose folder…", exact = True).click()
             expect(page.get_by_role("dialog")).to_be_visible()
             expect(page.get_by_label("Host folder path", exact = True)).to_be_focused()
             snapshot(page, "narrow-picker")
             page.keyboard.press("Escape")
             expect(page.get_by_role("dialog")).not_to_be_visible()
-            expect(page.get_by_role("button", name = "Choose another project", exact = True)).to_be_focused()
+            expect(chooser).to_be_focused()
+            # Leave the last native conversation open again for the remaining checks.
+            open_saved(page, base, foreign_id)
+            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
             snapshot(page, "narrow-opened")
-            scenario("A10-narrow-keyboard", "390x844: no horizontal document overflow; picker focus, Escape dismissal, and trigger focus restored")
+            scenario("A10-narrow-keyboard", "390x844: no horizontal document overflow; landing folder picker focus, Escape dismissal and chip focus restored; saved conversation reopened from the narrow sidebar")
             # Requests on known IDs still require ordinary Studio authentication.
             unauth = playwright.request.new_context(base_url = base)
             from urllib.parse import urlencode

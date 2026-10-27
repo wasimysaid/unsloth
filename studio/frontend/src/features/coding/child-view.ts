@@ -7,6 +7,7 @@ import {
   replaceEntryContent,
 } from "./entry-content.ts";
 import { trimSavedEntries } from "./entry-window.ts";
+import { needsReopen } from "./errors.ts";
 import { codingRowSize } from "./file-changes.ts";
 import { applyTextDelta, type TextDelta } from "./live-rows.ts";
 import { createViewNotifications } from "./view-notifications.ts";
@@ -149,12 +150,7 @@ export function createChildView(
     sameChild(state.inspection, identity) &&
     !abort?.signal.aborted;
   const report = (error: unknown) => {
-    if (
-      error instanceof Error &&
-      "requiresReopen" in error &&
-      error.requiresReopen === true
-    )
-      onReopen?.(error);
+    if (needsReopen(error)) onReopen?.(error);
     if (state.inspection)
       update({ inspection: { ...state.inspection, error: failure(error) } });
   };

@@ -10,19 +10,22 @@ import json
 import re
 import time
 
+from coding_recovery_scenarios import captured_state
+from coding_ui import create_and_open, expect_connected, expect_opened, opened_id, saved_row
+
 
 def run_concurrency_scenarios(page, context, base, provider, first, second, second_id,
                               alias, report, scenario, snapshot):
     import psutil
     from playwright.sync_api import expect
 
-    first_id = page.get_by_test_id("coding-conversation-id").inner_text()
+    first_id = opened_id(page)
     headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')")}
     headers["X-Mimir-Runtime-Generation"] = str(context.request.get(base + "/api/coding/runtime", headers=headers).json()["generation"])
     evidence = report.setdefault("concurrency", {"kind": "deterministic-provider-real-native-tools", "requests": []})
     composer = page.get_by_label("Coding prompt", exact=True)
     status = page.get_by_test_id("coding-run-status")
-    saved = page.locator('[aria-label="Saved coding conversations"] button')
+    send_explanation = page.locator("#coding-send-explanation")
     prompts = []
     page.on("request", lambda request: prompts.append(request.url)
             if request.method == "POST" and request.url.endswith("/prompts") else None)
@@ -42,9 +45,15 @@ def run_concurrency_scenarios(page, context, base, provider, first, second, seco
         raise AssertionError("Expected native provider request was not delivered")
 
     def choose(identifier):
-        saved.filter(has_text=identifier).click()
-        expect(page.get_by_test_id("coding-conversation-id")).to_have_text(identifier, timeout=60000)
-        expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+        saved_row(page, identifier).click()
+        expect_opened(page, identifier)
+        expect_connected(page)
+
+    def running(identifier, request_id):
+        # Request IDs are no longer rendered; a fresh native capture supplies the
+        # exact running identity behind the rendered Running status.
+        expect(status).to_have_text("Running", timeout=60000)
+        assert captured_state(base, headers, identifier)["active_request"] == request_id
 
     def enter(text):
         composer.fill(text)
@@ -89,20 +98,20 @@ def run_concurrency_scenarios(page, context, base, provider, first, second, seco
     peer = context.new_page()
     try:
         peer.goto(base + "/coding")
-        peer_saved = peer.locator('[aria-label="Saved coding conversations"] button').filter(has_text=first_id)
+        peer_saved = saved_row(peer, first_id)
         expect(peer_saved).to_be_visible(timeout=60000)
         with page.expect_request(lambda request: request.url == event_url, timeout=60000):
             peer_saved.click()
-        expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
-        expect(peer.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+        expect_connected(page)
+        expect_connected(peer)
         peer.on("request", record_watch)
         with page.expect_request(lambda request: request.url == event_url, timeout=60000), peer.expect_request(lambda request: request.url == event_url, timeout=60000):
             reopened = context.request.post(base + f"/api/coding/conversations/{first_id}/open", headers=headers)
         assert reopened.ok and reopened.json()["id"] == first_id
         for tab in (page, peer):
-            expect(tab.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+            expect_connected(tab)
             expect(tab.get_by_test_id("coding-run-status")).to_have_text("Running", timeout=60000)
-            expect(tab.get_by_test_id("coding-request-id")).to_contain_text(first_ack["request_id"])
+        assert captured_state(base, headers, first_id)["active_request"] == first_ack["request_id"]
         owner_requests = [(method, url) for method, url in watching_requests if "/api/coding/conversations/" in url]
         assert all((method == "GET") or (method == "POST" and url.endswith("/entries")) for method, url in owner_requests), owner_requests
         provider.assert_no_request()
@@ -128,20 +137,28 @@ def run_concurrency_scenarios(page, context, base, provider, first, second, seco
     evidence["tool_processes"] = [{"pid": process_a.pid, "created": process_a.create_time()}, {"pid": process_b.pid, "created": process_b.create_time()}]
 
     # Create through a symlink spelling while the canonical first project is busy.
-    page.get_by_role("button", name="Choose another project", exact=True).click()
+    # The rendered folder browser resolves the spelling to the canonical folder.
+    # Choosing it only selects the landing folder, and a landing Send would also
+    # auto-send its text, so the idle conversation is created in the selected
+    # folder through the authenticated API and deliberately opened from the sidebar.
+    page.get_by_role("button", name="New conversation", exact=True).click()
+    page.get_by_test_id("coding-project-chooser").click()
+    page.get_by_role("menuitem", name="Choose folder…", exact=True).click()
     page.get_by_label("Host folder path", exact=True).fill(str(alias))
     page.get_by_role("button", name="Browse", exact=True).click()
     expect(page.get_by_test_id("coding-browsed-path")).to_have_text(str(first))
-    with page.expect_response(lambda response: response.url == base + "/api/coding/conversations" and response.request.method == "POST", timeout=60000) as response:
-        page.get_by_role("button", name="Open project", exact=True).click()
-    assert response.value.status == 201
-    alias_id = response.value.json()["id"]
-    assert alias_id not in (first_id, second_id)
-    report["conversation_ids"].append(alias_id)
-    expect(page.get_by_test_id("coding-conversation-id")).to_have_text(alias_id, timeout=60000)
-    expect(page.get_by_test_id("coding-run-status")).to_have_text("Ready", timeout=60000)
-    expect(page.get_by_test_id("coding-canonical-cwd")).to_have_text(str(first))
+    page.get_by_role("button", name="Use this folder", exact=True).click()
+    chooser = page.get_by_test_id("coding-project-chooser")
+    expect(chooser).to_have_attribute("title", str(first))
     count = len(prompts)
+    created, _ = create_and_open(page, context, base, headers, chooser.get_attribute("title"))
+    alias_id = created["id"]
+    assert alias_id not in (first_id, second_id)
+    assert created["cwd"] == str(first)
+    report["conversation_ids"].append(alias_id)
+    expect(page.get_by_test_id("coding-run-status")).to_have_text("Ready", timeout=60000)
+    expect(page.get_by_test_id("coding-canonical-cwd")).to_have_attribute("title", str(first))
+    assert len(prompts) == count, "Opening the alias conversation submitted a prompt"
     enter("OVERLAP_CANCELLED: do not execute")
     dialog = page.get_by_role("alertdialog", name="Other work is active in this project")
     expect(dialog).to_be_visible(timeout=60000)
@@ -192,13 +209,17 @@ def run_concurrency_scenarios(page, context, base, provider, first, second, seco
     expect(dialog.get_by_role("button", name="Continue anyway", exact=True)).to_be_disabled()
     page.keyboard.press("Escape")
     expect(dialog).not_to_be_visible()
-    expect(page.get_by_test_id("coding-event-status")).to_be_focused()
+    # Typing is never native work: the composer stays editable and regains focus,
+    # while its send explanation names the withheld native view.
+    expect(composer).to_be_focused()
+    expect(send_explanation).to_have_text("Waiting for a connected, reconstructed native view.")
+    expect(page.get_by_test_id("coding-unsent-draft")).to_have_value("OVERLAP_DISCONNECTED_CANCEL: preserve draft without authority")
     assert len(prompts) == count
     snapshot(page, "concurrency-disconnected-cancel-focus")
     page.evaluate("window.codingDropView = false")
     page.unroute(event_url, outage)
     expect(status).to_have_text("Ready", timeout=60000)
-    scenario("A10-overlap-disconnected-cancel-focus", "Fault-injected browser stream loss disables Continue; Escape cancels only the known-unadmitted draft and restores focus to meaningful native status while composer is disabled")
+    scenario("A10-overlap-disconnected-cancel-focus", "Fault-injected browser stream loss disables Continue; Escape cancels only the known-unadmitted draft and restores focus to the still-editable composer while send stays blocked on the unreconstructed native view")
 
     # A direct unconfirmed submission must be refused before native admission too.
     race_body = {"submission_key": "route-unconfirmed-overlap", "text": "OVERLAP_ROUTE_GUARD"}
@@ -217,13 +238,18 @@ def run_concurrency_scenarios(page, context, base, provider, first, second, seco
     page.route(prompt_url, lambda route: delayed.append(route), times=1)
     page.keyboard.press("Enter")
     expect(dialog).not_to_be_visible()
-    expect(page.get_by_test_id("coding-event-status")).to_be_focused()
-    expect(composer).to_be_disabled()
+    # The composer stays editable while delivery is pending, so focus returns to
+    # it; the send explanation shows the held submission blocks another send.
+    expect(composer).to_be_focused()
+    expect(send_explanation).to_have_text("Reconcile the unconfirmed submission first.", timeout=60000)
+    deadline = time.monotonic() + 60
+    while not delayed and time.monotonic() < deadline:
+        page.wait_for_timeout(50)
     assert len(delayed) == 1, "Prompt transport was not gated"
     with page.expect_response(lambda response: response.url == prompt_url, timeout=60000) as response:
         delayed[0].continue_()  # Delay only; forward to the real authenticated route.
     assert response.value.status == 202
-    scenario("A10-overlap-delayed-continuation-focus", "Warning dismissal while prompt HTTP is delayed restores focus to enabled native status, not disabled composer; releasing transport reaches real native admission")
+    scenario("A10-overlap-delayed-continuation-focus", "Warning dismissal while prompt HTTP is delayed restores focus to the editable composer while send stays blocked on the unconfirmed submission; releasing transport reaches real native admission")
     assert response.value.request.post_data_json["overlap_confirmed"] is True
     alias_ack = response.value.json()
     evidence["requests"].append(alias_ack)
@@ -237,15 +263,14 @@ def run_concurrency_scenarios(page, context, base, provider, first, second, seco
 
     page.set_viewport_size({"width": 1440, "height": 1000})
     choose(first_id)
-    expect(page.get_by_test_id("coding-request-id")).to_contain_text(first_ack["request_id"])
+    running(first_id, first_ack["request_id"])
     page.get_by_role("button", name="Stop", exact=True).click()
     expect(status).to_contain_text("Stopped", timeout=60000)
     assert not process_a.is_running(), "Stopped was shown before native tool cleanup"
     assert process_b.is_running(), "Stopping first conversation cancelled independent tool"
     assert not (first / "CONCURRENT_A.completed").exists()
     choose(second_id)
-    expect(page.get_by_test_id("coding-request-id")).to_contain_text(second_ack["request_id"])
-    expect(status).to_have_text("Running")
+    running(second_id, second_ack["request_id"])
     # The gate is test input; only the real native shell creates completed output.
     (second / "CONCURRENT_B.release").write_text("release\n")
     wait_file(second / "CONCURRENT_B.completed")

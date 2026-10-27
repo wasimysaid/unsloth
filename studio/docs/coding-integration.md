@@ -215,6 +215,11 @@ not external-provider/local-model full-PoC or human-review acceptance (#255–25
 
 ## Native MCP apply/reconnect (#251)
 
+> **Removed from the browser (2026-10-27 UI debloat).** The Mimir Settings page,
+> the Studio Settings → Mimir tab and their MCP/extension browser drivers were
+> deleted. The backend routes described here remain, covered by backend tests,
+> with no browser client. Text below is the historical record of that slice.
+
 Implementation baselines: Studio `be0a051ae00f35935c3babb76e8c6e03626464d6`
 and paired private Mimir `f5364ce6a0c1d8cc4d5bc5f6c05e26ef3ce787f5`.
 Mimir Settings now exposes three distinct operations: **Save configuration**
@@ -259,12 +264,6 @@ Desktop and narrow rendering, keyboard/error focus, busy refusals, lost replies,
 saved/applied revisions, connection failures and settled process ownership are
 recorded separately in task evidence. Full live external/local-model acceptance
 and human implemented-UI review remain #255–256.
-
-```sh
-.venv/bin/python studio/tools/coding_mcp_browser_acceptance.py \
-  --mimir /path/to/paired/mimir --plugin-package /path/to/current/package \
-  --apply-reconnect --browser firefox --evidence-dir /path/to/task/evidence
-```
 
 ## Live model catalog refresh (#245)
 
@@ -364,6 +363,11 @@ Never install the acceptance-only component into normal shared Mimir state.
 Full external-provider/local-model and human PoC acceptance remain #255–256.
 
 ## Extension inspection and maintenance (#252)
+
+> **Removed from the browser (2026-10-27 UI debloat).** The Mimir Settings page,
+> the Studio Settings → Mimir tab and their MCP/extension browser drivers were
+> deleted. The backend routes described here remain, covered by backend tests,
+> with no browser client. Text below is the historical record of that slice.
 
 Implementation baselines: Studio `a784d9193d38c640562b5464d5e9c10def6ac82d`
 and paired Mimir `7ddec52c566497dd6e0cf572a18272a88d8fa10a`.
@@ -898,18 +902,22 @@ these contracts, not reused from an older Wasm artifact.
 | A5 | Externally configured provider admission; native Studio downloaded-model catalog and authenticated built-in serving, exact execution/dequeue admission and request-owned gated lifecycle protection (#246; evidence in coding-local-serving-ticket246.md) | Combined live catalog refresh/process recovery and cross-feature acceptance (#245/#249/#255) |
 | A6 | Canonical/native validated opening, non-persisting effective trust, saved-policy tests, child inheritance, mismatch/lease refusals, authenticated run/Stop/history access; independent concurrent native workloads and canonical-folder warning/admission (#247); same-identity trusted history reopening after idle retirement (#248) | Process-loss recovery (#249) and cross-feature acceptance (#254–255) |
 | A7 | Exact request cancellation; Stop acknowledgment distinct from cleanup; disconnect never stops owners; typed native failures; durable submission identity across reload/native restart, automatic authoritative reconnect and non-prompt reconciliation (#236); no automatic work replay; awaited EOF shutdown; continuous unviewed/native-quiescent retention, controlled clocks, atomic native retirement and failure-safe cleanup retry (#248); independent whole-request local-model holds, tools/questions/child gaps, exact uncertain-admission reconciliation and confirmed cleanup-only release (#246) | Full process-interruption/maintenance scenarios (#249) and cross-feature live-model acceptance (#254–255) |
-| A8 | Focused Mimir Settings; native headless installed/enabled/selected/live inventory, effective skills, bounded diagnostics, exact scoped reload and uncertain-outcome reconciliation (#252); scoped native MCP inventory, revision-checked persistence and draft reconciliation, save-only Settings with configured/applied distinction (#250) | MCP live apply/reconnect (#251) and separately owned runtime restart (#249) |
+| A8 | Removed from the browser 2026-10-27 (backend routes remain). Was: focused Mimir Settings; native headless installed/enabled/selected/live inventory, effective skills, bounded diagnostics, exact scoped reload and uncertain-outcome reconciliation (#252); scoped native MCP inventory, revision-checked persistence and draft reconciliation, save-only Settings with configured/applied distinction (#250) | MCP live apply/reconnect (#251) and separately owned runtime restart (#249) |
 | A9 | Ordinary-chat store and execution ownership preserved; coding route excludes ordinary chat stores/observers. Shared lifecycle owners reject destructive management of whole-request coding holds (#246); affected ordinary-chat/model-lifecycle regressions and real authenticated inference smoke are recorded in coding-local-serving-ticket246.md | Cross-feature regression (#254/#255) |
 | A10 | Rendered opening, deterministic provider/native-tool, cancellation/failure, keyboard/narrow, separate live-provider driver; local preparation/cleanup/error/retry and live invocation-start reconciliation (#246); bottom-follow, accessible latest/activity controls, anchored expansion/reconstruction and bounded older/newer navigation (#253) | #246's final real-model driver passed after host recovery; see coding-local-serving-ticket246.md and [reading evidence and its boundaries](coding-reading-253-evidence.md). Full cross-feature UI checks and user's implemented-UI review remain separate (#255/#256) |
 
 ## MCP save-only Settings slice (#250)
 
+> **Removed from the browser (2026-10-27 UI debloat).** The Mimir Settings page,
+> the Studio Settings → Mimir tab and their MCP/extension browser drivers were
+> deleted. The backend routes described here remain, covered by backend tests,
+> with no browser client. Text below is the historical record of that slice.
+
 Revalidated paired baselines: Studio `1ca8b10f3f3c43fddf3e510cf90aa5c65b79d9bd`
 and Mimir `1fd0ca7275f25a3bde6507a17535983e2aeec5ee`. Settings extends the
 existing authenticated coding boundary and single `studio.frontend` activation;
 no Studio file editor, competing configuration store, or additional plugin is added.
-See [frontend Settings contracts](../frontend/src/features/coding/README.md#mimir-settings-250)
-and the paired native SDK/protocol documentation for resource/revision semantics.
+See the paired native SDK/protocol documentation for resource/revision semantics.
 
 The real-route MCP driver uses the built UI, production auth/coding routers,
 installed product plugin and native Mimir. It isolates **all four** MCP layers
@@ -924,13 +932,6 @@ contains the actual committed revision and source-configured state independently
 best-effort inventory; unavailable inventory never replays or falsifies a completed
 save. It does not call a provider, apply/reconnect servers, or claim
 full-Studio/ordinary-chat smoke evidence.
-
-```sh
-.venv/bin/python studio/tools/coding_mcp_browser_acceptance.py \
-  --mimir /path/to/current/mimir \
-  --plugin-package /path/to/rebuilt/studio-frontend/package \
-  --evidence-dir /path/to/attempt/worker/mcp-browser
-```
 
 Use task-owned backend/test dependencies, `playwright` and `psutil`; Chrome is the
 default, with software-rendered Firefox available via `--browser firefox`.

@@ -83,26 +83,18 @@ test("child latest and earlier history use complete entry resolution while unins
   const rows: CodingRow[] = [
     { id: "full", entry_id: "entry", kind: "assistant", text: "complete 漢🙂" },
   ];
-  const data = JSON.stringify(rows);
   const ref = {
     cut,
     entry_id: "entry",
-    total_bytes: new TextEncoder().encode(data).length,
   };
   const view = createChildView("parent", {
     async readChild() {
       return { child: null, outcome: null };
     },
-    async readPublicEntry(id, reference, offset) {
+    async readPublicEntry(_id, reference) {
       assert.deepEqual(reference, { ...ref, cut: reference.cut });
       assert.ok(["attempt-1", "attempt-2"].includes(reference.cut.leaf!));
-      return {
-        conversation_id: id,
-        ...reference,
-        offset,
-        data,
-        next_offset: null,
-      };
+      return rows;
     },
     async readEntries(_id, captured, anchor) {
       const latest = anchor === "latest";

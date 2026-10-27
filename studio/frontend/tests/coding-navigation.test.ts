@@ -15,6 +15,14 @@ import type {
 } from "../src/features/coding/types.ts";
 import { memorySubmissionStorage } from "./coding-storage-fixture.ts";
 
+/** Choose a folder, then Send from the landing: the only way to create. */
+function create(
+  session: ReturnType<typeof createCodingSession>,
+  cwd: string,
+) {
+  session.selectProject(cwd);
+  return session.startConversation();
+}
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((yes) => {
@@ -93,7 +101,7 @@ test("New during a pending create neither orphans nor doubles it", async () => {
     },
   });
   await session.openConversation("current");
-  const creating = session.createConversation("/project");
+  const creating = create(session, "/project");
   const accepted = session.startNew();
   assert.deepEqual(
     session.getSnapshot().pending,
@@ -102,7 +110,7 @@ test("New during a pending create neither orphans nor doubles it", async () => {
   );
   assert.equal(session.getSnapshot().active?.id, "current");
   assert.equal(accepted, false, "a pending create cannot be withdrawn");
-  assert.equal(await session.createConversation("/project"), false);
+  assert.equal(await create(session, "/project"), false);
   assert.equal(await session.openConversation("other"), false);
   assert.equal(creates, 1, "never a second native create");
   slow.resolve({ id: "created", cwd: "/project" });
@@ -125,14 +133,14 @@ test("New keeps an uncertain create's reconciliation; the landing cannot create 
       return Promise.reject(new Error("Lost reply"));
     },
   });
-  assert.equal(await session.createConversation("/project"), false);
+  assert.equal(await create(session, "/project"), false);
   assert.equal(session.startNew(), true);
   assert.deepEqual(session.getSnapshot().openingUncertainty, {
     operation: "create",
     id: null,
     inspected: true,
   });
-  assert.equal(await session.createConversation("/project"), false);
+  assert.equal(await create(session, "/project"), false);
   assert.equal(creates, 1);
   assert.equal(await session.openConversation("saved"), true);
   assert.equal(session.getSnapshot().openingUncertainty, null);
@@ -154,7 +162,7 @@ test("a create from the landing takes over its complete current draft, including
   });
   const landing = session.getSnapshot().draft;
   landing.syncText("A first idea");
-  const creating = session.createConversation("/project");
+  const creating = create(session, "/project");
   // The landing stays editable while the create is pending.
   landing.syncText("B newer idea");
   landing.addImages([pixel]);
@@ -188,7 +196,7 @@ test("opening another conversation, New, or a create from an open conversation n
     attachmentErrors: [],
   });
   opened.syncText("typed in saved");
-  assert.equal(await session.createConversation("/elsewhere"), true);
+  assert.equal(await create(session, "/elsewhere"), true);
   const other = session.getSnapshot().draft;
   assert.notEqual(
     other,
@@ -210,7 +218,7 @@ test("an uncertain create keeps the landing's draft on the landing", async () =>
   const landing = session.getSnapshot().draft;
   landing.syncText("keep me");
   landing.addImages([pixel]);
-  assert.equal(await session.createConversation("/project"), false);
+  assert.equal(await create(session, "/project"), false);
   assert.equal(session.getSnapshot().active, null);
   assert.equal(session.getSnapshot().draft, landing);
   assert.equal(landing.getSnapshot().images.length, 1);
@@ -271,13 +279,12 @@ function runHarness(entries: () => Promise<EntryPage>) {
     storage: () => memorySubmissionStorage(),
   });
   run.connect();
-  const start = (recovering: boolean) =>
+  const start = () =>
     deliver({
       subscription: `view-${watches}`,
       position: ++position,
       event: {
         type: "start",
-        recovering,
         root: { cut: { journal: "root", leaf: "leaf" }, live_invocations: [] },
         state: {
           info: { id: "conversation", cwd: "/project" },
@@ -307,7 +314,7 @@ const page = (): EntryPage => ({
 test("Stop targets the request named by the current view while its history is still read", async () => {
   const hanging = deferred<EntryPage>();
   const h = runHarness(() => hanging.promise);
-  void h.start(false); // Capture awaits the history read, which does not finish.
+  void h.start();
   await settle();
   const state = h.run.getSnapshot();
   assert.equal(state.connection, "loading");
@@ -323,19 +330,29 @@ test("Stop targets the request named by the current view while its history is st
   );
 });
 
-test("Stop targets the active request while native history is still recovering", async () => {
-  const h = runHarness(async () => page());
-  await h.start(true);
-  assert.equal(h.run.getSnapshot().recovering, true);
+test("Stop during delayed reconnect history keeps its exact target after capture completes", async () => {
+  let history = Promise.resolve(page());
+  const h = runHarness(() => history);
+  await h.start();
+  const pending = deferred<EntryPage>();
+  history = pending.promise;
+  h.run.connect();
+  const capture = h.start();
+  assert.equal(h.run.getSnapshot().connection, "loading");
   assert.equal(codingStopTarget(h.run.getSnapshot()), "R");
   await h.run.stop();
   assert.deepEqual(h.cancelled, ["R"]);
+  pending.resolve(page());
+  await capture;
+  assert.equal(h.run.getSnapshot().connection, "connected");
+  assert.equal(h.run.getSnapshot().stopping, "R");
+  assert.equal(codingStopTarget(h.run.getSnapshot()), null);
   h.run.detach();
 });
 
 test("a fresh view keeps Stop on the exact request this owner last named; native judges it", async () => {
   const h = runHarness(async () => page());
-  await h.start(false);
+  await h.start();
   assert.equal(codingStopTarget(h.run.getSnapshot()), "R");
   h.run.connect(); // A fresh subscription is not a new owner or another request.
   assert.equal(h.run.getSnapshot().connection, "loading");

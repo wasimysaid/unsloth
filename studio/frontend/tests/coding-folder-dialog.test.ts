@@ -9,7 +9,6 @@ import {
   type StubElement,
 } from "./helpers/module-stubs.ts";
 import { createCodingSession } from "../src/features/coding/session.ts";
-import { CodingHttpError } from "../src/features/coding/errors.ts";
 import type { CodingApi } from "../src/features/coding/types.ts";
 
 function nodes(node: unknown): StubElement[] {
@@ -30,6 +29,7 @@ function picker(api: CodingApi) {
   let effectDirectory: unknown = Symbol("unmounted");
   const effects: (() => void)[] = [];
   const changes: boolean[] = [];
+  const selected: string[] = [];
   let restores = 0;
   const session = createCodingSession(api);
   const component = loadWithStubs<{
@@ -80,6 +80,7 @@ function picker(api: CodingApi) {
       onRestoreFocus: () => {
         restores++;
       },
+      onSelect: (path: string) => selected.push(path),
       session,
       state: session.getSnapshot(),
     });
@@ -91,6 +92,7 @@ function picker(api: CodingApi) {
         onRestoreFocus: () => {
           restores++;
         },
+        onSelect: (path: string) => selected.push(path),
         session,
         state: session.getSnapshot(),
       }),
@@ -103,7 +105,14 @@ function picker(api: CodingApi) {
     assert.ok(result, `button ${label} exists`);
     return result;
   };
-  return { session, render, button, changes, restores: () => restores };
+  return {
+    session,
+    render,
+    button,
+    changes,
+    selected,
+    restores: () => restores,
+  };
 }
 function api(overrides: Partial<CodingApi> = {}): CodingApi {
   return {
@@ -145,7 +154,7 @@ test("controlled picker restores its invoker when Radix closes focus scope after
   assert.equal(p.restores(), 1);
 });
 
-test("typed path Enter browses rather than opening; confirm sends only the browsed canonical cwd", async () => {
+test("typed path Enter browses rather than choosing; confirm selects only the browsed canonical folder", async () => {
   const browsed: string[] = [];
   const created: string[] = [];
   const p = picker(
@@ -165,7 +174,7 @@ test("typed path Enter browses rather than opening; confirm sends only the brows
       },
     }),
   );
-  assert.equal(p.button("Open project").props.disabled, true);
+  assert.equal(p.button("Use this folder").props.disabled, true);
   const input = p.render().find((node) => node.type === "Input")!;
   (input.props.onChange as (event: unknown) => void)({
     target: { value: "/host/link" },
@@ -181,29 +190,31 @@ test("typed path Enter browses rather than opening; confirm sends only the brows
   assert.equal(prevented, true);
   assert.deepEqual(browsed, ["/host/link"]);
   assert.deepEqual(created, []);
-  assert.equal(p.button("Open project").props.disabled, false);
-  await (p.button("Open project").props.onClick as () => Promise<void>)();
-  assert.deepEqual(created, ["/canonical"]);
+  assert.equal(p.button("Use this folder").props.disabled, false);
+  (p.button("Use this folder").props.onClick as () => void)();
+  assert.deepEqual(p.selected, ["/canonical"]);
+  assert.deepEqual(created, [], "choosing a folder never creates a conversation");
   assert.deepEqual(p.changes, [false]);
+  assert.equal(p.session.getSnapshot().directory, null);
 });
 
 test("editing the path after browse disables confirm until the new path is browsed", async () => {
   const p = picker(api());
   await p.session.browse("/canonical");
-  assert.equal(p.button("Open project").props.disabled, false);
+  assert.equal(p.button("Use this folder").props.disabled, false);
   const input = p.render().find((node) => node.type === "Input")!;
   (input.props.onChange as (event: unknown) => void)({
     target: { value: "/other" },
   });
-  assert.equal(p.button("Open project").props.disabled, true);
-  await (p.button("Open project").props.onClick as () => Promise<void>)();
-  assert.equal(
-    p.session.getSnapshot().active,
-    null,
-    "even direct stale button activation must not open the old folder",
+  assert.equal(p.button("Use this folder").props.disabled, true);
+  (p.button("Use this folder").props.onClick as () => void)();
+  assert.deepEqual(
+    p.selected,
+    [],
+    "even direct stale button activation must not choose the old folder",
   );
   const pending = p.session.browse("/other");
-  assert.equal(p.button("Open project").props.disabled, true);
+  assert.equal(p.button("Use this folder").props.disabled, true);
   await pending;
 });
 
@@ -235,64 +246,7 @@ test("editing while a browse is pending preserves the newer draft and invalidate
   );
   assert.equal(signal?.aborted, true);
   assert.equal(p.session.getSnapshot().directory, null);
-  assert.equal(p.button("Open project").props.disabled, true);
-  await (p.button("Open project").props.onClick as () => Promise<void>)();
-  assert.equal(p.session.getSnapshot().active, null);
-});
-
-test("a failed native opening keeps the dialog open with the error; cancel clears browse without opening", async () => {
-  const p = picker(
-    api({
-      createConversation: async () => {
-        throw new CodingHttpError(403, "Unreadable host folder");
-      },
-    }),
-  );
-  await p.session.browse("/canonical");
-  await (p.button("Open project").props.onClick as () => Promise<void>)();
-  assert.deepEqual(p.changes, []);
-  assert.ok(
-    p
-      .render()
-      .some(
-        (node) =>
-          node.props.role === "alert" &&
-          text(node.props.children) === "Unreadable host folder",
-      ),
-  );
-  (p.button("Cancel").props.onClick as () => void)();
-  assert.deepEqual(p.changes, [false]);
-  assert.equal(p.session.getSnapshot().directory, null);
-});
-
-test("uncertain native creation disables repeated confirmation and lets the user close to inspect saved history", async () => {
-  let creations = 0;
-  const p = picker(
-    api({
-      createConversation: async () => {
-        creations++;
-        throw new Error("Lost create ACK");
-      },
-      listConversations: async () => [{ id: "accepted", cwd: "/canonical" }],
-    }),
-  );
-  await p.session.browse("/canonical");
-  await (p.button("Open project").props.onClick as () => Promise<void>)();
-  assert.equal(p.button("Open project").props.disabled, true);
-  await (p.button("Open project").props.onClick as () => Promise<void>)();
-  assert.equal(creations, 1);
-  assert.equal(p.session.getSnapshot().openingUncertainty?.inspected, true);
-  assert.equal(p.session.getSnapshot().active, null);
-  assert.ok(
-    p
-      .render()
-      .some(
-        (node) =>
-          node.props.role === "alert" &&
-          text(node.props.children).includes("unconfirmed, not failed"),
-      ),
-  );
-  assert.equal(p.button("Cancel").props.disabled, false);
-  (p.button("Cancel").props.onClick as () => void)();
-  assert.deepEqual(p.changes, [false]);
+  assert.equal(p.button("Use this folder").props.disabled, true);
+  (p.button("Use this folder").props.onClick as () => void)();
+  assert.deepEqual(p.selected, []);
 });

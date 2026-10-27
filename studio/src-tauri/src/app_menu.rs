@@ -75,7 +75,6 @@ const SETTINGS_ROWS: &[Row] = &[
     Row::Action("settings-connections", "Connections", ""),
     Row::Action("settings-accounts", "Accounts", ""),
     Row::Action("settings-agents", "Agents", ""),
-    Row::Action("settings-mimir", "Mimir", ""),
     Row::Action("settings-voice", "Voice", ""),
     Row::Action("settings-browser", "Browser", ""),
     Row::Action("settings-keyboard-shortcuts", "Shortcuts", ""),

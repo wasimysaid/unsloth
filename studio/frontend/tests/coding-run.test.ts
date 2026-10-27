@@ -143,11 +143,10 @@ function harness(
   run.connect();
   const event = (event: unknown) =>
     deliver({ subscription: "view", position: ++pos, event });
-  const start = (state = native(), recovering = false) =>
+  const start = (state = native()) =>
     event({
       type: "start",
       state,
-      recovering,
       root: { cut: { journal: "root", leaf: "cut1" }, live_invocations: [] },
     });
   return {
@@ -169,6 +168,21 @@ function harness(
     },
     setRows(value: CodingRow[]) {
       rows = value;
+    },
+    holdHistory() {
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const read = api.readEntries;
+      api.readEntries = async (...args) => {
+        await pending;
+        return read(...args);
+      };
+      return () => {
+        api.readEntries = read;
+        release();
+      };
     },
     setSubmitError(error: Error | null) {
       submitError = error;
@@ -220,7 +234,6 @@ test("5000 inspected child deltas share a render budget without losing uninspect
   await h.event({
     type: "start",
     state: native("request"),
-    recovering: false,
     root: { cut: { journal: "root", leaf: null }, live_invocations: [] },
     children: [
       { ...child, status: "running", completion_pending: false, cut: null },
@@ -261,15 +274,6 @@ test("5000 inspected child deltas share a render budget without losing uninspect
 });
 
 function referencePage(cut: JournalCut, entry: string): EntryPage {
-  const rows: CodingRow[] = [
-    {
-      id: `${entry}-row`,
-      entry_id: entry,
-      request_id: null,
-      kind: "assistant",
-      text: `${entry} 漢🙂 complete`,
-    },
-  ];
   return {
     cut,
     rows: [
@@ -281,7 +285,6 @@ function referencePage(cut: JournalCut, entry: string): EntryPage {
         content_ref: {
           cut,
           entry_id: entry,
-          total_bytes: new TextEncoder().encode(JSON.stringify(rows)).length,
         },
       },
     ],
@@ -291,19 +294,15 @@ function referencePage(cut: JournalCut, entry: string): EntryPage {
     last_id: entry,
   };
 }
-const referenceRead: RunApi["readPublicEntry"] = async (id, ref, offset) => {
-  assert.equal(offset, 0);
-  const data = JSON.stringify([
-    {
-      id: `${ref.entry_id}-row`,
-      entry_id: ref.entry_id,
-      request_id: null,
-      kind: "assistant",
-      text: `${ref.entry_id} 漢🙂 complete`,
-    },
-  ]);
-  return { conversation_id: id, ...ref, offset, data, next_offset: null };
-};
+const referenceRead: RunApi["readPublicEntry"] = async (_id, ref) => [
+  {
+    id: `${ref.entry_id}-row`,
+    entry_id: ref.entry_id,
+    request_id: null,
+    kind: "assistant",
+    text: `${ref.entry_id} 漢🙂 complete`,
+  },
+];
 
 for (const direction of ["before", "after"] as const) {
   test(`${direction} pagination preserves content resolved while its page was pending`, async () => {
@@ -442,7 +441,6 @@ for (const path of [
     await h.event({
       type: "start",
       state: native(),
-      recovering: false,
       root: {
         cut: {
           journal: "root",
@@ -488,15 +486,13 @@ test("content references resolve without delaying capture or Stop", async () => 
       text: "漢🙂",
     },
   ];
-  const data = JSON.stringify(complete);
-  const total = new TextEncoder().encode(data).length;
   h.setRows([
     {
       id: "entry",
       entry_id: "entry",
       request_id: null,
       kind: "content_ref",
-      content_ref: { cut, entry_id: "entry", total_bytes: total },
+      content_ref: { cut, entry_id: "entry" },
     } as unknown as CodingRow,
   ]);
   let resolve!: (value: unknown) => void;
@@ -516,15 +512,7 @@ test("content references resolve without delaying capture or Stop", async () => 
   assert.deepEqual(h.cancellations, [
     { id: "conversation", request: "request" },
   ]);
-  resolve({
-    conversation_id: "conversation",
-    cut,
-    entry_id: "entry",
-    offset: 0,
-    total_bytes: total,
-    data,
-    next_offset: null,
-  });
+  resolve(complete);
   await tick();
   assert.deepEqual(
     h.run.getSnapshot().rows.map((row) => row.text),
@@ -574,7 +562,7 @@ test("disconnect turns pending content into explicit retry feedback while preser
   const h = harness(undefined, () => 60000);
   h.api.readEntries = async (_id, cut) => referencePage(cut, "entry");
   let signal: AbortSignal | undefined;
-  h.api.readPublicEntry = async (_id, _ref, _offset, received) => {
+  h.api.readPublicEntry = async (_id, _ref, received) => {
     signal = received;
     return await new Promise<never>(() => {});
   };
@@ -617,7 +605,7 @@ test("reset aborts old entry reads and a late failed result cannot change the re
   let oldSignal: AbortSignal | undefined;
   h.api.readPublicEntry = async (...args) => {
     if (args[1].entry_id === "old") {
-      oldSignal = args[3];
+      oldSignal = args[2];
       return await new Promise((_resolve, fail) => {
         reject = fail;
       });
@@ -628,7 +616,6 @@ test("reset aborts old entry reads and a late failed result cannot change the re
   await h.event({
     type: "reset",
     state: native(),
-    recovering: false,
     root: { cut: { journal: "root", leaf: "new-cut" }, live_invocations: [] },
   });
   await tick();
@@ -652,7 +639,6 @@ test("compact capture seeds exact UTF8 text deltas and reset replaces the base",
   await h.event({
     type: "start",
     state: native("request"),
-    recovering: false,
     root: { cut: { journal: "root", leaf: null }, live_invocations: [] },
     activity: [{ type: "text_delta", row, offset: 0, delta: "漢🙂" }],
   });
@@ -668,7 +654,6 @@ test("compact capture seeds exact UTF8 text deltas and reset replaces the base",
   await h.event({
     type: "reset",
     state: native("request"),
-    recovering: false,
     root: { cut: { journal: "root", leaf: null }, live_invocations: [] },
     activity: [{ type: "text_delta", row, offset: 0, delta: "new" }],
   });
@@ -676,6 +661,54 @@ test("compact capture seeds exact UTF8 text deltas and reset replaces the base",
     h.run.getSnapshot().rows.find((item) => item.id === row.id)?.text,
     "new",
   );
+  h.run.detach();
+});
+
+test("reconnect capture restores unfinished text and running tools without another checkpoint", async () => {
+  const h = harness();
+  await h.start(native("request"));
+  const row = { id: "text", kind: "assistant", entry_id: null, request_id: "request" };
+  const tool: CodingRow = {
+    id: "running-tool",
+    kind: "tool",
+    tool: {
+      invocation_id: "invocation",
+      call_id: "call",
+      request_id: "request",
+      name: "shell",
+      title: "Run shell",
+      status: "running",
+      output: "partial output",
+      clipped: false,
+      quiet: false,
+      row_group: null,
+    },
+  };
+  await h.event({ type: "text_delta", row, offset: 0, delta: "漢🙂" });
+  await h.event({ type: "activity", rows: [tool] });
+  h.run.connect();
+  const release = h.holdHistory();
+  const capture = h.event({
+    type: "start",
+    state: native("request"),
+    root: { cut: { journal: "root", leaf: "cut1" }, live_invocations: ["invocation"] },
+    activity: [
+      { type: "text_delta", row, offset: 0, delta: "漢🙂 while away" },
+      { type: "activity", rows: [tool] },
+    ],
+  });
+  assert.equal(h.run.getSnapshot().connection, "loading");
+  release();
+  await capture;
+  assert.equal(h.run.getSnapshot().connection, "connected");
+  assert.deepEqual(h.run.getSnapshot().rows.map((item) => item.id), ["text", "running-tool"]);
+  assert.equal(h.run.getSnapshot().rows[0].text, "漢🙂 while away");
+  assert.deepEqual(h.run.getSnapshot().rows[1].tool, tool.tool);
+  await h.event({ type: "text_delta", row, offset: 18, delta: " tail" });
+  assert.equal(h.run.getSnapshot().rows[0].text, "漢🙂 while away tail");
+  assert.equal(codingStopTarget(h.run.getSnapshot()), "request");
+  await h.run.stop();
+  assert.deepEqual(h.cancellations, [{ id: "conversation", request: "request" }]);
   h.run.detach();
 });
 
@@ -691,7 +724,6 @@ test("compact capture seeds uninspected child text before later deltas even with
   await h.event({
     type: "start",
     state: native("request"),
-    recovering: false,
     root: { cut: { journal: "root", leaf: null }, live_invocations: [] },
     children: [
       { ...child, status: "running", completion_pending: false, cut: null },
@@ -844,24 +876,22 @@ test("checkpoint replaces provisional rows, preserves still-live exact tool invo
     ["saved", "live-tool"],
   );
   h.setRows([{ id: "newbranch", kind: "user", text: "Different branch" }]);
-  await h.event({
+  const release = h.holdHistory();
+  const reset = h.event({
     type: "reset",
     state: native(),
-    recovering: true,
     root: { cut: { journal: "root", leaf: "branch" }, live_invocations: [] },
   });
+  assert.equal(h.run.getSnapshot().connection, "loading");
+  assert.deepEqual(h.run.getSnapshot().rows, []);
+  await assert.rejects(h.run.send("must not run"), /reconstructed/);
+  release();
+  await reset;
   assert.deepEqual(
     h.run.getSnapshot().rows.map((row) => row.id),
     ["newbranch"],
   );
-  assert.equal(h.run.getSnapshot().recovering, true);
-  await assert.rejects(h.run.send("must not run"), /reconstructed/);
-  await h.event({
-    type: "checkpoint",
-    cut: { journal: "root", leaf: "branch" },
-    live_invocations: [],
-  });
-  assert.equal(h.run.getSnapshot().recovering, false);
+  assert.equal(h.run.getSnapshot().connection, "connected");
   h.run.detach();
 });
 
@@ -1213,7 +1243,6 @@ test("reconnect preserves historical navigation while capture is pending; reset 
     const resetting = h.event({
       type: "reset",
       state: native(),
-      recovering: false,
       root: { cut: { journal: "root", leaf: "cut3" }, live_invocations: [] },
     });
     assert.equal(h.run.getSnapshot().older, false);
@@ -1281,7 +1310,6 @@ for (const retained of ["history", "reading"] as const) {
       const reconstructing = h.event({
         type: "start",
         state: native("reconnected-request"),
-        recovering: false,
         root: { cut: { journal: "root", leaf: "cut2" }, live_invocations: [] },
       });
       assert.equal(h.run.getSnapshot().connection, "loading");
@@ -1329,15 +1357,12 @@ test("bounded history navigation anchors the retained entry and shows an earlier
   await h.start();
   for (let batch = 0; batch < 11; batch++) {
     h.setRows(
-      Array.from(
-        { length: 100 },
-        (_, n): CodingRow => ({
-          id: `entry-${batch * 100 + n}`,
-          entry_id: `entry-${batch * 100 + n}`,
-          kind: "assistant",
-          text: `Row ${batch * 100 + n}`,
-        }),
-      ),
+      Array.from({ length: 100 }, (_, n): CodingRow => ({
+        id: `entry-${batch * 100 + n}`,
+        entry_id: `entry-${batch * 100 + n}`,
+        kind: "assistant",
+        text: `Row ${batch * 100 + n}`,
+      })),
     );
     await h.event({
       type: "checkpoint",
@@ -1448,7 +1473,6 @@ test("same-epoch replay reconstructs rows without inventing new activity; unseen
   const start = {
     type: "start",
     state: native(),
-    recovering: false,
     root: { cut: { journal: "root", leaf: "cut1" }, live_invocations: [] },
   };
   const activity = {
@@ -1494,7 +1518,6 @@ test("same-epoch reset replay rebuilds the branch without inventing new activity
   const h = harness();
   const capture = {
     state: native(),
-    recovering: false,
     root: { cut: { journal: "root", leaf: "cut1" }, live_invocations: [] },
   };
   const activity = {
@@ -1539,7 +1562,6 @@ test("a new observation epoch never suppresses genuinely new low-position activi
   const start = {
     type: "start",
     state: native(),
-    recovering: false,
     root: { cut: { journal: "root", leaf: "cut1" }, live_invocations: [] },
   };
   try {
@@ -1655,15 +1677,12 @@ test("reading snapshot survives latest-window eviction and reconnect without rep
 test("eviction freezes the currently read projection, including rows received after the initial pause", async () => {
   const h = harness();
   h.setRows(
-    Array.from(
-      { length: 995 },
-      (_, n): CodingRow => ({
-        id: `entry-${n}`,
-        entry_id: `entry-${n}`,
-        kind: "assistant",
-        text: `Row ${n}`,
-      }),
-    ),
+    Array.from({ length: 995 }, (_, n): CodingRow => ({
+      id: `entry-${n}`,
+      entry_id: `entry-${n}`,
+      kind: "assistant",
+      text: `Row ${n}`,
+    })),
   );
   await h.start();
   h.run.setReading(true);
@@ -2031,7 +2050,7 @@ test("failed pending cleanup prevents new input even after accepted delivery", a
   h.run.detach();
 });
 
-test("automatic reconnect keeps disconnect banner through history capture and recovering checkpoint", async () => {
+test("automatic reconnect keeps disconnect banner until delayed history capture completes", async () => {
   const attempts: number[] = [];
   const h = harness(memorySubmissionStorage(), (attempt) => {
     attempts.push(attempt);
@@ -2047,16 +2066,14 @@ test("automatic reconnect keeps disconnect banner through history capture and re
   assert.notEqual(h.signal(), firstSignal);
   assert.equal(h.run.getSnapshot().connection, "loading");
   assert.equal(h.run.getSnapshot().disconnected, true);
-  await h.start(native("running"), true);
+  const release = h.holdHistory();
+  const capture = h.start(native("running"));
   assert.equal(h.run.getSnapshot().disconnected, true);
-  assert.equal(h.run.getSnapshot().recovering, true);
-  await h.event({
-    type: "checkpoint",
-    cut: { journal: "root", leaf: "cut1" },
-    live_invocations: [],
-  });
+  assert.equal(h.run.getSnapshot().connection, "loading");
+  release();
+  await capture;
   assert.equal(h.run.getSnapshot().disconnected, false);
-  assert.equal(h.run.getSnapshot().recovering, false);
+  assert.equal(h.run.getSnapshot().connection, "connected");
   assert.deepEqual(attempts, [0]);
   assert.equal(h.submissions.length, 0);
   assert.equal(h.cancellations.length, 0);
@@ -2093,17 +2110,18 @@ test("uncertain Stop must inspect fresh capture before offering explicit same-re
   assert.equal(h.run.getSnapshot().reconcilingAction, "exact");
   await h.run.stop();
   assert.equal(h.cancellations.length, 1);
-  await h.start(native("exact"), true);
+  const release = h.holdHistory();
+  const capture = h.start(native("exact"));
+  assert.equal(h.run.getSnapshot().connection, "loading");
   assert.equal(
     h.run.getSnapshot().retryStop,
     null,
-    "recovering state is not a retry decision",
+    "unfinished capture is not a retry decision",
   );
-  await h.event({
-    type: "checkpoint",
-    cut: { journal: "root", leaf: "cut1" },
-    live_invocations: [],
-  });
+  await h.run.stop();
+  assert.equal(h.cancellations.length, 1);
+  release();
+  await capture;
   assert.equal(h.run.getSnapshot().retryStop, "exact");
   assert.equal(h.run.getSnapshot().stopping, null);
   assert.match(h.run.getSnapshot().error ?? "", /Fresh native view/);
@@ -2156,7 +2174,6 @@ test("reset hides old provisional rows while capture is unfinished, and reopened
   const reset = h.event({
     type: "reset",
     state: native(),
-    recovering: true,
     root: { cut: { journal: "root", leaf: "new" }, live_invocations: [] },
   });
   assert.deepEqual(h.run.getSnapshot().rows, []);
@@ -2164,7 +2181,7 @@ test("reset hides old provisional rows while capture is unfinished, and reopened
   release();
   await reset;
   assert.equal(h.run.getSnapshot().rows[0].historical, true);
-  assert.equal(h.run.getSnapshot().recovering, true);
+  assert.equal(h.run.getSnapshot().connection, "connected");
   h.run.detach();
 });
 
@@ -2192,7 +2209,7 @@ test("nonprogressing older history keeps omission actionable instead of presenti
   h.run.detach();
 });
 
-test("persisted pending identities are conversation-scoped and recovering reset never replays them", async () => {
+test("persisted pending identities are conversation-scoped and delayed reset never replays them", async () => {
   const h = harness();
   h.storage.setItem(
     pendingSubmissionStorageKey("other"),
@@ -2207,21 +2224,31 @@ test("persisted pending identities are conversation-scoped and recovering reset 
   assert.equal(h.run.getSnapshot().uncertainSubmission, null);
   h.setSubmitError(new Error("Lost response"));
   await h.run.send("Pending here");
-  await h.event({
+  const releaseStale = h.holdHistory();
+  const staleCapture = h.start(native("accepted"));
+  h.run.connect();
+  releaseStale();
+  await assert.rejects(staleCapture, { name: "AbortError" });
+  assert.equal(h.run.getSnapshot().connection, "loading");
+  assert.equal(h.run.getSnapshot().uncertainSubmission?.key, "key");
+  assert.equal(h.run.getSnapshot().acceptedSubmissionKey, undefined);
+  assert.notEqual(h.storage.getItem(storageName), null);
+  const release = h.holdHistory();
+  const reset = h.event({
     type: "reset",
     state: native("accepted"),
-    recovering: true,
     root: { cut: { journal: "root", leaf: "recovery" }, live_invocations: [] },
   });
+  assert.equal(h.run.getSnapshot().connection, "loading");
   assert.equal(h.run.getSnapshot().uncertainSubmission?.key, "key");
+  assert.equal(h.run.getSnapshot().acceptedSubmissionKey, undefined);
   assert.notEqual(h.storage.getItem(storageName), null);
   await assert.rejects(h.run.retrySubmission(), /reconstructed/);
   assert.equal(h.submissions.length, 1);
-  await h.event({
-    type: "checkpoint",
-    cut: { journal: "root", leaf: "recovery" },
-    live_invocations: [],
-  });
+  release();
+  await reset;
+  assert.equal(h.run.getSnapshot().connection, "connected");
+  assert.equal(h.run.getSnapshot().acceptedSubmissionKey, "key");
   assert.equal(h.run.getSnapshot().uncertainSubmission, null);
   assert.equal(h.storage.getItem(storageName), null);
   assert.notEqual(
@@ -2238,15 +2265,7 @@ test("disconnect banner is retained while reconnect captured history reads are o
   h.failWatch(new Error("Stream lost"));
   await tick();
   h.run.connect();
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const originalRead = h.api.readEntries;
-  h.api.readEntries = async (...args) => {
-    await gate;
-    return originalRead(...args);
-  };
+  const release = h.holdHistory();
   const capture = h.start();
   assert.equal(h.run.getSnapshot().connection, "loading");
   assert.equal(h.run.getSnapshot().disconnected, true);
@@ -2396,7 +2415,6 @@ for (const status of ["saved", "completed", "failed"]) {
     await h.event({
       type: "start",
       state: native("request"),
-      recovering: false,
       root: {
         cut: { journal: "root", leaf: "cut1" },
         live_invocations: ["invocation"],
@@ -2610,7 +2628,6 @@ test("typed repeated file effects preserve invocation, call and file identities 
   await h.event({
     type: "reset",
     state: native(),
-    recovering: false,
     root: { cut: { journal: "root", leaf: "cut2" }, live_invocations: [] },
   });
   assert.deepEqual(
@@ -2876,26 +2893,6 @@ test("stale-generation earlier-history read requires reopen while retaining nati
   assert.equal(h.run.getSnapshot().loadingEarlier, false);
   assert.equal(h.run.getSnapshot().connection, "disconnected");
   assert.equal(h.run.getSnapshot().rows, saved);
-  h.run.detach();
-});
-
-test("a closed native view requires deliberate reopen instead of automatic owner restart", async () => {
-  const attempts: number[] = [];
-  const h = harness(memorySubmissionStorage(), (attempt) => {
-    attempts.push(attempt);
-    return 0;
-  });
-  await h.start();
-  h.failWatch(
-    Object.assign(new Error("Native view closed. Reopen."), {
-      requiresReopen: true,
-    }),
-  );
-  await tick();
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(h.run.getSnapshot().reopenRequired, true);
-  assert.equal(h.run.getSnapshot().disconnected, true);
-  assert.deepEqual(attempts, []);
   h.run.detach();
 });
 
@@ -3284,5 +3281,45 @@ test("durable submission recovery survives a lost stream and Stop without replay
   assert.equal(recovered.deliveryRecovered, true);
   assert.equal(storage.getItem(storageName), null);
   assert.deepEqual(h.submissions, [], "recovery never resubmits");
+  h.run.detach();
+});
+
+test("a saved result keeps its saved call's command argument", async () => {
+  const h = harness();
+  const tool = {
+    invocation_id: "invocation",
+    call_id: "call",
+    request_id: "request",
+    name: "shell",
+    title: "Run command",
+    status: "saved",
+    output: "",
+    clipped: false,
+    quiet: false,
+    row_group: null,
+    historical: true,
+  };
+  h.setRows([
+    {
+      id: "entry:1",
+      entry_id: "entry",
+      kind: "tool",
+      historical: true,
+      tool: { ...tool, argument: "cargo test -p mimir" },
+    },
+    {
+      id: "result",
+      entry_id: "result",
+      kind: "tool",
+      historical: true,
+      tool: { ...tool, status: "completed", output: "ok", argument: null },
+    },
+  ]);
+  await h.start();
+  const rows = h.run.getSnapshot().rows;
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].tool?.status, "completed");
+  assert.equal(rows[0].tool?.output, "ok");
+  assert.equal(rows[0].tool?.argument, "cargo test -p mimir");
   h.run.detach();
 });

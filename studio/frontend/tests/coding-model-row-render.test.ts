@@ -2,28 +2,14 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 import assert from "node:assert/strict";
 import test from "node:test";
-import * as cva from "class-variance-authority";
 import * as lucide from "lucide-react";
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as jsxRuntime from "react/jsx-runtime";
-import type * as ButtonModule from "../src/components/ui/button.tsx";
 import type * as Picker from "../src/features/coding/model-configuration-popover.tsx";
 import * as modelSelection from "../src/features/coding/model-selection.ts";
-import * as utils from "../src/lib/utils.ts";
 import { loadWithStubs } from "./helpers/module-stubs.ts";
 
-// The real shared Button and class merging: the defect lived in their result.
-const button = loadWithStubs<typeof ButtonModule>(
-  new URL("../src/components/ui/button.tsx", import.meta.url),
-  {
-    react: React,
-    "react/jsx-runtime": jsxRuntime,
-    "class-variance-authority": cva,
-    "radix-ui": { Slot: { Root: "span" } },
-    "@/lib/utils": utils,
-  },
-);
 const picker = loadWithStubs<typeof Picker>(
   new URL(
     "../src/features/coding/model-configuration-popover.tsx",
@@ -33,15 +19,11 @@ const picker = loadWithStubs<typeof Picker>(
     react: React,
     "react/jsx-runtime": jsxRuntime,
     "lucide-react": lucide,
-    "@/components/ui/button": button,
-    "@/components/ui/input": { Input: "input" },
     "@/components/ui/popover": {
       Popover: "div",
       PopoverContent: "div",
       PopoverTrigger: "div",
     },
-    "@/components/ui/slider": { Slider: "div" },
-    "./api": { codingModelApi: {} },
     "./model-selection": modelSelection,
   },
 );
@@ -74,17 +56,11 @@ test("a long native model label wraps inside its choice and never under Favorite
     }),
   );
   const choice = classes(markup, 'data-model="offline"');
-  // Root cause: the shared Button is `whitespace-nowrap shrink-0`.
-  const inherited = utils
-    .cn(button.buttonVariants({ variant: "ghost" }))
-    .split(" ");
-  assert.ok(inherited.includes("whitespace-nowrap"));
-  assert.ok(choice.includes("whitespace-normal"), choice.join(" "));
   assert.ok(!choice.includes("whitespace-nowrap"), choice.join(" "));
-  assert.ok(choice.includes("shrink") && !choice.includes("shrink-0"));
   assert.ok(choice.includes("min-w-0") && choice.includes("flex-1"));
   assert.match(markup, new RegExp(`${name.replace(/[()]/g, "\\$&")}`));
   assert.match(markup, /overflow-wrap:anywhere/);
+  assert.match(markup, /aria-label="Selected"/);
   // Favorite stays its own sibling control, never inside the choice.
   assert.match(
     markup,
@@ -95,4 +71,30 @@ test("a long native model label wraps inside its choice and never under Favorite
       "shrink-0",
     ),
   );
+});
+
+test("effort names read as labels and the rail exposes the discrete slider", () => {
+  assert.deepEqual(
+    ["low", "medium", "high", "xhigh", "max", "very_high"].map(
+      picker.effortLabel,
+    ),
+    ["Low", "Medium", "High", "X-High", "Max", "Very High"],
+  );
+  const markup = renderToStaticMarkup(
+    React.createElement(picker.EffortSlider, {
+      levels: ["low", "medium", "high", "xhigh"],
+      value: 2,
+      disabled: false,
+      onPreview: () => {},
+      onCommit: () => {},
+    }),
+  );
+  assert.match(markup, /role="slider"/);
+  assert.match(markup, /aria-valuemin="0"/);
+  assert.match(markup, /aria-valuemax="3"/);
+  assert.match(markup, /aria-valuenow="2"/);
+  assert.match(markup, /aria-valuetext="High"/);
+  // One stop per offered level; the thumb sits on the selected stop.
+  assert.equal(markup.match(/size-1 /g)?.length, 4);
+  assert.match(markup, /left:calc\(22px \+ \(100% - 44px\) \* 0\.6666/);
 });

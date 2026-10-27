@@ -10,8 +10,12 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+import re
 import struct
 import zlib
+
+from coding_run_scenarios import expand_tool, unfold_activity
+from coding_ui import opened_id
 
 SKILL_NAME = "project-visual"
 SKILL_SENTINEL = "TICKET242_SKILL_BODY_SENTINEL"
@@ -48,7 +52,7 @@ def prepare_input_project(project: Path, *, live: bool = False) -> None:
 def input_scenarios(page, context, base, provider, project, report, scenario, snapshot):
     from playwright.sync_api import expect
 
-    conversation = page.get_by_test_id("coding-conversation-id").inner_text()
+    conversation = opened_id(page)
     prompt = page.get_by_label("Coding prompt", exact = True)
     send = page.get_by_role("button", name = "Send", exact = True)
     status = page.get_by_test_id("coding-run-status")
@@ -69,14 +73,15 @@ def input_scenarios(page, context, base, provider, project, report, scenario, sn
     provider.assert_no_request()
     scenario("A2-input-effective-skills", "Selected trusted project's native enabled/disabled configuration and exact descriptor path are honored; discovery is metadata only, no provider call")
 
-    files = page.get_by_label("Coding image files", exact = True)
+    files = page.get_by_label("Image files", exact = True)
     files.set_input_files({"name": "bad.svg", "mimeType": "image/svg+xml", "buffer": b"<svg/>"})
-    expect(page.get_by_role("alert").filter(has_text = "supported images")).to_be_visible()
+    expect(page.get_by_role("alert").filter(has_text = "PNG, JPEG, WebP or GIF images only")).to_be_visible()
     files.set_input_files({"name": "corrupt.png", "mimeType": "image/png", "buffer": PNG[:8] + b"invalid"})
     expect(page.get_by_role("alert").filter(has_text = "cannot be decoded")).to_be_visible()
-    files.set_input_files({"name": "huge.png", "mimeType": "image/png", "buffer": PNG[:8] + b"x" * (512 * 1024)})
-    expect(page.get_by_role("alert").filter(has_text = "512 KiB")).to_be_visible()
-    expect(page.get_by_role("list", name = "Attached coding images")).to_have_count(0)
+    # The composer's per-image bound is 10 MiB (input.ts MAX_IMAGE_BYTES).
+    files.set_input_files({"name": "huge.png", "mimeType": "image/png", "buffer": PNG[:8] + b"x" * (10 * 1024 * 1024)})
+    expect(page.get_by_role("alert").filter(has_text = "at most 10 MiB")).to_be_visible()
+    expect(page.get_by_role("list", name = "Attached images")).to_have_count(0)
     scenario("A2-image-rejections", "SVG, corrupt PNG and oversized image remain explicit actionable composer failures, no accepted attachment or native request")
     files.set_input_files({"name": "visual.png", "mimeType": "image/png", "buffer": PNG})
     inspect = page.get_by_role("button", name = "Inspect visual.png", exact = True)
@@ -93,27 +98,33 @@ def input_scenarios(page, context, base, provider, project, report, scenario, sn
     files.set_input_files({"name": "visual.png", "mimeType": "image/png", "buffer": PNG})
     scenario("A10-image-inspect-remove-focus", "Valid image renders thumbnail, keyboard Escape dismisses preview, remove and preview dismissal restore composer focus")
 
-    option = page.get_by_role("option", name = f"{SKILL_NAME} Coding input fixture {SKILL_NAME}")
+    # "@" opens one flat mention listbox; rows carry the native kind and name.
+    mention_list = page.get_by_test_id("coding-mention-list")
+    option = mention_list.locator(f'[data-mention-kind="skill"][data-mention-name="{SKILL_NAME}"]')
+    selected_mentions = page.get_by_label("Selected mentions", exact = True)
     # Repeated literal text must not inherit a deleted selected occurrence.
     prompt.fill("@project")
     expect(option).to_be_visible()
+    # Enter picks the active option; wait until it is this exact skill.
+    expect(option).to_have_attribute("aria-selected", "true")
     prompt.press("Enter")
-    expect(page.get_by_label("Selected skill mentions")).to_contain_text(SKILL_NAME)
+    expect(selected_mentions).to_contain_text(SKILL_NAME)
     prompt.press("End")
     prompt.type(f"@{SKILL_NAME} ")
-    expect(page.get_by_label("Selected skill mentions")).to_contain_text(SKILL_NAME)
+    expect(selected_mentions).to_contain_text(SKILL_NAME)
     prompt.evaluate("(node, length) => node.setSelectionRange(0, length)", len(SKILL_NAME) + 2)
     prompt.press("Delete")
     expect(prompt).to_have_value(f"@{SKILL_NAME} ")
-    expect(page.get_by_label("Selected skill mentions")).to_have_count(0)
+    expect(selected_mentions).to_have_count(0)
     provider.assert_no_request()
     scenario("A2-mention-occurrence-edit", "Deleting a selected occurrence while identical unselected text remains removes the canonical skill association; no accidental native invocation")
 
     prompt.fill("😀 @project")
     expect(option).to_be_visible()
+    expect(option).to_have_attribute("aria-selected", "true")
     prompt.press("Enter")  # Select mention, NOT Send.
     expect(prompt).to_have_value(f"😀 @{SKILL_NAME} ")
-    expect(page.get_by_label("Selected skill mentions")).to_contain_text(SKILL_NAME)
+    expect(selected_mentions).to_contain_text(SKILL_NAME)
     provider.assert_no_request()
     prompt.press("End")
     prompt.type("Inspect this visual context.")
@@ -122,17 +133,26 @@ def input_scenarios(page, context, base, provider, project, report, scenario, sn
     prompt.type("é ")
     expected_text = f"é 😀 @{SKILL_NAME} Inspect this visual context."
     expect(prompt).to_have_value(expected_text)
-    expect(page.get_by_label("Selected skill mentions")).to_contain_text(SKILL_NAME)
+    expect(selected_mentions).to_contain_text(SKILL_NAME)
     snapshot(page, "inputs-desktop-ready")
     page.set_viewport_size({"width": 390, "height": 844})
     expect(inspect).to_be_visible()
-    expect(page.get_by_role("button", name = "Mention skill", exact = True)).to_be_visible()
+    expect(page.get_by_role("button", name = "Attach images", exact = True)).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-    page.get_by_role("button", name = "Mention skill", exact = True).click()
-    expect(page.get_by_label("Search project skills")).to_be_focused()
+    # There is no mention button: a typed "@" opens the listbox while focus stays
+    # in the prompt. Escape dismisses it; the probe text is then erased again.
+    prompt.press("End")
+    prompt.type(" @")
+    expect(mention_list).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     snapshot(page, "inputs-narrow-skills")
-    page.get_by_label("Search project skills").press("Escape")
+    prompt.press("Escape")
+    expect(mention_list).to_have_count(0)
     expect(prompt).to_be_focused()
+    prompt.press("Backspace")
+    prompt.press("Backspace")
+    expect(prompt).to_have_value(expected_text)
+    expect(selected_mentions).to_contain_text(SKILL_NAME)
     snapshot(page, "inputs-narrow-ready")
     page.set_viewport_size({"width": 1440, "height": 1000})
     scenario("A10-input-layout-keyboard", "1440x1000 and 390x844: attachment/mention controls unclipped; Enter chooses exact mention without sending, Escape returns focus; Unicode prefix edits preserve ranges")
@@ -175,10 +195,10 @@ def input_scenarios(page, context, base, provider, project, report, scenario, sn
     prompt.fill("Retain this rejected visual input")
     page.route(prompts, lambda route: route.fulfill(status = 400, content_type = "application/json", body = json.dumps({"detail": "Fault-injected pre-admission image refusal"})), times = 1)
     send.click()
-    expect(page.get_by_test_id("coding-input-recovery")).to_contain_text("Submission rejected")
-    page.get_by_role("button", name = "Restore rejected input", exact = True).click()
+    expect(page.get_by_test_id("coding-input-recovery")).to_contain_text("Not sent")
+    page.get_by_test_id("coding-input-recovery").get_by_role("button", name = "Restore input", exact = True).click()
     expect(prompt).to_have_value("Retain this rejected visual input")
-    expect(page.get_by_role("list", name = "Attached coding images")).to_be_visible()
+    expect(page.get_by_role("list", name = "Attached images")).to_be_visible()
     provider.assert_no_request()
     scenario("A2-input-rejected-restore-fixture", "Explicit pre-admission HTTP refusal (fault-injected) retains actionable visual draft without accepted transcript; Restore recovers the exact text/image association")
 
@@ -217,21 +237,24 @@ def live_input_scenario(page, context, base, project, report, scenario, snapshot
     import time
     from playwright.sync_api import expect
 
-    conversation = page.get_by_test_id("coding-conversation-id").inner_text()
+    conversation = opened_id(page)
     prompt = page.get_by_label("Coding prompt", exact = True)
     status = page.get_by_test_id("coding-run-status")
     evidence = report.setdefault("workload", {"kind": "live-existing-provider-rich-input", "requests": [], "deadline_seconds": 180})
-    evidence["configured_model"] = page.get_by_test_id("coding-event-status").inner_text().split("Configured model: ")[-1].splitlines()[0]
+    # The composer's model chip names the configured model ("Model: <name>[ · effort]").
+    evidence["configured_model"] = (page.get_by_test_id("coding-model-trigger").get_attribute("aria-label") or "").removeprefix("Model: ")
     # Prepare instructions before opening: native owns the effective skill snapshot.
     # Use a resolvable visual fixture rather than the 1px transport-contract image.
-    page.get_by_label("Coding image files", exact = True).set_input_files({"name": "visual.png", "mimeType": "image/png", "buffer": LIVE_PNG})
+    page.get_by_label("Image files", exact = True).set_input_files({"name": "visual.png", "mimeType": "image/png", "buffer": LIVE_PNG})
     prompt.fill("@project")
-    selected = page.get_by_role("option", name = f"{SKILL_NAME} Coding input fixture {SKILL_NAME}", exact = True)
+    selected = (page.get_by_test_id("coding-mention-list")
+                .locator(f'[data-mention-kind="skill"][data-mention-name="{SKILL_NAME}"]')
+                .filter(has_text = f"Coding input fixture {SKILL_NAME}"))
     expect(selected).to_be_visible(timeout = 60000)
     # The real profile also discovers global skills whose descriptions match
     # 'project'; choose this exact descriptor rather than assuming list order.
     selected.click()
-    expect(page.get_by_label("Selected skill mentions")).to_contain_text(SKILL_NAME)
+    expect(page.get_by_label("Selected mentions", exact = True)).to_contain_text(SKILL_NAME)
     prompt.press("End")
     prompt.type("Visual-evidence request: inspect the attached image and identify its dominant color, without guessing from filename. In this disposable project only, use write_file to create image-skill-evidence.txt as instructed by the selected skill, then read_file to verify it. Make no other changes and report completion briefly.")
     snapshot(page, "live-inputs-ready")
@@ -268,8 +291,12 @@ def live_input_scenario(page, context, base, project, report, scenario, snapshot
     result = json.loads(outcome.read_text())
     assert str(result["dominant_color"]).lower() == "red", result
     assert result["skill_marker"] == "SKILL242_LOADED_FROM_NATIVE_BODY", result
+    # Settled activity is folded; rows show native verbs ("Write …", "Read …").
+    unfold_activity(page)
     tools = page.get_by_test_id("coding-tool-row")
-    expect(tools.filter(has_text = "write_file")).to_contain_text("image-skill-evidence.txt")
-    expect(tools.filter(has_text = "read_file")).to_contain_text("SKILL242_LOADED_FROM_NATIVE_BODY")
+    expect(tools.filter(has_text = re.compile(r"^Write\b")).last).to_contain_text("image-skill-evidence.txt")
+    read = tools.filter(has_text = re.compile(r"^Read\b")).last
+    expand_tool(read)
+    expect(read.get_by_label("Tool output", exact = True)).to_contain_text("SKILL242_LOADED_FROM_NATIVE_BODY")
     evidence.update(status = "passed", filesystem_result = result)
     scenario("A2-live-rich-input", "Existing configured provider completed the authenticated coding route with image semantic recognition, selected skill-only instruction, real native write/read effects and terminal completion")

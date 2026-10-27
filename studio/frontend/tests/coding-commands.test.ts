@@ -3,10 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  type CodingDiagnostic,
   type CommandOutcome,
-  commandOutcomeLabel,
-  contextUsageLabel,
   parseCodingCommand,
 } from "../src/features/coding/command-types.ts";
 import { CodingHttpError } from "../src/features/coding/errors.ts";
@@ -23,14 +20,12 @@ function harness(storage = memorySubmissionStorage()) {
   let views = 0;
   const prompts: string[] = [];
   const invocations: { name: string; tail: string }[] = [];
-  const diagnosticRequests: string[] = [];
   let outcome: CommandOutcome = {
     conversation_id: "session",
     operation_id: "key",
     outcome: "handled",
   };
   let failure: Error | null = null;
-  let largeDiagnostic = false;
   const api: RunApi = {
     async setMode() {
       throw new Error(
@@ -75,16 +70,6 @@ function harness(storage = memorySubmissionStorage()) {
       invocations.push({ name, tail });
       if (failure) throw failure;
       return outcome;
-    },
-    async diagnostics(id, kind) {
-      diagnosticRequests.push(kind);
-      return {
-        conversation_id: id,
-        kind,
-        data: largeDiagnostic
-          ? "x".repeat(70000)
-          : { messages_shown: 2, omitted_messages: 10, bytes_bound: 4096 },
-      };
     },
     async submit(id, key, text) {
       prompts.push(text);
@@ -147,7 +132,6 @@ function harness(storage = memorySubmissionStorage()) {
       event: {
         type: "start",
         state,
-        recovering: false,
         root: { cut: { journal: "root", leaf: "saved" }, live_invocations: [] },
       },
     });
@@ -161,15 +145,11 @@ function harness(storage = memorySubmissionStorage()) {
       deliver({ subscription: `view-${views}`, position: ++position, event }),
     prompts,
     invocations,
-    diagnosticRequests,
     setOutcome(value: CommandOutcome) {
       outcome = value;
     },
     setFailure(value: Error | null) {
       failure = value;
-    },
-    makeLargeDiagnostic() {
-      largeDiagnostic = true;
     },
     views: () => views,
   };
@@ -233,10 +213,6 @@ test("handled, transient display and submitted outcomes remain distinct from tra
     assert.deepEqual(h.run.getSnapshot().rows, before);
     assert.equal(h.run.getSnapshot().native?.active_request, null);
   }
-  assert.match(
-    commandOutcomeLabel(outcomes[2]),
-    /completion is reported by the native view/,
-  );
   assert.deepEqual(h.prompts, []);
   h.run.detach();
 });
@@ -259,7 +235,7 @@ test("unknown/terminal-only and busy errors are authoritative native refusals wi
   h.run.detach();
 });
 
-test("model selection guards slash commands without disabling read-only diagnostics", async () => {
+test("model selection guards slash commands until the configuration settles", async () => {
   const h = harness();
   await h.start();
   let rejectConfiguration!: (reason: Error) => void;
@@ -274,8 +250,6 @@ test("model selection guards slash commands without disabling read-only diagnost
   );
   try {
     await assert.rejects(h.run.send("/inspect pending"), /reconstructed/);
-    await h.run.inspectDiagnostic("tokens");
-    assert.deepEqual(h.diagnosticRequests, ["tokens"]);
     rejectConfiguration(new Error("Configuration reply lost"));
     await failedConfiguration;
     assert.equal(h.run.getSnapshot().configurationUncertain, true);
@@ -426,59 +400,6 @@ test("lost command reply reconstructs a fresh view and never blindly retries or 
   h.run.detach();
 });
 
-test("diagnostics are intentionally requested, bounded, ephemeral, and never appended to public rows", async () => {
-  const h = harness();
-  await h.start();
-  assert.deepEqual(h.diagnosticRequests, []);
-  const before = h.run.getSnapshot().rows;
-  for (const kind of ["context", "tokens", "retry", "execution"] as const) {
-    await h.run.inspectDiagnostic(kind);
-    assert.equal(h.run.getSnapshot().diagnostic?.kind, kind);
-  }
-  assert.deepEqual(h.diagnosticRequests, [
-    "context",
-    "tokens",
-    "retry",
-    "execution",
-  ]);
-  assert.deepEqual(h.run.getSnapshot().rows, before);
-  h.run.clearDiagnostic();
-  assert.equal(h.run.getSnapshot().diagnostic, null);
-  h.makeLargeDiagnostic();
-  await h.run.inspectDiagnostic("context");
-  assert.equal(h.run.getSnapshot().diagnostic, null);
-  const error = h.run.getSnapshot().commandError;
-  assert.ok(error);
-  assert.match(error, /exceeded their bound/);
-  h.run.detach();
-});
-
-test("compact usage distinguishes missing, estimated and provider-confirmed metrics", () => {
-  assert.match(contextUsageLabel(), /not yet reported/);
-  assert.match(
-    contextUsageLabel({
-      prompt_tokens: {
-        used_prompt_tokens: 100,
-        confirmed_prompt_tokens: 0,
-        estimated_tail_tokens: 100,
-        provider_confirmed: false,
-      },
-    }),
-    /estimated/,
-  );
-  assert.match(
-    contextUsageLabel({
-      prompt_tokens: {
-        used_prompt_tokens: 120,
-        confirmed_prompt_tokens: 100,
-        estimated_tail_tokens: 20,
-        provider_confirmed: true,
-      },
-    }),
-    /100 provider-confirmed.*\+20 estimated tail/,
-  );
-});
-
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 test("command identity survives remount, stores no arguments, and only exact settled receipt permits another action", async () => {
@@ -563,37 +484,6 @@ test("late failed command cannot resurrect a detached native watcher or mutate d
   await tick();
   assert.equal(h.views(), 1);
   assert.equal(h.run.getSnapshot(), state);
-});
-
-test("dismissed diagnostics ignore late results and errors and release the pending control", async () => {
-  const h = harness();
-  await h.start();
-  let resolve!: (value: CodingDiagnostic) => void;
-  h.api.diagnostics = () =>
-    new Promise((success) => {
-      resolve = success;
-    });
-  const request = h.run.inspectDiagnostic("context");
-  h.run.clearDiagnostic();
-  resolve({
-    conversation_id: "session",
-    kind: "context",
-    data: { roles: ["user"] },
-  });
-  await request;
-  assert.equal(h.run.getSnapshot().diagnostic, null);
-  assert.equal(h.run.getSnapshot().inspectingDiagnostic, null);
-  let reject!: (reason: unknown) => void;
-  h.api.diagnostics = () =>
-    new Promise((_resolve, failure) => {
-      reject = failure;
-    });
-  const failing = h.run.inspectDiagnostic("tokens");
-  h.run.clearDiagnostic();
-  reject(new Error("dismissed error"));
-  await failing;
-  assert.equal(h.run.getSnapshot().commandError, null);
-  h.run.detach();
 });
 
 test("browser command storage failure fails closed before any HTTP action", async () => {

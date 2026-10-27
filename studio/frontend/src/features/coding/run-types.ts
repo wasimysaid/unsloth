@@ -7,11 +7,9 @@ import type {
   ChildPresentation,
 } from "./child-types.ts";
 import type {
-  CodingDiagnostic,
   CommandCatalog,
   CommandOutcome,
   CommandReceipt,
-  DiagnosticKind,
   SessionUsage,
 } from "./command-types.ts";
 import type { ToolOutputProfile } from "./file-changes.ts";
@@ -29,12 +27,7 @@ import type {
 import type { CodingConversation } from "./types.ts";
 
 export type RequestStatus =
-  | "queued"
-  | "running"
-  | "completed"
-  | "cancelled"
-  | "failed"
-  | "interrupted";
+  "queued" | "running" | "completed" | "cancelled" | "failed" | "interrupted";
 export interface NativeRequest {
   id: string;
   status: RequestStatus;
@@ -164,6 +157,8 @@ export interface CodingRow {
     request_id: string | null;
     name: string;
     title: string;
+    /** The call's bounded `command` input, which native shell titles omit. */
+    argument?: string | null;
     status: string;
     output: string;
     clipped: boolean;
@@ -180,14 +175,8 @@ export interface CodingRow {
 export interface ContentReference {
   cut: JournalCut;
   entry_id: string;
-  total_bytes: number;
 }
-export interface PublicEntryChunk extends ContentReference {
-  conversation_id: string;
-  offset: number;
-  data: string;
-  next_offset: number | null;
-}
+
 export interface EntryPage {
   cut: JournalCut;
   rows: CodingRow[];
@@ -230,7 +219,6 @@ export interface RunApi {
     operationId: string,
   ): Promise<CommandOutcome>;
   commandReceipt?(id: string, operationId: string): Promise<CommandReceipt>;
-  diagnostics?(id: string, kind: DiagnosticKind): Promise<CodingDiagnostic>;
   configure(
     id: string,
     change: CodingConfigurationChange,
@@ -264,9 +252,8 @@ export interface RunApi {
   readPublicEntry(
     id: string,
     reference: ContentReference,
-    offset: number,
     signal?: AbortSignal,
-  ): Promise<PublicEntryChunk>;
+  ): Promise<CodingRow[]>;
   readEntries(
     id: string,
     cut: JournalCut,

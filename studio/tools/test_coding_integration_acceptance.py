@@ -24,26 +24,17 @@ class IntegrationEvidenceTests(unittest.TestCase):
         self.build = {"status": "passed", "sources": self.sources, "artifacts": {**self.expected, **self.guests}}
 
     def command(self, workload):
-        script = "coding_mcp_browser_acceptance.py" if workload == "mcp" else "coding_browser_acceptance.py"
-        command = [sys.executable, script]
-        command += ["--apply-reconnect"] if workload == "mcp" else ["--workload", workload]
-        if workload == "deterministic":
-            command += ["--extensions"]
+        command = [sys.executable, "coding_browser_acceptance.py", "--workload", workload]
         if workload == "commands":
             command += ["--commands-package", "/fixture/current-commands"]
         return {"returncode": 0, "sources": self.sources, "command": command}
 
     def report(self, workload="recovery"):
-        ids = REQUIRED_SCENARIOS[workload].split()
-        if workload != "mcp":
-            ids += COMMON_SCENARIOS.split()
+        ids = REQUIRED_SCENARIOS[workload].split() + COMMON_SCENARIOS.split()
         report = {**self.expected, "status": "passed", "provider_workload": workload,
                   "scenarios": [{"id": name, "status": "passed", "detail": "Terminal evidence fixture for reconciler unit test only"} for name in ids],
                   "cleanup": {"native_process_settled": True, "server_port_closed": True,
                               "provider_thread_settled": True}}
-        if workload == "mcp":
-            report.update(provider_workload="deterministic-http-protocol-not-live-model", ticket=251,
-                          provider_fixture_settled=True, mcp_cleanup={"all_connections_settled": True})
         if workload == "retirement":
             report["plugin_sha256"] = self.guests["retirement_sha256"]
         if workload == "commands":
@@ -83,22 +74,20 @@ class IntegrationEvidenceTests(unittest.TestCase):
             report["scenarios"] = [row for row in report["scenarios"] if row["id"] != name]
             self.assertTrue(assess_report(report, self.expected, workload="recovery"), name)
         report = self.report("deterministic")
-        report["scenarios"] = [row for row in report["scenarios"] if not row["id"].startswith("A8-")]
+        report["scenarios"] = [row for row in report["scenarios"] if not row["id"].startswith("A7-")]
         self.assertTrue(assess_report(report, self.expected, workload="deterministic"))
-        command = self.command("deterministic")["command"]
-        command.remove("--extensions")
-        self.assertFalse(command_identity("deterministic", command))
-        self.assertFalse(command_identity("mcp", [sys.executable, "coding_mcp_browser_acceptance.py"]))
+        self.assertTrue(command_identity("deterministic", self.command("deterministic")["command"]))
+        command = self.command("commands")["command"]
+        command.remove("--commands-package")
+        self.assertFalse(command_identity("commands", command))
+        self.assertFalse(command_identity("deterministic", [sys.executable, "coding_browser_acceptance.py", "--workload", "opening"]))
+        self.assertFalse(command_identity("deterministic", [sys.executable, "other_driver.py", "--workload", "deterministic"]))
 
-    def test_cleanup_and_mcp_ownership_must_be_confirmed_independently(self):
+    def test_cleanup_must_be_confirmed_independently(self):
         for key in ("native_process_settled", "server_port_closed", "provider_thread_settled"):
             report = self.report()
             del report["cleanup"][key]
             self.assertTrue(assess_report(report, self.expected, workload="recovery"))
-        for key in ("mcp_cleanup", "provider_fixture_settled"):
-            report = self.report("mcp")
-            del report[key]
-            self.assertTrue(assess_report(report, self.expected, workload="mcp"))
 
     def test_missing_truncated_and_unrelated_reports_never_establish_success(self):
         with tempfile.TemporaryDirectory() as directory:

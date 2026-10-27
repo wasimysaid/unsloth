@@ -13,7 +13,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Path as ApiPath, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -44,9 +44,58 @@ class NativeViewResponse(StreamingResponse):
                 await self.runtime.unsubscribe(self.subscription)
 
 
+class NativeContentResponse(Response):
+    """Own production and its temporary file, including disconnect before headers."""
+    media_type = "application/json"
+
+    def __init__(self, runtime, conversation_id, selection, generation):
+        super().__init__(media_type = self.media_type)
+        self.runtime = runtime
+        self.conversation_id = conversation_id
+        self.selection = selection
+        self.generation = generation
+
+    async def __call__(self, scope, receive, send):
+        content = None
+        async def respond():
+            nonlocal content
+            try:
+                content = await self.runtime.public_entry(self.conversation_id, **self.selection,
+                                                         expected_generation = self.generation)
+            except CodingRuntimeError as exc:
+                error = _http_error(exc)
+                await JSONResponse({"detail": error.detail}, status_code = error.status_code,
+                                   headers = error.headers)(scope, receive, send)
+                return
+            await send({"type": "http.response.start", "status": 200,
+                        "headers": [(b"content-type", b"application/json"), (b"cache-control", b"no-store")]})
+            while data := await anyio.to_thread.run_sync(content.read, 65536):
+                await send({"type": "http.response.body", "body": data, "more_body": True})
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+        try:
+            async with anyio.create_task_group() as tasks:
+                async def serve():
+                    try:
+                        await respond()
+                    finally:
+                        tasks.cancel_scope.cancel()
+                tasks.start_soon(serve)
+                while True:
+                    message = await receive()
+                    if message["type"] == "http.disconnect":
+                        tasks.cancel_scope.cancel()
+                        break
+        finally:
+            if content is not None:
+                self.runtime.release_content(content)
+
+
 class ProjectSelection(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     cwd: str = Field(min_length = 1, max_length = 32768)
+    # The first request's selection, chosen before the conversation existed.
+    configuration: ModelConfiguration | None = None
 
 
 class RuntimeRestart(BaseModel):
@@ -244,8 +293,6 @@ class PublicEntrySelection(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     cut: JournalCut
     entry_id: str = Field(min_length = 1, max_length = 128)
-    offset: int = Field(ge = 0, le = 9007199254740991, strict = True)
-    max_bytes: int = Field(default = 65536, ge = 1024, le = 262144, strict = True)
 
 
 def _http_error(exc: CodingRuntimeError) -> HTTPException:
@@ -425,8 +472,9 @@ async def reload_plugins(conversation_id: str, body: PluginReload, request: Requ
 
 
 @router.get("/catalog")
-async def catalog(request: Request, cwd: str = Query(min_length = 1, max_length = 32768)):
-    return await _command(request, "catalog", {"cwd": cwd})
+async def catalog(request: Request, cwd: str | None = Query(default = None, min_length = 1, max_length = 32768)):
+    # Model choices before any folder is chosen are the host home's effective settings.
+    return await _command(request, "catalog", {"cwd": cwd or str(Path.home())})
 
 
 @router.get("/conversations/{conversation_id}/models")
@@ -452,7 +500,10 @@ async def conversations(request: Request, cursor: str | None = Query(default = N
 
 @router.post("/conversations", status_code = 201)
 async def create_conversation(body: ProjectSelection, request: Request):
-    state = await _command(request, "create", {"cwd": body.cwd})
+    params = {"cwd": body.cwd}
+    if body.configuration is not None:
+        params["configuration"] = body.configuration.model_dump(exclude_none = True)
+    state = await _command(request, "create", params)
     return state["info"]
 
 
@@ -585,7 +636,10 @@ async def read_entries(conversation_id: str, body: HistorySelection, request: Re
 @router.post("/conversations/{conversation_id}/public-entry")
 async def read_public_entry(conversation_id: str, body: PublicEntrySelection, request: Request,
                             generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
-    return await _command(request, "read_public_entry", {"conversation_id": conversation_id, **body.model_dump()}, generation = generation)
+    runtime = runtime_for(request.app)
+    if isinstance(runtime, CodingRuntime):
+        await runtime.configure_local_serving(request)
+    return NativeContentResponse(runtime, conversation_id, body.model_dump(), generation)
 
 
 @router.get("/conversations/{conversation_id}/children/{handle}/attempts/{attempt}")

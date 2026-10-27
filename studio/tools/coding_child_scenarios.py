@@ -11,6 +11,8 @@ import hashlib
 import json
 import re
 
+from coding_ui import expect_connected, open_saved, opened_id, saved_row
+
 
 FIRST_OBJECTIVE = "CHILD_INSPECT_ATTEMPT_ONE"
 SECOND_OBJECTIVE = "CHILD_INSPECT_ATTEMPT_TWO"
@@ -103,16 +105,21 @@ def validate_child_events(events: list[dict], handle: str) -> dict:
 def run_child_scenarios(page, context, base, provider, first, second_id, report, scenario, snapshot):
     from playwright.sync_api import expect
 
-    conversation = page.get_by_test_id("coding-conversation-id").inner_text()
+    conversation = opened_id(page)
     headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')")}
     headers["X-Mimir-Runtime-Generation"] = str(context.request.get(base + "/api/coding/runtime", headers=headers).json()["generation"])
     evidence = report.setdefault("children", {"kind": "deterministic-http-provider-real-native-delegation", "requests": [], "outcomes": [], "inspection_reads": [], "events": []})
     prompt_url = base + f"/api/coding/conversations/{conversation}/prompts"
     event_url = base + f"/api/coding/conversations/{conversation}/events"
     child_url = lambda handle, attempt: base + f"/api/coding/conversations/{conversation}/children/{handle}/attempts/{attempt}"
-    inspector = page.get_by_role("dialog", name="Subagent inspector", exact=True)
+    inspector = page.get_by_role("dialog", name="Subagent", exact=True)
     status = page.get_by_test_id("coding-run-status")
-    saved = page.locator('[aria-label="Saved coding conversations"] button')
+
+    def reopen_same():
+        # A deliberate same-ID open mounts a fresh native view; await it.
+        previous = page.get_by_test_id("coding-transcript").element_handle()
+        open_saved(page, base, conversation, ready=False)
+        page.wait_for_function("node => !node.isConnected", arg=previous, timeout=60000)
 
     def read_detail(handle, attempt):
         response = context.request.get(child_url(handle, attempt), headers=headers, timeout=60000)
@@ -129,17 +136,24 @@ def run_child_scenarios(page, context, base, provider, first, second_id, report,
     def open_inspector(handle, attempt, expected_status):
         trigger = row(handle, attempt)
         expect(trigger).to_be_visible(timeout=60000)
-        expect(trigger).to_have_accessible_name(re.compile(rf".*attempt {attempt}.*", re.I))
-        expect(trigger).to_contain_text(expected_status, ignore_case=True, timeout=60000)
+        # The agent card names its delegated work; the exact attempt is its identity data.
+        expect(trigger).to_have_accessible_name(re.compile(r"^Agent "))
+        expect(trigger).to_have_attribute("data-child-status", expected_status, timeout=60000)
         trigger.focus()
         trigger.press("Enter")
         expect(inspector).to_be_visible(timeout=60000)
         expect(inspector).to_have_attribute("data-testid", "coding-child-inspector")
-        expect(inspector).to_contain_text(handle)
-        expect(inspector).to_contain_text(f"Attempt {attempt}")
-        expect(inspector).to_contain_text("Transcript")
-        expect(inspector).to_contain_text("Activity")
-        expect(inspector).to_contain_text("Retained result")
+        expect(inspector).to_have_attribute("data-child-handle", handle)
+        expect(inspector).to_have_attribute("data-child-attempt", str(attempt))
+        expect(inspector.locator("header output")).to_have_text(expected_status.capitalize(), timeout=60000)
+        # Child transcript: the delegated input is a collapsed Task brief.
+        expect(inspector.locator("summary").filter(has_text="Task").first).to_be_visible(timeout=60000)
+        # A retained result exists only once this exact attempt is terminal.
+        result = inspector.get_by_role("region", name="Subagent result", exact=True)
+        if expected_status == "running":
+            expect(result).to_have_count(0)
+        else:
+            expect(result.get_by_role("heading", name="Result", exact=True)).to_be_visible(timeout=60000)
         assert_no_child_controls()
         return trigger
 
@@ -148,7 +162,7 @@ def run_child_scenarios(page, context, base, provider, first, second_id, report,
         expect(inspector.get_by_role("button", name=forbidden)).to_have_count(0)
 
     def dismiss(trigger):
-        inspector.get_by_role("button", name="Close subagent inspector", exact=True).focus()
+        inspector.get_by_role("button", name="Close subagent", exact=True).focus()
         page.keyboard.press("Escape")
         expect(inspector).to_have_count(0)
         expect(trigger).to_be_focused()
@@ -194,10 +208,10 @@ def run_child_scenarios(page, context, base, provider, first, second_id, report,
     assert "CHILD_LARGE_INPUT_BEGIN" in child.tool_result("child-read-large")
     # Terminal content exceeds the public transcript and retained-result bounds.
     child.text(FIRST_RESULT + " " + "y" * 40000 + " " + FIRST_TAIL)
-    expect(row(handle, 1)).to_contain_text("completed", timeout=60000)
+    expect(row(handle, 1)).to_have_attribute("data-child-status", "completed", timeout=60000)
     trigger = open_inspector(handle, 1, "completed")
     expect(inspector).to_contain_text(FIRST_RESULT, timeout=60000)
-    expect(inspector).to_contain_text(re.compile(r"clipped|omitted|bounded", re.I), timeout=60000)
+    expect(inspector.get_by_role("region", name="Subagent result", exact=True)).to_contain_text("Result clipped", timeout=60000)
     expect(inspector).not_to_contain_text(FIRST_TAIL)
     assert len(inspector.inner_text()) < 60000, "Inspector expanded oversized result without a public bound"
     box = inspector.bounding_box()
@@ -237,8 +251,8 @@ def run_child_scenarios(page, context, base, provider, first, second_id, report,
     assert admitted_identity(parent.tool_result("child-continue"), 2) == (handle, 2)
     evidence["attempts"].append(2)
     child = provider.request_matching(lambda request: request.is_child(SECOND_OBJECTIVE))
-    expect(row(handle, 2)).to_contain_text("running", timeout=60000)
-    expect(row(handle, 1)).to_contain_text("completed")
+    expect(row(handle, 2)).to_have_attribute("data-child-status", "running", timeout=60000)
+    expect(row(handle, 1)).to_have_attribute("data-child-status", "completed")
     historical = assert_outcome(read_detail(handle, 1), handle, 1, "completed")
     assert historical == first_outcome, "Continuation overwrote retained attempt-one outcome"
     trigger = open_inspector(handle, 1, "completed")
@@ -249,7 +263,8 @@ def run_child_scenarios(page, context, base, provider, first, second_id, report,
     inspector.get_by_role("button", name="Attempt 2", exact=True).focus()
     page.keyboard.press("Enter")
     expect(inspector).to_have_attribute("data-child-attempt", "2")
-    expect(inspector.get_by_role("region", name="Subagent retained result", exact=True)).not_to_contain_text(FIRST_RESULT)
+    # Running attempt 2 has no retained result region; it never shows attempt 1's.
+    expect(inspector.get_by_role("region", name="Subagent result", exact=True).filter(has_text=FIRST_RESULT)).to_have_count(0)
     inspector.get_by_role("button", name="Attempt 1", exact=True).focus()
     page.keyboard.press("Enter")
     expect(inspector).to_have_attribute("data-child-attempt", "1")
@@ -259,14 +274,15 @@ def run_child_scenarios(page, context, base, provider, first, second_id, report,
 
     # Lose only a browser subscription, then reopen this exact native identity.
     page.route(event_url, lambda route: route.abort("connectionreset"), times=1)
-    saved.filter(has_text=conversation).click()
+    reopen_same()
     expect(status).to_contain_text("Disconnected", timeout=60000)
     snapshot(page, "children-desktop-disconnected")
-    saved.filter(has_text=conversation).click()
-    expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
-    expect(page.get_by_test_id("coding-request-id")).to_contain_text(ack["request_id"])
-    expect(row(handle, 1)).to_contain_text("completed", timeout=60000)
-    expect(row(handle, 2)).to_contain_text("running", timeout=60000)
+    reopen_same()
+    expect_connected(page)
+    # The same native request is still the running one (no replay below).
+    expect(status).to_have_text("Running", timeout=60000)
+    expect(row(handle, 1)).to_have_attribute("data-child-status", "completed", timeout=60000)
+    expect(row(handle, 2)).to_have_attribute("data-child-status", "running", timeout=60000)
     provider.assert_no_request()
     scenario("A2-child-continuation-disconnect", f"Continuation admitted the same {handle} attempt 2 while attempt 1 stayed completed and retained; browser-only disconnect/same-ID reopen recovered both attempts without native/provider replay")
 
@@ -274,7 +290,8 @@ def run_child_scenarios(page, context, base, provider, first, second_id, report,
     trigger = open_inspector(handle, 2, "running")
     box = inspector.bounding_box()
     transcript_box = page.get_by_test_id("coding-transcript").bounding_box()
-    assert box and transcript_box and abs(box["x"] - transcript_box["x"]) <= 1 and abs(box["width"] - transcript_box["width"]) <= 1, "Narrow inspector did not fill the available coding transcript width"
+    # Narrow panel covers the transcript area (including its gutters), not the composer.
+    assert box and transcript_box and box["x"] <= transcript_box["x"] + 1 and box["x"] + box["width"] >= transcript_box["x"] + transcript_box["width"] - 1, "Narrow inspector did not cover the available coding transcript width"
     assert box["x"] >= 0 and box["x"] + box["width"] <= 391
     evidence["narrow_inspector_box"] = box
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "Narrow inspector created horizontal document overflow"
@@ -286,10 +303,10 @@ def run_child_scenarios(page, context, base, provider, first, second_id, report,
     expect(inspector).to_be_visible()
     snapshot(page, "children-narrow-running")
     dismiss(trigger)
-    scenario("A10-child-narrow-keyboard", "390x844 full-width inspector, no horizontal overflow; Enter activation, Escape dismissal and exact activating-row focus restored; inspection-only controls and main-session Stop available")
+    scenario("A10-child-narrow-keyboard", "390x844 inspector covering the transcript width, no horizontal overflow; Enter activation, Escape dismissal and exact activating-row focus restored; inspection-only controls and main-session Stop available")
 
     child.fail()
-    expect(row(handle, 2)).to_contain_text("failed", timeout=60000)
+    expect(row(handle, 2)).to_have_attribute("data-child-status", "failed", timeout=60000)
     trigger = open_inspector(handle, 2, "failed")
     expect(inspector).to_contain_text("failed", ignore_case=True)
     second_detail = read_detail(handle, 2)
@@ -317,16 +334,23 @@ def run_child_scenarios(page, context, base, provider, first, second_id, report,
     # Full navigation must reconstruct historical row identities from native
     # saved data, not just the previous tab's in-memory live child inventory.
     page.reload()
-    page.get_by_role("button", name="Toggle coding sidebar", exact=True).click()
-    saved.filter(has_text=conversation).click()
-    expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
-    expect(row(handle, 1)).to_contain_text("completed", timeout=60000)
-    expect(row(handle, 2)).to_contain_text("failed", timeout=60000)
+    page.get_by_role("button", name="Toggle sidebar", exact=True).click()
+    # The narrow sidebar sheet unmounts its rows once one is chosen, so the
+    # open response and the composer's canonical folder identify the reopen.
+    with page.expect_response(lambda response: response.url == base + f"/api/coding/conversations/{conversation}/open"
+                              and response.request.method == "POST", timeout=60000) as reopened:
+        saved_row(page, conversation).click()
+    assert reopened.value.ok and reopened.value.json()["id"] == conversation
+    expect(page.get_by_test_id("coding-canonical-cwd")).to_have_attribute("title", reopened.value.json()["cwd"], timeout=60000)
+    expect_connected(page)
+    expect(page.locator('[data-sidebar="sidebar"][data-mobile="true"]')).to_be_hidden(timeout=60000)
+    expect(row(handle, 1)).to_have_attribute("data-child-status", "completed", timeout=60000)
+    expect(row(handle, 2)).to_have_attribute("data-child-status", "failed", timeout=60000)
     trigger = open_inspector(handle, 1, "completed")
     expect(inspector).to_contain_text(FIRST_RESULT, timeout=60000)
     assert assert_outcome(read_detail(handle, 1), handle, 1, "completed") == first_outcome
     snapshot(page, "children-narrow-reopened-historical")
-    inspector.get_by_role("button", name="Close subagent inspector", exact=True).click()
+    inspector.get_by_role("button", name="Close subagent", exact=True).click()
     expect(trigger).to_be_focused()
     trigger = open_inspector(handle, 2, "failed")
     assert assert_outcome(read_detail(handle, 2), handle, 2, "failed") == second_outcome

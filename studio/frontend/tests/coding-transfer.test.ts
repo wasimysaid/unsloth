@@ -21,39 +21,18 @@ import type {
   ContentReference,
   EntryPage,
   JournalCut,
-  PublicEntryChunk,
   RunApi,
 } from "../src/features/coding/run-types.ts";
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
-const encoder = new TextEncoder();
 const cut: JournalCut = { journal: "root", leaf: "entry" };
-function fixture(rows: CodingRow[], width = 1024) {
-  const bytes = encoder.encode(JSON.stringify(rows));
-  const ref: ContentReference = {
-    cut,
-    entry_id: "entry",
-    total_bytes: bytes.length,
-  };
-  const calls: number[] = [];
-  const readPublicEntry: RunApi["readPublicEntry"] = async (
-    id,
-    requested,
-    offset,
-  ) => {
+function fixture(rows: CodingRow[]) {
+  const ref: ContentReference = { cut, entry_id: "entry" };
+  const calls: string[] = [];
+  const readPublicEntry: RunApi["readPublicEntry"] = async (id, requested) => {
     assert.deepEqual(requested, ref);
-    calls.push(offset);
-    let end = Math.min(bytes.length, offset + width);
-    while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--;
-    return {
-      conversation_id: id,
-      ...ref,
-      offset,
-      data: new TextDecoder("utf-8", { fatal: true }).decode(
-        bytes.subarray(offset, end),
-      ),
-      next_offset: end === bytes.length ? null : end,
-    };
+    calls.push(id);
+    return rows;
   };
   const placeholder: CodingRow = {
     id: "entry",
@@ -83,9 +62,9 @@ const saved = (text = "漢🙂"): CodingRow[] => [
   },
 ];
 
-test("saved multirow entry assembles all 2.52MiB of Unicode at exact UTF8 chunk offsets", async () => {
+test("saved multirow entry resolves all 2.52MiB of Unicode in one owned HTTP transfer", async () => {
   const rows = saved("漢🙂".repeat(360000));
-  const f = fixture(rows, 32768);
+  const f = fixture(rows);
   assert.deepEqual(
     await assemblePublicEntry(
       f,
@@ -95,57 +74,25 @@ test("saved multirow entry assembles all 2.52MiB of Unicode at exact UTF8 chunk 
     ),
     rows,
   );
-  assert.equal(f.calls[0], 0);
-  assert.ok(f.calls.length > 70);
-  assert.ok(f.calls.every((offset, n) => n === 0 || offset > f.calls[n - 1]));
+  assert.deepEqual(f.calls, ["conversation"]);
 });
 
-test("chunk identity, cut, totals, byte progress and exact EOF are checked before accepting rows", async () => {
-  const f = fixture(saved());
-  for (const patch of [
-    { conversation_id: "other" },
-    { entry_id: "other" },
-    { cut: { journal: "root", leaf: "other" } },
-    { cut: { journal: { child: "other" }, leaf: "entry" } },
-    { offset: 1 },
-    { total_bytes: f.ref.total_bytes + 1 },
-    { data: "" },
-    { data: "x".repeat(f.ref.total_bytes + 1) },
-    { next_offset: 0 },
-    { next_offset: f.ref.total_bytes },
-  ]) {
-    const api = {
-      readPublicEntry: async (...args: Parameters<RunApi["readPublicEntry"]>) =>
-        ({
-          ...(await f.readPublicEntry(...args)),
-          ...patch,
-        }) as PublicEntryChunk,
-    };
-    await assert.rejects(
-      assemblePublicEntry(
-        api,
-        "conversation",
-        f.ref,
-        new AbortController().signal,
-      ),
-      /immutable cut.*byte offsets/,
-    );
-  }
-  const early = fixture(saved("a".repeat(4000)));
-  await assert.rejects(
-    assemblePublicEntry(
-      {
-        readPublicEntry: async (...args) => ({
-          ...(await early.readPublicEntry(...args)),
-          next_offset: null,
-        }),
-      },
-      "conversation",
-      early.ref,
-      new AbortController().signal,
-    ),
-    /byte offsets/,
+test("a deferred native entry with no public rows removes its reference without losing the pagination cursor", async () => {
+  const f = fixture([]);
+  const rows = await assemblePublicEntry(
+    f,
+    "conversation",
+    f.ref,
+    new AbortController().signal,
   );
+  const page = {
+    ...f.page,
+    rows: replaceEntryContent(f.page.rows, f.ref, rows),
+  };
+  assert.deepEqual(page.rows, []);
+  assert.equal(page.first_id, "entry");
+  assert.equal(page.last_id, "entry");
+  assert.deepEqual(f.calls, ["conversation"]);
 });
 
 test("complete entry rejects recursive references, duplicate rows, unrelated entries and non-row JSON", async () => {
@@ -154,12 +101,11 @@ test("complete entry rejects recursive references, duplicate rows, unrelated ent
     [
       {
         ...saved()[0],
-        content_ref: { cut, entry_id: "entry", total_bytes: 1 },
+        content_ref: { cut, entry_id: "entry" },
       },
     ],
     [saved()[0], saved()[0]],
     [{ ...saved()[0], entry_id: "other" }],
-    [],
   ] as CodingRow[][]) {
     const f = fixture(rows);
     await assert.rejects(
@@ -172,25 +118,12 @@ test("complete entry rejects recursive references, duplicate rows, unrelated ent
       /immutable cut/,
     );
   }
-  for (const data of ["{}", "null", "[invalid]"]) {
-    const ref = {
-      cut,
-      entry_id: "entry",
-      total_bytes: encoder.encode(data).length,
-    };
+  for (const data of [{}, null, "invalid"]) {
     await assert.rejects(
       assemblePublicEntry(
-        {
-          readPublicEntry: async () => ({
-            conversation_id: "conversation",
-            ...ref,
-            offset: 0,
-            data,
-            next_offset: null,
-          }),
-        },
+        { readPublicEntry: async () => data as CodingRow[] },
         "conversation",
-        ref,
+        { cut, entry_id: "entry" },
         new AbortController().signal,
       ),
       /immutable cut/,
@@ -204,8 +137,7 @@ test("page reference cuts and placeholder identity are validated before content 
     { id: "other" },
     { entry_id: "other" },
     { request_id: "request" },
-    { content_ref: { ...f.ref, total_bytes: 0 } },
-    { content_ref: { ...f.ref, total_bytes: 1.5 } },
+    { content_ref: { ...f.ref, entry_id: "" } },
     { content_ref: { ...f.ref, cut: { journal: "root", leaf: "other" } } },
   ]) {
     await assert.rejects(
@@ -277,7 +209,7 @@ test("failed reference is explicit and retryable without keeping capture pending
 
 test("retry aborts a slow content request and its late result cannot overwrite the replacement", async () => {
   const f = fixture(saved());
-  let release!: (chunk: PublicEntryChunk) => void;
+  let release!: (chunk: CodingRow[]) => void;
   let firstSignal: AbortSignal | undefined;
   let reads = 0;
   let page!: EntryPage;
@@ -286,8 +218,8 @@ test("retry aborts a slow content request and its late result cannot overwrite t
       readEntries: async () => f.page,
       readPublicEntry: async (...args) => {
         if (++reads === 1) {
-          firstSignal = args[3];
-          return await new Promise<PublicEntryChunk>((done) => {
+          firstSignal = args[2];
+          return await new Promise<CodingRow[]>((done) => {
             release = done;
           });
         }
@@ -308,13 +240,7 @@ test("retry aborts a slow content request and its late result cannot overwrite t
   await tick();
   assert.equal(firstSignal?.aborted, true);
   assert.equal(page.rows[0].text, "漢🙂");
-  release({
-    conversation_id: "wrong",
-    ...f.ref,
-    offset: 0,
-    data: "bad",
-    next_offset: null,
-  });
+  release([{ ...saved()[0], entry_id: "wrong" }]);
   await tick();
   assert.equal(page.rows[0].text, "漢🙂");
 });

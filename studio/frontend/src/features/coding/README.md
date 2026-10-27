@@ -1,4 +1,4 @@
-# Coding native execution, recovery, questions, goals, reported changes, rich inputs, concurrency and Mimir Settings
+# Coding native execution, recovery, questions, goals, reported changes, rich inputs and concurrency
 
 `/coding` keeps Studio’s authenticated route gate, sidebar primitives and composer
 CSS, without importing ordinary chat execution, tool orchestration, model loading
@@ -40,8 +40,10 @@ first native reply.
 All `/api/coding` routes use established Studio auth, including IDs and fetch SSE:
 
 - Browse/catalog/list/create/open retain the #234 canonical-folder and effective,
-  non-persisting trust behavior. Selecting a folder always creates a new native
-  conversation; reopening preserves its saved native identity and directory.
+  non-persisting trust behavior. Choosing a folder only selects it; the first Send
+  creates the conversation there (`POST /conversations {cwd, configuration?}`),
+  then sends the typed message once. Reopening preserves the saved native identity
+  and directory.
 - `GET /conversations/{id}/overlap` reads native canonical-folder overlap against
   other retained, busy owners; it never opens an owner or changes project identity.
 - `POST /conversations/{id}/prompts` accepts `{submission_key,text}` plus optional
@@ -91,10 +93,12 @@ Apply/Revert controls or tool-selection pills. See **Transcript projection** bel
 
 ## Native mode and plan decisions (#239)
 
-The compact Build/Plan segment (native radios inside the composer) shows only
-`state.configuration.mode` from the ordered native view. It never optimistically
-changes mode, accepts a plan, or rewrites running work; a requested mode is marked
-on its own segment (`data-requested-mode`) and nothing else is dimmed or disabled.
+There is no Build/Plan control. The native `/plan` command enters plan mode; the
+composer footer then shows a **Plan mode** chip (`coding-plan-mode`) from
+`state.configuration.mode` of the ordered native view. Its × — and `/build`, a
+browser command offered only when the native registry has none — sends
+`POST /mode {mode:"build"}`. Nothing changes optimistically, accepts a plan or
+rewrites running work.
 
 A **mode-only** command keeps the existing event stream: after a definite
 acknowledgment the ordered native `state` item settles it, including one that
@@ -182,10 +186,11 @@ Project changes create distinct conversations; reconnect retains native identity
 
 ## Child-attempt inspection (#241)
 
-Native agent-icon rows sit in their chronological transcript slot (exact
-`(handle, attempt)` identity from a child row or a tool's subagent presentation;
-live attempts not yet named by any row are listed after the transcript) and open a
-right-hand, inspection-only panel; no launch,
+Agent cards sit in their chronological transcript slot (exact `(handle, attempt)`
+identity from a child row or a launch's subagent presentation; live attempts not
+yet named by any row are listed after the transcript) and open a right-hand,
+inspection-only panel showing status, model, the collapsed task brief, the child's
+activity in the same groups as the main transcript, and its retained result; no launch,
 continue, steer, or individual Stop is exposed. On narrow screens the dismissible
 panel fills the transcript width, leaving connection feedback and the **main-session
 Stop** available below. Enter/Space activate native buttons, Escape dismisses from
@@ -211,8 +216,7 @@ Reconnect uses a new atomic capture and preserves the selected exact historical
 attempt without relabeling it as current. Inspection never consumes parent delivery.
 
 Stable selectors: `coding-child-row` and `coding-child-inspector` carry
-`data-child-handle` / `data-child-attempt`; the panel is the `Subagent inspector`
-dialog. `--workload children` in the coding-route driver exercises actual native
+`data-child-handle` / `data-child-attempt`; the panel is the `Subagent` dialog. `--workload children` in the coding-route driver exercises actual native
 delegation with a deterministic protocol provider, not real-model acceptance.
 
 ## Skill and subagent mentions and images (#242)
@@ -376,35 +380,30 @@ A native `restart` cause is shown as interrupted requiring explicit resume.
 The `--workload goals` coding-route browser driver exercises this product path with
 deterministic external provider/reviewer replies, not a real-model workload claim.
 
-## Native commands and current-session diagnostics (#243)
+## Native slash commands (#243)
 
-The Commands dialog queries the live native registry, including effective contributed
-names/aliases, descriptions, optional arguments and native availability. Selecting a
-command does not execute it. Execute and composer slash input both use native command
-handling; unsupported/terminal-only attempts never become model prompts. Prompt HTTP
-also refuses slash input. Native busy/admission guards remain final.
+Typing `/` as the prompt's first token opens the effective native registry
+(contributed names and aliases, descriptions, argument hints, availability) above
+the composer. Tab or Enter completes `/name `; a fully typed name runs on Enter.
+Unsupported/terminal-only attempts never become model prompts; prompt HTTP also
+refuses slash input; native busy/admission guards remain final. There is no
+Commands dialog and no diagnostics dialog.
 
-`POST /conversations/{id}/commands` accepts `{operation_id,name,tail}`. Handled,
-transient-display and submitted native request outcomes are presented distinctly;
-none is an optimistic conversation message or proof of terminal completion. Native
-compression is submitted work with real lifecycle/view evidence; public history is
-retained. Transient output is bounded and is not appended to the transcript.
+`POST /conversations/{id}/commands` accepts `{operation_id,name,tail}`. A transient
+display outcome appears in a dismissible card above the composer; it is not a
+conversation message. Handled and submitted outcomes need no card: native state and
+the transcript show their effect.
 
 Before dispatch, `pending-command.ts` durably records a conversation-scoped operation
 identity/name, **not arguments**. Reload/reopen retains uncertainty. A fresh atomic
 view must reconstruct before the read-only command receipt lookup can resolve that
 exact outcome. An incomplete/missing receipt (including runtime loss) remains unknown
-and blocks another mutation; Inspect command outcome only reads again. No command is
+and blocks another mutation; **Check again** only reads again. No command is
 replayed and receipt storage does not promise generic exactly-once execution.
 
-The compact indicator uses native current-session prompt/turn observations, labeling
-provider-confirmed, estimated and stale data where supplied. Unavailable metrics stay
-unavailable, never invented zeroes. The diagnostics dialog requests only the selected
-context, tokens, retry or execution category. Native context inspection exposes bounded
-structural roles/counts rather than private message contents; provider payloads,
-credentials, arbitrary error reasons and raw logs are not browser diagnostics.
-Dismissal invalidates pending inspection replies. Model-context diagnostics are not
-public transcript entries or a historical-usage dashboard.
+The footer ring uses native current-session prompt/turn observations; clicking it
+shows used / window / remaining tokens, labeled estimated or stale where native says
+so. Unavailable metrics stay unavailable, never invented zeroes.
 
 ## Inspection-only reported file changes (#238)
 
@@ -434,67 +433,12 @@ content remains explicitly labelled; section navigation cannot recover content
 that the native public profile did not supply. Expanding a report is a reading
 request, not a request to follow its growth. See #253 below.
 
-## Mimir Settings (#250–251)
+## Mimir Settings (removed)
 
-The focused **Mimir Settings** view uses the open native conversation's effective
-trust and project directory to inspect MCP's global/workspace layers. Native source
-identities, configured states, effective field origins and live ownership/status
-are preserved; inventory is redacted. The explicit editor reads raw source JSON
-(including secrets), never expanded/merged transport values for persistence.
-
-Authenticated endpoints under `/api/coding/conversations/{id}/mcp`:
-
-- `GET /inventory`: native scoped documents, source entries, effective values and
-  live connection metadata; does not open an owner or apply changes.
-- `POST /edit` with `{source,name}`: begins an edit of that exact native source.
-  Missing names create a draft. Returns `{edit_id,source,name,revision,json}`.
-- `POST /save` with `{edit_id,revision,json}`: native validation and revision-checked
-  persistence; returns `{draft,configured_state,inventory,inventory_error}` with the
-  actual committed editor revision and configured state at the saved source.
-  Inventory is a separate best-effort observation: if it exceeds transport bounds,
-  `inventory` is null and `inventory_error` explains how to refresh. A completed
-  persistence operation is never reported as failed because observation is unavailable.
-  Raw and normalized editor JSON are bounded to 512 KiB before persistence.
-  It never applies/reconnects connections, attaches transient servers, cancels work,
-  or closes/reopens conversations.
-- `POST /apply` with `{operation_id}`: native safe-idle application of saved layers
-  for this conversation, never unsaved editor text.
-- `POST /reconnect` with `{operation_id,name?}`: safe-idle reconnect of configured
-  connections using applied definitions. No transient SDK attachments are replaced.
-- `GET /operations/{operation_id}`: read-only exact native outcome plus current
-  inventory. Missing/evicted status is unknown, never proof of non-admission.
-- `POST /release` with `{edit_id}`: drops only an obsolete native editor resource
-  after comparison/reconciliation/discard, never its conversation or connections.
-
-No endpoint accepts arbitrary file paths. Responses are `no-store`; raw drafts
-are never logged or included in request-validation diagnostics. The browser
-uses authenticated fetch with transport replay disabled. A lost save reply is
-**uncertain**, not a failed write: compare the saved version before deliberate retry.
-
-`mcp-settings.ts` holds ephemeral forms keyed by native conversation ID, retaining
-draft text and edit revision through errors, conflicts, tab switches and conversation
-changes within this mounted coding page. Definitions/drafts are never stored in
-browser storage; a browser reload/navigation away loses these in-memory unsaved
-drafts. Only unresolved runtime-operation ID/kind/name is retained in per-tab
-sessionStorage as transport correlation across reload. Other tabs cannot overwrite
-or clear the submitting tab's unresolved identity; native safe-idle admission
-still orders their distinct commands. Lost apply/reconnect replies are inspected by exact
-identity before another runtime action, never replayed; corrupted/unavailable
-correlation storage blocks sending. Native running/failed/completed outcomes and
-saved effective/applied revision and actual configured tool evidence are separate
-from persistence acknowledgment. A mounted Settings view observes unresolved
-outcomes for at most one minute, then retains explicit refresh/reconciliation.
-Refresh reads inventory without rebasing edits. Comparison reads a new native draft
-separately; only **Keep draft and use latest revision** or **Replace draft with saved
-version** adopts it. Another intervening writer can still conflict. Discard is
-confirmed; selecting another row never silently replaces a draft. Operations are
-serialized per form, with focused native errors and keyboard-operable reconciliation.
-
-Saved status and native live connection status are separate. The persisted revision
-is an editor revision, not evidence that servers have reconfigured. Native inventory's
-`live_available` explicitly distinguishes unknown observation from known-empty connections;
-unavailable status offers refresh instead of inferring no applied servers. Refresh is a
-read, not an apply mechanism. Extensions/maintenance sections are supplied by #252.
+The in-page MCP editor and the Studio Settings → Mimir tab were removed from the
+browser, together with their client code. The backend `/mcp/*`, `/extensions`,
+`/plugins/reload` and `/diagnostics` routes remain and are covered by backend
+tests, but nothing in the browser calls them.
 
 ## Next-request model picker (#244)
 
@@ -507,7 +451,15 @@ Selecting a model returns to configuration without dismissal. Shared Studio popo
 primitives are presentation only. Keyboard Tab remains ordinary focus navigation;
 Escape returns from search to configuration or dismisses to the trigger.
 
-`GET /catalog?cwd=…` is the only inventory. Exact provider ID + provider-local model
+Before a conversation exists the same picker reads `GET /catalog` — the chosen
+folder's effective settings via `?cwd=`, or the host home's when no folder is chosen
+— and keeps the choice (provider/model/effort identities only, never content) in
+browser storage with the folder (`new-conversation-memory.ts`). It is sent once as
+`configuration` when Send creates the conversation; a confirmed change in an open
+conversation becomes the next default. The effort control is a discrete rail with
+one stop per offered level (drag, click or arrow keys).
+
+`GET /conversations/{id}/models` is an open conversation's inventory. Exact provider ID + provider-local model
 ID select a model; labels and API-model mapping are display/search metadata, never
 replacement identities. Favorites persist only identity pairs. Reasoning positions
 come only from the selected model's offered native values and disappear when none
@@ -577,12 +529,11 @@ answers, plans, notices, semantic public answers/reports, subagent lifecycle row
 and **activity groups**. Consecutive tool and `reasoning` rows of one request form
 one icon-led tree; reply text, a new request or a semantic answer ends it. Every
 tool invocation stays its own item with its public result, including several calls
-on one delegated attempt (e.g. a launch and a refused message); invocations that
-carry an exact `(handle, attempt)` get an **Inspect** link and form their own
-always-visible group. Only lifecycle rows of one attempt are deduplicated. Icons and summary verbs come from native `display_kind` (`shell`, `file_read`,
+on one delegated attempt (e.g. a launch and a refused message); launches form their
+own card group. Lifecycle records of one attempt are deduplicated. Icons and summary verbs come from native `display_kind` (`shell`, `file_read`,
 `file_change`, `file_*_search`, `web`, `status`, `mcp`, …), never tool names; unknown
 kinds are counted as tools. The summary states real counts, distinct reported
-edited paths and failures ("Thought 2 times · ran 2 commands · 1 failed"); empty
+edited paths and failures ("Thought 2 times · Ran 2 commands · 1 failed"); empty
 reasoning is skipped, nothing is invented. A group opens itself only while live; a
 reader's choice wins and survives remounts. Each item expands to its actual bounded
 output, typed file-change diff and native identities.
@@ -604,20 +555,28 @@ with their saved rows, so those blocks remount once at the saving checkpoint.
 `run-session.ts` reuses derived row objects by reference so unchanged blocks keep
 identity and memoized components skip work.
 
-Layout: a quiet header (project switcher, Session details popover with conversation
-ID/cwd/reopen, trust disclosure and runtime maintenance, Mimir Settings), a
-full-height transcript, and a bottom dock with only actionable notices (disconnect,
-errors, recovery, reconciliation), current plan and goal disclosures, the composer
-(+ menu: images, mention, goal; Build/Plan; model; Send/Stop) and a one-line footer
-(run status → model details popover with **Diagnostics…**; a context ring whose
-hover shows only used / limit / remaining tokens; Commands). Request identities and
-bounded native diagnostics live only in the Diagnostics dialog.
-Stable selectors added: `coding-activity-group`, `coding-reasoning`,
-`coding-mention-list`, `coding-composer-surface`, `coding-session-details`,
-`coding-event-details`, `coding-context-usage`. `coding-running-model` and
-`coding-next-model` live in the run-details popover, `coding-request-id` in the
-Diagnostics dialog; `coding-conversation-id`
-and `coding-reopen-saved` in Session details.
+Activity groups always have a title row ("Thought 2 times · Ran 1 command · read
+1 file") whose live state shimmers; rows hang off a connector rail with the native
+icon, verb and argument on one line — a shell call's argument is its bounded
+`tool.argument` command, other subjects come from the native title — and expand to
+the full command and its verbatim output, or a colored diff. A delegation launch
+(native `agent` tool) is its own bordered **Agent** card (description, model,
+status, ↗) that opens the inspector; calls about an agent stay ordinary rows with
+their output, and a later lifecycle record of a launched attempt adds no second
+card. Inputs with no public text (delivered agent results) render nothing.
+Streaming replies use `MarkdownPreview streaming`: the shared incremental parse of
+only the growing tail, repaired unfinished syntax and a short fade for new words.
+A **Working…** line with elapsed time shows while a request runs and nothing
+streams at the tail.
+
+Layout: a header with the conversation title; a full-height transcript; a bottom
+dock with only actionable notices, the current plan and goal, command feedback, the
+composer (attach, prompt, model chip, Send/Stop) and a footer (folder, Plan mode
+chip, compaction, context ring). The runtime notice appears only when the Mimir
+process needs attention and offers **Restart Mimir**. Stable selectors:
+`coding-activity-group`, `coding-reasoning`, `coding-tool-row`, `coding-child-row`,
+`coding-mention-list`, `coding-composer-surface`, `coding-context-usage`,
+`coding-plan-mode`, `coding-run-status` (screen-reader only).
 
 ## Navigation, landing and Stop authority (interaction refresh)
 
@@ -630,20 +589,21 @@ own a native conversation; uncertain creates still block until inspected. Saved
 session buttons carry `data-conversation-id` and `aria-busy` and stay clickable
 while another open is pending.
 
-**New coding conversation** returns at once to a blank landing composer
-(`active: null`); no folder dialog opens. While a create is pending it is disabled
+**New conversation** returns at once to the landing (`active: null`) with the open
+conversation's folder — otherwise the remembered one — and the remembered model
+already chosen; no folder dialog opens. While a create is pending it is disabled
 and `startNew()` refuses (returns false), so the create is neither orphaned nor
 repeated; it opens what it created. An uncertain create keeps its reconciliation on
-the landing, which cannot create another copy. The landing composer is editable but
-not sendable ("Choose a project to start."); its **Choose project** menu lists
-recent project folders and **Choose project folder…**. Choosing creates the
-conversation with the existing native canonical-folder authority.
+the landing, which cannot create another copy. The folder chip above the composer
+lists recent folders and **Choose folder…**; choosing only selects. Send (or Enter)
+creates the conversation with the native canonical-folder authority, and the new
+owner sends the carried draft exactly once when it can accept it. `@` and `/` open
+nothing until a conversation exists.
 
 The session owns the composer draft of the current view (`state.draft`: text,
-selected mentions, images, images still being read and attachment errors). The landing stays editable while its create is
-pending, and the conversation created from the landing takes over that same
-draft object as it is when the create lands, edits and images added meanwhile
-included. Opening any conversation, a create started from an open conversation,
+selected mentions, images, images still being read and attachment errors). The
+landing is read-only while its create is pending, and the conversation created from
+the landing takes over that same draft object. Opening any conversation, a create started from an open conversation,
 and New each start a fresh draft, so no conversation inherits a draft meant for
 another; an uncertain create leaves the draft on the landing. A new composer whose
 field is empty shows its draft's text; one that already has text is never

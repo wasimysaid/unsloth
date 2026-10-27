@@ -137,7 +137,7 @@ export function mentionGroups(
 
 /** Next selectable option in display order, wrapping and skipping disabled ones. */
 export function stepMention(
-  options: readonly MentionOption[],
+  options: readonly { disabled: string | null }[],
   active: number | null,
   delta: 1 | -1,
 ): number | null {
@@ -149,4 +149,104 @@ export function stepMention(
     if (!options[index].disabled) return index;
   }
   return null;
+}
+
+/** One flat menu: prefix-matching skills and agents, then files, then the rest. */
+export function mentionItems(
+  groups: readonly MentionGroup[],
+  query: string,
+): MentionOption[] {
+  const named = groups
+    .filter((group) => group.kind !== "file")
+    .flatMap((group) => group.options);
+  const files = groups.find((group) => group.kind === "file")?.options ?? [];
+  if (!query) return [...files, ...named];
+  const q = query.toLocaleLowerCase();
+  const prefix = named.filter((option) =>
+    option.label.toLocaleLowerCase().startsWith(q),
+  );
+  return [
+    ...prefix,
+    ...files,
+    ...named.filter((option) => !prefix.includes(option)),
+  ];
+}
+
+/** The one line shown when nothing matches: a retryable failure first. */
+export function mentionStatus(
+  groups: readonly MentionGroup[],
+  query: string,
+): string {
+  const statuses = groups
+    .map((group) => group.status)
+    .filter((status): status is string => Boolean(status));
+  return (
+    statuses.find((status) => status.endsWith("Retry.")) ??
+    groups.find((group) => group.kind === "file")?.status ??
+    (query ? `No matches for “${query}”` : "No files")
+  );
+}
+
+/** The `/command` being typed: the prompt's first token, caret inside it. */
+export function commandQuery(
+  text: string,
+  cursor: number,
+): { start: number; end: number; query: string } | null {
+  const match = /^(\s*)\/([^\s]*)$/.exec(text.slice(0, cursor));
+  if (!match) return null;
+  const rest = /^[^\s]*/.exec(text.slice(cursor))?.[0] ?? "";
+  return {
+    start: match[1].length,
+    end: cursor + rest.length,
+    query: match[2] + rest,
+  };
+}
+
+export interface CommandOption {
+  id: string;
+  name: string;
+  label: string;
+  description: string;
+  disabled: string | null;
+}
+
+/** Effective native commands matching a typed prefix, aliases included. */
+export function commandItems(
+  commands: readonly {
+    name: string;
+    aliases: readonly string[];
+    description: string;
+    argument: string | null;
+    availability: string;
+  }[],
+  query: string,
+  busy: boolean,
+): CommandOption[] {
+  const q = query.toLocaleLowerCase();
+  const score = (names: string[], description: string) => {
+    if (!q) return 0;
+    if (names.some((name) => name.toLocaleLowerCase().startsWith(q))) return 0;
+    if (names.some((name) => name.toLocaleLowerCase().includes(q))) return 1;
+    return description.toLocaleLowerCase().includes(q) ? 2 : -1;
+  };
+  return commands
+    .map((command, index) => ({
+      command,
+      index,
+      score: score([command.name, ...command.aliases], command.description),
+    }))
+    .filter((entry) => entry.score >= 0)
+    .sort((a, b) => a.score - b.score || a.index - b.index)
+    .map(({ command }) => ({
+      id: `command:${command.name}`,
+      name: command.name,
+      label: `/${command.name}`,
+      description: command.argument
+        ? `${command.description} · <${command.argument}>`
+        : command.description,
+      disabled:
+        busy && command.availability === "idle-only"
+          ? "Available when idle"
+          : null,
+    }));
 }

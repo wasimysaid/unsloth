@@ -2,6 +2,7 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 import { MarkdownPreview } from "@/components/markdown/markdown-preview";
 import {
+  Blocks,
   Bot,
   ChevronRight,
   ClipboardList,
@@ -11,17 +12,23 @@ import {
   FolderSearch,
   Globe,
   Image,
-  LayoutGrid,
   ListChecks,
-  LoaderCircle,
   type LucideIcon,
-  MessageCircleMore,
+  MessageCircle,
   MessageCircleQuestion,
   MessageSquareText,
   SquareTerminal,
   Wrench,
 } from "lucide-react";
-import { createContext, useCallback, useContext, useId, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { boundedContentKeyDown } from "./bounded-content";
 import { FileChangeReport } from "./file-change-report";
 import type { CodingRow } from "./run-types";
@@ -58,122 +65,172 @@ const kindIcons: Record<string, LucideIcon> = {
   user_request: MessageCircleQuestion,
   web: Globe,
   agent: Bot,
-  mcp: LayoutGrid,
+  mcp: Blocks,
 };
 export const toolIcon = (kind: string | null | undefined) =>
   (kind && kindIcons[kind]) || Wrench;
 
+type Tool = NonNullable<CodingRow["tool"]>;
+const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
+
+/** "Read: src/lib.rs" -> Read + src/lib.rs. A shell call's subject is its command. */
+export function toolLabel(tool: Tool): { verb: string; subject: string } {
+  const title = tool.title || tool.name || "Tool";
+  const colon = title.indexOf(": ");
+  let verb = colon > 0 && colon <= 40 ? title.slice(0, colon) : title;
+  let subject = colon > 0 && colon <= 40 ? title.slice(colon + 2) : "";
+  if (tool.argument) {
+    if (tool.display_kind === "shell")
+      verb = tool.status === "running" ? "Running" : "Run";
+    subject = tool.argument;
+  }
+  return { verb, subject: oneLine(subject) };
+}
+
+const fileKinds = new Set(["file_read", "file_change", "image_view"]);
+const looksLikePath = (subject: string) =>
+  Boolean(subject) && !/\s/.test(subject) && !/^\d+ files$/.test(subject);
+const basename = (path: string) =>
+  path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || path;
+
+function diffStats(tool: Tool) {
+  const files = tool.output_profile?.files ?? [];
+  let added = 0;
+  let removed = 0;
+  let known = false;
+  for (const file of files) {
+    if (file.additions != null) {
+      added += file.additions;
+      known = true;
+    }
+    if (file.deletions != null) {
+      removed += file.deletions;
+      known = true;
+    }
+  }
+  return known ? { added, removed } : null;
+}
+
 const statusText: Record<string, string> = {
-  running: "Running",
   failed: "Failed",
   cancelled: "Cancelled",
   interrupted: "Interrupted",
-  saved: "No result recorded",
 };
 
-function ActivityLine({
+/** Tree connector of one row: the trunk continues past every row but the last. */
+function Rail({ last }: { last: boolean }) {
+  return (
+    <>
+      <span
+        aria-hidden="true"
+        className={`absolute left-2.75 top-0 w-px bg-border ${last ? "h-2" : "bottom-0"}`}
+      />
+      <span
+        aria-hidden="true"
+        className="absolute left-2.75 top-2 h-1.75 w-3.75 rounded-bl-[7px] border-b border-l border-border"
+      />
+    </>
+  );
+}
+
+/** One rail row: icon on the connector, verb and argument on one line. */
+function RailRow({
   icon: Icon,
-  label,
-  status,
+  verb,
+  subject,
+  file,
+  trailing,
   tone,
   open,
   onToggle,
   control,
   controls,
+  last,
+  rail,
+  children,
 }: {
   icon: LucideIcon;
-  label: string;
-  status: string | null;
+  verb: string;
+  subject: string;
+  file: boolean;
+  trailing?: React.ReactNode;
   tone: "default" | "running" | "failed";
   open: boolean;
   onToggle: () => void;
   control: string;
   controls: string;
+  last: boolean;
+  rail: boolean;
+  children: React.ReactNode;
 }) {
+  const failed = tone === "failed";
   return (
-    <button
-      type="button"
-      aria-expanded={open}
-      aria-controls={controls}
-      data-reading-control={control}
-      onClick={onToggle}
-      className={`group/line flex w-full min-w-0 items-center gap-2.5 rounded-lg py-1 pr-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${tone === "failed" ? "text-destructive" : "text-muted-foreground hover:text-foreground"}`}
-    >
-      <Icon className="size-4 shrink-0" aria-hidden="true" />
-      <span className="min-w-0 truncate">{label}</span>
-      {status && (
-        <span
-          className={`shrink-0 text-xs ${tone === "failed" ? "font-medium" : ""}`}
-        >
-          {status}
-        </span>
-      )}
-      {tone === "running" && (
-        <LoaderCircle
-          className="size-3.5 shrink-0 animate-spin"
-          aria-hidden="true"
-        />
-      )}
-      <ChevronRight
-        className={`ml-auto size-3.5 shrink-0 opacity-0 transition-transform group-hover/line:opacity-100 group-focus-visible/line:opacity-100 ${open ? "rotate-90 opacity-100" : ""}`}
-        aria-hidden="true"
-      />
-    </button>
-  );
-}
-
-function ToolDetail({ row }: { row: CodingRow }) {
-  const tool = row.tool;
-  if (!tool) return null;
-  const historical = Boolean(row.historical || tool.historical);
-  return (
-    <div className="min-w-0 space-y-2 pb-2">
-      <pre
-        className="max-h-80 overflow-auto overscroll-contain whitespace-pre-wrap break-words rounded-xl bg-muted/60 p-3 font-mono text-xs leading-relaxed text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: Bounded output needs keyboard scrolling.
-        tabIndex={0}
-        onKeyDown={boundedContentKeyDown}
-        aria-label="Actual public tool output"
+    <div className={`relative min-w-0 ${rail ? "pl-12" : "pl-6"}`}>
+      {rail && <Rail last={last} />}
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={controls}
+        data-reading-control={control}
+        onClick={onToggle}
+        className={`group/row relative flex h-7.5 w-full min-w-0 items-center gap-2 rounded-md text-left text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${failed ? "text-destructive" : "text-muted-foreground hover:text-foreground"}`}
       >
-        {tool.output || "No public output reported yet."}
-      </pre>
-      {tool.clipped && (
-        <p role="note" className="text-xs font-medium">
-          Output clipped to the presentation bound; this is not the complete
-          output.
-        </p>
-      )}
-      {tool.output_profile?.kind === "file_change" && (
-        <FileChangeReport
-          profile={tool.output_profile}
-          historical={historical}
+        <Icon
+          aria-hidden="true"
+          className={`absolute top-1.75 size-4 ${rail ? "-left-5" : "-left-6"}`}
         />
+        <span
+          className={`relative shrink-0 ${tone === "running" ? "coding-shimmer" : ""}`}
+        >
+          {verb}
+        </span>
+        {subject &&
+          (file && looksLikePath(subject) ? (
+            <span
+              className="min-w-0 truncate rounded-[5px] coding-wash px-1.5 py-px text-[12px] text-foreground/80"
+              title={subject}
+            >
+              {basename(subject)}
+            </span>
+          ) : (
+            <span
+              className={`min-w-0 truncate ${failed ? "" : "text-muted-foreground/80 group-hover/row:text-muted-foreground"}`}
+              title={subject}
+            >
+              {subject}
+            </span>
+          ))}
+        {trailing}
+        <ChevronRight
+          aria-hidden="true"
+          className={`ml-auto size-3.5 shrink-0 text-muted-foreground/70 opacity-0 transition-transform group-hover/row:opacity-100 group-focus-visible/row:opacity-100 ${open ? "rotate-90" : ""}`}
+        />
+      </button>
+      {open && (
+        <div id={controls} className="min-w-0 pb-2">
+          {children}
+        </div>
       )}
-      {!tool.output_profile &&
-        ["completed", "failed"].includes(tool.status) && (
-          <p className="text-xs text-muted-foreground">
-            No structured file-change profile; filesystem effects are not
-            inferred from this output.
-          </p>
-        )}
-      <p className="break-all font-mono text-[11px] text-muted-foreground">
-        {tool.name} · {tool.status || "reported"}
-        {historical && " · historical report"}
-      </p>
     </div>
   );
 }
 
-/** One native tool invocation: icon-led line, real result on expansion. */
+const outputClass =
+  "max-h-108 max-w-full overflow-auto overscroll-contain whitespace-pre py-1 font-mono text-[12px] leading-[18px] text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+/** One native tool invocation: verb and argument, actual result on expansion. */
 export function ToolReport({
   row,
   itemKey,
-  trailing,
+  last = true,
+  rail = true,
 }: {
   row: CodingRow;
   itemKey?: string;
-  /** A sibling control beside the line, e.g. the subagent inspector link. */
-  trailing?: React.ReactNode;
+  /** Last row of its group: the connector ends here. */
+  last?: boolean;
+  /** Inside an activity group's tree. */
+  rail?: boolean;
 }) {
   const tool = row.tool;
   const key = itemKey ?? `invocation:${tool?.invocation_id ?? row.id}`;
@@ -182,6 +239,10 @@ export function ToolReport({
   if (!tool) return null;
   const failed = tool.status === "failed";
   const running = tool.status === "running";
+  const { verb, subject } = toolLabel(tool);
+  const stats = diffStats(tool);
+  const status = statusText[tool.status];
+  const output = tool.output.replace(/\s+$/, "");
   return (
     <div
       className="min-w-0"
@@ -191,76 +252,129 @@ export function ToolReport({
       data-tool-status={tool.status}
       data-reading-owner={tool.invocation_id ?? tool.call_id}
     >
-      <div className="flex min-w-0 items-center gap-1">
-        <ActivityLine
-          icon={toolIcon(tool.display_kind)}
-          label={tool.title || tool.name || "Tool"}
-          status={statusText[tool.status] ?? null}
-          tone={failed ? "failed" : running ? "running" : "default"}
-          open={open}
-          onToggle={toggle}
-          control={`tool:${key}`}
-          controls={detail}
-        />
-        {trailing}
-      </div>
-      {open && (
-        <div id={detail} className="pl-6.5">
-          <ToolDetail row={row} />
-        </div>
-      )}
+      <RailRow
+        icon={toolIcon(tool.display_kind)}
+        verb={verb}
+        subject={subject}
+        file={fileKinds.has(tool.display_kind ?? "")}
+        tone={failed ? "failed" : running ? "running" : "default"}
+        open={open}
+        onToggle={toggle}
+        control={`tool:${key}`}
+        controls={detail}
+        last={last}
+        rail={rail}
+        trailing={
+          <>
+            {stats && (
+              <span className="shrink-0 font-mono text-[11px]">
+                <span className="text-emerald-600 dark:text-emerald-400">
+                  +{stats.added}
+                </span>{" "}
+                <span className="text-red-600 dark:text-red-400">
+                  −{stats.removed}
+                </span>
+              </span>
+            )}
+            {status && !failed && (
+              <span className="shrink-0 text-[11px]">{status}</span>
+            )}
+          </>
+        }
+      >
+        {tool.argument && (
+          <pre className="whitespace-pre-wrap break-all py-1 font-mono text-[12px] leading-[18px] text-muted-foreground/70">
+            {tool.argument}
+          </pre>
+        )}
+        {tool.output_profile?.kind === "file_change" ? (
+          <FileChangeReport profile={tool.output_profile} />
+        ) : output ? (
+          <pre
+            className={outputClass}
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: Bounded output needs keyboard scrolling.
+            tabIndex={0}
+            onKeyDown={boundedContentKeyDown}
+            aria-label="Tool output"
+          >
+            {output}
+          </pre>
+        ) : (
+          <p className="py-1 text-[12px] text-muted-foreground/70">
+            {running ? "Running…" : "No output"}
+          </p>
+        )}
+        {tool.clipped && (
+          <p role="note" className="text-[11px] text-muted-foreground">
+            Output clipped
+          </p>
+        )}
+      </RailRow>
     </div>
   );
 }
 
-/** Native public reasoning text only. Live thinking starts open, settled closed. */
+/** Public reasoning text. Live thinking stays open and follows its tail. */
 export function ReasoningReport({
   row,
   itemKey,
   live,
+  last = true,
+  rail = true,
 }: {
   row: CodingRow;
   itemKey: string;
   live: boolean;
+  last?: boolean;
+  rail?: boolean;
 }) {
   const [open, toggle] = useDisclosure(itemKey, live);
   const detail = useId();
+  const body = useRef<HTMLDivElement>(null);
+  const text = row.text ?? "";
+  useLayoutEffect(() => {
+    if (live && open && body.current)
+      body.current.scrollTop = body.current.scrollHeight;
+  }, [live, open, text]);
   return (
     <div
       className="min-w-0"
       data-testid="coding-reasoning"
       data-native-entry={row.id}
     >
-      <ActivityLine
-        icon={MessageCircleMore}
-        label="Thought process"
-        status={null}
+      <RailRow
+        icon={MessageCircle}
+        verb="Thought process"
+        subject=""
+        file={false}
         tone={live ? "running" : "default"}
         open={open}
         onToggle={toggle}
         control={`reasoning:${itemKey}`}
         controls={detail}
-      />
-      {open && (
+        last={last}
+        rail={rail}
+      >
         <div
-          id={detail}
-          className="max-h-80 overflow-auto overscroll-contain pb-2 pl-6.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          ref={body}
+          className="max-h-108 overflow-auto overscroll-contain focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           // biome-ignore lint/a11y/noNoninteractiveTabindex: Long public reasoning needs keyboard scrolling.
           tabIndex={0}
           onKeyDown={boundedContentKeyDown}
           aria-label="Public reasoning"
         >
           <MarkdownPreview
-            markdown={row.text ?? ""}
-            className="max-h-none overflow-visible rounded-none border-0 bg-transparent p-0 text-sm leading-6 text-muted-foreground"
+            markdown={text}
+            streaming={live}
+            className="max-h-none overflow-visible rounded-none border-0 bg-transparent p-0 text-[13px] leading-6 text-muted-foreground"
           />
           {row.clipped && (
-            <p role="note" className="text-xs font-medium">
-              Reasoning clipped to the presentation bound.
+            <p role="note" className="text-[11px] text-muted-foreground">
+              Reasoning clipped
             </p>
           )}
         </div>
-      )}
+      </RailRow>
     </div>
   );
 }

@@ -372,7 +372,6 @@ async function harness(
     position: 1,
     event: {
       type: "start",
-      recovering: false,
       root: { cut: { journal: "root", leaf: null }, live_invocations: [] },
       state: {
         info: { id: "conversation", cwd: "/project" },

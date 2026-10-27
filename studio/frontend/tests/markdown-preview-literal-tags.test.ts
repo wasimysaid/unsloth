@@ -13,9 +13,12 @@ import ts from "@typescript/typescript6";
 import type * as ComposerDraftPreviewModule from "../src/components/assistant-ui/composer-draft-preview.tsx";
 import { createCodePlugin } from "../src/components/assistant-ui/code-plugin.ts";
 import * as mermaidPlugin from "../src/components/assistant-ui/mermaid-plugin.ts";
+import * as streamingMarkdown from "../src/components/assistant-ui/streaming-markdown.ts";
+import * as streamingRenderSchedule from "../src/components/assistant-ui/streaming-render-schedule.ts";
 import * as inertComponents from "../src/components/markdown/inert-components.ts";
 import type * as MarkdownPreviewModule from "../src/components/markdown/markdown-preview.tsx";
 import * as markdownDataImages from "../src/lib/markdown-data-images.ts";
+import * as markdownParagraphBreaks from "../src/lib/markdown-paragraph-breaks.ts";
 import * as markdownPlugins from "../src/lib/markdown-plugins.ts";
 import * as safeMarkdownUrl from "../src/lib/safe-markdown-url.ts";
 import * as scheduleIdleTask from "../src/lib/schedule-idle-task.ts";
@@ -51,6 +54,10 @@ const { MarkdownPreview } = loadWithStubs<typeof MarkdownPreviewModule>(
     },
     "@streamdown/math": streamdownMath,
     "@/components/assistant-ui/mermaid-plugin": mermaidPlugin,
+    "@/components/assistant-ui/streaming-markdown": streamingMarkdown,
+    "@/components/assistant-ui/streaming-render-schedule":
+      streamingRenderSchedule,
+    "@/lib/markdown-paragraph-breaks": markdownParagraphBreaks,
     "@/lib/markdown-plugins": markdownPlugins,
     "@/lib/open-link": { openLink: () => false },
     "@/lib/safe-markdown-url": safeMarkdownUrl,
@@ -201,4 +208,26 @@ test("Hub model cards are wired to the literal-tag pipeline", () => {
     initializers.get(rehypePlugins) ?? rehypePlugins,
     /withLiteralUnknownTags\(\s*README_ALLOWED_TAGS,/,
   );
+});
+
+test("live preview text renders through the streaming parser with its unfinished syntax repaired", () => {
+  const live = (markdown: string) =>
+    renderToStaticMarkup(
+      React.createElement(MarkdownPreview, { markdown, streaming: true }),
+    );
+  const heading = live("## Tour\n\nThe **bold claim");
+  assert.match(heading, /<h2[^>]*>(?:<span[^>]*>)?Tour(?:<\/span>)?<\/h2>/);
+  // An unclosed marker renders as formatting, not a stray "**".
+  assert.match(heading, /<strong|data-streamdown="strong"/);
+  assert.doesNotMatch(heading, /\*\*/);
+  assert.match(live("run `npm i"), /data-streamdown="inline-code"/);
+  // New words fade in; settled text has no animation wrappers.
+  assert.match(heading, /data-sd-animate/);
+  const settled = renderToStaticMarkup(
+    React.createElement(MarkdownPreview, {
+      markdown: "## Tour\n\nThe **bold claim**",
+    }),
+  );
+  assert.doesNotMatch(settled, /data-sd-animate/);
+  assert.match(settled, /<h2[^>]*>Tour<\/h2>/);
 });

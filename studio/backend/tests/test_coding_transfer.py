@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import struct
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -45,25 +46,27 @@ async def test_unsubscribe_drains_payloads_held_by_the_response_before_forgettin
 async def test_public_entry_forwards_exact_cut_and_generation(coding_app):
     app, headers = coding_app
     cut = {"journal": {"child": "agent-exact"}, "leaf": "entry-9"}
-    result = {"conversation_id": "saved", "cut": cut, "entry_id": "entry-4", "offset": 0,
-              "total_bytes": 7, "data": "漢🙂", "next_offset": None}
-    command = AsyncMock(return_value = result)
-    app.state.coding_runtime = SimpleNamespace(command = command)
+    result = [{"id": "entry-4:text", "entry_id": "entry-4", "kind": "assistant", "text": "漢🙂"}]
+    content = tempfile.TemporaryFile(mode = "w+b")
+    content.write(json.dumps(result, ensure_ascii = False).encode())
+    content.seek(0)
+    runtime = CodingRuntime()
+    runtime.public_entry = AsyncMock(return_value = content)
+    app.state.coding_runtime = runtime
     async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
         response = await client.post("/api/coding/conversations/saved/public-entry", json = {
-            "cut": cut, "entry_id": "entry-4", "offset": 0, "max_bytes": 1024,
+            "cut": cut, "entry_id": "entry-4",
         })
     assert response.status_code == 200
     assert response.json() == result
-    command.assert_awaited_once_with("read_public_entry", {
-        "conversation_id": "saved", "cut": cut, "entry_id": "entry-4", "offset": 0, "max_bytes": 1024,
-    }, expected_generation = 1)
+    runtime.public_entry.assert_awaited_once_with("saved", cut = cut, entry_id = "entry-4", expected_generation = 1)
+    assert content.closed
 
 
 @pytest.mark.asyncio
 async def test_public_entry_auth_and_strict_validation_precede_runtime_start(coding_app):
     app, headers = coding_app
-    body = {"cut": {"journal": "root", "leaf": "saved"}, "entry_id": "saved", "offset": 0}
+    body = {"cut": {"journal": "root", "leaf": "saved"}, "entry_id": "saved"}
     async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test") as client:
         response = await client.post("/api/coding/conversations/saved/public-entry", json = body)
         assert response.status_code in (401, 403)
@@ -81,11 +84,13 @@ async def test_public_entry_auth_and_strict_validation_precede_runtime_start(cod
 async def test_public_entry_generation_refusal_preserves_reopen_header(coding_app):
     from core.coding_runtime import CodingRuntimeError
     app, headers = coding_app
-    app.state.coding_runtime = SimpleNamespace(command = AsyncMock(side_effect = CodingRuntimeError(
-        "runtime_changed", "Deliberately reopen", requires_reopen = True)))
+    runtime = CodingRuntime()
+    runtime.public_entry = AsyncMock(side_effect = CodingRuntimeError(
+        "runtime_changed", "Deliberately reopen", requires_reopen = True))
+    app.state.coding_runtime = runtime
     async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
         response = await client.post("/api/coding/conversations/saved/public-entry", json = {
-            "cut": {"journal": "root", "leaf": "saved"}, "entry_id": "saved", "offset": 0,
+            "cut": {"journal": "root", "leaf": "saved"}, "entry_id": "saved",
         })
     assert response.status_code == 409
     assert response.headers["X-Mimir-Requires-Reopen"] == "true"

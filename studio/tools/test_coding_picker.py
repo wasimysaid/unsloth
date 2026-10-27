@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """CPU/helper tests, not a substitute for executing rendered picker acceptance.
 
-Run: python -m unittest discover -s studio/tools -p 'coding_picker_tests.py' -v
+Run (from studio/tools): python -m pytest -q test_coding_picker.py
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import threading
 import unittest
 import urllib.request
 
-from coding_picker_scenarios import assert_provider_selection, assert_viewport_box
+from coding_picker_scenarios import assert_provider_selection, assert_viewport_box, effort_label, trigger_label
 from coding_provider_fixture import (
     PICKER_API_A, PICKER_API_B, PICKER_API_PLAIN, PICKER_LEVELS_A,
     PICKER_LEVELS_B, PICKER_MODEL, PICKER_PLAIN_MODEL, PICKER_PROVIDER_A,
@@ -87,6 +87,17 @@ class PickerEvidenceTests(unittest.TestCase):
                     {"x": 0, "y": 840, "width": 10, "height": 6}):
             with self.subTest(box=box), self.assertRaises(AssertionError):
                 assert_viewport_box(box, 390, 844, label="test")
+
+    def test_effort_and_trigger_labels_mirror_the_rendered_picker(self):
+        # model-configuration-popover.tsx effortLabel and the trigger's aria-label.
+        for level, label in (("low", "Low"), ("minimal", "Minimal"), ("medium", "Medium"),
+                             ("high", "High"), ("xhigh", "X-High"), ("very_high", "Very High")):
+            with self.subTest(level=level):
+                self.assertEqual(effort_label(level), label)
+        self.assertEqual(trigger_label("Shared coding model", "minimal"), "Model: Shared coding model \u00b7 Minimal")
+        self.assertEqual(trigger_label("No reasoning control", None), "Model: No reasoning control")
+        self.assertEqual({effort_label(level) for level in PICKER_LEVELS_A + PICKER_LEVELS_B},
+                         {"Low", "Medium", "High", "Minimal"})
 
     def test_routing_evidence_rejects_local_id_or_wrong_effort(self):
         assert_provider_selection(ProviderRequest({"model": PICKER_API_A, "reasoning_effort": "high"}), PICKER_API_A, "high")

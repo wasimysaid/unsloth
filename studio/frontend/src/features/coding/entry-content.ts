@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
+import { needsReopen } from "./errors.ts";
 import type {
   CodingRow,
   ContentReference,
@@ -17,14 +18,11 @@ export const sameCut = (a: JournalCut, b: JournalCut) =>
       typeof b?.journal === "object" &&
       a.journal.child === b.journal.child);
 const sameReference = (a: ContentReference, b: ContentReference) =>
-  a.entry_id === b.entry_id &&
-  a.total_bytes === b.total_bytes &&
-  sameCut(a.cut, b.cut);
+  a.entry_id === b.entry_id && sameCut(a.cut, b.cut);
 const invalid = () =>
   new Error(
-    "Native saved entry content did not match its immutable cut, identity or byte offsets. Retry loading this entry.",
+    "Native saved entry content did not match its immutable cut or entry identity. Retry loading this entry.",
   );
-const encoder = new TextEncoder();
 
 export function replaceEntryContent(
   rows: CodingRow[],
@@ -41,19 +39,18 @@ export function replaceEntryContent(
 }
 
 export function interruptEntryContent(rows: CodingRow[], retry: () => void) {
-  return rows.map(
-    (row): CodingRow =>
-      row.kind === "content_ref"
-        ? {
-            ...row,
-            content: {
-              status: "error",
-              error:
-                "Content loading was interrupted. Retry to reconnect and load this entry.",
-              retry,
-            },
-          }
-        : row,
+  return rows.map((row): CodingRow =>
+    row.kind === "content_ref"
+      ? {
+          ...row,
+          content: {
+            status: "error",
+            error:
+              "Content loading was interrupted. Retry to reconnect and load this entry.",
+            retry,
+          },
+        }
+      : row,
   );
 }
 
@@ -63,43 +60,12 @@ export async function assemblePublicEntry(
   ref: ContentReference,
   signal: AbortSignal,
 ): Promise<CodingRow[]> {
-  const parts: string[] = [];
-  let offset = 0;
-  while (true) {
-    signal.throwIfAborted();
-    const chunk = await api.readPublicEntry(id, ref, offset, signal);
-    signal.throwIfAborted();
-    if (
-      !chunk ||
-      chunk.conversation_id !== id ||
-      !sameReference(chunk, ref) ||
-      chunk.offset !== offset ||
-      typeof chunk.data !== "string" ||
-      !chunk.data
-    )
-      throw invalid();
-    const next = offset + encoder.encode(chunk.data).length;
-    if (
-      next > ref.total_bytes ||
-      (next === ref.total_bytes
-        ? chunk.next_offset !== null
-        : chunk.next_offset !== next)
-    )
-      throw invalid();
-    parts.push(chunk.data);
-    if (chunk.next_offset === null) break;
-    offset = next;
-  }
-  let rows: CodingRow[];
-  try {
-    rows = JSON.parse(parts.join("")) as CodingRow[];
-  } catch {
-    throw invalid();
-  }
+  signal.throwIfAborted();
+  const rows = await api.readPublicEntry(id, ref, signal);
+  signal.throwIfAborted();
   const seen = new Set<string>();
   if (
     !Array.isArray(rows) ||
-    !rows.length ||
     rows.some((row) => {
       if (
         !row ||
@@ -164,9 +130,7 @@ export function resolveEntryPage(
       row.id !== ref.entry_id ||
       row.entry_id !== ref.entry_id ||
       row.request_id !== null ||
-      !ref.entry_id ||
-      !Number.isSafeInteger(ref.total_bytes) ||
-      ref.total_bytes < 1
+      !ref.entry_id
     )
       throw invalid();
     references.push({ row, ref });
@@ -189,11 +153,7 @@ export function resolveEntryPage(
         if (!lifetime.aborted) publish(rows);
       } catch (error) {
         if (lifetime.aborted) return;
-        if (
-          error instanceof Error &&
-          "requiresReopen" in error &&
-          error.requiresReopen === true
-        ) {
+        if (needsReopen(error)) {
           onFatal(error);
           return;
         }

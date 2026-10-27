@@ -20,18 +20,18 @@ import time
 import uuid
 
 WORKLOAD_ROWS = {
-    "deterministic": ("A1", "A2", "A6", "A7", "A8", "A9", "A10"),
+    "deterministic": ("A1", "A2", "A6", "A7", "A9", "A10"),
     "recovery": ("A1", "A6", "A7", "A10"), "maintenance": ("A6", "A7", "A8", "A10"),
     "plan": ("A2", "A7", "A10"), "goals": ("A2", "A7", "A10"), "questions": ("A2", "A7", "A10"),
     "picker": ("A4", "A5", "A10"), "catalog": ("A4", "A5", "A10"), "commands": ("A2", "A7", "A10"),
     "retirement": ("A6", "A7"), "concurrency": ("A1", "A6", "A7", "A10"),
     "children": ("A2", "A10"), "inputs": ("A2", "A10"), "file-changes": ("A1", "A3", "A10"),
-    "reading": ("A3", "A10"), "mcp": ("A1", "A7", "A8", "A10"),
+    "reading": ("A3", "A10"),
 }
 # Required external scenario evidence from accumulated drivers, not component or
 # source-text assertions. Native/provider/live/human categories remain separate.
 REQUIRED_SCENARIOS = {
-    "deterministic": "A1-busy-native-admission A1-native-identities-tools A2-public-output-bound A7-actual-tool-failure A7-provider-failure A7-disconnected-running A7-exact-cancel-cleanup A7-detach-unrelated-owner A10-narrow-run-keyboard A8-effective-inventory A8-idle-scoped-reload A8-terminal-ack-fresh-inventory A8-inventory-stale-recovery A8-busy-deferred-eventual-scoped A8-detached-ack-original-target A8-uncertain-native-reconciliation A10-settings-keyboard-narrow",
+    "deterministic": "A1-busy-native-admission A1-native-identities-tools A2-public-output-bound A7-actual-tool-failure A7-provider-failure A7-disconnected-running A7-exact-cancel-cleanup A7-detach-unrelated-owner A10-narrow-run-keyboard",
     "recovery": "A7-navigation-refresh-tab A7-automatic-authoritative-reconnect A1-incomplete-history A1-reset-recovering-checkpoint A7-pending-key-frontend-restart A7-uncertain-nonprompt-reconciliation A7-lost-ack-plugin-frontend-restart A7-uncertain-opening-reconciliation A7-durable-storage-fails-closed",
     "maintenance": "A7-restart-concurrent-refusal A7-stale-http-incarnation-fence A7-idle-restart A7-active-process-loss A7-duplicate-key-interrupted A7-explicit-continuation A7-native-shutdown-drain",
     "plan": "A2-native-plan-write-refusal A2-mode-is-not-plan-acceptance A10-plan-keyboard-focus-layout A2-stale-plan-validation A2-native-busy-plan-controls A2-mode-does-not-rewrite-running-plan A2-implement-current-context A2-implement-fresh-context A2-save-stop-history A2-historical-plan-lifecycle A7-uncertain-plan-action-reconnect",
@@ -46,7 +46,6 @@ REQUIRED_SCENARIOS = {
     "inputs": "A2-input-effective-skills A2-image-rejections A10-image-inspect-remove-focus A2-mention-occurrence-edit A10-input-layout-keyboard A10-mention-escape-running A2-rich-input-native-terminal A2-input-rejected-restore-fixture A2-input-response-loss-reconciliation",
     "file-changes": "A3-real-repeated-edits A3-no-profile-output A10-diff-reading-position A1-A3-historical-state A10-file-diff-keyboard-bounds A1-SYNTHETIC-not-persisted A3-SYNTHETIC-edge-profiles",
     "reading": "A3-A10-reading-native-desktop A3-A10-reading-native-narrow A3-A10-reading-SYNTHETIC-desktop A3-A10-reading-SYNTHETIC-narrow A1-reading-SYNTHETIC-not-persisted",
-    "mcp": "A8-scoped-read A8-valid-save A8-native-busy-refusal A8-conflict-keep A8-conflict-replace A8-A10-permission-recovery A8-create-draft A8-normalized-editor-bound A8-enabled-saved-not-applied A8-bounded-save-acknowledgement A8-established-auth A8-read-only-inheritance A8-A10-persistence-error A8-A10-access-error A1-A8-real-path A8-251-save-distinct-from-apply A8-251-refresh-readonly A8-251-apply-running-completed A7-A8-251-busy-native-request A7-A8-A10-251-busy-native-mcp-tool A8-251-reconnect-owned-lifetime A8-A10-251-native-connection-failed-recovery A8-251-apply-connection-failed-recovery A8-251-lost-response-readonly-reconcile A8-251-reload-correlation-only A1-251-auth-negative A8-251-unknown-not-replayed A8-A10-251-unconfirmed-background-edit-save-error",
 }
 COMMON_SCENARIOS = "A6-auth-route A10-layout A6-folder-missing A6-folder-file A6-folder-denied A6-canonical A6-native-missing A6-native-denied A6-change-reopen A6-same-id-view-reopen A6-cross-process-lease A1-one-runtime A10-narrow-keyboard A6-known-id-auth A9-ordinary-observer-isolation A6-saved-policy"
 
@@ -84,15 +83,12 @@ def assess_report(report: dict, expected: dict, *, workload: str) -> list[str]:
         errors.append("Driver did not reach a passed terminal outcome")
     scenarios = report.get("scenarios", [])
     ids = {row["id"] for row in scenarios if row.get("status") == "passed"}
-    required = set(REQUIRED_SCENARIOS[workload].split())
-    if workload != "mcp":
-        required.update(COMMON_SCENARIOS.split())
+    required = set(REQUIRED_SCENARIOS[workload].split()) | set(COMMON_SCENARIOS.split())
     if required - ids:
         errors.append("Required scenarios absent: " + " ".join(sorted(required - ids)))
     if any(row.get("status") != "passed" for row in scenarios):
         errors.append("Non-passing scenario evidence")
-    identity = "deterministic-http-protocol-not-live-model" if workload == "mcp" else workload
-    if report.get("provider_workload") != identity or (workload == "mcp" and report.get("ticket") != 251):
+    if report.get("provider_workload") != workload:
         errors.append("Driver workload identity mismatch")
     for key, value in expected.items():
         if report.get(key) != value:
@@ -101,22 +97,15 @@ def assess_report(report: dict, expected: dict, *, workload: str) -> list[str]:
     for key in ("native_process_settled", "server_port_closed"):
         if cleanup.get(key) is not True:
             errors.append(f"Terminal cleanup unconfirmed: {key}")
-    provider_settled = report.get("provider_fixture_settled") if workload == "mcp" else cleanup.get("provider_thread_settled")
-    if provider_settled is not True:
+    if cleanup.get("provider_thread_settled") is not True:
         errors.append("Provider fixture thread settlement unconfirmed")
-    if workload == "mcp" and report.get("mcp_cleanup", {}).get("all_connections_settled") is not True:
-        errors.append("Configured MCP connection cleanup unconfirmed")
     return errors
 
 
 def command_identity(workload: str, command: list[str]) -> bool:
-    script = "coding_mcp_browser_acceptance.py" if workload == "mcp" else "coding_browser_acceptance.py"
-    if len(command) < 2 or Path(command[1]).name != script:
+    if len(command) < 2 or Path(command[1]).name != "coding_browser_acceptance.py":
         return False
-    if workload == "mcp":
-        return "--apply-reconnect" in command
     return ("--workload" in command and command[command.index("--workload") + 1] == workload
-            and (workload != "deterministic" or "--extensions" in command)
             and (workload != "commands" or "--commands-package" in command))
 
 
@@ -296,20 +285,14 @@ def main() -> None:
         if workload == "commands" and not args.commands_package or workload == "retirement" and not args.retirement_package:
             batch.append({"workload": workload, "status": "blocked"})
             continue
-        script = "coding_mcp_browser_acceptance.py" if workload == "mcp" else "coding_browser_acceptance.py"
         package = args.retirement_package if workload == "retirement" else args.plugin_package
-        command = [sys.executable, str(root / "studio/tools" / script), "--mimir", str(args.mimir.resolve()),
-                   "--plugin-package", str(package.resolve()), "--browser", args.browser, "--evidence-dir", str(directory)]
+        command = [sys.executable, str(root / "studio/tools/coding_browser_acceptance.py"), "--mimir", str(args.mimir.resolve()),
+                   "--plugin-package", str(package.resolve()), "--browser", args.browser, "--evidence-dir", str(directory),
+                   "--workload", workload]
         if args.compilation_cache:
             command.extend(["--compilation-cache", str(args.compilation_cache.resolve())])
-        if workload == "mcp":
-            command.append("--apply-reconnect")
-        else:
-            command.extend(["--workload", workload])
-            if workload == "deterministic":
-                command.append("--extensions")
-            if workload == "commands":
-                command.extend(["--commands-package", str(args.commands_package.resolve())])
+        if workload == "commands":
+            command.extend(["--commands-package", str(args.commands_package.resolve())])
         started = time.monotonic()
         with (directory / "driver.log").open("w") as output:
             result = run_driver(command, root, output, args.timeout_seconds)

@@ -19,7 +19,6 @@ export const SETTINGS_TABS = [
   "api-keys",
   "remote-lan",
   "agents",
-  "mimir",
   "keyboard-shortcuts",
   "browser",
   "debugging",
@@ -94,8 +93,6 @@ interface SettingsDialogState {
   // The Audio API card applies it, then clears it. Same lifetime as archivedRequested.
   audioApiRequested: AudioApiRequest | null;
   decisionTryRequested: string | null;
-  /** View context only; native Session Control still owns execution. */
-  mimirConversationRequested: string | null;
   mediaApiRequested: MediaApiRequest | null;
   openDialog: (tab?: SettingsTab, options?: OpenDialogOptions) => void;
   openArchivedChats: () => void;
@@ -213,8 +210,6 @@ function requestsFor(state: SettingsDialogState, tab: SettingsTab) {
       tab === "debugging" ? state.logSourcePathRequested : null,
     connectionRequested:
       tab === "connections" ? state.connectionRequested : null,
-    mimirConversationRequested:
-      tab === "mimir" ? state.mimirConversationRequested : null,
     audioApiRequested: tab === "api-keys" ? state.audioApiRequested : null,
   };
 }
@@ -245,7 +240,6 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
   connectionRequested: null,
   audioApiRequested: null,
   decisionTryRequested: null,
-  mimirConversationRequested: null,
   mediaApiRequested: null,
   openDialog: (requestedTab, options) =>
     set((state) => {
@@ -261,7 +255,6 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
         logFamilyRequested: pending.logFamilyRequested,
         logSourcePathRequested: pending.logSourcePathRequested,
         connectionRequested: pending.connectionRequested,
-        mimirConversationRequested: pending.mimirConversationRequested,
         audioApiRequested: pending.audioApiRequested,
         ...focusForOpen(state, options?.focusFallback, options?.opener),
       };
@@ -275,7 +268,6 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
       logFamilyRequested: null,
       logSourcePathRequested: null,
       connectionRequested: null,
-      mimirConversationRequested: null,
       audioApiRequested: null,
       ...focusForOpen(state),
     })),
@@ -288,7 +280,6 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
       logFamilyRequested: null,
       logSourcePathRequested: null,
       connectionRequested: null,
-      mimirConversationRequested: null,
       audioApiRequested: null,
       ...focusForOpen(state),
     })),
@@ -301,7 +292,6 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
       logFamilyRequested: null,
       logSourcePathRequested: null,
       connectionRequested: providerId,
-      mimirConversationRequested: null,
       audioApiRequested: null,
       ...focusForOpen(state),
     })),
@@ -315,7 +305,6 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
       logSourcePathRequested: null,
       connectionRequested: null,
       audioApiRequested: request,
-      mimirConversationRequested: null,
       ...focusForOpen(state),
     })),
   consumeAudioApiRequest: () => set({ audioApiRequested: null }),
@@ -330,7 +319,6 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
       logSourcePathRequested: sourcePath ?? null,
       logRequestSeq: state.logRequestSeq + 1,
       connectionRequested: null,
-      mimirConversationRequested: null,
       audioApiRequested: null,
       ...focusForOpen(state),
     })),
@@ -347,7 +335,6 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
       logSourcePathRequested: null,
       connectionRequested: null,
       decisionTryRequested: model,
-      mimirConversationRequested: null,
       ...focusForOpen(state),
     })),
   consumeDecisionTryRequest: () => set({ decisionTryRequested: null }),
@@ -362,7 +349,6 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
       connectionRequested: null,
       audioApiRequested: null,
       mediaApiRequested: request,
-      mimirConversationRequested: null,
       ...focusForOpen(state),
     })),
   consumeMediaApiRequest: () => set({ mediaApiRequested: null }),
@@ -381,7 +367,6 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
       connectionRequested: null,
       audioApiRequested: null,
       decisionTryRequested: null,
-      mimirConversationRequested: null,
       mediaApiRequested: null,
     }),
   setActiveTab: (tab) => {

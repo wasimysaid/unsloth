@@ -15,28 +15,28 @@ import {
 } from "@/components/ui/dialog";
 import type { CodingSession, CodingSessionState } from "./session";
 
+/** Host folder browser. Choosing only selects where the next conversation runs. */
 export function ProjectFolderDialog({
   open,
   onOpenChange,
   onRestoreFocus,
+  onSelect,
   session,
   state,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onRestoreFocus: () => void;
+  onSelect: (path: string) => void;
   session: CodingSession;
   state: CodingSessionState;
 }) {
   const [path, setPath] = useState("");
-  const creating = state.pending?.operation === "create";
   useEffect(() => {
     if (state.directory) setPath(state.directory.path);
   }, [state.directory]);
 
   const close = (next: boolean) => {
-    // A native creation isn't cancelled by dismissing the folder picker.
-    if (!next && creating) return;
     if (!next) session.cancelBrowse();
     onOpenChange(next);
   };
@@ -45,7 +45,6 @@ export function ProjectFolderDialog({
     <Dialog open={open} onOpenChange={close}>
       <DialogContent
         className="sm:max-w-xl"
-        showCloseButton={!creating}
         onCloseAutoFocus={(event) => {
           // This controlled dialog has multiple invokers and no DialogTrigger.
           // Restore the actual invoker instead of Radix's absent-trigger fallback.
@@ -54,13 +53,11 @@ export function ProjectFolderDialog({
         }}
       >
         <DialogHeader>
-          <DialogTitle>Choose a project folder</DialogTitle>
+          <DialogTitle>Choose a folder</DialogTitle>
           <DialogDescription>
-            This folder becomes Mimir's working directory on the Studio host,
-            not an upload or a sandbox. Opening trusts its project configuration
-            and extensions for this native controller only; no shared trust
-            decision is saved. Each opening creates a new conversation, even for
-            a folder you used before.
+            Mimir works directly in this folder on the Studio host. It isn't a
+            sandbox: the folder's project settings and extensions are trusted
+            for that conversation only.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -86,13 +83,8 @@ export function ProjectFolderDialog({
               placeholder="Enter a host folder path"
               autoComplete="off"
               spellCheck={false}
-              disabled={creating}
             />
-            <Button
-              type="submit"
-              variant="outline"
-              disabled={state.browsing || creating}
-            >
+            <Button type="submit" variant="outline" disabled={state.browsing}>
               Browse
             </Button>
           </div>
@@ -123,7 +115,7 @@ export function ProjectFolderDialog({
                   variant="ghost"
                   size="icon-sm"
                   aria-label="Go to parent folder"
-                  disabled={state.directory.parent === null || creating}
+                  disabled={state.directory.parent === null}
                   onClick={() => {
                     if (state.directory?.parent)
                       void session.browse(state.directory.parent);
@@ -146,7 +138,6 @@ export function ProjectFolderDialog({
                   <li key={entry.path}>
                     <button
                       type="button"
-                      disabled={creating}
                       onClick={() => void session.browse(entry.path)}
                       className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                     >
@@ -166,31 +157,20 @@ export function ProjectFolderDialog({
                 ))}
                 {state.directory.entries.length === 0 && (
                   <li className="px-3 py-4 text-sm text-muted-foreground">
-                    No subfolders. You can open this folder.
+                    No subfolders
                   </li>
                 )}
               </ul>
               {state.directory.truncated && (
                 <p className="text-xs text-muted-foreground">
-                  Only the first folders are shown. Enter a full host path to
-                  browse another folder.
+                  Only the first folders are shown. Enter a path to go further.
                 </p>
               )}
             </>
           )}
         </div>
-        {state.openingError && (
-          <p role="alert" className="break-words text-sm text-destructive">
-            {state.openingError}
-          </p>
-        )}
         <DialogFooter>
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={creating}
-            onClick={() => close(false)}
-          >
+          <Button type="button" variant="ghost" onClick={() => close(false)}>
             Cancel
           </Button>
           <Button
@@ -198,29 +178,16 @@ export function ProjectFolderDialog({
             disabled={
               !state.directory ||
               path !== state.directory.path ||
-              state.browsing ||
-              creating ||
-              Boolean(state.openingUncertainty)
+              state.browsing
             }
-            onClick={async () => {
+            onClick={() => {
               if (!state.directory || path !== state.directory.path) return;
-              if (await session.createConversation(state.directory.path)) {
-                session.cancelBrowse();
-                onOpenChange(false);
-              }
+              onSelect(state.directory.path);
+              session.cancelBrowse();
+              onOpenChange(false);
             }}
           >
-            {creating ? (
-              <>
-                <LoaderCircle
-                  className="size-4 animate-spin"
-                  aria-hidden="true"
-                />{" "}
-                Opening…
-              </>
-            ) : (
-              "Open project"
-            )}
+            Use this folder
           </Button>
         </DialogFooter>
       </DialogContent>

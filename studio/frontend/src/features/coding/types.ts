@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import type { CodingConfigurationChange } from "./model-selection.ts";
+
 /** Read-only native records. Studio does not persist a second coding history. */
 export interface CodingConversation {
   id: string;
@@ -21,7 +23,11 @@ export interface CodingProjectDirectory {
 
 export interface CodingApi {
   listConversations(): Promise<CodingConversation[]>;
-  createConversation(cwd: string): Promise<CodingConversation>;
+  /** The first request's model, chosen before the conversation existed. */
+  createConversation(
+    cwd: string,
+    configuration?: CodingConfigurationChange | null,
+  ): Promise<CodingConversation>;
   openConversation(
     id: string,
     signal?: AbortSignal,

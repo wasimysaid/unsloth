@@ -15,6 +15,9 @@ import subprocess
 import sys
 import time
 
+from coding_local_browser_acceptance import open_tool_output
+from coding_ui import expect_connected, open_saved
+
 
 def digest(path):
     with path.open("rb") as stream:
@@ -110,22 +113,14 @@ def main():
                 conversation = original["conversation_id"]
                 def reopen():
                     page.goto(base + "/coding")
-                    expect(page.get_by_role("heading", name="Build with Mimir")).to_be_visible(timeout=60000)
-                    refresh = page.get_by_role("button", name="Refresh coding conversations", exact=True)
-                    expect(refresh).to_be_enabled(timeout=60000)
-                    refresh.click()
-                    expect(refresh).to_be_enabled(timeout=60000)
-                    saved = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text=conversation)
-                    expect(saved).to_be_visible(timeout=60000)
-                    saved.click()
-                    expect(page.get_by_test_id("coding-conversation-id")).to_have_text(conversation, timeout=60000)
-                    expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+                    expect(page.get_by_role("heading", name="What should we build?")).to_be_visible(timeout=60000)
+                    open_saved(page, base, conversation, refresh=True)
+                    expect_connected(page)
                     call = original["shell_tool"]["call_id"]
+                    output = open_tool_output(page, call)
                     tool = page.locator('[data-testid="coding-tool-row"][data-call-id=' + json.dumps(call) + ']')
-                    expect(tool).to_have_count(1, timeout=60000)
-                    expect(tool).to_contain_text("completed")
-                    tool.locator("summary").click()
-                    expect(tool.get_by_label("Actual public tool output", exact=True)).to_contain_text("TICKET246_REAL_NATIVE_SHELL")
+                    expect(tool).to_have_attribute("data-tool-status", "completed")
+                    expect(output).to_contain_text("TICKET246_REAL_NATIVE_SHELL")
                 reopen()
                 before = owner()
                 assert isinstance(before["native_pid"], int)

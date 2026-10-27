@@ -3,11 +3,6 @@
 
 import { Button } from "@/components/ui/button";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
   AssistantRuntimeProvider,
   ThreadPrimitive,
   useExternalStoreRuntime,
@@ -21,17 +16,15 @@ import {
   useSyncExternalStore,
 } from "react";
 import { watchAnswerFocus } from "./answer-focus";
-import { createCodingRunApi } from "./api";
-import { ChildActivityRows, ChildInspector } from "./child-inspector";
+import { codingModelApi, createCodingRunApi } from "./api";
+import { ChildInspector } from "./child-inspector";
 import { CodingComposer } from "./coding-composer";
-import {
-  CodingCommandControls,
-  CodingDiagnosticsDialog,
-} from "./command-controls";
+import { CommandFeedback, ComposerFooter } from "./composer-footer";
 import { GoalSummary } from "./goal-summary";
 import type { CodingInputDraft } from "./input";
 import { CodingModelPicker } from "./model-configuration-popover";
-import { CodingModeControl, PlanCard } from "./plan-card";
+import type { CodingConfiguration } from "./model-selection";
+import { PlanCard } from "./plan-card";
 import { ProjectOverlapDialog } from "./project-overlap-dialog";
 import { QuestionCard } from "./question-card";
 import { CodingRecoveryControls } from "./recovery-controls";
@@ -45,7 +38,9 @@ import {
   createCodingRun,
 } from "./run-session";
 import type { CodingRuntimeStatus } from "./runtime-maintenance";
-import { AnswerFocus, TranscriptBlocks } from "./transcript";
+import { ChildActivityRows } from "./subagent-card";
+import { DisclosureMemory } from "./tool-report";
+import { AnswerFocus, TranscriptBlocks, WorkingLine } from "./transcript";
 import {
   createTranscriptProjection,
   transcriptWindow,
@@ -54,13 +49,11 @@ import {
   type TranscriptReader,
   createTranscriptReader,
 } from "./transcript-reader";
-import { DisclosureMemory } from "./tool-report";
 import { CodingUnsentDraft } from "./unsent-draft";
 
-const notice =
-  "rounded-2xl border border-border/60 bg-muted/40 px-3.5 py-2.5 dark:bg-card";
+const notice = "rounded-xl border border-border/60 bg-muted/40 px-3 py-2";
 const alert =
-  "rounded-2xl border border-destructive/30 bg-destructive/5 px-3.5 py-2.5 text-destructive";
+  "rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-destructive";
 
 function StatusNotices({
   state,
@@ -78,21 +71,21 @@ function StatusNotices({
       {state.disconnected && (
         <output
           data-testid="coding-disconnect-banner"
-          className={`${notice} flex flex-wrap items-center gap-2 font-medium`}
+          className={`${notice} flex flex-wrap items-center gap-2`}
         >
           <span className="min-w-0 flex-1">
             {state.reopenRequired
-              ? "Disconnected · work may still be running. The native view closed; deliberately reopen the saved conversation."
-              : "Disconnected · work may still be running. Reconnecting automatically; this stays until native history is rebuilt."}
+              ? "Disconnected · work may still be running. Reopen this conversation from the sidebar."
+              : "Disconnected · work may still be running. Reconnecting…"}
           </span>
           {!state.reopenRequired && (
             <Button
               variant="outline"
               size="sm"
-              className="rounded-full"
+              className="h-7 rounded-full"
               onClick={() => run?.connect()}
             >
-              Reconnect native events
+              Reconnect
             </Button>
           )}
         </output>
@@ -102,16 +95,15 @@ function StatusNotices({
         state.configurationUncertain && (
           <div className={`${notice} flex flex-wrap items-center gap-2`}>
             <span className="min-w-0 flex-1">
-              Model configuration is unconfirmed. Reconstruct the native view
-              before changing it again.
+              The model change wasn't confirmed.
             </span>
             <Button
               variant="outline"
               size="sm"
-              className="rounded-full"
+              className="h-7 rounded-full"
               onClick={() => run?.connect()}
             >
-              Reconnect native events
+              Reconnect
             </Button>
           </div>
         )}
@@ -120,40 +112,29 @@ function StatusNotices({
           className={`${notice} block break-words`}
           data-testid="coding-selection-unavailable"
         >
-          Selected model unavailable: {state.native.selection_unavailable}{" "}
-          History remains readable. Open the model picker to retry or choose a
-          replacement.
+          Model unavailable: {state.native.selection_unavailable}. Choose
+          another model.
         </output>
       )}
       {preparation && preparation.phase !== "loading" && (
         <div
           data-testid="coding-local-preparation"
-          className={`${notice} space-y-2 break-words`}
+          className={`${notice} flex flex-wrap items-center gap-2 break-words`}
         >
-          <p role="alert">
-            {preparation.message ??
-              "Local preparation or cleanup needs attention. No fallback was used."}
+          <p role="alert" className="min-w-0 flex-1">
+            {preparation.message ?? "The local model needs attention."}
           </p>
           {preparation.retryable &&
             ["busy", "failed"].includes(preparation.phase) && (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="rounded-full"
-                  disabled={!canAct || Boolean(state.native?.active_request)}
-                  onClick={() => void run?.configure({}).catch(() => {})}
-                >
-                  {state.configuring
-                    ? "Retrying local selection…"
-                    : "Retry local selection"}
-                </Button>
-                <p className="text-muted-foreground">
-                  Retry checks the same selection. Resend failed work
-                  explicitly; no prompt is replayed and no idle model is
-                  reserved.
-                </p>
-              </>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 rounded-full"
+                disabled={!canAct || Boolean(state.native?.active_request)}
+                onClick={() => void run?.configure({}).catch(() => {})}
+              >
+                {state.configuring ? "Retrying…" : "Retry"}
+              </Button>
             )}
         </div>
       )}
@@ -173,10 +154,7 @@ function StatusNotices({
           data-testid="coding-submission-storage-error"
           className={`${alert} break-words`}
         >
-          {state.storageError}{" "}
-          {state.unsentDraft
-            ? "Copy the retained unsent draft below before reopening. Restore browser storage before sending."
-            : "Restore browser storage and deliberately reopen before sending."}
+          {state.storageError}
         </p>
       )}
       {state.planControlError && (
@@ -199,17 +177,8 @@ function StatusNotices({
           data-testid="coding-action-reconciliation"
         >
           {state.reconcilingAction
-            ? "Inspecting a fresh native view before another action; cancellation was not replayed."
-            : "Fresh native view inspected. Explicit retry targets only the same active request; cancellation is not exactly-once."}
-        </output>
-      )}
-      {state.deliveryRecovered && !state.native?.pending_user_request && (
-        <output
-          className={`${notice} block`}
-          data-testid="coding-submission-recovered"
-        >
-          Native prompt acceptance confirmed. Delivery recovery does not start a
-          new continuation.
+            ? "Checking whether Stop took effect…"
+            : "Stop may not have taken effect. Press Stop again to retry it."}
         </output>
       )}
       {state.uncertainSubmission && (
@@ -219,17 +188,15 @@ function StatusNotices({
           className={`${notice} flex flex-wrap items-center gap-2`}
         >
           <p className="min-w-0 flex-1">
-            Prompt delivery is unconfirmed. The original submission identity is
-            saved; no prompt is replayed automatically.
+            Your last message may not have been delivered.
           </p>
           <Button
             variant="outline"
             size="sm"
-            className="rounded-full"
+            className="h-7 rounded-full"
             data-testid="coding-retry-submission"
             disabled={
               state.connection !== "connected" ||
-              state.recovering ||
               state.submitting ||
               state.configuring ||
               state.configurationUncertain ||
@@ -239,7 +206,7 @@ function StatusNotices({
             }
             onClick={() => void run?.retrySubmission()}
           >
-            Retry same submission
+            Retry
           </Button>
         </div>
       )}
@@ -247,105 +214,41 @@ function StatusNotices({
   );
 }
 
-function RunStatus({
-  state,
-  onDiagnostics,
-}: {
-  state: CodingRunState;
-  onDiagnostics: () => void;
-}) {
-  const active = state.native?.active_request;
-  const completion = codingRunCompletion(state);
-  const label = codingRunLabel(state);
-  const tone =
-    state.connection !== "connected" || completion?.error
-      ? "bg-destructive"
-      : active || state.stopping
-        ? "animate-pulse bg-primary"
-        : "bg-muted-foreground/50";
-  const configuration = state.native?.configuration;
-  const running = state.native?.running_configuration;
-  return (
-    <Popover>
-      <PopoverTrigger asChild={true}>
-        <button
-          type="button"
-          className="flex min-w-0 items-center gap-2 rounded-full px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label={`Run status: ${label}. Show run details`}
-        >
-          <span className={`size-1.5 shrink-0 rounded-full ${tone}`} />
-          <output
-            data-testid="coding-run-status"
-            aria-live="polite"
-            className="truncate"
-          >
-            {label}
-          </output>
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        side="top"
-        align="start"
-        className="w-[min(24rem,calc(100vw-2rem))] gap-2 rounded-[21px] border border-border/60 p-4 text-xs shadow-[0_2px_8px_-2px_rgba(0,0,0,0.16)] dark:bg-card"
-        data-testid="coding-event-details"
-      >
-        <p className="font-medium">{label}</p>
-        <p className="text-muted-foreground">
-          {state.connection === "connected"
-            ? "Native event stream connected"
-            : state.connection === "loading"
-              ? "Connecting to native events…"
-              : "Native event stream unavailable · lost connection does not mean work stopped"}
-        </p>
-        {active && (
-          <p className="break-words" data-testid="coding-running-model">
-            Running coding model:{" "}
-            {running
-              ? `${running.provider}/${running.model}${running.reasoning ? ` · ${running.reasoning}` : ""}`
-              : "Awaiting native execution configuration"}
-          </p>
-        )}
-        {configuration?.provider && (
-          <p className="break-all" data-testid="coding-next-model">
-            Next request: {configuration.provider}/{configuration.model}
-            {configuration.reasoning && ` · ${configuration.reasoning}`}
-          </p>
-        )}
-        <p className="text-muted-foreground">
-          Leaving this view does not stop work.
-        </p>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-mx-2 justify-start rounded-full text-xs"
-          onClick={onDiagnostics}
-        >
-          Diagnostics…
-        </Button>
-      </PopoverContent>
-    </Popover>
-  );
+export interface CodingLanding {
+  /** Folder chip above the composer. */
+  project: React.ReactNode;
+  /** Model chip for the first request. */
+  modelPicker: React.ReactNode;
+  onStart: () => void;
+  starting: boolean;
+  blocked: string | null;
 }
 
 export function CodingSurface({
   conversationId,
   conversationGeneration,
+  cwd,
   runtimeStatus,
   onRuntimeLost,
-  empty,
-  projectChooser,
   draft,
+  landing,
+  autoSend = false,
+  onAutoSent,
+  onConfigured,
 }: {
   conversationId: string | null;
   conversationGeneration?: number;
+  cwd?: string | null;
   runtimeStatus: CodingRuntimeStatus | null;
   onRuntimeLost?: () => void;
-  /** Quiet empty state shown before a project is open. */
-  empty?: React.ReactNode;
-  /** Landing only: contextual project selection inside the composer. */
-  projectChooser?: React.ReactNode;
   /** The session-owned composer draft of this view; it may outlive the surface. */
   draft: CodingInputDraft;
+  /** No conversation yet: choose folder and model, then Send creates one. */
+  landing?: CodingLanding | null;
+  autoSend?: boolean;
+  onAutoSent?: () => void;
+  /** A confirmed model change, remembered for the next new conversation. */
+  onConfigured?: (configuration: CodingConfiguration) => void;
 }) {
   const [run] = useState(() => {
     if (
@@ -368,12 +271,12 @@ export function CodingSurface({
   );
   const [projection] = useState(createTranscriptProjection);
   const [disclosures] = useState(() => new Map<string, boolean>());
-  const [goalRequested, setGoalRequested] = useState(false);
-  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const landing = !conversationId && Boolean(projectChooser);
-  const canEdit = landing || codingCanEdit(state, run);
-  const sendBlocked = landing
-    ? "Choose a project to start."
+  const isLanding = !conversationId && Boolean(landing);
+  const canEdit = isLanding
+    ? !landing?.starting
+    : codingCanEdit(state, run);
+  const sendBlocked = isLanding
+    ? (landing?.blocked ?? null)
     : codingSendBlockedReason(state);
   const runtime = useExternalStoreRuntime(
     codingRunAdapter(state, run, draft, projection, canEdit),
@@ -454,10 +357,67 @@ export function CodingSurface({
     state &&
       run &&
       (state.native?.goal ||
-        goalRequested ||
         state.goalNotice ||
         state.goalChanging ||
         state.reconcilingGoal),
+  );
+  // The live tail already shows activity; otherwise a quiet working line does.
+  const tail = blocks.at(-1);
+  const tailStreaming =
+    (tail?.kind === "activity" && tail.live) ||
+    (tail?.kind === "prose" && tail.live);
+  const configuration = state?.native?.configuration ?? null;
+  const modelPicker = isLanding ? (
+    landing?.modelPicker
+  ) : conversationId ? (
+    <CodingModelPicker
+      key={conversationId}
+      readCatalog={(refresh, signal) =>
+        refresh
+          ? codingModelApi.refresh(conversationId, signal)
+          : codingModelApi.catalog(conversationId, signal)
+      }
+      configuration={configuration}
+      unavailable={state?.native?.selection_unavailable ?? null}
+      disabled={
+        state?.connection !== "connected" ||
+        Boolean(
+          state?.configurationUncertain ||
+            state?.planControl ||
+            state?.goalChanging ||
+            state?.reconcilingGoal ||
+            state?.commandBusy ||
+            state?.uncertainCommand,
+        )
+      }
+      configuring={Boolean(state?.configuring)}
+      configure={async (change) => {
+        if (!run) throw new Error("This conversation is not connected.");
+        const accepted = await run.configure(change);
+        if (accepted?.provider && accepted.model) onConfigured?.(accepted);
+      }}
+    />
+  ) : null;
+  const composer = (
+    <CodingComposer
+      conversationId={conversationId}
+      run={run}
+      state={state}
+      draft={draft}
+      canEdit={canEdit}
+      sendBlocked={sendBlocked}
+      inputRef={promptInput}
+      modelPicker={modelPicker}
+      onStart={isLanding ? landing?.onStart : undefined}
+      starting={Boolean(landing?.starting)}
+      autoSend={autoSend}
+      onAutoSent={onAutoSent}
+      footer={
+        isLanding ? null : (
+          <ComposerFooter cwd={cwd ?? null} state={state} run={run} />
+        )
+      }
+    />
   );
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -466,7 +426,6 @@ export function CodingSurface({
         disabled={Boolean(
           !state ||
             state.connection !== "connected" ||
-            state.recovering ||
             state.submitting ||
             state.configuring ||
             state.configurationUncertain ||
@@ -490,283 +449,254 @@ export function CodingSurface({
         }
       />
       <ThreadPrimitive.Root className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="relative flex min-h-0 min-w-0 flex-1 gap-3 px-3 sm:px-6">
-          <section
-            ref={viewport}
-            className="min-h-0 min-w-0 flex-1 overflow-y-auto focus-visible:outline-none"
-            style={{ overflowAnchor: "none" }}
-            data-testid="coding-transcript"
-            aria-label="Coding transcript"
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: Main reading viewport needs keyboard scrolling and jump focus.
-            tabIndex={0}
-            aria-busy={
-              state?.connection === "loading" ||
-              state?.recovering ||
-              state?.loadingEarlier
-            }
-          >
-            <div
-              ref={transcriptContent}
-              className="mx-auto flex min-h-full w-full min-w-0 max-w-3xl flex-col gap-3 py-6"
-            >
-              {!conversationId && empty}
-              {conversationId && !run && (
-                <p role="alert" className={`${alert} break-words text-sm`}>
-                  The saved conversation has no confirmed opening generation.
-                  Deliberately reopen it before sending or controlling native
-                  work; runtime status cannot supply its owner identity.
-                </p>
-              )}
-              {state?.older && (
-                <div className="text-center text-xs text-muted-foreground">
-                  <p>Earlier history is not shown in this bounded view.</p>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    // Native disabled drops focus in Firefox during the read.
-                    // Keep the control focusable, but refuse repeat activation.
-                    aria-disabled={
-                      state.loadingEarlier || state.connection !== "connected"
-                    }
-                    className="rounded-full aria-disabled:pointer-events-none aria-disabled:opacity-50"
-                    data-reading-control="earlier"
-                    onClick={() => {
-                      if (
-                        state.loadingEarlier ||
-                        state.connection !== "connected"
-                      )
-                        return;
-                      reader.current?.pause();
-                      void run?.loadEarlier();
-                    }}
-                  >
-                    {state.loadingEarlier
-                      ? "Loading earlier history…"
-                      : "Load earlier history"}
-                  </Button>
-                </div>
-              )}
-              {state?.viewingEarlier && (
-                <p className="text-center text-xs text-muted-foreground">
-                  Historical reading window · live updates are not merged into
-                  this bounded view.
-                  {state.newer &&
-                    " Newer saved history is not shown; load it below or Jump to latest."}
-                  {state.native?.pending_user_request
-                    ? " Question controls below still reflect current native state."
-                    : " Native work may still be running."}
-                </p>
-              )}
-              <DisclosureMemory value={disclosures}>
-                <AnswerFocus.Provider value={answerFocus}>
-                  <TranscriptBlocks
-                    blocks={blocks}
-                    childView={run?.childView ?? null}
-                  />
-                  {run &&
-                    state?.answerForms
-                      .filter(
-                        (form) =>
-                          !(
-                            state.viewingEarlier && form.status === "accepted"
-                          ) &&
-                          !state.rows.some(
-                            (row) =>
-                              row.answer?.request_id ===
-                                form.target.request_id &&
-                              row.answer.user_request_id ===
-                                form.target.user_request_id,
-                          ),
-                      )
-                      .map((form) => (
-                        <QuestionCard
-                          key={`${form.target.request_id}:${form.target.user_request_id}`}
-                          form={form}
-                          run={run}
-                          live={Boolean(
-                            state.answerTarget &&
-                              state.answerTarget.subscription ===
-                                form.target.subscription &&
-                              state.answerTarget.request_id ===
-                                form.target.request_id &&
-                              state.answerTarget.user_request_id ===
-                                form.target.user_request_id,
-                          )}
-                          focus={
-                            (reader.current?.following ?? true) &&
-                            !state.viewingEarlier
-                          }
-                          onReleaseFocus={(questionId) => {
-                            if (document.activeElement !== document.body)
-                              return;
-                            answerFocus.current = questionId;
-                            const answer =
-                              viewport.current?.querySelector<HTMLElement>(
-                                `[data-native-answer="${CSS.escape(questionId)}"]`,
-                              );
-                            if (answer?.isConnected) {
-                              answer.focus();
-                              answerFocus.current = null;
-                            }
-                          }}
-                        />
-                      ))}
-                  {run && (
-                    <ChildActivityRows view={run.childView} placed={placed} />
+        {isLanding ? (
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-3 pb-[12dvh] sm:px-6">
+            <div className="flex w-full max-w-3xl flex-col gap-2">
+              <h1 className="mb-4 text-center font-heading text-2xl font-semibold tracking-tight sm:text-3xl">
+                What should we build?
+              </h1>
+              <div className="flex min-w-0 justify-end px-1">
+                {landing?.project}
+              </div>
+              {composer}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="relative flex min-h-0 min-w-0 flex-1 gap-3 px-3 sm:px-6">
+              <section
+                ref={viewport}
+                className="min-h-0 min-w-0 flex-1 overflow-y-auto focus-visible:outline-none"
+                style={{ overflowAnchor: "none" }}
+                data-testid="coding-transcript"
+                aria-label="Coding transcript"
+                // biome-ignore lint/a11y/noNoninteractiveTabindex: Main reading viewport needs keyboard scrolling and jump focus.
+                tabIndex={0}
+                aria-busy={
+                  state?.connection === "loading" || state?.loadingEarlier
+                }
+              >
+                <div
+                  ref={transcriptContent}
+                  className="mx-auto flex min-h-full w-full min-w-0 max-w-3xl flex-col gap-3 py-6"
+                >
+                  {conversationId && !run && (
+                    <p role="alert" className={`${alert} break-words text-sm`}>
+                      This conversation needs to be reopened from the sidebar.
+                    </p>
                   )}
-                </AnswerFocus.Provider>
-              </DisclosureMemory>
-              {state?.newer && (
-                <div className="text-center">
+                  {state?.older && (
+                    <div className="text-center">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        // Native disabled drops focus in Firefox during the read.
+                        // Keep the control focusable, but refuse repeat activation.
+                        aria-disabled={
+                          state.loadingEarlier ||
+                          state.connection !== "connected"
+                        }
+                        className="rounded-full text-xs text-muted-foreground aria-disabled:pointer-events-none aria-disabled:opacity-50"
+                        data-reading-control="earlier"
+                        onClick={() => {
+                          if (
+                            state.loadingEarlier ||
+                            state.connection !== "connected"
+                          )
+                            return;
+                          reader.current?.pause();
+                          void run?.loadEarlier();
+                        }}
+                      >
+                        {state.loadingEarlier
+                          ? "Loading earlier messages…"
+                          : "Load earlier messages"}
+                      </Button>
+                    </div>
+                  )}
+                  {state?.viewingEarlier && (
+                    <p className="text-center text-xs text-muted-foreground">
+                      Viewing earlier messages
+                      {state.native?.active_request
+                        ? " · work is still running"
+                        : ""}
+                    </p>
+                  )}
+                  <DisclosureMemory value={disclosures}>
+                    <AnswerFocus.Provider value={answerFocus}>
+                      <TranscriptBlocks
+                        blocks={blocks}
+                        childView={run?.childView ?? null}
+                      />
+                      {run &&
+                        state?.answerForms
+                          .filter(
+                            (form) =>
+                              !(
+                                state.viewingEarlier &&
+                                form.status === "accepted"
+                              ) &&
+                              !state.rows.some(
+                                (row) =>
+                                  row.answer?.request_id ===
+                                    form.target.request_id &&
+                                  row.answer.user_request_id ===
+                                    form.target.user_request_id,
+                              ),
+                          )
+                          .map((form) => (
+                            <QuestionCard
+                              key={`${form.target.request_id}:${form.target.user_request_id}`}
+                              form={form}
+                              run={run}
+                              live={Boolean(
+                                state.answerTarget &&
+                                  state.answerTarget.subscription ===
+                                    form.target.subscription &&
+                                  state.answerTarget.request_id ===
+                                    form.target.request_id &&
+                                  state.answerTarget.user_request_id ===
+                                    form.target.user_request_id,
+                              )}
+                              focus={
+                                (reader.current?.following ?? true) &&
+                                !state.viewingEarlier
+                              }
+                              onReleaseFocus={(questionId) => {
+                                if (document.activeElement !== document.body)
+                                  return;
+                                answerFocus.current = questionId;
+                                const answer =
+                                  viewport.current?.querySelector<HTMLElement>(
+                                    `[data-native-answer="${CSS.escape(questionId)}"]`,
+                                  );
+                                if (answer?.isConnected) {
+                                  answer.focus();
+                                  answerFocus.current = null;
+                                }
+                              }}
+                            />
+                          ))}
+                      {run && (
+                        <ChildActivityRows
+                          view={run.childView}
+                          placed={placed}
+                        />
+                      )}
+                    </AnswerFocus.Provider>
+                  </DisclosureMemory>
+                  {state?.native?.active_request &&
+                    !state.viewingEarlier &&
+                    !state.native.pending_user_request && (
+                      // Mounted for the whole request so its timer is stable.
+                      <WorkingLine
+                        key={state.native.active_request}
+                        hidden={tailStreaming}
+                      />
+                    )}
+                  {state?.newer && (
+                    <div className="text-center">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        data-reading-control="newer"
+                        aria-disabled={
+                          state.loadingEarlier ||
+                          state.connection !== "connected"
+                        }
+                        className="rounded-full text-xs text-muted-foreground aria-disabled:pointer-events-none aria-disabled:opacity-50"
+                        onClick={() => {
+                          if (
+                            state.loadingEarlier ||
+                            state.connection !== "connected"
+                          )
+                            return;
+                          reader.current?.pause();
+                          void run?.loadNewer();
+                        }}
+                      >
+                        {state.loadingEarlier
+                          ? "Loading…"
+                          : "Load newer messages"}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </section>
+              {run && <ChildInspector view={run.childView} />}
+              {(reading.away || state?.viewingEarlier) && (
+                <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     size="sm"
-                    data-reading-control="newer"
-                    aria-disabled={
-                      state.loadingEarlier || state.connection !== "connected"
-                    }
-                    className="rounded-full aria-disabled:pointer-events-none aria-disabled:opacity-50"
+                    className="pointer-events-auto h-7 gap-1.5 rounded-full bg-background/95 text-xs shadow-sm dark:bg-card"
                     onClick={() => {
-                      if (
-                        state.loadingEarlier ||
-                        state.connection !== "connected"
-                      )
-                        return;
-                      reader.current?.pause();
-                      void run?.loadNewer();
+                      run?.showLatest();
+                      reader.current?.jump();
                     }}
                   >
-                    {state.loadingEarlier
-                      ? "Loading history…"
-                      : "Load newer history"}
+                    <ArrowDown className="size-3" aria-hidden="true" />
+                    {reading.newActivity ? (
+                      <output aria-live="polite" data-testid="coding-new-activity">
+                        New activity
+                      </output>
+                    ) : (
+                      "Jump to latest"
+                    )}
                   </Button>
                 </div>
               )}
             </div>
-          </section>
-          {run && <ChildInspector view={run.childView} />}
-          {(reading.away || state?.viewingEarlier) && (
-            <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
-              <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-border/60 bg-background/95 py-1 pl-3 pr-1 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.16)] dark:bg-card">
-                {reading.newActivity && (
-                  <output
-                    aria-live="polite"
-                    data-testid="coding-new-activity"
-                    className="text-xs font-medium"
+            <section
+              className="shrink-0 px-3 pb-2 sm:px-6"
+              aria-label="Prompt and request status"
+            >
+              <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-2">
+                {state && (
+                  <div
+                    ref={statusFocus}
+                    role="region"
+                    aria-label="Coding request status"
+                    tabIndex={-1}
+                    className="flex max-h-[30dvh] flex-col gap-2 overflow-y-auto text-xs empty:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    data-testid="coding-event-status"
                   >
-                    New activity
+                    <StatusNotices
+                      state={state}
+                      run={run}
+                      canAct={!sendBlocked}
+                    />
+                  </div>
+                )}
+                {state?.native?.plan && (
+                  <PlanCard
+                    key={state.native.plan.id}
+                    plan={state.native.plan}
+                    state={state}
+                    run={run}
+                  />
+                )}
+                {showGoal && state && run && (
+                  <GoalSummary state={state} run={run} />
+                )}
+                {state && run && <CommandFeedback state={state} run={run} />}
+                {state?.unsentDraft && (
+                  <CodingUnsentDraft text={state.unsentDraft} />
+                )}
+                {composer}
+                {state && (
+                  <output
+                    data-testid="coding-run-status"
+                    aria-live="polite"
+                    className="sr-only"
+                  >
+                    {codingRunLabel(state)}
                   </output>
                 )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 rounded-full"
-                  onClick={() => {
-                    run?.showLatest();
-                    reader.current?.jump();
-                  }}
-                >
-                  <ArrowDown className="size-3" aria-hidden="true" />
-                  Jump to latest
-                </Button>
               </div>
-            </div>
-          )}
-        </div>
-        <section
-          className="shrink-0 px-3 pb-3 sm:px-6"
-          aria-label="Prompt and request status"
-        >
-          <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-2">
-            {state && (
-              <div
-                ref={statusFocus}
-                role="region"
-                aria-label="Coding request status"
-                tabIndex={-1}
-                className="flex max-h-[30dvh] flex-col gap-2 overflow-y-auto text-xs empty:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                data-testid="coding-event-status"
-              >
-                <StatusNotices state={state} run={run} canAct={!sendBlocked} />
-              </div>
-            )}
-            {state?.native?.plan && (
-              <PlanCard
-                key={state.native.plan.id}
-                plan={state.native.plan}
-                state={state}
-                run={run}
-              />
-            )}
-            {showGoal && state && run && (
-              <GoalSummary
-                state={state}
-                run={run}
-                defaultOpen={goalRequested}
-              />
-            )}
-            {state?.unsentDraft && (
-              <CodingUnsentDraft text={state.unsentDraft} />
-            )}
-            <CodingComposer
-              conversationId={conversationId}
-              run={run}
-              state={state}
-              draft={draft}
-              canEdit={canEdit}
-              sendBlocked={sendBlocked}
-              inputRef={promptInput}
-              onGoal={run ? () => setGoalRequested(true) : undefined}
-              projectChooser={landing ? projectChooser : undefined}
-              modeControl={
-                state?.native ? (
-                  <CodingModeControl state={state} run={run} />
-                ) : null
-              }
-              modelPicker={
-                <CodingModelPicker
-                  key={conversationId}
-                  conversationId={conversationId}
-                  configuration={state?.native?.configuration ?? null}
-                  unavailable={state?.native?.selection_unavailable ?? null}
-                  disabled={
-                    state?.connection !== "connected" ||
-                    Boolean(
-                      state?.recovering ||
-                        state?.configurationUncertain ||
-                        state?.planControl ||
-                        state?.goalChanging ||
-                        state?.reconcilingGoal ||
-                        state?.commandBusy ||
-                        state?.uncertainCommand,
-                    )
-                  }
-                  configuring={Boolean(state?.configuring)}
-                  configure={(change) =>
-                    run
-                      ? run.configure(change)
-                      : Promise.reject(new Error("Choose a project first."))
-                  }
-                />
-              }
-            />
-            {state && run && (
-              <div className="flex min-w-0 flex-wrap items-start justify-between gap-x-2 px-1">
-                <RunStatus
-                  state={state}
-                  onDiagnostics={() => setDiagnosticsOpen(true)}
-                />
-                <CodingDiagnosticsDialog
-                  run={run}
-                  state={state}
-                  open={diagnosticsOpen}
-                  onOpenChange={setDiagnosticsOpen}
-                />
-                <CodingCommandControls run={run} state={state} />
-              </div>
-            )}
-          </div>
-        </section>
+            </section>
+          </>
+        )}
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>
   );

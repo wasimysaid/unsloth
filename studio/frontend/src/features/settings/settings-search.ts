@@ -7,7 +7,6 @@ import type { SettingsTab } from "./stores/settings-dialog-store";
 
 /** Tab names always match, so tabs without translatable rows stay reachable. */
 export const SETTINGS_SEARCH_INDEX: Record<SettingsTab, TranslationKey[]> = {
-  mimir: ["mimirSettings.plugins", "mimirSettings.skills", "mimirSettings.diagnostics"],
   accounts: [
     "settings.accounts.title",
     "settings.accounts.create",

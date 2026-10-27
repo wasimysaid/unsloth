@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type * as Composer from "../src/features/coding/coding-composer.tsx";
+import * as commandTypes from "../src/features/coding/command-types.ts";
 import * as codingInput from "../src/features/coding/input.ts";
 import {
   type CodingInputDraft,
@@ -12,6 +13,7 @@ import {
 } from "../src/features/coding/input.ts";
 import * as mentionMenu from "../src/features/coding/mention-menu.ts";
 import * as pendingSubmission from "../src/features/coding/pending-submission.ts";
+import * as runRuntime from "../src/features/coding/run-runtime.ts";
 import * as runSession from "../src/features/coding/run-session.ts";
 import {
   type PendingImageStore,
@@ -162,7 +164,6 @@ async function harness(
       position: ++position,
       event: {
         type: "start",
-        recovering: false,
         root: { cut: { journal: "root", leaf: null }, live_invocations: [] },
         state: native(requests),
       },
@@ -244,17 +245,14 @@ function loadComposer(
         DialogDescription: "dialog-description",
         DialogTitle: "dialog-title",
       },
-      "@/components/ui/dropdown-menu": {
-        DropdownMenu: "menu",
-        DropdownMenuContent: "menu-content",
-        DropdownMenuItem: "menu-item",
-        DropdownMenuTrigger: "menu-trigger",
-      },
       "@assistant-ui/react": {
         ComposerPrimitive: { Root: "root", Input: "input", Send: "send" },
         useComposerRuntime: () => runtime,
       },
       "@assistant-ui/tap": { flushResourcesSync: (run: () => void) => run() },
+      "@/features/native-intents": {
+        useNativeFileDrop: () => ({ ref: () => {}, dragging: false, dragHandlers: {} }),
+      },
       "react-dom": { flushSync: (run: () => void) => run() },
       "lucide-react": {},
       react: {
@@ -274,13 +272,15 @@ function loadComposer(
         discoverCodingSubagents: async () => ({ subagents: [] }),
         discoverCodingFiles: async () => ({ files: [], truncated: false }),
       },
+      "./command-types": commandTypes,
       "./input": codingInput,
       "./mention-list": {
-        MentionList: "mention-list",
+        CompletionList: "completion-list",
         mentionOptionId: () => "",
       },
       "./mention-menu": mentionMenu,
       "./pending-submission": pendingSubmission,
+      "./run-runtime": runRuntime,
       "./run-session": runSession,
     },
   );
@@ -479,9 +479,9 @@ const landingProps = (draft: CodingInputDraft) => ({
   state: null,
   draft,
   canEdit: true,
-  sendBlocked: "Choose a project to start.",
+  sendBlocked: "Choose a project folder first.",
   inputRef: { current: null },
-  projectChooser: "project-chooser",
+  onStart: () => {},
 });
 
 test("an image still being read on the landing keeps Send blocked in the created conversation until that read settles", async () => {
@@ -499,7 +499,8 @@ test("an image still being read on the landing keeps Send blocked in the created
       png("late.png"),
     );
     await until(() => browser.started() === 1);
-    const creating = session.createConversation("/project");
+    session.selectProject("/project");
+    const creating = session.startConversation();
     land({ id: "conversation", cwd: "/project" });
     assert.equal(await creating, true);
     const h = await harness();
@@ -675,5 +676,122 @@ test("without durable image storage an image send fails closed and keeps its inp
     h.calls.map((call) => call.text),
     ["text only"],
   );
+  h.run.detach();
+});
+
+test("the message typed before the conversation existed is sent once, only when the new owner accepts it", async () => {
+  const runtime = {
+    ...composerRuntime(),
+    sent: 0,
+    send() {
+      this.sent++;
+    },
+  };
+  const h = await harness();
+  const draft = createInputDraft();
+  draft.syncText("Build the parser");
+  let consumed = 0;
+  const props = {
+    conversationId: "conversation",
+    run: h.run,
+    state: h.run.getSnapshot(),
+    draft,
+    canEdit: true,
+    sendBlocked: "Reconnecting",
+    inputRef: { current: null },
+    autoSend: true,
+    onAutoSent: () => consumed++,
+  };
+  const composer = loadComposer(runtime);
+  composer.CodingComposer(props);
+  assert.equal(runtime.sent, 0, "a blocked owner keeps the text for later");
+  composer.CodingComposer({ ...props, sendBlocked: null });
+  assert.equal(runtime.text, "Build the parser");
+  assert.equal(runtime.sent, 1);
+  assert.equal(consumed, 1);
+  // The session clears the request; later renders never send again.
+  composer.CodingComposer({ ...props, sendBlocked: null, autoSend: false });
+  assert.equal(runtime.sent, 1);
+  h.run.detach();
+});
+
+test("Enter on the landing starts the conversation instead of sending, and only with text and a folder", () => {
+  const runtime = composerRuntime();
+  const draft = createInputDraft();
+  let started = 0;
+  const enter = (props: Record<string, unknown>) => {
+    let prevented = false;
+    const input = find(
+      loadComposer(runtime).CodingComposer({
+        ...landingProps(draft),
+        ...props,
+        onStart: () => started++,
+      } as Parameters<typeof Composer.CodingComposer>[0]),
+      (element) => element.props["aria-label"] === "Coding prompt",
+    );
+    assert.equal(input?.props.submitMode, "none");
+    (input?.props.onKeyDown as (event: unknown) => void)({
+      key: "Enter",
+      shiftKey: false,
+      nativeEvent: { isComposing: false },
+      preventDefault() {
+        prevented = true;
+      },
+    });
+    return prevented;
+  };
+  assert.equal(enter({ sendBlocked: null }), true);
+  assert.equal(started, 0, "nothing typed yet");
+  draft.syncText("Explore this project");
+  assert.equal(enter({ sendBlocked: "Choose a project folder first." }), true);
+  assert.equal(started, 0, "no folder chosen yet");
+  assert.equal(enter({ sendBlocked: null }), true);
+  assert.equal(started, 1);
+});
+
+test("a slash command typed while a request runs is dispatched natively, not dropped", async () => {
+  const runtime = composerRuntime();
+  const sent: string[] = [];
+  const h = await harness();
+  const draft = createInputDraft();
+  draft.syncText("/goal pause");
+  runtime.text = "/goal pause";
+  const busyState = {
+    ...h.run.getSnapshot(),
+    native: { ...h.run.getSnapshot().native!, active_request: "running" },
+  };
+  const run = {
+    ...h.run,
+    send: async (text: string) => {
+      sent.push(text);
+      return true;
+    },
+  };
+  const input = find(
+    loadComposer(runtime).CodingComposer({
+      conversationId: "conversation",
+      run,
+      state: busyState,
+      draft,
+      canEdit: true,
+      sendBlocked: null,
+      inputRef: { current: null },
+    } as Parameters<typeof Composer.CodingComposer>[0]),
+    (element) => element.props["aria-label"] === "Coding prompt",
+  );
+  let prevented = false;
+  (input?.props.onKeyDown as (event: unknown) => void)({
+    key: "Enter",
+    shiftKey: false,
+    nativeEvent: { isComposing: false },
+    preventDefault() {
+      prevented = true;
+    },
+  });
+  await until(() => sent.length === 1);
+  assert.equal(prevented, true);
+  assert.deepEqual(sent, ["/goal pause"]);
+  assert.equal(runtime.text, "", "the command left the composer");
+  assert.equal(draft.getSnapshot().text, "");
   h.run.detach();
 });

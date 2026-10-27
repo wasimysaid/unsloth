@@ -19,6 +19,7 @@ import time
 from urllib.parse import urlsplit
 
 from coding_file_change_scenarios import LIVE_PROFILE_OBSERVER
+from coding_ui import create_and_open, expect_connected, open_saved
 
 
 GRANT_EXPIRY = 1791980523
@@ -66,6 +67,26 @@ LOCAL_REQUEST_OBSERVER = r"""(() => {
     return response;
   };
 })();"""
+
+
+def open_tool_output(page, call_id):
+    """Settled activity groups are folded and render no tool rows: open every
+    folded group, then the exact tool row; returns its "Tool output" region."""
+    from playwright.sync_api import expect
+    groups = page.get_by_test_id("coding-activity-group")
+    expect(groups.first).to_be_visible(timeout=60000)
+    folded = groups.locator(':scope > button[aria-expanded="false"]')
+    for _ in range(groups.count()):
+        if not folded.count():
+            break
+        folded.first.click()
+    expect(folded).to_have_count(0, timeout=60000)
+    row = page.locator('[data-testid="coding-tool-row"][data-call-id=' + json.dumps(call_id) + ']')
+    expect(row).to_have_count(1, timeout=60000)
+    line = row.locator("button[aria-expanded][aria-controls]")
+    if line.get_attribute("aria-expanded") != "true":
+        line.click()
+    return row.get_by_label("Tool output", exact=True)
 
 
 def main() -> None:
@@ -131,21 +152,17 @@ def main() -> None:
             page.goto(base + "/login")
             page.evaluate("tokens => {localStorage.setItem('unsloth_auth_token',tokens.access_token); localStorage.setItem('unsloth_auth_refresh_token',tokens.refresh_token); localStorage.setItem('unsloth_auth_session_mark','coding-local-acceptance');}", tokens)
             page.goto(base + "/coding")
-            expect(page.get_by_role("heading", name="Build with Mimir")).to_be_visible()
-            page.get_by_role("button", name="Choose project folder", exact=True).click()
-            expect(page.get_by_test_id("coding-browsed-path")).to_be_visible(timeout=60000)
-            page.get_by_label("Host folder path", exact=True).fill(str(project))
-            page.get_by_role("button", name="Browse", exact=True).click()
-            expect(page.get_by_test_id("coding-browsed-path")).to_have_text(str(project), timeout=60000)
-            with page.expect_response(lambda r: r.url == base + "/api/coding/conversations" and r.request.method == "POST", timeout=60000) as created:
-                page.get_by_role("button", name="Open project", exact=True).click()
-            assert created.value.status == 201
-            conversation = created.value.json()["id"]
+            expect(page.get_by_role("heading", name="What should we build?")).to_be_visible()
+            # Choosing a folder no longer creates a conversation and the landing
+            # composer would send a prompt before the model is selected; create it
+            # natively, then open the saved sidebar row.
+            created, opened = create_and_open(page, context, base, headers, project)
+            conversation = created["id"]
             report["conversation_id"] = conversation
-            report["runtime_generation"] = created.value.json()["runtime_generation"]
+            report["runtime_generation"] = opened.json()["runtime_generation"]
+            assert report["runtime_generation"] == created["runtime_generation"], "Runtime incarnation changed between create and open"
             headers["X-Mimir-Runtime-Generation"] = str(report["runtime_generation"])
-            expect(page.get_by_test_id("coding-conversation-id")).to_have_text(conversation, timeout=60000)
-            expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+            expect_connected(page)
             catalog = context.request.post(base + f"/api/coding/conversations/{conversation}/models/refresh", headers=headers)
             assert catalog.ok, f"Actual native catalog refresh failed ({catalog.status})"
             choices = catalog.json()
@@ -167,16 +184,29 @@ def main() -> None:
                 assert not bounded["gpu_backend_unavailable"], "Studio reported GPU runtime unavailable; CPU fallback is not accepted"
                 assert isinstance(bounded["server_pid"], int), "No actual Studio-owned llama-server PID"
                 report["bounded_preload"] = bounded
-            page.get_by_role("button", name="Configure next coding request", exact=True).click()
+            trigger = page.get_by_test_id("coding-model-trigger")
             picker = page.get_by_test_id("coding-model-picker")
-            picker.get_by_role("button", name="Choose coding model", exact=True).click()
+
+            def refreshed_model_list():
+                # The picker reads its catalog once when the conversation opens; an
+                # explicit rendered refresh shows the refreshed native inventory.
+                trigger.click()
+                picker.get_by_role("button", name="Choose model", exact=True).click()
+                with page.expect_response(lambda r: r.url == base + f"/api/coding/conversations/{conversation}/models/refresh" and r.request.method == "POST", timeout=60000) as listed:
+                    picker.get_by_role("button", name="Refresh models", exact=True).click()
+                assert listed.value.ok, f"Rendered native catalog refresh failed ({listed.value.status})"
+
+            refreshed_model_list()
             row = picker.locator(f'button[data-provider="studio-local"][data-model="{model["id"]}"]')
             expect(row).to_be_enabled(timeout=60000)
             with page.expect_response(lambda r: r.url == base + f"/api/coding/conversations/{conversation}/configuration" and r.request.method == "POST", timeout=60000) as configured:
                 row.click()
             assert configured.value.ok and configured.value.request.post_data_json == {"provider": "studio-local", "model": model["id"]}
             page.keyboard.press("Escape")
-            expect(page.get_by_test_id("coding-next-model")).to_contain_text("studio-local/" + model["id"])
+            # The next-model diagnostic is gone: the browser's own native stream must
+            # report the exact identity, and the trigger shows its native name.
+            page.wait_for_function("m => window.codingFileChangeModel?.provider === 'studio-local' && window.codingFileChangeModel?.model === m", arg=model["id"], timeout=60000)
+            expect(trigger).to_contain_text(model["name"], timeout=60000)
             snapshot("local-selected-desktop")
             page.set_viewport_size({"width": 390, "height": 844})
             snapshot("local-selected-narrow")
@@ -201,7 +231,9 @@ def main() -> None:
             assert submitted.value.status == 202
             request_id = submitted.value.json()["request_id"]
             report["request_id"] = request_id
-            expect(page.get_by_test_id("coding-request-id")).to_contain_text(request_id, timeout=60000)
+            # The rendered request-ID diagnostic is gone; the browser's own native
+            # stream must report this exact request.
+            page.wait_for_function("id => Boolean(window.localNativeRequests[id])", arg=request_id, timeout=60000)
             status = page.get_by_test_id("coding-run-status")
             deadline = time.monotonic() + args.deadline_seconds
             max_holds, gap_hold = 0, False
@@ -248,7 +280,7 @@ def main() -> None:
                         "status": restart_refusal.status, "generation": runtime_after["generation"],
                         "coding_holds_preserved": owner_after_refusal["coding_holds"], "native_pid": owner_after_refusal["native_pid"]}
                     gap_hold = True
-                    expect(rendered).to_contain_text("running", timeout=3000)
+                    expect(rendered).to_have_attribute("data-tool-status", "running", timeout=3000)
                     report["shell_row_during_native_gap"] = rendered.inner_text()[:1024]
                     report["rendered_running_shell_assertion"] = "passed"
                     snapshot("local-protected-native-shell-desktop")
@@ -276,9 +308,7 @@ def main() -> None:
             shell_calls = [t for t in report["native_tools"] if t["name"] == "shell"]
             assert len(shell_calls) == 1
             shell = page.locator('[data-testid="coding-tool-row"][data-call-id=' + json.dumps(shell_calls[0]["call_id"]) + ']')
-            expect(shell).to_have_count(1)
-            shell.locator("summary").click()
-            expect(shell.get_by_label("Actual public tool output", exact=True)).to_contain_text(marker)
+            expect(open_tool_output(page, shell_calls[0]["call_id"])).to_contain_text(marker)
             report["shell_tool"] = {"call_id": shell.get_attribute("data-call-id"), "invocation_id": shell.get_attribute("data-invocation-id"), "output_marker": marker}
             reads = [t for t in report["native_tools"] if t["name"] == "read_file"]
             assert len(reads) == 1 and reads[0]["status"] == "completed"
@@ -313,14 +343,14 @@ def main() -> None:
             assert alternate, "Download the real second model with coding_local_setup.py --alternate before busy/retry acceptance"
             if alternate:
                 original_pid = final["server_pid"]
-                page.get_by_role("button", name="Configure next coding request", exact=True).click()
-                picker.get_by_role("button", name="Choose coding model", exact=True).click()
+                refreshed_model_list()
                 other = picker.locator(f'button[data-provider="studio-local"][data-model="{alternate["id"]}"]')
                 expect(other).to_be_enabled(timeout=60000)
                 with page.expect_response(lambda r: r.url == base + f"/api/coding/conversations/{conversation}/configuration" and r.request.method == "POST", timeout=60000) as alternate_configured:
                     other.click()
                 assert alternate_configured.value.ok
-                expect(page.get_by_test_id("coding-next-model")).to_contain_text("studio-local/" + alternate["id"], timeout=60000)
+                page.wait_for_function("m => window.codingFileChangeModel?.provider === 'studio-local' && window.codingFileChangeModel?.model === m", arg=alternate["id"], timeout=60000)
+                expect(trigger).to_contain_text(alternate["name"], timeout=60000)
                 page.keyboard.press("Escape")
                 composer.fill("Reply READY only. Do not use tools or change files.")
                 with page.expect_response(lambda r: r.url == base + f"/api/coding/conversations/{conversation}/prompts" and r.request.method == "POST", timeout=60000) as busy_submission:
@@ -336,9 +366,10 @@ def main() -> None:
                 page.set_viewport_size({"width": 390, "height": 844})
                 snapshot("local-real-busy-narrow")
                 page.set_viewport_size({"width": 1440, "height": 1000})
-                expect(page.get_by_role("button", name="Retry local selection", exact=True)).to_be_enabled()
+                retry = preparation.get_by_role("button", name="Retry", exact=True)
+                expect(retry).to_be_enabled()
                 with page.expect_response(lambda r: r.url == base + f"/api/coding/conversations/{conversation}/configuration" and r.request.method == "POST", timeout=60000) as retried:
-                    page.get_by_role("button", name="Retry local selection", exact=True).click()
+                    retry.click()
                 assert retried.value.ok and retried.value.request.post_data_json == {}, "Explicit retry must validate identity without loading/replaying"
                 stable = context.request.get(base + "/api/coding-local-acceptance/protection", headers=headers).json()
                 assert stable["coding_holds"] == 0 and stable["server_pid"] == original_pid and stable["primary_loaded"]
@@ -373,16 +404,9 @@ def main() -> None:
             recovery = fault.json()
             assert recovery["native_exit_code"] == -9 and recovery["coding_holds"] == 0 and not recovery["model_active"]
             page.goto(base + "/coding")
-            expect(page.get_by_role("heading", name="Build with Mimir")).to_be_visible(timeout=60000)
-            refresh_saved = page.get_by_role("button", name="Refresh coding conversations", exact=True)
-            expect(refresh_saved).to_be_enabled(timeout=60000)
-            refresh_saved.click()
-            expect(refresh_saved).to_be_enabled(timeout=60000)
-            saved = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text=conversation)
-            expect(saved).to_be_visible(timeout=60000)
-            saved.click()
-            expect(page.get_by_test_id("coding-conversation-id")).to_have_text(conversation, timeout=60000)
-            expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+            expect(page.get_by_role("heading", name="What should we build?")).to_be_visible(timeout=60000)
+            open_saved(page, base, conversation, refresh=True)
+            expect_connected(page)
             refreshed = context.request.post(base + f"/api/coding/conversations/{conversation}/models/refresh", headers=headers)
             assert refreshed.ok
             recovered_choices = refreshed.json()
@@ -391,7 +415,7 @@ def main() -> None:
             assert recovered_owner["coding_holds"] == 0 and not recovered_owner["primary_active"]
             assert isinstance(recovered_owner["native_pid"], int) and recovered_owner["native_pid"] != recovery["native_pid_before"]
             assert hashlib.sha256((project / filename).read_bytes()).hexdigest() == prior_file_hash, "Native recovery replayed or changed prior file effects"
-            expect(page.locator('[data-testid="coding-tool-row"][data-call-id=' + json.dumps(shell_calls[0]["call_id"]) + ']')).to_have_count(1, timeout=60000)
+            expect(open_tool_output(page, shell_calls[0]["call_id"])).to_contain_text(marker, timeout=60000)
             recovery.update(native_pid_after=recovered_owner["native_pid"], catalog_refresh_http_status=refreshed.status,
                             restored_conversation_id=conversation, file_sha256_unchanged=prior_file_hash,
                             owner_after_reopen=recovered_owner)

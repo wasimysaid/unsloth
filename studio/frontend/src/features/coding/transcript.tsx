@@ -1,15 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 import { MarkdownPreview } from "@/components/markdown/markdown-preview";
-import {
-  Check,
-  ChevronRight,
-  CircleAlert,
-  Copy,
-  Image as ImageIcon,
-  Info,
-  LoaderCircle,
-} from "lucide-react";
+import { Check, ChevronDown, Copy, Image as ImageIcon, Info } from "lucide-react";
 import {
   createContext,
   memo,
@@ -21,12 +13,11 @@ import {
 } from "react";
 import { restoreAnswerFocus } from "./answer-focus";
 import { boundedContentKeyDown } from "./bounded-content";
-import { ChildActivityRow, ChildInspectLink } from "./child-inspector";
 import type { ChildView } from "./child-view";
-import { PlanCard } from "./plan-card";
 import { EntryContentStatus } from "./entry-content-status";
-import { isLiteralParagraph, literalParagraphRuns } from "./markdown-paragraph";
+import { PlanCard } from "./plan-card";
 import type { CodingRow } from "./run-types";
+import { SubagentRow } from "./subagent-card";
 import { ReasoningReport, ToolReport, useDisclosure } from "./tool-report";
 import type { ActivityItem, TranscriptBlock } from "./transcript-model";
 
@@ -40,38 +31,36 @@ const prose =
   "max-h-none overflow-visible rounded-none border-0 bg-transparent p-0 text-[15px] leading-7 text-foreground";
 const isLong = (text: string) =>
   text.length > 4000 || text.split("\n").length > 80;
+// Replies flow with the page; only pathological sizes get their own scroller.
+const isHuge = (text: string) => text.length > 200_000;
 
+/** Long user/notice text scrolls inside itself instead of flooding the page. */
 function Bounded({
   text,
+  long = isLong,
   children,
 }: {
   text: string;
+  long?: (text: string) => boolean;
   children: React.ReactNode;
 }) {
-  if (!isLong(text)) return <>{children}</>;
+  if (!long(text)) return <>{children}</>;
   return (
-    <>
-      <div
-        className="max-h-[32rem] overflow-auto overscroll-contain rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: Long native messages need keyboard scrolling.
-        tabIndex={0}
-        onKeyDown={boundedContentKeyDown}
-        data-reading-control="message-content"
-        aria-label="Bounded native message content"
-      >
-        {children}
-      </div>
-      <p className="mt-1 text-xs text-muted-foreground">
-        Long message · scroll within it to read all supplied text.
-      </p>
-    </>
+    <div
+      className="max-h-128 overflow-auto overscroll-contain rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: Long native messages need keyboard scrolling.
+      tabIndex={0}
+      onKeyDown={boundedContentKeyDown}
+      data-reading-control="message-content"
+      aria-label="Long message"
+    >
+      {children}
+    </div>
   );
 }
 const Clipped = ({ row }: { row: CodingRow }) =>
   row.clipped ? (
-    <p className="mt-1 text-xs font-medium">
-      Content clipped to the presentation bound.
-    </p>
+    <p className="mt-1 text-xs text-muted-foreground">Content clipped</p>
   ) : null;
 
 function CopyText({ text }: { text: string }) {
@@ -113,15 +102,14 @@ function UserBlock({
       data-reading-key={block.key}
       data-native-entry={row.id}
     >
-      <div className="min-w-0 max-w-[85%] rounded-3xl bg-muted px-4 py-2.5 text-[15px] leading-6 dark:bg-accent">
+      <div className="min-w-0 max-w-[85%] rounded-[18px] bg-muted px-4 py-2.5 text-[15px] leading-6 dark:bg-accent">
         <Bounded text={text}>
           <p className="whitespace-pre-wrap break-words">{text}</p>
         </Bounded>
         {(row.image_count ?? 0) > 0 && (
           <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
             <ImageIcon className="size-3.5" aria-hidden="true" />
-            {row.image_count} {row.image_count === 1 ? "image" : "images"} sent
-            with this prompt
+            {row.image_count} {row.image_count === 1 ? "image" : "images"}
           </p>
         )}
         <Clipped row={row} />
@@ -141,21 +129,15 @@ function ProseBlock({
       className="min-w-0"
       data-reading-key={block.key}
       data-native-entry={block.row.id}
+      data-live={block.live || undefined}
     >
       {text.trim() && (
-        <Bounded text={text}>
-          {isLiteralParagraph(text) ? (
-            <p
-              className={`${prose} [overflow-wrap:anywhere]`}
-              data-native-paragraph=""
-            >
-              {literalParagraphRuns(text).map((run, index) => (
-                <span key={index}>{run}</span>
-              ))}
-            </p>
-          ) : (
-            <MarkdownPreview markdown={text} className={prose} />
-          )}
+        <Bounded text={text} long={isHuge}>
+          <MarkdownPreview
+            markdown={text}
+            streaming={block.live}
+            className={prose}
+          />
         </Bounded>
       )}
       <Clipped row={block.row} />
@@ -203,10 +185,8 @@ function AnswerBlock({
       data-native-answer={questionId}
       tabIndex={-1}
     >
-      <div className="min-w-0 max-w-[85%] rounded-3xl bg-muted px-4 py-2.5 dark:bg-accent">
-        <p className="text-xs font-medium text-muted-foreground">
-          Your accepted answer
-        </p>
+      <div className="min-w-0 max-w-[85%] rounded-[18px] bg-muted px-4 py-2.5 dark:bg-accent">
+        <p className="text-xs text-muted-foreground">Your answer</p>
         <p className="whitespace-pre-wrap break-words text-[15px] leading-6">
           {row.text}
         </p>
@@ -233,42 +213,32 @@ function SemanticBlock({
           data-reading-control="semantic-output"
           aria-label={
             tool.semantic_content === "answer_markdown"
-              ? "Public tool answer"
-              : "Public tool report"
+              ? "Tool answer"
+              : "Tool report"
           }
         >
           <MarkdownPreview markdown={tool.output} className={prose} />
         </div>
       )}
-      <ToolReport row={block.row} itemKey={block.key} />
+      <ToolReport row={block.row} itemKey={block.key} rail={false} />
     </div>
   );
 }
 
-function Item({
-  item,
-  childView,
-}: {
-  item: ActivityItem;
-  childView: ChildView | null;
-}) {
+function Item({ item, last }: { item: ActivityItem; last: boolean }) {
   if (item.kind === "reasoning")
     return (
-      <ReasoningReport row={item.row} itemKey={item.key} live={item.live} />
+      <ReasoningReport
+        row={item.row}
+        itemKey={item.key}
+        live={item.live}
+        last={last}
+      />
     );
-  return (
-    <ToolReport
-      row={item.row}
-      itemKey={item.key}
-      trailing={
-        item.child && childView ? (
-          <ChildInspectLink view={childView} identity={item.child} />
-        ) : null
-      }
-    />
-  );
+  return <ToolReport row={item.row} itemKey={item.key} last={last} />;
 }
 
+/** Consecutive thinking and tool calls: one titled tree, open while it streams. */
 function ActivityBlock({
   block,
   childView,
@@ -276,12 +246,19 @@ function ActivityBlock({
   block: Extract<TranscriptBlock, { kind: "activity" }>;
   childView: ChildView | null;
 }) {
-  // Subagent invocations stay visible, like running work.
-  const [open, toggle] = useDisclosure(block.key, block.live || block.agents);
-  if (block.items.length === 1)
+  const [open, toggle] = useDisclosure(block.key, block.live);
+  if (block.agents)
     return (
-      <div className="min-w-0" data-reading-key={block.key}>
-        <Item item={block.items[0]} childView={childView} />
+      <div className="min-w-0 space-y-1.5 py-0.5" data-reading-key={block.key}>
+        {block.items.map((item) => (
+          <div key={item.key} data-reading-key={item.key}>
+            <SubagentRow
+              row={item.row}
+              identity={item.kind === "tool" ? item.child : null}
+              view={childView}
+            />
+          </div>
+        ))}
       </div>
     );
   const { summary } = block;
@@ -297,31 +274,29 @@ function ActivityBlock({
         aria-expanded={open}
         data-reading-control={`activity:${block.key}`}
         onClick={toggle}
-        className="flex min-w-0 max-w-full items-center gap-1.5 rounded-lg py-1 pr-2 text-left text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex h-6.5 min-w-0 max-w-full items-center gap-1.5 rounded-md pr-2 text-left text-[13px] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <ChevronRight
-          className={`size-4 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
-          aria-hidden="true"
-        />
-        <span className="min-w-0 truncate">{summary.text}</span>
-        {summary.failed > 0 && (
-          <CircleAlert
-            className="size-3.5 shrink-0 text-destructive"
+        <span className="flex w-5.75 shrink-0 justify-center">
+          <ChevronDown
+            className={`size-3.5 transition-transform duration-150 ${open ? "" : "-rotate-90"}`}
             aria-hidden="true"
           />
-        )}
-        {block.live && (
-          <LoaderCircle
-            className="size-3.5 shrink-0 animate-spin"
-            aria-label="In progress"
-          />
-        )}
+        </span>
+        <span
+          className={`min-w-0 truncate ${block.live ? "coding-shimmer" : ""}`}
+        >
+          {summary.text}
+        </span>
       </button>
       {open && (
-        <div className="ml-[7px] mt-0.5 space-y-0.5 border-l border-border/70 pl-3.5">
-          {block.items.map((item) => (
-            <div key={item.key} data-reading-key={item.key}>
-              <Item item={item} childView={childView} />
+        <div className="min-w-0 pt-0.5">
+          {block.items.map((item, index) => (
+            <div
+              key={item.key}
+              data-reading-key={item.key}
+              className="coding-row-enter"
+            >
+              <Item item={item} last={index === block.items.length - 1} />
             </div>
           ))}
         </div>
@@ -351,13 +326,7 @@ const BlockView = memo(function BlockView({
     case "child":
       return (
         <div className="min-w-0" data-reading-key={block.key}>
-          {childView ? (
-            <ChildActivityRow
-              view={childView}
-              row={block.row}
-              identity={block.child}
-            />
-          ) : null}
+          <SubagentRow row={block.row} identity={block.child} view={childView} />
         </div>
       );
     case "plan":
@@ -407,5 +376,43 @@ export function TranscriptBlocks({
         <BlockView key={block.key} block={block} childView={childView} />
       ))}
     </>
+  );
+}
+
+const elapsed = (ms: number) => {
+  const seconds = Math.floor(ms / 1000);
+  return seconds < 60
+    ? `${seconds}s`
+    : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+};
+
+/** The request is running; shown while nothing streams at the tail. */
+export function WorkingLine({ hidden }: { hidden: boolean }) {
+  const [since] = useState(() => Date.now());
+  const [now, setNow] = useState(since);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <div
+      className="flex h-6 items-center gap-2 text-[12px] text-muted-foreground"
+      data-testid="coding-working"
+      hidden={hidden}
+    >
+      <span className="flex gap-0.5" aria-hidden="true">
+        {[0, 1, 2].map((dot) => (
+          <span
+            key={dot}
+            className="size-1 animate-pulse rounded-full bg-muted-foreground"
+            style={{ animationDelay: `${dot * 150}ms` }}
+          />
+        ))}
+      </span>
+      <span className="coding-shimmer">Working…</span>
+      <span className="text-[11px] text-muted-foreground/70">
+        {elapsed(Math.max(0, now - since))}
+      </span>
+    </div>
   );
 }

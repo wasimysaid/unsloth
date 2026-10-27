@@ -20,6 +20,11 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
+/** Choose a folder, then Send from the landing: the only way to create. */
+function create(session: ReturnType<typeof createCodingSession>, cwd: string) {
+  session.selectProject(cwd);
+  return session.startConversation();
+}
 function nativeApi(overrides: Partial<CodingApi> = {}): CodingApi {
   return {
     listConversations: async () => [],
@@ -49,12 +54,12 @@ test("every confirmed folder creates a distinct native conversation; only native
       listConversations: async () => [...records],
     }),
   );
-  await session.createConversation("/host/link");
+  await create(session, "/host/link");
   assert.deepEqual(session.getSnapshot().active, {
     id: "native-1",
     cwd: "/canonical/project",
   });
-  await session.createConversation("/host/link");
+  await create(session, "/host/link");
   assert.deepEqual(calls, ["/host/link", "/host/link"]);
   assert.equal(session.getSnapshot().active?.id, "native-2");
   assert.deepEqual(
@@ -84,7 +89,7 @@ test("history loading does not implicitly reopen; explicit reopening uses the na
   assert.deepEqual(opened, ["saved-native"]);
   assert.equal(session.getSnapshot().active?.cwd, "/native/revalidated");
   assert.equal(session.getSnapshot().reopened, true);
-  await session.createConversation("/another-project");
+  await create(session, "/another-project");
   assert.equal(session.getSnapshot().reopened, false);
 });
 
@@ -119,12 +124,12 @@ test("idle cleanup refusal preserves saved identity and actionable error without
       },
     }),
   );
-  await session.createConversation("/canonical");
+  await create(session, "/canonical");
   assert.equal(await session.openConversation("retained-history"), false);
   assert.equal(session.getSnapshot().active?.id, "native-new");
   assert.equal(
     session.getSnapshot().openingError,
-    `${message} Opening is unconfirmed, not failed. Inspect shared native history, then deliberately reopen a saved conversation; do not create another copy. Close the folder picker to inspect or refresh history.`,
+    `${message} The conversation may already exist; check the sidebar before starting another.`,
   );
   assert.equal(session.getSnapshot().openingUncertainty?.operation, "open");
   assert.equal(
@@ -145,13 +150,13 @@ test("loading and concurrent keyboard/click activation issue just one native ope
       },
     }),
   );
-  const opening = session.createConversation("/a");
+  const opening = create(session, "/a");
   assert.deepEqual(session.getSnapshot().pending, {
     operation: "create",
     id: null,
   });
   assert.equal(session.getSnapshot().active, null);
-  assert.equal(await session.createConversation("/b"), false);
+  assert.equal(await create(session, "/b"), false);
   assert.equal(await session.openConversation("saved"), false);
   assert.equal(calls, 1);
   pending.resolve({ id: "native", cwd: "/a" });
@@ -173,9 +178,9 @@ test("native validation/open failures preserve the open conversation and expose 
       },
     }),
   );
-  await session.createConversation("/good");
+  await create(session, "/good");
   fail = true;
-  assert.equal(await session.createConversation("/file"), false);
+  assert.equal(await create(session, "/file"), false);
   assert.equal(session.getSnapshot().active?.id, "native");
   assert.equal(
     session.getSnapshot().openingError,
@@ -287,16 +292,16 @@ test("lost create acknowledgement inspects shared history before deliberate reop
       },
     }),
   );
-  const opening = session.createConversation("/requested");
+  const opening = create(session, "/requested");
   await new Promise((resolve) => setImmediate(resolve));
   // No longer pending: the unconfirmed create is held by catalog inspection.
   assert.equal(session.getSnapshot().pending, null);
   assert.equal(session.getSnapshot().openingUncertainty?.inspected, false);
   assert.match(
     session.getSnapshot().openingError ?? "",
-    /unconfirmed, not failed/,
+    /may already exist/,
   );
-  assert.equal(await session.createConversation("/requested"), false);
+  assert.equal(await create(session, "/requested"), false);
   assert.equal(await session.openConversation("native-accepted"), false);
   assert.equal(creates, 1);
   assert.deepEqual(opens, []);
@@ -312,7 +317,7 @@ test("lost create acknowledgement inspects shared history before deliberate reop
     null,
     "catalog inspection does not implicitly reopen or infer identity by cwd",
   );
-  assert.equal(await session.createConversation("/requested"), false);
+  assert.equal(await create(session, "/requested"), false);
   assert.equal(creates, 1);
   assert.equal(await session.openConversation("native-accepted"), true);
   assert.deepEqual(opens, ["native-accepted"]);
@@ -340,11 +345,11 @@ test("failed uncertainty inspection blocks mutation until explicit history refre
       },
     }),
   );
-  await session.createConversation("/project");
+  await create(session, "/project");
   assert.equal(session.getSnapshot().pending, null);
   assert.equal(session.getSnapshot().openingUncertainty?.inspected, false);
   assert.equal(session.getSnapshot().historyError, "Catalog offline");
-  assert.equal(await session.createConversation("/project"), false);
+  assert.equal(await create(session, "/project"), false);
   assert.equal(await session.openConversation("accepted"), false);
   assert.equal(creates, 1);
   assert.equal(opens, 0);
@@ -379,10 +384,83 @@ test("lost known-open acknowledgement preserves previous identity and requires i
     id: "new",
     inspected: true,
   });
-  assert.equal(await session.createConversation("/new"), false);
+  assert.equal(await create(session, "/new"), false);
   lose = false;
   await session.openConversation("new");
   assert.deepEqual(opens, ["old", "new", "new"]);
   assert.equal(session.getSnapshot().openingGeneration, 2);
   assert.equal(session.getSnapshot().active?.cwd, "/native/canonical");
+});
+
+function memory() {
+  const values = new Map<string, string>();
+  return {
+    values,
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+  };
+}
+
+test("the new-conversation folder and model are remembered across New and reloads", async () => {
+  const stored = memory();
+  const created: unknown[][] = [];
+  const api = nativeApi({
+    createConversation: async (cwd, configuration) => {
+      created.push([cwd, configuration]);
+      return { id: `native:${cwd}`, cwd: `/canonical${cwd}`, runtime_generation: 1 };
+    },
+  });
+  const first = createCodingSession(api, { memory: stored });
+  assert.equal(first.getSnapshot().project, null);
+  assert.equal(await first.startConversation(), false, "no folder, no create");
+  first.selectProject("/a");
+  first.selectModel({ provider: "p", model: "m" });
+  first.selectModel({ reasoning: "high" });
+  first.getSnapshot().draft.syncText("first message");
+  assert.equal(await first.startConversation(), true);
+  assert.deepEqual(created, [["/a", { provider: "p", model: "m", reasoning: "high" }]]);
+  // The canonical folder of what was created is the next default.
+  assert.equal(first.getSnapshot().project, "/canonical/a");
+  assert.equal(first.getSnapshot().autoSend, true);
+  first.clearAutoSend();
+  assert.equal(first.startNew(), true);
+  assert.equal(first.getSnapshot().active, null);
+  assert.equal(first.getSnapshot().project, "/canonical/a");
+  assert.equal(first.getSnapshot().autoSend, false);
+
+  const reloaded = createCodingSession(api, { memory: stored });
+  assert.equal(reloaded.getSnapshot().project, "/canonical/a");
+  assert.deepEqual(reloaded.getSnapshot().selection, {
+    provider: "p",
+    model: "m",
+    reasoning: "high",
+  });
+  // Picking another model drops the previous model's effort.
+  reloaded.selectModel({ provider: "p", model: "other" });
+  assert.deepEqual(reloaded.getSnapshot().selection, { provider: "p", model: "other" });
+});
+
+test("New from an open conversation starts in its folder; an empty draft is never auto-sent", async () => {
+  const session = createCodingSession(nativeApi(), { memory: memory() });
+  await session.openConversation("saved");
+  assert.equal(session.startNew(), true);
+  assert.equal(session.getSnapshot().project, "/saved");
+  assert.equal(await session.startConversation(), true);
+  assert.equal(session.getSnapshot().autoSend, false);
+});
+
+test("unusable remembered values are ignored", () => {
+  const stored = memory();
+  stored.setItem("unsloth_coding_project", JSON.stringify(42));
+  stored.setItem("unsloth_coding_model", JSON.stringify({ provider: "p" }));
+  const session = createCodingSession(nativeApi(), { memory: stored });
+  assert.equal(session.getSnapshot().project, null);
+  assert.equal(session.getSnapshot().selection, null);
+  stored.setItem("unsloth_coding_project", "{not json");
+  assert.equal(
+    createCodingSession(nativeApi(), { memory: stored }).getSnapshot().project,
+    null,
+  );
 });

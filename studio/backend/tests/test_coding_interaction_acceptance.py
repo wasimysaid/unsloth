@@ -2,6 +2,8 @@
 """Driver-level checks only. Production-native validation is the separate CLI run."""
 from __future__ import annotations
 
+import base64
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -33,6 +35,12 @@ class InteractionDriverTests(unittest.TestCase):
         self.assertEqual(driver.file_token("notes", "directory"), "@notes/")
         self.assertEqual(driver.file_token("notes/", "directory"), "@notes/")
         self.assertEqual(driver.file_token("source files", "directory"), '@"source files/"')
+
+    def test_file_rows_are_named_by_basename(self):
+        self.assertEqual(driver.mention_name("notes/é report.txt"), "é report.txt")
+        self.assertEqual(driver.mention_name("notes/"), "notes")
+        self.assertEqual(driver.mention_name("notes"), "notes")
+        self.assertEqual(driver.mention_name("a/b/source files/"), "source files")
 
     def test_utf8_selected_reference_identity(self):
         body, selected = self.body()
@@ -81,6 +89,28 @@ class InteractionDriverTests(unittest.TestCase):
         for count in (0, 2):
             with self.subTest(create_count=count), self.assertRaises(AssertionError):
                 driver.assert_rich_draft(expected, expected, count)
+
+    def test_auto_send_requires_landing_text_and_exact_image_once(self):
+        png, other = b"\x89PNG\r\n\x1a\nlanding", b"\x89PNG\r\n\x1a\nother"
+        encoded = base64.b64encode(png).decode()
+        expected = {"text": "Latest é 😀 draft", "images": [{"filename": "landing.png", "sha256": hashlib.sha256(png).hexdigest()}]}
+        body = {"submission_key": "key", "text": expected["text"], "images": [{"mime_type": "image/png", "data": encoded}]}
+        driver.assert_auto_sent(body, expected, 1)
+        mutations = [
+            {**body, "text": "Earlier draft"},
+            {**body, "images": []},
+            {key: value for key, value in body.items() if key != "images"},
+            {**body, "images": [{"mime_type": "image/png", "data": base64.b64encode(other).decode()}]},
+            {**body, "images": body["images"] * 2},
+        ]
+        for sent in mutations:
+            with self.subTest(sent=sent), self.assertRaises(AssertionError):
+                driver.assert_auto_sent(sent, expected, 1)
+        with self.assertRaises(ValueError):
+            driver.assert_auto_sent({**body, "images": [{"mime_type": "image/png", "data": "not base64!"}]}, expected, 1)
+        for count in (0, 2):
+            with self.subTest(prompt_count=count), self.assertRaises(AssertionError):
+                driver.assert_auto_sent(body, expected, count)
 
     def test_create_gate_only_holds_post_and_forwards_original_201(self):
         page, listing, creation = Mock(), Mock(), Mock()

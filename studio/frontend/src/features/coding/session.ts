@@ -2,6 +2,16 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 import { type CodingInputDraft, createInputDraft } from "./input.ts";
+import type { CodingConfigurationChange } from "./model-selection.ts";
+import {
+  MODEL_KEY,
+  type Memory,
+  PROJECT_KEY,
+  browserMemory,
+  isProject,
+  isSelection,
+  recall,
+} from "./new-conversation-memory.ts";
 import type {
   CodingApi,
   CodingConversation,
@@ -33,9 +43,14 @@ export interface CodingSessionState {
   browseError: string | null;
   /** The composer draft of the current view: text, selected mentions, images.
    * A conversation created from the landing takes the landing's draft over as
-   * it is when the create lands, edits made while pending included. Every other
-   * opening, and New, starts a fresh one. */
+   * it is when the create lands. Every other opening, and New, starts a fresh one. */
   draft: CodingInputDraft;
+  /** The folder a new conversation starts in; remembered across New and reloads. */
+  project: string | null;
+  /** The new conversation's first model, remembered likewise. */
+  selection: CodingConfigurationChange | null;
+  /** The just-created conversation sends the carried draft once it can. */
+  autoSend: boolean;
 }
 
 const errorText = (error: unknown) =>
@@ -46,8 +61,19 @@ const errorText = (error: unknown) =>
 /** Ephemeral presentation state backed exclusively by the native HTTP API. */
 export function createCodingSession(
   api: CodingApi,
-  options: { onOpened?: (conversation: CodingConversation) => void } = {},
+  options: {
+    onOpened?: (conversation: CodingConversation) => void;
+    memory?: Memory | null;
+  } = {},
 ) {
+  const memory = options.memory === undefined ? browserMemory() : options.memory;
+  const remember = (key: string, value: unknown) => {
+    try {
+      memory?.setItem(key, JSON.stringify(value));
+    } catch {
+      /* The choice still applies to this page if storage is unavailable. */
+    }
+  };
   let state: CodingSessionState = {
     conversations: [],
     active: null,
@@ -62,6 +88,9 @@ export function createCodingSession(
     browsing: false,
     browseError: null,
     draft: createInputDraft(),
+    project: recall(memory, PROJECT_KEY, isProject),
+    selection: recall(memory, MODEL_KEY, isSelection),
+    autoSend: false,
   };
   const listeners = new Set<() => void>();
   let historyRevision = 0;
@@ -144,6 +173,7 @@ export function createCodingSession(
       // The canonical cwd and conversation ID come from Mimir, never the browser input.
       // A deliberate same-ID reopening also needs a fresh native view after
       // disconnect/closure; identity alone is not a subscription incarnation.
+      if (kind === "create") remember(PROJECT_KEY, active.cwd);
       update({
         active,
         pending: null,
@@ -151,6 +181,8 @@ export function createCodingSession(
         openingGeneration: state.openingGeneration + 1,
         reopened: kind === "open",
         draft: fromLanding ? state.draft : createInputDraft(),
+        autoSend: fromLanding && Boolean(state.draft.getSnapshot().text.trim()),
+        ...(kind === "create" ? { project: active.cwd } : {}),
       });
       void refreshConversations();
       return true;
@@ -170,7 +202,7 @@ export function createCodingSession(
         // An abandoned open's fate is irrelevant; an unconfirmed create is not.
         update({
           openingUncertainty: { operation: kind, id, inspected: false },
-          openingError: `${errorText(error)} Opening is unconfirmed, not failed. Inspect shared native history, then deliberately reopen a saved conversation; do not create another copy. Close the folder picker to inspect or refresh history.`,
+          openingError: `${errorText(error)} The conversation may already exist; check the sidebar before starting another.`,
         });
         await refreshConversations(); // Inspection only: never replays create/open.
       }
@@ -188,14 +220,25 @@ export function createCodingSession(
       };
     },
     refreshConversations,
-    createConversation: (cwd: string) =>
-      open(() => api.createConversation(cwd), "create", null),
+    /** Create in the chosen folder with the chosen first model. */
+    startConversation() {
+      const cwd = state.project;
+      if (!cwd) return Promise.resolve(false);
+      return open(
+        () => api.createConversation(cwd, state.selection),
+        "create",
+        null,
+      );
+    },
     openConversation: (id: string) =>
       open((signal) => api.openConversation(id, signal), "open", id),
     /** A blank landing at once: a pending open is abandoned, never awaited.
      * A pending create is never withdrawn (false): it opens what it created. */
     startNew() {
       if (!supersede()) return false;
+      // New work starts where the open conversation is.
+      const project = state.active?.cwd ?? state.project;
+      if (project) remember(PROJECT_KEY, project);
       update({
         active: null,
         pending: null,
@@ -203,9 +246,31 @@ export function createCodingSession(
         reopened: false,
         openingGeneration: state.openingGeneration + 1,
         draft: createInputDraft(),
+        autoSend: false,
+        project,
       });
       return true;
     },
+    selectProject(cwd: string) {
+      remember(PROJECT_KEY, cwd);
+      update({ project: cwd, openingError: null });
+    },
+    /** A partial change keeps the rest of the remembered selection. */
+    selectModel(change: CodingConfigurationChange) {
+      const selection: CodingConfigurationChange | null =
+        change.provider && change.model
+          ? { provider: change.provider, model: change.model }
+          : state.selection;
+      if (!selection) return;
+      const reasoning =
+        change.provider && change.model
+          ? change.reasoning
+          : (change.reasoning ?? state.selection?.reasoning);
+      const next = reasoning ? { ...selection, reasoning } : selection;
+      remember(MODEL_KEY, next);
+      update({ selection: next });
+    },
+    clearAutoSend: () => update({ autoSend: false }),
     clearOpeningError: () => update({ openingError: null }),
     async browse(path: string) {
       const revision = ++browseRevision;

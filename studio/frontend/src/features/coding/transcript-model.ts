@@ -38,7 +38,14 @@ export interface ActivitySummary {
 }
 export type TranscriptBlock =
   | { kind: "user"; key: string; row: CodingRow }
-  | { kind: "prose"; key: string; row: CodingRow; turnEnd: boolean }
+  | {
+      kind: "prose";
+      key: string;
+      row: CodingRow;
+      turnEnd: boolean;
+      /** The streaming tail of the active request. */
+      live: boolean;
+    }
   | { kind: "answer"; key: string; row: CodingRow }
   | { kind: "plan"; key: string; row: CodingRow }
   | { kind: "notice"; key: string; row: CodingRow }
@@ -74,6 +81,10 @@ export function toolChild(row: CodingRow): ChildIdentity | null {
     ? { handle: run.agent_id, attempt: run.attempt }
     : null;
 }
+
+/** A delegation launch (native `agent` tool) gets its own card; result and
+ * message calls about an agent stay ordinary rows with their output. */
+export const agentLaunch = (row: CodingRow) => row.tool?.name === "agent";
 
 const semantic = (row: CodingRow) =>
   row.tool?.semantic_content === "answer_markdown" ||
@@ -140,20 +151,24 @@ export function summarizeActivity(
     buckets.set(bucket, (buckets.get(bucket) ?? 0) + 1);
   }
   if (edited.size) buckets.set("file_change", edited.size);
+  const capital = (text: string) => text[0].toUpperCase() + text.slice(1);
   const segments: string[] = [];
-  if (thoughts === 1) segments.push("thought process");
-  else if (thoughts > 1) segments.push(`thought ${thoughts} times`);
+  if (thoughts === 1) segments.push("Thought process");
+  else if (thoughts > 1) segments.push(`Thought ${thoughts} times`);
+  // "Thought 2 times · Ran 2 commands · read 1 file": the tool part starts
+  // its own sentence after the thinking.
+  const tools: string[] = [];
   for (const [bucket, verb, count] of verbs) {
     const n = buckets.get(bucket);
     if (!n) continue;
-    segments.push(
+    tools.push(
       bucket === "status" && n === 1 ? verb : `${verb} ${plural(n, count)}`,
     );
   }
-  if (failed) segments.push(`${failed} failed`);
-  const text = segments.join(" · ");
+  if (failed) tools.push(`${failed} failed`);
+  if (tools.length) segments.push(capital(tools[0]), ...tools.slice(1));
   return {
-    text: text ? text[0].toUpperCase() + text.slice(1) : "Activity",
+    text: segments.join(" · ") || "Activity",
     failed,
     running,
   };
@@ -181,7 +196,9 @@ function reusable(prior: TranscriptBlock | undefined, next: TranscriptBlock) {
   return (
     prior.row === next.row &&
     (next.kind !== "prose" ||
-      (prior.kind === "prose" && prior.turnEnd === next.turnEnd))
+      (prior.kind === "prose" &&
+        prior.turnEnd === next.turnEnd &&
+        prior.live === next.live))
   );
 }
 
@@ -193,6 +210,8 @@ export function projectTranscript(
 ): TranscriptBlock[] {
   const blocks: TranscriptBlock[] = [];
   const seenChildren = new Set<string>();
+  // An attempt shown by its launch card needs no second card for its record.
+  const launched = new Set<string>();
   const lastRow = rows.at(-1);
   const latest = window.kind === "latest";
   const tailLive =
@@ -235,19 +254,18 @@ export function projectTranscript(
     }
     if (row.tool && !semantic(row)) {
       // Every invocation stays its own item with its public result, including
-      // several calls on one delegated attempt.
+      // several calls on one delegated attempt. Delegations are their own cards.
       const child = toolChild(row);
-      add(
-        { kind: "tool", key: readingRowKey(row), row, child },
-        Boolean(child),
-      );
+      if (child && agentLaunch(row))
+        launched.add(`child:${child.handle}:${child.attempt}`);
+      add({ kind: "tool", key: readingRowKey(row), row, child }, agentLaunch(row));
       continue;
     }
     flush();
     if (row.child) {
       // Lifecycle records of one exact attempt are one slot.
       const key = `child:${row.child.handle}:${row.child.attempt}`;
-      if (seenChildren.has(key)) continue;
+      if (seenChildren.has(key) || launched.has(key)) continue;
       seenChildren.add(key);
       blocks.push({
         kind: "child",
@@ -264,6 +282,8 @@ export function projectTranscript(
     } else if (row.plan) {
       blocks.push({ kind: "plan", key: readingRowKey(row), row });
     } else if (row.kind === "user") {
+      // Native-only inputs (such as delivered agent results) have no public text.
+      if (!row.text?.trim() && !row.image_count && !row.clipped) continue;
       blocks.push({ kind: "user", key: readingRowKey(row), row });
     } else if (row.kind === "assistant") {
       if (!row.text?.trim() && !row.clipped) continue;
@@ -272,6 +292,7 @@ export function projectTranscript(
         key: readingRowKey(row),
         row,
         turnEnd: false,
+        live: tailLive && row === lastRow,
       });
     } else {
       blocks.push({ kind: "notice", key: readingRowKey(row), row });

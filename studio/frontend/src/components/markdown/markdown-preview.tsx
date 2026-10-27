@@ -2,6 +2,7 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 import { withLiteralUnknownTags } from "@/lib/markdown-data-images";
+import { rehypeParagraphBreaks } from "@/lib/markdown-paragraph-breaks";
 import { markdownPluginNeeds } from "@/lib/markdown-plugins";
 import { openLink } from "@/lib/open-link";
 import { safeMarkdownUrl } from "@/lib/safe-markdown-url";
@@ -13,6 +14,13 @@ import {
   StaticMarkdownTable,
 } from "@/components/assistant-ui/markdown-table";
 import { codePlugin } from "@/components/assistant-ui/shared-code-plugin";
+import { stabilizeStreamingMarkdown } from "@/components/assistant-ui/streaming-markdown";
+import {
+  IncrementalMarkdownCache,
+  LITERAL_LINK_REMEND,
+  hasIncompleteLinkRepair,
+  markdownRenderKey,
+} from "@/components/assistant-ui/streaming-render-schedule";
 import { math } from "@streamdown/math";
 import { mermaid } from "@/components/assistant-ui/mermaid-plugin";
 import {
@@ -30,7 +38,7 @@ import "katex/dist/katex.min.css";
 type MarkdownPlugins = NonNullable<
   ComponentProps<typeof Streamdown>["plugins"]
 >;
-const REHYPE_PLUGINS = withLiteralUnknownTags();
+const REHYPE_PLUGINS = [...withLiteralUnknownTags(), rehypeParagraphBreaks];
 const MARKDOWN_COMPONENTS = {
   a: ({ href, children, ...props }: ComponentProps<"a">) => (
     <a
@@ -53,6 +61,8 @@ const INERT_COMPONENTS = {
   ...INERT_MARKDOWN_COMPONENTS,
   table: StaticMarkdownTable,
 };
+// New words fade in; settled blocks are memoised and never redrawn.
+const STREAMING_FADE = { animation: "fadeIn", duration: 160, sep: "word" } as const;
 
 type MarkdownPreviewProps = {
   markdown: string;
@@ -61,6 +71,8 @@ type MarkdownPreviewProps = {
   inert?: boolean;
   /** Parse on the next idle callback so the UI stays interactive for large documents. */
   defer?: boolean;
+  /** Live text: re-parse only the growing tail and repair unfinished syntax. */
+  streaming?: boolean;
 };
 
 function MarkdownPreviewImpl({
@@ -69,7 +81,15 @@ function MarkdownPreviewImpl({
   plain = false,
   inert = false,
   defer = false,
+  streaming = false,
 }: MarkdownPreviewProps): ReactElement {
+  // One incremental parse per stream; settled text uses the static renderer.
+  const cache = useMemo(
+    () => (streaming ? new IncrementalMarkdownCache() : null),
+    [streaming],
+  );
+  const live = cache ? stabilizeStreamingMarkdown(markdown, true) : null;
+  const incremental = live === null ? null : cache?.update(live);
   // Skip plugins with nothing to do or too costly on very long documents.
   const plugins = useMemo<MarkdownPlugins>(() => {
     const needs = markdownPluginNeeds(markdown);
@@ -102,7 +122,23 @@ function MarkdownPreviewImpl({
     >
       {ready ? (
         <Streamdown
-          mode="static"
+          key={
+            live === null
+              ? "settled"
+              : `${cache?.renderGeneration}:${markdownRenderKey(live)}`
+          }
+          {...(live === null
+            ? { mode: "static" as const }
+            : {
+                mode: "streaming" as const,
+                parseIncompleteMarkdown: !incremental,
+                remend: hasIncompleteLinkRepair(live)
+                  ? LITERAL_LINK_REMEND
+                  : undefined,
+                parseMarkdownIntoBlocksFn: incremental?.parseMarkdownIntoBlocks,
+                isAnimating: true,
+                animated: STREAMING_FADE,
+              })}
           plugins={plugins}
           rehypePlugins={REHYPE_PLUGINS}
           components={inert || plain ? INERT_COMPONENTS : MARKDOWN_COMPONENTS}
@@ -111,7 +147,9 @@ function MarkdownPreviewImpl({
           controls={false}
           className={markdownClassName}
         >
-          {markdown.trim() ? markdown : "_Empty note_"}
+          {incremental?.markdown ??
+            live ??
+            (markdown.trim() ? markdown : "_Empty note_")}
         </Streamdown>
       ) : (
         <div className={markdownClassName} aria-busy="true" />

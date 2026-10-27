@@ -8,28 +8,21 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { useNativeFileDrop } from "@/features/native-intents";
 import { ComposerPrimitive, useComposerRuntime } from "@assistant-ui/react";
+import { flushResourcesSync } from "@assistant-ui/tap";
 import {
   ArrowUp,
-  AtSign,
   Bot,
+  Command,
   FileText,
   Folder,
   LoaderCircle,
   Paperclip,
-  Plus,
   Sparkles,
   Square,
-  Target,
   X,
 } from "lucide-react";
-import { flushResourcesSync } from "@assistant-ui/tap";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import {
@@ -37,6 +30,7 @@ import {
   discoverCodingSkills,
   discoverCodingSubagents,
 } from "./api";
+import { LOCAL_COMMANDS, parseCodingCommand } from "./command-types";
 import {
   type CodingFile,
   type CodingInputDraft,
@@ -47,14 +41,20 @@ import {
   IMAGE_LIMITS,
   IMAGE_TYPES,
 } from "./input";
-import { MentionList, mentionOptionId } from "./mention-list";
+import { type CompletionItem, CompletionList, mentionOptionId } from "./mention-list";
 import {
+  type CommandOption,
   type MentionOption,
+  commandItems,
+  commandQuery,
   mentionGroups,
+  mentionItems,
   mentionQuery,
+  mentionStatus,
   stepMention,
 } from "./mention-menu";
 import { pendingImageCount } from "./pending-submission";
+import { runLocalCommand } from "./run-runtime";
 import {
   type CodingRun,
   type CodingRunState,
@@ -69,13 +69,52 @@ const megabytes = (bytes: number) =>
 interface Catalog {
   skills: CodingSkill[];
   subagents: CodingSubagent[];
-  files: CodingFile[];
   skillStatus: string | null;
   subagentStatus: string | null;
-  fileStatus: string | null;
 }
 const failure = (reason: unknown, what: string) =>
   `${reason instanceof Error ? reason.message : `${what} discovery failed.`} Retry.`;
+type Menu = {
+  kind: "mention" | "command";
+  start: number;
+  end: number;
+  query: string;
+};
+const parent = (path: string) => {
+  const cut = path.replace(/\/+$/, "").lastIndexOf("/");
+  return cut > 0 ? path.slice(0, cut) : "";
+};
+const leaf = (path: string) =>
+  path.replace(/\/+$/, "").split("/").pop() || path;
+
+function mentionItem(option: MentionOption): CompletionItem {
+  const { choice } = option;
+  if (choice.kind === "file")
+    return {
+      id: option.id,
+      kind: "file",
+      icon: choice.file.kind === "directory" ? Folder : FileText,
+      label: leaf(choice.file.path),
+      detail: parent(choice.file.path),
+      disabled: option.disabled,
+    };
+  return {
+    id: option.id,
+    kind: choice.kind,
+    icon: choice.kind === "skill" ? Sparkles : Bot,
+    label: option.label,
+    detail: option.description,
+    disabled: option.disabled,
+  };
+}
+const commandItem = (option: CommandOption): CompletionItem => ({
+  id: option.id,
+  kind: "command",
+  icon: Command,
+  label: option.label,
+  detail: option.description,
+  disabled: option.disabled,
+});
 
 export function CodingComposer({
   conversationId,
@@ -86,9 +125,11 @@ export function CodingComposer({
   sendBlocked,
   inputRef,
   modelPicker,
-  modeControl,
-  onGoal,
-  projectChooser,
+  onStart,
+  starting = false,
+  autoSend = false,
+  onAutoSent,
+  footer,
 }: {
   conversationId: string | null;
   run: CodingRun | null;
@@ -99,10 +140,13 @@ export function CodingComposer({
   sendBlocked: string | null;
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
   modelPicker?: React.ReactNode;
-  modeControl?: React.ReactNode;
-  onGoal?: () => void;
-  /** Landing: project selection replaces the conversation-only controls. */
-  projectChooser?: React.ReactNode;
+  /** New conversation: Send creates it in the chosen folder first. */
+  onStart?: () => void;
+  starting?: boolean;
+  /** Send the carried new-conversation draft once this owner accepts it. */
+  autoSend?: boolean;
+  onAutoSent?: () => void;
+  footer?: React.ReactNode;
 }) {
   const composer = useComposerRuntime();
   const input = inputRef;
@@ -111,25 +155,24 @@ export function CodingComposer({
   const [catalog, setCatalog] = useState<Catalog>({
     skills: [],
     subagents: [],
-    files: [],
-    skillStatus: "Select a project to discover skills.",
-    subagentStatus: "Select a project to discover subagents.",
-    fileStatus: null,
+    skillStatus: null,
+    subagentStatus: null,
   });
-  const [refresh, setRefresh] = useState(0);
-  const [menu, setMenu] = useState<{
-    start: number;
-    end: number;
+  const [found, setFound] = useState<{
     query: string;
+    files: CodingFile[];
+    error: string | null;
   } | null>(null);
+  const [refresh, setRefresh] = useState(0);
+  const [menu, setMenu] = useState<Menu | null>(null);
   // Escape/selection close synchronously; a late selection event must not reopen.
   const menuOpen = useRef(false);
   const dismissed = useRef<number | null>(null);
   const [active, setActive] = useState<number | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [preview, setPreview] = useState<DraftImage | null>(null);
-  const [dragging, setDragging] = useState(false);
   const connected = state?.connection === "connected";
+  const landing = Boolean(onStart);
   const composing = useRef(false);
   // The shipped primitive suppresses composer updates during IME input. Keep
   // its controlled DOM value locally until compositionend commits it natively.
@@ -166,14 +209,26 @@ export function CodingComposer({
     const { text } = draft.getSnapshot();
     if (text && !composer.getState().text) composer.setText(text);
   }, [composer, draft]);
+  // The first message typed before the conversation existed is sent exactly
+  // once, through the ordinary Send path, when this owner can accept it.
+  const autoSent = useRef(false);
+  useEffect(() => {
+    if (!autoSend || autoSent.current || !connected || sendBlocked) return;
+    if (model.reading.length) return;
+    autoSent.current = true;
+    onAutoSent?.();
+    if (composer.getState().text.trim()) composer.send();
+  }, [
+    autoSend,
+    connected,
+    sendBlocked,
+    model.reading.length,
+    composer,
+    onAutoSent,
+  ]);
   useEffect(() => {
     if (!conversationId || !connected) return;
     const abort = new AbortController();
-    setCatalog((prior) => ({
-      ...prior,
-      skillStatus: "Discovering effective project skills…",
-      subagentStatus: "Discovering effective subagents…",
-    }));
     void Promise.allSettled([
       discoverCodingSkills(conversationId, abort.signal),
       discoverCodingSubagents(conversationId, abort.signal),
@@ -195,44 +250,73 @@ export function CodingComposer({
     return () => abort.abort();
   }, [conversationId, connected, refresh]);
   // A quoted reference is being typed as `@"path…`; search the path itself.
-  const fileQuery = menu ? menu.query.replace(/^"/, "") : null;
+  const fileQuery =
+    menu?.kind === "mention" ? menu.query.replace(/^"/, "") : null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh is the Retry trigger.
   useEffect(() => {
     if (!conversationId || !connected || fileQuery === null) return;
     const abort = new AbortController();
-    setCatalog((prior) => ({
-      ...prior,
-      files: [],
-      fileStatus: "Searching files…",
-    }));
     const timer = setTimeout(() => {
       void discoverCodingFiles(conversationId, fileQuery, abort.signal)
         .then((result) => {
           if (abort.signal.aborted) return;
-          setCatalog((prior) => ({
-            ...prior,
-            files: result.files,
-            fileStatus: result.files.length ? null : "No matching files.",
-          }));
+          setFound({ query: fileQuery, files: result.files, error: null });
         })
         .catch((reason: unknown) => {
           if (abort.signal.aborted) return;
-          setCatalog((prior) => ({
-            ...prior,
+          setFound({
+            query: fileQuery,
             files: [],
-            fileStatus: failure(reason, "File"),
-          }));
+            error: failure(reason, "File"),
+          });
         });
-    }, 120);
+    }, 80);
     return () => {
       clearTimeout(timer);
       abort.abort();
     };
   }, [conversationId, connected, fileQuery, refresh]);
   const mode = state?.native?.configuration.mode;
-  const groups = menu ? mentionGroups(catalog, menu.query, mode) : [];
-  const options = groups.flatMap((group) => group.options);
-  const current = active !== null ? options[active] : undefined;
+  const busy = Boolean(state?.native?.active_request || state?.stopping);
+  const commands = [
+    ...(state?.commands ?? []),
+    ...LOCAL_COMMANDS.filter(
+      (local) =>
+        !state?.commands?.some(
+          (native) =>
+            native.name === local.name || native.aliases.includes(local.name),
+        ),
+    ),
+  ];
+  // Earlier results stay visible while the next query is searched.
+  const fileCatalog = {
+    ...catalog,
+    files: found?.files ?? [],
+    fileStatus:
+      found?.query === fileQuery && found
+        ? found.error
+        : fileQuery === null
+          ? null
+          : "Searching…",
+  };
+  const groups =
+    menu?.kind === "mention"
+      ? mentionGroups(fileCatalog, menu.query, mode)
+      : [];
+  const mentions = menu?.kind === "mention" ? mentionItems(groups, menu.query) : [];
+  const commandOptions =
+    menu?.kind === "command" ? commandItems(commands, menu.query, busy) : [];
+  const items: CompletionItem[] =
+    menu?.kind === "mention"
+      ? mentions.map(mentionItem)
+      : commandOptions.map(commandItem);
+  const status =
+    menu?.kind === "mention"
+      ? mentionStatus(groups, menu.query)
+      : state?.discoveringCommands && !state.commands
+        ? "Loading commands…"
+        : (state?.commandError ?? "No matching commands");
+  const current = active !== null ? items[active] : undefined;
   const close = (dismiss = false) => {
     menuOpen.current = false;
     dismissed.current = dismiss ? (menu?.start ?? null) : null;
@@ -252,7 +336,7 @@ export function CodingComposer({
     node.focus();
     node.setSelectionRange(cursor, cursor);
   };
-  const select = (option: MentionOption) => {
+  const selectMention = (option: MentionOption) => {
     const node = input.current;
     const text = node?.value ?? composer.getState().text;
     draft.syncText(text);
@@ -268,12 +352,38 @@ export function CodingComposer({
       setErrors([reason instanceof Error ? reason.message : String(reason)]);
     }
   };
-  const openAt = (query: { start: number; end: number; query: string }) => {
+  const selectCommand = (option: CommandOption) => {
+    const node = input.current;
+    const text = node?.value ?? composer.getState().text;
+    const live = node ? commandQuery(text, node.selectionStart) : null;
+    const start = live?.start ?? menu?.start ?? 0;
+    const end = live?.end ?? menu?.end ?? text.length;
+    const token = `/${option.name} `;
+    const next = `${text.slice(0, start)}${token}${text.slice(end).replace(/^\s+/, "")}`;
+    draft.syncText(text);
+    draft.syncText(next, { start, end });
+    close(true);
+    commitText(next, start + token.length);
+  };
+  const select = (index: number) => {
+    if (menu?.kind === "mention" && mentions[index])
+      selectMention(mentions[index]);
+    else if (menu?.kind === "command" && commandOptions[index])
+      selectCommand(commandOptions[index]);
+  };
+  const openAt = (next: Menu) => {
     menuOpen.current = true;
-    setMenu(query);
+    setMenu(next);
+    if (next.kind === "command" && run && !state?.commands)
+      void run.discoverCommands();
     setActive(
       stepMention(
-        mentionGroups(catalog, query.query, mode).flatMap((g) => g.options),
+        next.kind === "mention"
+          ? mentionItems(
+              mentionGroups(fileCatalog, next.query, mode),
+              next.query,
+            )
+          : commandItems(commands, next.query, busy),
         null,
         1,
       ),
@@ -305,37 +415,55 @@ export function CodingComposer({
         draft.syncText(text);
       }
     } else if (node.value !== draft.getSnapshot().text) return;
-    const query = mentionQuery(node.value, node.selectionStart);
+    // Mentions and commands need a live conversation; a new one has neither.
+    const mention = conversationId
+      ? mentionQuery(node.value, node.selectionStart)
+      : null;
+    const command = run ? commandQuery(node.value, node.selectionStart) : null;
+    const query: Menu | null = mention
+      ? { kind: "mention", ...mention }
+      : command
+        ? { kind: "command", ...command }
+        : null;
     if (!query) {
       dismissed.current = null;
       if (menuOpen.current) close();
     } else if (dismissed.current !== query.start) {
       if (
         !menuOpen.current ||
-        menu?.query !== query.query ||
+        menu?.kind !== query.kind ||
+        menu.query !== query.query ||
         menu.start !== query.start
       )
         openAt(query);
     }
   };
-  const startMention = () => {
-    const node = input.current;
-    const text = composer.getState().text;
-    const at = node?.selectionStart ?? text.length;
-    const pad = at > 0 && !/\s/.test(text[at - 1]) ? " " : "";
-    const next = `${text.slice(0, at)}${pad}@${text.slice(at)}`;
-    draft.syncText(text);
-    draft.syncText(next, { start: at, end: at });
-    const start = at + pad.length;
-    commitText(next, start + 1);
-    dismissed.current = null;
-    openAt({ start, end: start + 1, query: "" });
+  // The shipped composer will not send while a request runs, but a command can:
+  // native admission decides whether it runs now (an idle-only one is refused).
+  const commandWhileBusy = () => {
+    const text = input.current?.value ?? composer.getState().text;
+    if (!run || !busy || !parseCodingCommand(text)) return false;
+    commitText("", 0);
+    draft.syncText("");
+    void runLocalCommand(run, text)
+      .then((local) => (local ? undefined : run.send(text)))
+      .catch((reason: unknown) => run.retainUnsent({ text }, reason));
+    return true;
   };
   const attach = (selected: File[]) => {
     setErrors([]);
     void draft.attach(selected);
   };
-  const busy = Boolean(state?.native?.active_request || state?.stopping);
+  // Web drops and the desktop app's native drops land in the same draft.
+  const {
+    ref: dropRef,
+    dragging,
+    dragHandlers,
+  } = useNativeFileDrop({
+    onFiles: attach,
+    accept: ".png,.jpg,.jpeg,.webp,.gif",
+    disabled: !canEdit,
+  });
   const blocked =
     sendBlocked ??
     (model.reading.length
@@ -343,41 +471,37 @@ export function CodingComposer({
       : null);
   const recovery = state?.uncertainSubmission ?? state?.rejectedSubmission;
   const rejected = state?.rejectedSubmission;
+  const expanded =
+    landing || model.text.includes("\n") || model.text.length > 72;
   return (
     <ComposerPrimitive.Root
       className="aui-composer-root relative w-full min-w-0"
       aria-label="Coding composer"
       onSubmit={(event) => {
-        if (blocked) event.preventDefault();
+        if (blocked || landing) event.preventDefault();
       }}
     >
       {menu && (
-        <MentionList
+        <CompletionList
           id={LIST_ID}
-          groups={groups}
-          options={options}
+          label={menu.kind === "mention" ? "Mentions" : "Commands"}
+          items={items}
           active={active}
-          query={menu.query}
+          status={status}
           onSelect={select}
           onActive={setActive}
-          onRetry={() => setRefresh((value) => value + 1)}
+          onRetry={() =>
+            menu.kind === "mention"
+              ? setRefresh((value) => value + 1)
+              : void run?.discoverCommands()
+          }
         />
       )}
       <div
+        ref={dropRef}
         className={`unsloth-composer-surface min-w-0 ${dragging ? "ring-2 ring-primary/60" : ""}`}
         data-testid="coding-composer-surface"
-        onDragOver={(event) => {
-          if (!canEdit || !event.dataTransfer.types.includes("Files")) return;
-          event.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(event) => {
-          setDragging(false);
-          if (!canEdit || !event.dataTransfer.files.length) return;
-          event.preventDefault();
-          attach(Array.from(event.dataTransfer.files));
-        }}
+        {...dragHandlers}
       >
         {recovery && (
           <div
@@ -386,17 +510,21 @@ export function CodingComposer({
           >
             <p className="font-medium">
               {state?.uncertainSubmission
-                ? "Delivery unconfirmed · these inputs are not confirmed accepted"
-                : "Not sent · input retained, not accepted"}
+                ? "Delivery unconfirmed"
+                : "Not sent"}
             </p>
             <p className="max-h-24 overflow-auto whitespace-pre-wrap break-words">
               {recovery.text}
             </p>
-            <p className="text-muted-foreground">
-              {recovery.skill_mentions?.length ?? 0} skill ·{" "}
-              {recovery.subagent_mentions?.length ?? 0} subagent mentions ·{" "}
-              {pendingImageCount(recovery)} images
-            </p>
+            {(recovery.skill_mentions?.length ||
+              recovery.subagent_mentions?.length ||
+              pendingImageCount(recovery) > 0) && (
+              <p className="text-muted-foreground">
+                {recovery.skill_mentions?.length ?? 0} skills ·{" "}
+                {recovery.subagent_mentions?.length ?? 0} agents ·{" "}
+                {pendingImageCount(recovery)} images
+              </p>
+            )}
             {rejected && !state?.uncertainSubmission && (
               <Button
                 type="button"
@@ -419,22 +547,22 @@ export function CodingComposer({
           model.mentions.length > 0) && (
           <div className="mx-1 mb-1 flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
             {model.images.length > 0 && (
-              <ul aria-label="Attached coding images" className="contents">
+              <ul aria-label="Attached images" className="contents">
                 {model.images.map((image) => (
                   <li
                     key={image.id}
-                    className="flex min-w-0 max-w-full items-center gap-1 rounded-2xl bg-muted/70 p-1 pr-1.5 dark:bg-accent"
+                    className="flex min-w-0 max-w-full items-center gap-1 rounded-xl bg-muted/70 p-1 pr-1.5 dark:bg-accent"
                   >
                     <button
                       type="button"
-                      className="flex min-w-0 items-center gap-2 rounded-xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="flex min-w-0 items-center gap-2 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       aria-label={`Inspect ${image.filename}`}
                       onClick={() => setPreview(image)}
                     >
                       <img
                         src={`data:${image.mime_type};base64,${image.data}`}
                         alt=""
-                        className="size-9 shrink-0 rounded-xl object-cover"
+                        className="size-8 shrink-0 rounded-lg object-cover"
                       />
                       <span className="min-w-0">
                         <span className="block max-w-36 truncate text-xs">
@@ -445,11 +573,9 @@ export function CodingComposer({
                         </span>
                       </span>
                     </button>
-                    <Button
+                    <button
                       type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="rounded-full"
+                      className="shrink-0 rounded-full p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
                       aria-label={`Remove ${image.filename}`}
                       disabled={!canEdit}
                       onClick={() => {
@@ -458,7 +584,7 @@ export function CodingComposer({
                       }}
                     >
                       <X className="size-3" aria-hidden="true" />
-                    </Button>
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -466,13 +592,13 @@ export function CodingComposer({
             {model.reading.map((item) => (
               <output
                 key={item.id}
-                className="flex items-center gap-2 rounded-2xl bg-muted/70 px-2.5 py-2 text-xs dark:bg-accent"
+                className="flex items-center gap-2 rounded-xl bg-muted/70 px-2.5 py-2 text-xs dark:bg-accent"
               >
                 <LoaderCircle
                   className="size-3.5 animate-spin"
                   aria-hidden="true"
                 />
-                Reading {item.filename} · {megabytes(item.bytes)}
+                Reading {item.filename}
               </output>
             ))}
             {model.mentions.length > 0 && (
@@ -504,7 +630,7 @@ export function CodingComposer({
         {(errors.length > 0 || model.attachmentErrors.length > 0) && (
           <div
             role="alert"
-            className="mx-1 mb-1 flex items-start gap-2 rounded-2xl bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            className="mx-1 mb-1 flex items-start gap-2 rounded-xl bg-destructive/10 px-3 py-2 text-xs text-destructive"
           >
             <ul className="min-w-0 flex-1 space-y-0.5 break-words">
               {[...errors, ...model.attachmentErrors].map((error) => (
@@ -524,7 +650,10 @@ export function CodingComposer({
             </button>
           </div>
         )}
-        <div className="unsloth-composer-line" data-expanded="true">
+        <div
+          className="unsloth-composer-line"
+          data-expanded={expanded ? "true" : "false"}
+        >
           <ComposerPrimitive.Input
             ref={input}
             className="aui-composer-input unsloth-composer-input disabled:cursor-not-allowed"
@@ -536,18 +665,12 @@ export function CodingComposer({
             aria-controls={menu ? LIST_ID : undefined}
             aria-expanded={menu ? true : undefined}
             aria-activedescendant={
-              menu && current
-                ? mentionOptionId(LIST_ID, active ?? 0)
-                : undefined
+              menu && current ? mentionOptionId(LIST_ID, active ?? 0) : undefined
             }
-            placeholder={
-              conversationId
-                ? "Ask Mimir to build, fix or explain…"
-                : "Choose a project folder to start"
-            }
-            submitMode="enter"
+            placeholder="Do anything…"
+            submitMode={landing ? "none" : "enter"}
             disabled={!canEdit}
-            minRows={1}
+            minRows={landing ? 2 : 1}
             maxRows={10}
             addAttachmentOnPaste={false}
             cancelOnEscape={false}
@@ -584,21 +707,27 @@ export function CodingComposer({
                   event.preventDefault();
                   setActive(
                     stepMention(
-                      options,
+                      items,
                       active,
                       event.key === "ArrowDown" ? 1 : -1,
                     ),
                   );
                   return;
                 }
+                // A command typed out in full runs on Enter; Tab completes.
+                const typed =
+                  menu?.kind === "command" &&
+                  current?.label === `/${menu.query}` &&
+                  event.key === "Enter";
                 if (
                   ((event.key === "Enter" && !event.shiftKey) ||
                     event.key === "Tab") &&
                   current &&
-                  !current.disabled
+                  !current.disabled &&
+                  !typed
                 ) {
                   event.preventDefault();
-                  select(current);
+                  select(active ?? 0);
                   return;
                 }
                 if (event.key === "Escape") {
@@ -607,8 +736,14 @@ export function CodingComposer({
                   return;
                 }
               }
-              if (event.key === "Enter" && !event.shiftKey && blocked)
-                event.preventDefault();
+              if (event.key === "Enter" && !event.shiftKey) {
+                if (blocked) event.preventDefault();
+                else if (commandWhileBusy()) event.preventDefault();
+                else if (landing) {
+                  event.preventDefault();
+                  if (!starting && model.text.trim()) onStart?.();
+                }
+              }
             }}
             onPaste={(event) => {
               const selected = Array.from(event.clipboardData.files);
@@ -619,60 +754,16 @@ export function CodingComposer({
             }}
           />
           <div className="unsloth-composer-left">
-            {projectChooser}
-            {!projectChooser && (
-              <DropdownMenu modal={false}>
-                <DropdownMenuTrigger asChild={true}>
-                  <button
-                    type="button"
-                    aria-label="Add images, mentions or a goal"
-                    className="unsloth-composer-plus"
-                    disabled={!canEdit}
-                  >
-                    <Plus
-                      className="size-[calc(22px*var(--ui-space-scale,1))] stroke-[1.75px]"
-                      aria-hidden="true"
-                    />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  side="top"
-                  align="start"
-                  className="unsloth-plus-menu w-[calc(272px*var(--ui-space-scale,1))]"
-                >
-                  <DropdownMenuItem onSelect={() => files.current?.click()}>
-                    <Paperclip aria-hidden="true" />
-                    <span className="min-w-0">
-                      <span className="block">Images</span>
-                      <span className="block text-xs text-muted-foreground">
-                        {IMAGE_LIMITS}
-                      </span>
-                    </span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => startMention()}>
-                    <AtSign aria-hidden="true" />
-                    <span className="min-w-0">
-                      <span className="block">Skill or subagent</span>
-                      <span className="block text-xs text-muted-foreground">
-                        Mention a native identity
-                      </span>
-                    </span>
-                  </DropdownMenuItem>
-                  {onGoal && (
-                    <DropdownMenuItem onSelect={() => onGoal()}>
-                      <Target aria-hidden="true" />
-                      <span className="min-w-0">
-                        <span className="block">Goal</span>
-                        <span className="block text-xs text-muted-foreground">
-                          Set a goal to keep pursuing
-                        </span>
-                      </span>
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-            {!projectChooser && modeControl}
+            <button
+              type="button"
+              aria-label="Attach images"
+              title={IMAGE_LIMITS}
+              className="flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              disabled={!canEdit}
+              onClick={() => files.current?.click()}
+            >
+              <Paperclip className="size-4.5" aria-hidden="true" />
+            </button>
           </div>
           <div className="aui-composer-action-wrapper flex min-w-0 shrink items-center gap-1">
             {modelPicker}
@@ -687,13 +778,9 @@ export function CodingComposer({
                       ? "Retry Stop for same request"
                       : "Stop"
                 }
-                title={
-                  state?.stopping
-                    ? "Waiting for native terminal cleanup"
-                    : "Cancel this exact native request"
-                }
+                title={state?.stopping ? "Stopping" : "Stop"}
                 disabled={!codingStopTarget(state)}
-                className="aui-composer-cancel ml-1 size-9 shrink-0 rounded-full"
+                className="aui-composer-cancel ml-1 size-8 shrink-0 rounded-full"
                 onClick={() => void run?.stop()}
               >
                 {state?.stopping ? (
@@ -702,7 +789,30 @@ export function CodingComposer({
                     aria-hidden="true"
                   />
                 ) : (
-                  <Square className="size-3 fill-current" aria-hidden="true" />
+                  <Square
+                    className="size-2.5 fill-current"
+                    aria-hidden="true"
+                  />
+                )}
+              </Button>
+            ) : landing ? (
+              <Button
+                type="button"
+                size="icon"
+                aria-label="Send"
+                title={blocked ?? "Send (Enter)"}
+                disabled={Boolean(blocked) || starting || !model.text.trim()}
+                aria-describedby="coding-send-explanation"
+                className="aui-composer-send ml-1 size-8 shrink-0 rounded-full"
+                onClick={() => onStart?.()}
+              >
+                {starting ? (
+                  <LoaderCircle
+                    className="size-4 animate-spin"
+                    aria-label="Starting conversation"
+                  />
+                ) : (
+                  <ArrowUp className="size-4" aria-hidden="true" />
                 )}
               </Button>
             ) : (
@@ -715,9 +825,9 @@ export function CodingComposer({
                   // Omit otherwise: assistant-ui's own empty/running gate applies.
                   {...(blocked ? { disabled: true } : {})}
                   aria-describedby="coding-send-explanation"
-                  className="aui-composer-send ml-1 size-9 shrink-0 rounded-full"
+                  className="aui-composer-send ml-1 size-8 shrink-0 rounded-full"
                 >
-                  <ArrowUp className="size-5" aria-hidden="true" />
+                  <ArrowUp className="size-4" aria-hidden="true" />
                 </Button>
               </ComposerPrimitive.Send>
             )}
@@ -730,7 +840,7 @@ export function CodingComposer({
           multiple={true}
           className="sr-only"
           tabIndex={-1}
-          aria-label="Coding image files"
+          aria-label="Image files"
           disabled={!canEdit}
           onChange={(event) => {
             const selected = Array.from(event.currentTarget.files ?? []);
@@ -739,16 +849,16 @@ export function CodingComposer({
           }}
         />
         <p id="coding-image-support" className="sr-only">
-          {IMAGE_LIMITS}. The native provider must support images. Include a
-          text prompt.
+          {IMAGE_LIMITS}. The model must support images.
         </p>
         <p id="coding-send-explanation" className="sr-only">
           {blocked ??
             (conversationId
-              ? "Mimir owns execution, tools and saved history. Stop cancels the running native request; leaving this view does not stop work."
-              : "Choose a host project folder before sending a coding prompt.")}
+              ? "Enter sends. Type / for commands and @ to mention files, skills or agents. Leaving this view does not stop work."
+              : "Enter starts a new conversation in the chosen folder.")}
         </p>
       </div>
+      {footer}
       <Dialog
         open={Boolean(preview)}
         onOpenChange={(open) => {
@@ -762,9 +872,7 @@ export function CodingComposer({
           <DialogTitle className="break-all pr-5">
             {preview?.filename}
           </DialogTitle>
-          <DialogDescription>
-            Attachment preview · not confirmation of accepted visual context.
-          </DialogDescription>
+          <DialogDescription>Attachment preview</DialogDescription>
           {preview && (
             <img
               src={`data:${preview.mime_type};base64,${preview.data}`}
@@ -793,22 +901,22 @@ function MentionChip({
     mention.kind === "skill"
       ? [Sparkles, "Skill"]
       : mention.kind === "subagent"
-        ? [Bot, "Subagent"]
+        ? [Bot, "Agent"]
         : mention.fileKind === "directory"
           ? [Folder, "Folder"]
           : [FileText, "File"];
   return (
     <li
-      className={`flex min-w-0 max-w-full items-center gap-1.5 rounded-full py-1 pl-2.5 pr-1 text-xs ${ineligible ? "bg-destructive/10 text-destructive" : "bg-muted/70 dark:bg-accent"}`}
-      title={ineligible ? "This subagent is not available in Plan mode" : label}
+      className={`flex min-w-0 max-w-full items-center gap-1.5 rounded-lg py-1 pl-2 pr-1 text-xs ${ineligible ? "bg-destructive/10 text-destructive" : "bg-muted/70 dark:bg-accent"}`}
+      title={ineligible ? "Not available in plan mode" : label}
       data-mention-kind={mention.kind}
     >
       <Icon className="size-3.5 shrink-0" aria-hidden="true" />
       <span className="min-w-0 truncate">{mention.token}</span>
-      {ineligible && <span className="shrink-0">· not in Plan</span>}
+      {ineligible && <span className="shrink-0">· not in plan mode</span>}
       <button
         type="button"
-        className="shrink-0 rounded-full p-0.5 hover:bg-foreground/10 disabled:opacity-50"
+        className="shrink-0 rounded-full p-0.5 hover:bg-accent disabled:opacity-50"
         aria-label={`Remove mention ${mention.token}`}
         disabled={disabled}
         onClick={onRemove}

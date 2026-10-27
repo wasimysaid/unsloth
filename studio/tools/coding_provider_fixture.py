@@ -157,7 +157,7 @@ def picker_providers(base_url: str) -> dict:
 
 
 class ProviderFixture:
-    def __init__(self):
+    def __init__(self, *, max_request_bytes: int = 4 * 1024 * 1024):
         self.requests = queue.Queue()
         self.deferred = deque()
         self.pending = []
@@ -172,7 +172,7 @@ class ProviderFixture:
                     self.send_error(404)
                     return
                 size = int(self.headers.get("Content-Length", "0"))
-                if not 0 < size <= 4 * 1024 * 1024:
+                if not 0 < size <= max_request_bytes:
                     self.send_error(413)
                     return
                 request = ProviderRequest(json.loads(self.rfile.read(size)))

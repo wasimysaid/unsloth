@@ -2,21 +2,19 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 import { Button } from "@/components/ui/button";
-import { LoaderCircle } from "lucide-react";
 import type { NativePlan, PlanDecision } from "./plan-types";
 import {
   type CodingRun,
   type CodingRunState,
-  codingModeControlReason,
   codingPlanDecisionReason,
 } from "./run-session";
 
 const planLabels: Record<NativePlan["status"], string> = {
-  review_pending: "Awaiting your decision",
-  saved_stopped: "Saved · implementation not started",
-  accepted: "Accepted · implementation admitted",
+  review_pending: "Ready for review",
+  saved_stopped: "Saved",
+  accepted: "Accepted",
   implementing: "Implementing",
-  completed: "Implementation completed",
+  completed: "Implemented",
   abandoned: "Abandoned",
 };
 const choices: {
@@ -27,19 +25,17 @@ const choices: {
   {
     decision: "implement",
     label: "Implement",
-    description: "Continue in this conversation and switch to Build.",
+    description: "Build it in this conversation.",
   },
   {
     decision: "implement_fresh",
     label: "Implement with fresh context",
-    description:
-      "Keep saved history, clear model context, and build from the plan alone.",
+    description: "Build it from the plan alone, with a cleared context.",
   },
   {
     decision: "save_and_stop",
     label: "Save and stop",
-    description:
-      "Save the plan and return to Build without starting implementation.",
+    description: "Keep the plan without building it yet.",
   },
 ];
 
@@ -55,22 +51,18 @@ export function PlanCard({
   state?: CodingRunState;
   run?: CodingRun | null;
 }) {
-  const reason = historical
-    ? "Historical record · actions target only the current native plan."
-    : codingPlanDecisionReason(state ?? null, plan);
+  const reason = historical ? null : codingPlanDecisionReason(state ?? null, plan);
   const explanation = historical ? undefined : "coding-plan-action-explanation";
   return (
     <details
-      className="min-w-0 shrink-0 rounded-2xl border border-border/60 bg-background text-sm dark:bg-card"
+      className="min-w-0 shrink-0 rounded-xl border border-border/60 bg-background text-sm dark:bg-card"
       data-testid={
         historical ? "coding-historical-plan" : "coding-current-plan"
       }
       data-plan-id={plan.id}
     >
-      <summary className="cursor-pointer break-words rounded-2xl px-3.5 py-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        <span className="font-medium">
-          {historical ? "Plan" : "Current plan"}: {plan.name}
-        </span>
+      <summary className="cursor-pointer break-words rounded-xl px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <span className="font-medium">Plan: {plan.name}</span>
         <span className="ml-2 text-xs text-muted-foreground">
           {planLabels[plan.status] ?? plan.status}
         </span>
@@ -88,11 +80,6 @@ export function PlanCard({
             {plan.path}
           </p>
         )}
-        {historical && (
-          <p className="text-xs text-muted-foreground">
-            Saved native lifecycle record · not current workspace contents.
-          </p>
-        )}
         <pre
           className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed"
           data-testid="coding-plan-content"
@@ -100,26 +87,23 @@ export function PlanCard({
           {plan.markdown}
         </pre>
         {historical && !plan.markdown && (
-          <p className="text-xs font-medium">
-            The plan body was not recorded in this older historical entry. It
-            has not been reconstructed from today's file.
+          <p className="text-xs text-muted-foreground">
+            This older entry didn't record the plan text.
           </p>
         )}
         {plan.clipped && (
-          <p className="text-xs font-medium">
-            Plan content is clipped to the presentation bound; the saved native
-            artifact retains the complete content.
-          </p>
+          <p className="text-xs text-muted-foreground">Plan clipped</p>
         )}
         {!historical && (
           <>
-            <output
-              id={explanation}
-              className="block text-xs text-muted-foreground"
-            >
-              {reason ??
-                "Choose explicitly. Changing mode does not accept or implement this plan."}
-            </output>
+            {reason && (
+              <output
+                id={explanation}
+                className="block text-xs text-muted-foreground"
+              >
+                {reason}
+              </output>
+            )}
             <div className="flex flex-wrap items-start gap-2">
               {choices.map(({ decision, label, description }) => (
                 <div
@@ -138,7 +122,7 @@ export function PlanCard({
                       codingPlanDecisionReason(state ?? null, plan, decision) ??
                       description
                     }
-                    aria-describedby={explanation}
+                    aria-describedby={reason ? explanation : undefined}
                     onClick={() => void run?.decidePlan(plan, decision)}
                   >
                     {label}
@@ -159,86 +143,5 @@ export function PlanCard({
         )}
       </div>
     </details>
-  );
-}
-
-/** Native mode only: never flips before ordered native state reports it. A
- * pending request is marked on its segment; nothing else is dimmed or disabled,
- * so keyboard focus stays put while native state settles. */
-export function CodingModeControl({
-  state,
-  run,
-}: { state: CodingRunState | null; run: CodingRun | null }) {
-  const reason = codingModeControlReason(state);
-  const mode = state?.native?.configuration.mode;
-  const requested =
-    state?.planControl?.kind === "mode" ? state.planControl.mode : null;
-  const stale = Boolean(
-    mode &&
-      (state?.connection !== "connected" ||
-        state.recovering ||
-        state.disconnected),
-  );
-  return (
-    <fieldset
-      aria-describedby="coding-mode-explanation"
-      data-requested-mode={requested ?? undefined}
-      className="flex h-8 min-w-0 shrink-0 items-center rounded-full bg-muted p-0.5 text-xs dark:bg-accent"
-    >
-      <legend className="sr-only">Coding mode</legend>
-      {(["build", "plan"] as const).map((value) => {
-        const checked = mode === value;
-        const pending = requested === value && !checked;
-        return (
-          <label
-            key={value}
-            title={
-              reason ??
-              (value === "plan"
-                ? "Plan: native read-only planning"
-                : "Build: native execution")
-            }
-            className={`relative inline-flex h-7 items-center gap-1 rounded-full px-2.5 font-medium transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring ${checked ? "bg-background text-foreground shadow-sm dark:bg-card" : "text-muted-foreground hover:text-foreground"} ${reason ? "cursor-not-allowed" : "cursor-pointer"}`}
-          >
-            <input
-              type="radio"
-              name="coding-mode"
-              value={value}
-              checked={checked}
-              aria-disabled={Boolean(reason) || undefined}
-              aria-busy={pending || undefined}
-              onChange={() => {
-                if (!reason) void run?.setMode(value);
-              }}
-              // Covers its segment (not sr-only): a 1px radio left the label
-              // intercepting pointer clicks meant for the radio.
-              className="absolute inset-0 m-0 cursor-[inherit] appearance-none rounded-full opacity-0"
-            />
-            {pending && (
-              <LoaderCircle
-                className="size-3 animate-spin"
-                aria-hidden="true"
-              />
-            )}
-            {value === "build" ? "Build" : "Plan"}
-          </label>
-        );
-      })}
-      <output
-        className="sr-only"
-        data-testid="coding-plan-mode"
-        aria-live="polite"
-      >
-        Native mode: {mode ?? "not connected"}
-        {stale ? " · last observed, reconnecting" : ""}
-        {requested && requested !== mode
-          ? ` · ${requested} requested, awaiting native state`
-          : ""}
-      </output>
-      <span id="coding-mode-explanation" className="sr-only">
-        {reason ??
-          "Plan is native read-only planning. Mode selection never accepts a plan or rewrites running work."}
-      </span>
-    </fieldset>
   );
 }

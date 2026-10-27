@@ -13,7 +13,8 @@ import copy
 import json
 import re
 
-from coding_file_change_scenarios import synthetic_history_rows
+from coding_file_change_scenarios import OUTPUT_BOUND, expand_activity, synthetic_history_rows, tool_header
+from coding_ui import expect_connected, expect_opened, opened_id, saved_row
 
 
 VIEWPORTS = ((1440, 1000, "desktop"), (390, 844, "narrow"))
@@ -196,7 +197,7 @@ def run_reading_scenarios(page, context, base, provider, first, second_id,
     from playwright.sync_api import expect
 
     assert provider is not None, "Reading workload requires isolated deterministic provider"
-    conversation = page.get_by_test_id("coding-conversation-id").inner_text()
+    conversation = opened_id(page)
     transcript = page.get_by_test_id("coding-transcript")
     status = page.get_by_test_id("coding-run-status")
     prompt_url = base + f"/api/coding/conversations/{conversation}/prompts"
@@ -254,7 +255,8 @@ def run_reading_scenarios(page, context, base, provider, first, second_id,
         return after
 
     def latest_action():
-        return page.get_by_role("button", name=re.compile(r"Jump to latest", re.I))
+        # One floating action: "Jump to latest", or "New activity" while unread.
+        return page.get_by_role("button", name=re.compile(r"^(?:Jump to latest|New activity)$"))
 
     def activity_text():
         indicator = page.get_by_test_id("coding-new-activity")
@@ -297,40 +299,58 @@ def run_reading_scenarios(page, context, base, provider, first, second_id,
         return ack
 
     def reopen(identifier=conversation):
-        saved = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text=identifier)
-        if page.viewport_size["width"] < 768 and not saved.is_visible():
-            page.get_by_role("button", name="Toggle coding sidebar", exact=True).click()
+        saved = saved_row(page, identifier)
+        narrow = page.viewport_size["width"] < 768
+        if narrow and not saved.is_visible():
+            page.get_by_role("button", name="Toggle sidebar", exact=True).click()
         expect(saved).to_be_visible(timeout=60000)
-        saved.click()
-        expect(page.get_by_test_id("coding-conversation-id")).to_have_text(identifier, timeout=60000)
-        expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+        # Every deliberate (even same-ID) open mounts a fresh view; await it
+        # rather than asserting against the departing one.
+        previous = transcript.element_handle()
+        with page.expect_response(lambda response: response.url == base + f"/api/coding/conversations/{identifier}/open"
+                                  and response.request.method == "POST", timeout=60000) as opened:
+            saved.click()
+        assert opened.value.ok and opened.value.json()["id"] == identifier, f"Open failed ({opened.value.status})"
+        page.wait_for_function("node => !node.isConnected", arg=previous, timeout=60000)
+        if narrow:
+            # The narrow sidebar sheet unmounts its rows once one is chosen.
+            expect(page.get_by_test_id("coding-canonical-cwd")).to_have_attribute("title", opened.value.json()["cwd"], timeout=60000)
+        else:
+            expect_opened(page, identifier)
+        expect_connected(page)
         expect(transcript).to_have_attribute("aria-busy", "false", timeout=60000)
-        if page.viewport_size["width"] < 768:
+        if narrow:
             # A connected view can arrive before the mobile sheet finishes its
             # closing animation. Do not click a departing saved-row instance on
             # the next reopen; await the actual sidebar's closed state instead.
             expect(page.locator('[data-sidebar="sidebar"][data-mobile="true"]')).to_be_hidden(timeout=60000)
 
     def toggle(details, label, *, large=False, tool=False):
-        summary = details.locator(":scope > summary")
+        # details is a coding-tool-row; its header button discloses the output.
+        summary = tool_header(details)
         place(summary)
         focus(summary)
         before = measure(label + "-before")
         summary.press("Enter")
-        expect(details).to_have_attribute("open", "")
+        expect(summary).to_have_attribute("aria-expanded", "true")
         expect(summary).to_be_focused()
         preserved(before, label + "-expanded")
-        output = details.get_by_label("Actual public tool output", exact=True) if tool else details.locator("pre")
+        if tool:
+            output = details.get_by_label("Tool output", exact=True)
+        else:
+            changed = details.get_by_test_id("coding-file-change-row")
+            expect(changed).to_have_count(1)
+            output = changed.locator("pre")
         expect(output).to_be_visible()
-        assert output.evaluate("node => node.clientHeight <= 321"), "Output viewport is unbounded"
+        assert output.evaluate("(node, bound) => node.clientHeight <= bound", OUTPUT_BOUND), "Output viewport is unbounded"
         if large:
             assert output.evaluate("node => node.scrollHeight > node.clientHeight"), "Large output is not scrollable"
             if tool:
-                expect(details.locator("..")).to_contain_text("Output clipped to the presentation bound")
+                expect(details).to_contain_text("Output clipped")
             else:
-                expect(details).to_contain_text("Diff truncated to a presentation bound")
-                assert len(output.text_content()) <= 16 * 1024
-                assert len(output.text_content().splitlines()) <= 400
+                expect(changed.locator("p").first).to_contain_text("truncated")
+                assert len(output.inner_text().encode("utf-8")) <= 16 * 1024
+                assert len(output.inner_text().splitlines()) <= 400
         focus(output)
         before_scroll = measure(label + "-output-focused")
         output.press("Control+End")
@@ -341,41 +361,39 @@ def run_reading_scenarios(page, context, base, provider, first, second_id,
         if large and not tool:
             previous = details.get_by_role("button", name="Previous diff section", exact=True)
             following = details.get_by_role("button", name="Next diff section", exact=True)
+            # The mounted section's position is a polite "N/M" status between them.
+            position = details.get_by_role("status")
             expect(previous).to_be_disabled()
             expect(following).to_be_enabled()
-            assert previous.get_attribute("data-reading-control") != following.get_attribute("data-reading-control")
-            first_section = output.text_content()
+            expect(position).to_have_text(re.compile(r"^1/\d+$"))
+            # One block per supplied line: inner text keeps the line breaks.
+            first_section = output.inner_text()
             sections = [first_section]
             while following.is_enabled() and len(sections) < 32:
                 focus(following)
                 before_section = measure(label + f"-next-section-{len(sections)}-before")
                 following.press("Enter")
-                expect(output).to_be_focused()
-                expect(details.get_by_role("status")).to_contain_text(f"Reported diff section {len(sections) + 1} of")
-                expect(details.get_by_role("status")).to_contain_text("Continued supplied content")
+                expect(position).to_have_text(re.compile(rf"^{len(sections) + 1}/\d+$"))
                 preserved(before_section, label + f"-next-section-{len(sections)}-after")
-                expect(output).to_be_focused()
-                supplied = output.text_content()
+                supplied = output.inner_text()
                 assert len(supplied.encode("utf-8")) <= 16 * 1024
                 assert len(supplied.split("\n")) <= 400
-                assert output.evaluate("node => node.clientHeight <= 321 && node.scrollTop === 0")
+                assert output.evaluate("(node, bound) => node.clientHeight <= bound", OUTPUT_BOUND)
                 sections.append(supplied)
             expect(following).to_be_disabled()
             expect(output).to_contain_text("SYNTHETIC_LARGE_449_")
-            supplied_lines = re.findall(r"^\+SYNTHETIC_LARGE_(\d{3})_", "".join(sections), re.M)
+            supplied_lines = re.findall(r"^\+SYNTHETIC_LARGE_(\d{3})_", "\n".join(sections), re.M)
             assert supplied_lines == [f"{index:03d}" for index in range(450)], "Sections duplicated or omitted supplied synthetic diff lines"
             snapshot(page, label + "-supported-tail")
             for index in range(len(sections) - 2, -1, -1):
                 focus(previous)
                 before_section = measure(label + f"-previous-section-{index}-before")
                 previous.press("Enter")
-                expect(output).to_be_focused()
-                expect(output).to_have_text(sections[index], use_inner_text=False)
-                assert output.text_content() == sections[index]
+                expect(position).to_have_text(re.compile(rf"^{index + 1}/\d+$"))
+                assert output.inner_text() == sections[index]
                 preserved(before_section, label + f"-previous-section-{index}-after")
-                expect(output).to_be_focused()
             expect(previous).to_be_disabled()
-            assert output.text_content() == first_section
+            assert output.inner_text() == first_section
             evidence.setdefault("diff_sections", []).append({
                 "label": label, "kind": "SYNTHETIC rendered 450-line supplied diff, not native execution",
                 "sections": len(sections), "supplied_lines_accessible": 450,
@@ -384,7 +402,7 @@ def run_reading_scenarios(page, context, base, provider, first, second_id,
         focus(summary)
         before_collapse = measure(label + "-collapse-before")
         summary.press("Enter")
-        expect(details).not_to_have_attribute("open", "")
+        expect(summary).to_have_attribute("aria-expanded", "false")
         expect(summary).to_be_focused()
         preserved(before_collapse, label + "-collapsed")
 
@@ -417,6 +435,8 @@ def run_reading_scenarios(page, context, base, provider, first, second_id,
         reopen(second_id)
         reopen()
         expect(transcript).to_contain_text("READING_NATIVE_LINE_099", timeout=60000)
+        # The settled native tool group is folded on reopen; open it to read its rows.
+        expand_activity(transcript)
         native_calls = [item.get_attribute("data-call-id") for item in page.get_by_test_id("coding-tool-row").all()]
         assert native_calls[:4] == [call for call, _, _ in operations], "Repeated native edits lost chronology on reopen"
         invocations = [item.get_attribute("data-invocation-id") for item in page.get_by_test_id("coding-tool-row").all()][:4]
@@ -426,25 +446,16 @@ def run_reading_scenarios(page, context, base, provider, first, second_id,
             for call, invocation in zip(native_calls[:4], invocations)]
         measure("reading-native-reopen-" + size)
         snapshot(page, "reading-native-reopen-" + size)
+        # Assistant replies flow with the transcript (no inner message scroller).
         seed_row = transcript.locator("[data-native-entry]").filter(has_text="READING_NATIVE_SAVED_LONG_ANSWER").first
-        bounded = seed_row.get_by_label("Bounded native message content", exact=True)
-        expect(seed_row).to_contain_text("Long message · scroll within the content")
+        expect(seed_row).to_contain_text("READING_NATIVE_LINE_099")
         place(seed_row)
-        focus(bounded)
-        assert bounded.evaluate("node => node.clientHeight <= 385 && node.scrollHeight > node.clientHeight")
-        before_content = measure("reading-native-long-content-" + size + "-before")
-        bounded.press("Control+End")
-        expect(bounded).to_have_js_property("scrollTop", bounded.evaluate("node => node.scrollHeight-node.clientHeight"))
-        assert bounded.evaluate("node => node.scrollHeight-node.clientHeight-node.scrollTop <= 3")
-        expect(bounded).to_be_focused()
-        preserved(before_content, "reading-native-long-content-" + size + "-after")
+        measure("reading-native-long-content-" + size)
         snapshot(page, "reading-native-long-content-" + size)
         for call, _, _ in operations[:3]:
             tool = page.locator('[data-testid="coding-tool-row"][data-call-id=' + json.dumps(call) + ']')
-            expect(tool.locator("summary")).to_contain_text("Historical report")
-            changed = tool.locator("..").get_by_test_id("coding-file-change-row")
-            expect(changed).to_have_count(1)
-            toggle(changed, f"reading-native-{size}-{call}")
+            expect(tool).to_have_count(1)
+            toggle(tool, f"reading-native-{size}-{call}")
         tool = page.locator('[data-testid="coding-tool-row"][data-call-id="reading-shell"]')
         toggle(tool, "reading-native-tool-" + size, tool=True)
         # This explicit action establishes bottom-following before submission.
@@ -529,7 +540,7 @@ def run_reading_scenarios(page, context, base, provider, first, second_id,
                 evidence.setdefault("busy_reading_gestures", []).append({"viewport": page.viewport_size, "gesture": "ArrowDown", "before_scrollTop": during["scrollTop"], "after_scrollTop": moved["scrollTop"]})
                 # Navigation keys also scroll the region when an inline summary
                 # owns focus; only Space activation must be excluded there.
-                summary = page.get_by_test_id("coding-tool-row").last.locator("summary")
+                summary = tool_header(page.get_by_test_id("coding-tool-row").last)
                 focus(summary)
                 summary.press("ArrowDown")
                 page.wait_for_timeout(300)
@@ -550,13 +561,14 @@ def run_reading_scenarios(page, context, base, provider, first, second_id,
             finally:
                 # Never delay the separate terminal checkpoint below.
                 page.unroute(entry_url, delayed_latest)
-            expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+            expect_connected(page)
             expect(transcript).to_have_attribute("aria-busy", "false", timeout=60000)
             assert page.evaluate("window.codingReadingDroppedViews") == dropped + 1
             preserved(before_drop, "reading-" + size + "-reconnect-after")
             expect(transcript).to_be_focused()
             no_unread()
-            expect(page.get_by_test_id("coding-request-id")).to_contain_text(ack["request_id"])
+            # The same native request is still the running one (no provider replay).
+            expect(status).to_have_text("Running")
             provider.assert_no_request()
             before_finish = measure("reading-" + size + "-provisional-before")
             provisional_id = transcript.locator("[data-native-entry]").filter(has_text=prefix + "_RESUMED").get_attribute("data-native-entry")
@@ -616,7 +628,7 @@ def _run_synthetic_history(page, base, entry_url, conversation, transcript, evid
                 # conversation must not unmount the focused paging control.
                 expect(transcript).to_have_attribute("aria-busy", "true")
                 expect(earlier).to_be_focused()
-                expect(transcript).to_contain_text("Historical reading window")
+                expect(transcript).to_contain_text("Viewing earlier messages")
                 reconnect_probe = False
             response = route.fetch(timeout=60000)
             assert response.ok
@@ -681,20 +693,20 @@ def _run_synthetic_history(page, base, entry_url, conversation, transcript, evid
             reopen()
             expect(transcript).to_contain_text("SYNTHETIC bounded reading history", timeout=60000)
             count_bound()
+            # Settled (synthetic and native) tool groups are folded; open them.
+            expand_activity(transcript)
             start = HISTORY_ROWS - PAGE_ROWS
             for offset in (5, 6, 7):
                 call = f"SYNTHETIC-reading-call-{start + offset}"
                 tool = page.locator('[data-testid="coding-tool-row"][data-call-id=' + json.dumps(call) + ']')
-                expect(tool.locator("summary")).to_contain_text("Historical report")
-                changed = tool.locator("..").get_by_test_id("coding-file-change-row")
-                expect(changed.locator("summary")).to_contain_text("Historical reported change")
-                toggle(changed, f"reading-SYNTHETIC-{size}-repeat-{offset}", large=offset == 7)
+                expect(tool).to_contain_text(f"SYNTHETIC repeated edit {offset}")
+                toggle(tool, f"reading-SYNTHETIC-{size}-repeat-{offset}", large=offset == 7)
             call = f"SYNTHETIC-reading-call-{start + 8}"
             tool = page.locator('[data-testid="coding-tool-row"][data-call-id=' + json.dumps(call) + ']')
             toggle(tool, "reading-SYNTHETIC-large-output-" + size, large=True, tool=True)
             ids = transcript.locator('[data-testid="coding-tool-row"][data-call-id^="SYNTHETIC-reading-call-"]').evaluate_all("nodes => nodes.map(node => node.getAttribute('data-invocation-id'))")
             assert len(ids) == 4 and len(set(ids)) == 4, "Repeated synthetic edits lost independent chronology"
-            earlier = page.get_by_role("button", name="Load earlier history", exact=True)
+            earlier = page.get_by_role("button", name="Load earlier messages", exact=True)
             # Explicit latest intent must supersede the FIRST pending earlier
             # read, whose pre-request historical window is still null.
             place(transcript.locator("[data-native-entry]").first, 90)
@@ -704,7 +716,7 @@ def _run_synthetic_history(page, base, entry_url, conversation, transcript, evid
                 earlier.press("Enter")
             assert delayed.value.ok and not pending_jump
             expect(transcript).to_have_attribute("aria-busy", "false", timeout=60000)
-            expect(transcript).not_to_contain_text("Historical reading window")
+            expect(transcript).not_to_contain_text("Viewing earlier messages")
             expect(transcript.locator("[data-native-entry]").first).to_have_attribute("data-native-entry", history_id(start))
             assert measure("reading-SYNTHETIC-" + size + "-pending-jump-settled")["bottomGap"] <= POSITION_TOLERANCE
             no_unread()
@@ -727,12 +739,14 @@ def _run_synthetic_history(page, base, entry_url, conversation, transcript, evid
                 expect(transcript.locator("[data-native-entry]").first).to_have_attribute("data-native-entry", expected)
             expect(earlier).to_have_count(0)
             expect(transcript).to_contain_text("SYNTHETIC bounded reading history 0000")
-            expect(transcript).to_contain_text(re.compile(r"newer.*(not shown|bounded|history)|bounded.*newer", re.I))
+            # The bounded window says newer messages are not shown and offers them.
+            expect(transcript).to_contain_text("Viewing earlier messages")
+            expect(page.get_by_role("button", name="Load newer messages", exact=True)).to_be_visible()
             snapshot(page, "reading-SYNTHETIC-oldest-" + size)
             # Forward access is REQUIRED, not optional even if Jump can skip pages.
             # More than 1,000 supplied rows forces newer-page eviction and thus
             # exercises the new HTTP {after: ...} navigation path, not only cache.
-            newer = page.get_by_role("button", name="Load newer history", exact=True)
+            newer = page.get_by_role("button", name="Load newer messages", exact=True)
             forward_count = 0
             while newer.count() and forward_count < 26:
                 last = transcript.locator("[data-native-entry]").last

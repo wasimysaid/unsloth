@@ -14,6 +14,10 @@ import {
   mentionGroups,
   mentionQuery,
   stepMention,
+  commandItems,
+  commandQuery,
+  mentionItems,
+  mentionStatus,
 } from "../src/features/coding/mention-menu.ts";
 import {
   type PendingImageStore,
@@ -410,7 +414,6 @@ async function harness(
     position: 1,
     event: {
       type: "start",
-      recovering: false,
       root: { cut: { journal: "root", leaf: null }, live_invocations: [] },
       state: {
         info: { id: "conversation", cwd: "/project" },
@@ -559,4 +562,102 @@ test("a send refused after the composer cleared its text keeps that input restor
   ]);
   assert.match(h.run.getSnapshot().error ?? "", /Reconcile.*input is retained/);
   h.run.detach();
+});
+
+test("/ completes only the prompt's first token; @ and / never mix", () => {
+  assert.deepEqual(commandQuery("/com", 4), { start: 0, end: 4, query: "com" });
+  assert.deepEqual(commandQuery("  /plan rest", 5), {
+    start: 2,
+    end: 7,
+    query: "plan",
+  });
+  assert.equal(commandQuery("/plan the work", 14), null, "past the name");
+  assert.equal(commandQuery("see /plan", 9), null, "not the first token");
+  assert.equal(commandQuery("a/b", 3), null);
+});
+
+test("commands match names and aliases first; idle-only ones say why while busy", () => {
+  const commands = [
+    {
+      name: "compact",
+      aliases: [],
+      description: "Compact context",
+      argument: null,
+      availability: "idle-only",
+    },
+    {
+      name: "review",
+      aliases: ["cr"],
+      description: "Review changes",
+      argument: "instructions",
+      availability: "any",
+    },
+    {
+      name: "plan",
+      aliases: [],
+      description: "Plan before building: compact first",
+      argument: "task",
+      availability: "any",
+    },
+  ];
+  assert.deepEqual(
+    commandItems(commands, "c", false).map((item) => item.name),
+    ["compact", "review", "plan"],
+    "prefix, then alias, then description matches",
+  );
+  assert.deepEqual(commandItems(commands, "cr", false)[0], {
+    id: "command:review",
+    name: "review",
+    label: "/review",
+    description: "Review changes · <instructions>",
+    disabled: null,
+  });
+  assert.equal(
+    commandItems(commands, "compact", true)[0].disabled,
+    "Available when idle",
+  );
+  assert.deepEqual(commandItems(commands, "zzz", false), []);
+});
+
+test("the flat @ list puts prefix-matching agents and skills before files", () => {
+  const groups = [
+    {
+      kind: "skill" as const,
+      label: "Skills" as const,
+      status: null,
+      options: [
+        { id: "s", choice: { kind: "skill" }, label: "release-notes", description: "", disabled: null },
+      ],
+    },
+    {
+      kind: "subagent" as const,
+      label: "Subagents" as const,
+      status: null,
+      options: [
+        { id: "a", choice: { kind: "subagent" }, label: "explore", description: "", disabled: null },
+      ],
+    },
+    {
+      kind: "file" as const,
+      label: "Files" as const,
+      status: "Searching…",
+      options: [
+        { id: "f", choice: { kind: "file" }, label: "src/explore.ts", description: "", disabled: null },
+      ],
+    },
+  ] as unknown as Parameters<typeof mentionItems>[0];
+  assert.deepEqual(
+    mentionItems(groups, "exp").map((item) => item.id),
+    ["a", "f", "s"],
+  );
+  assert.deepEqual(
+    mentionItems(groups, "").map((item) => item.id),
+    ["f", "s", "a"],
+    "an empty query starts with files",
+  );
+  assert.equal(mentionStatus(groups, "x"), "Searching…");
+  const failed = groups.map((group) =>
+    group.kind === "skill" ? { ...group, status: "Skill discovery failed. Retry." } : group,
+  );
+  assert.equal(mentionStatus(failed, "x"), "Skill discovery failed. Retry.");
 });

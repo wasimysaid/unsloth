@@ -32,6 +32,7 @@ def coding_app(monkeypatch, tmp_path):
 @pytest.mark.parametrize("method,path,body", [
     ("GET", "/projects/browse", None),
     ("GET", "/catalog?cwd=/", None),
+    ("GET", "/catalog", None),
     ("GET", "/local-models/catalog", None),
     ("POST", "/local-models/acquire", {"incarnation": "process", "operation_id": "operation", "conversation_id": "session", "request_id": "request", "model_id": "local-model", "api_model": "wire"}),
     ("POST", "/local-models/inspect", {"incarnation": "process", "operation_id": "operation"}),
@@ -147,6 +148,35 @@ async def test_open_never_accepts_a_replacement_working_directory(coding_app):
         assert "another process" in response.json()["detail"]
         bad = await client.post("/api/coding/conversations", json = {"cwd": "/", "trust": False})
         assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_create_carries_the_first_selection_and_catalog_needs_no_folder(coding_app):
+    app, headers = coding_app
+    calls = []
+    class RecordingRuntime:
+        async def command(self, method, params, *, expected_generation=None):
+            calls.append((method, params))
+            if method == "create":
+                return {"info": {"id": "created", "cwd": params["cwd"], "runtime_generation": 1}}
+            return [{"id": "provider", "name": "Provider", "models": []}]
+    app.state.coding_runtime = RecordingRuntime()
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        chosen = await client.post("/api/coding/conversations", json = {
+            "cwd": "/project", "configuration": {"provider": "provider", "model": "model", "reasoning": "high"}})
+        assert chosen.status_code == 201
+        assert (await client.post("/api/coding/conversations", json = {"cwd": "/project", "configuration": {"model": "model"}})).status_code == 201
+        assert (await client.post("/api/coding/conversations", json = {"cwd": "/project"})).status_code == 201
+        assert (await client.post("/api/coding/conversations", json = {"cwd": "/project", "configuration": {"api_key": "secret"}})).status_code == 422
+        assert (await client.get("/api/coding/catalog")).status_code == 200
+        assert (await client.get("/api/coding/catalog", params = {"cwd": "/project"})).status_code == 200
+    assert calls == [
+        ("create", {"cwd": "/project", "configuration": {"provider": "provider", "model": "model", "reasoning": "high"}}),
+        ("create", {"cwd": "/project", "configuration": {"model": "model"}}),
+        ("create", {"cwd": "/project"}),
+        ("catalog", {"cwd": str(Path.home())}),
+        ("catalog", {"cwd": "/project"}),
+    ]
 
 
 @pytest.mark.asyncio

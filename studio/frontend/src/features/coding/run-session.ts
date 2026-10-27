@@ -5,12 +5,10 @@ import type { ChildAttempt, ChildIdentity } from "./child-types.ts";
 import { createChildView } from "./child-view.ts";
 import {
   type CodingCommand,
-  type CodingDiagnostic,
   type CommandOutcome,
-  type DiagnosticKind,
   parseCodingCommand,
 } from "./command-types.ts";
-import { CodingOverlapError } from "./errors.ts";
+import { CodingOverlapError, needsReopen } from "./errors.ts";
 import {
   interruptEntryContent,
   readCompleteEntryPage,
@@ -73,7 +71,6 @@ export interface CodingRunState {
   connection: "loading" | "connected" | "disconnected";
   native: NativeState | null;
   rows: CodingRow[];
-  recovering: boolean;
   older: boolean;
   viewingEarlier: boolean;
   /** More saved entries after the bounded reading window, at its captured cut. */
@@ -121,16 +118,10 @@ export interface CodingRunState {
   commandError: string | null;
   uncertainCommand: (PendingCommand & { reconciled: boolean }) | null;
   reconcilingCommand: boolean;
-  diagnostic: CodingDiagnostic | null;
-  inspectingDiagnostic: DiagnosticKind | null;
   overlapWarning:
     | (CodingInput & { key: string; overlap: ProjectOverlap })
     | null;
 }
-const needsReopen = (reason: unknown) =>
-  reason instanceof Error &&
-  "requiresReopen" in reason &&
-  reason.requiresReopen === true;
 const MAX_ROWS = 1000;
 const MAX_TEXT = 2 * 1024 * 1024;
 const errorText = (reason: unknown) =>
@@ -166,7 +157,6 @@ export function createCodingRun(
     connection: "loading",
     native: null,
     rows: [],
-    recovering: false,
     older: false,
     viewingEarlier: false,
     newer: false,
@@ -204,8 +194,6 @@ export function createCodingRun(
     commandError: null,
     uncertainCommand: null,
     reconcilingCommand: false,
-    diagnostic: null,
-    inspectingDiagnostic: null,
     overlapWarning: null,
   };
   try {
@@ -220,7 +208,6 @@ export function createCodingRun(
     state.storageError = `Command storage unavailable. No command was replayed. ${errorText(reason)}`;
   }
   let attachment = 0;
-  let diagnosticRevision = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
   let runtimeLost = false;
@@ -275,8 +262,7 @@ export function createCodingRun(
       ),
     });
   const reconcileAnswers = (freshCapture = false, deferred = false) => {
-    if (state.connection !== "connected" || state.recovering || !subscription)
-      return;
+    if (state.connection !== "connected" || !subscription) return;
     const pending = state.native?.user_request;
     const request = state.native?.active_request;
     const terminal =
@@ -383,8 +369,7 @@ export function createCodingRun(
   };
   const reconcileAction = () => {
     const request = state.reconcilingAction;
-    if (!request || state.recovering || state.connection !== "connected")
-      return;
+    if (!request || state.connection !== "connected") return;
     const terminal = state.native?.requests.some(
       (item) =>
         item.id === request &&
@@ -419,7 +404,6 @@ export function createCodingRun(
       !modeAwaiting ||
       state.planControlReconciling ||
       state.connection !== "connected" ||
-      state.recovering ||
       state.native?.configuration.mode !== control.mode
     )
       return;
@@ -439,7 +423,6 @@ export function createCodingRun(
     if (
       !control ||
       !state.planControlReconciling ||
-      state.recovering ||
       state.connection !== "connected"
     )
       return;
@@ -489,6 +472,10 @@ export function createCodingRun(
             id: prior.id,
             entry_id: prior.entry_id ?? row.entry_id,
             request_id: row.request_id ?? prior.request_id,
+            // A saved result carries no input; keep its call's argument.
+            ...(row.tool && !row.tool.argument && prior.tool?.argument
+              ? { tool: { ...row.tool, argument: prior.tool.argument } }
+              : {}),
           };
           byRow.set(row, next);
         }
@@ -619,7 +606,6 @@ export function createCodingRun(
   };
   async function capture(
     root: { cut: JournalCut; live_invocations: string[] },
-    recovering: boolean,
     signal: AbortSignal,
     retainedWindow: EntryPage | null,
     retainedIntentRevision: number,
@@ -652,7 +638,7 @@ export function createCodingRun(
         ...contentCallbacks(lifetime),
       );
     }
-    update({ recovering, loadingEarlier: false });
+    update({ loadingEarlier: false });
     publishRows();
   }
   async function checkpoint(
@@ -701,7 +687,6 @@ export function createCodingRun(
             ),
         ),
     );
-    update({ recovering: false });
     publishRows();
   }
   function applyActivity(event: Record<string, unknown>, fresh: boolean) {
@@ -813,7 +798,6 @@ export function createCodingRun(
         rows: event.type === "reset" ? [] : state.rows,
         connection: "loading",
         completion: null,
-        recovering: Boolean(event.recovering),
         // Paging controls belong to the retained projection too. Hiding them
         // during same-conversation capture removes the reader's focused node.
         older: event.type === "reset" ? false : state.older,
@@ -822,7 +806,6 @@ export function createCodingRun(
       });
       await capture(
         event.root as { cut: JournalCut; live_invocations: string[] },
-        Boolean(event.recovering),
         signal,
         retainedWindow,
         retainedIntentRevision,
@@ -836,9 +819,7 @@ export function createCodingRun(
         throw new Error("Invalid native snapshot activity.");
       for (const item of activity)
         applyActivity(item as Record<string, unknown>, false);
-      // A recovering capture still owns a fresh inspection read generation.
-      // Leave it offline until the root checkpoint; do not abort it a second time.
-      if (!event.recovering) childView.setConnected(true);
+      childView.setConnected(true);
       // Native active_request remains held through cleanup; journal terminal
       // status alone is insufficient, but this atomic capture can settle Stop.
       const stopped =
@@ -928,7 +909,7 @@ export function createCodingRun(
       state.native?.requests.find(
         (request) => request.submission_key === state.uncertainSubmission?.key,
       );
-    if (accepted && !state.recovering && state.connection === "connected") {
+    if (accepted && state.connection === "connected") {
       update({ acceptedSubmissionKey: accepted.submission_key!, error: null });
       clearPending(accepted.submission_key!, true);
     }
@@ -936,8 +917,7 @@ export function createCodingRun(
       (event.type === "start" ||
         event.type === "reset" ||
         (event.type === "checkpoint" && !event.child)) &&
-      state.connection === "connected" &&
-      !state.recovering
+      state.connection === "connected"
     ) {
       reconnectAttempt = 0;
       update({ disconnected: false, reopenRequired: false });
@@ -993,7 +973,6 @@ export function createCodingRun(
     abort?.abort();
     childView.setConnected(false);
     const current = ++incarnation;
-    ++diagnosticRevision;
     const configurationCut = configurationEpoch;
     const controller = new AbortController();
     abort = controller;
@@ -1006,8 +985,6 @@ export function createCodingRun(
       loadingEarlier: false,
       reconcilingGoal: state.reconcilingGoal ?? state.goalChanging,
       discoveringCommands: false,
-      inspectingDiagnostic: null,
-      diagnostic: null,
       reconcilingCommand: false,
     });
     void api
@@ -1070,7 +1047,6 @@ export function createCodingRun(
   ): Promise<boolean> {
     if (
       state.connection !== "connected" ||
-      state.recovering ||
       state.submitting ||
       state.native?.pending_user_request ||
       state.configuring ||
@@ -1132,8 +1108,7 @@ export function createCodingRun(
       lifetime.attachment !== attachment ||
       lifetime.incarnation !== incarnation ||
       runtimeLost ||
-      state.connection !== "connected" ||
-      state.recovering
+      state.connection !== "connected"
     ) {
       // Known unsent: a fresh record is withdrawn; a retried uncertain one stays.
       if (!existing) clearPending(key, false);
@@ -1250,7 +1225,6 @@ export function createCodingRun(
   }
   const readyForCommand = () =>
     state.connection === "connected" &&
-    !state.recovering &&
     !state.submitting &&
     !state.configuring &&
     !state.configurationUncertain &&
@@ -1265,8 +1239,7 @@ export function createCodingRun(
     if (
       !api.commands ||
       state.discoveringCommands ||
-      state.connection !== "connected" ||
-      state.recovering
+      state.connection !== "connected"
     )
       return;
     const current = incarnation;
@@ -1326,7 +1299,6 @@ export function createCodingRun(
       !pending.reconciled ||
       !api.commandReceipt ||
       state.connection !== "connected" ||
-      state.recovering ||
       state.reconcilingCommand ||
       state.commandBusy
     )
@@ -1422,41 +1394,6 @@ export function createCodingRun(
       }
     }
   }
-  async function inspectDiagnostic(kind: DiagnosticKind) {
-    if (
-      !api.diagnostics ||
-      state.connection !== "connected" ||
-      state.recovering ||
-      state.inspectingDiagnostic
-    )
-      return;
-    const current = incarnation;
-    const inspection = ++diagnosticRevision;
-    update({
-      inspectingDiagnostic: kind,
-      diagnostic: null,
-      commandError: null,
-    });
-    try {
-      const result = await api.diagnostics(id, kind);
-      if (current !== incarnation || inspection !== diagnosticRevision) return;
-      if (
-        result.conversation_id !== id ||
-        result.kind !== kind ||
-        JSON.stringify(result).length > 65536
-      )
-        throw new Error(
-          "Native diagnostics exceeded their bound or did not match this conversation.",
-        );
-      update({ diagnostic: result });
-    } catch (reason) {
-      if (current === incarnation && inspection === diagnosticRevision)
-        update({ commandError: errorText(reason) });
-    } finally {
-      if (current === incarnation && inspection === diagnosticRevision)
-        update({ inspectingDiagnostic: null });
-    }
-  }
   async function loadHistory(direction: "before" | "after") {
     const previousWindow = historyWindow;
     const anchor =
@@ -1546,11 +1483,8 @@ export function createCodingRun(
     discoverCommands,
     executeCommand,
     reconcileCommand,
-    inspectDiagnostic,
-    clearDiagnostic() {
-      ++diagnosticRevision;
-      update({ diagnostic: null, inspectingDiagnostic: null });
-    },
+    dismissCommandOutcome: () =>
+      update({ commandOutcome: null, commandError: null }),
     childView,
     getSnapshot: () => state,
     subscribe: notifications.subscribe,
@@ -1591,7 +1525,6 @@ export function createCodingRun(
         !state.answerTarget ||
         !sameTarget(state.answerTarget, target) ||
         state.connection !== "connected" ||
-        state.recovering ||
         state.stopping ||
         !["waiting", "error"].includes(form.status)
       )
@@ -1641,7 +1574,6 @@ export function createCodingRun(
     async configure(change: CodingConfigurationChange) {
       if (
         state.connection !== "connected" ||
-        state.recovering ||
         state.configuring ||
         state.configurationUncertain ||
         state.planControl ||
@@ -1656,8 +1588,9 @@ export function createCodingRun(
       ++configurationEpoch;
       update({ configuring: true, error: null });
       try {
-        await api.configure(id, change);
-        // Ordered native state, not this response, owns the next-request choice.
+        // Ordered native state, not this response, owns the next-request
+        // choice; the reply only tells the caller what was accepted.
+        return await api.configure(id, change);
       } catch (reason) {
         const rejected =
           reason instanceof Error &&
@@ -1680,7 +1613,6 @@ export function createCodingRun(
       clearModeWait();
       ++attachment;
       ++incarnation;
-      ++diagnosticRevision;
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       reconnectTimer = null;
       abort?.abort();
@@ -1794,7 +1726,6 @@ export function createCodingRun(
       );
       if (
         state.connection !== "connected" ||
-        state.recovering ||
         state.planControl ||
         state.goalChanging ||
         state.reconcilingGoal ||
@@ -1892,7 +1823,6 @@ export function createCodingRun(
         state.stopping ||
         state.reconcilingAction ||
         state.storageError ||
-        state.recovering ||
         state.connection !== "connected"
       )
         throw new Error(
@@ -1921,7 +1851,6 @@ export function createCodingRun(
       if (
         current !== incarnation ||
         state.connection !== "connected" ||
-        state.recovering ||
         state.stopping ||
         state.reconcilingAction
       ) {
@@ -1944,7 +1873,6 @@ export function createCodingRun(
       if (
         !warning ||
         state.connection !== "connected" ||
-        state.recovering ||
         state.submitting ||
         state.configuring ||
         state.configurationUncertain ||
@@ -2111,7 +2039,6 @@ export function codingCanContinue(state: CodingRunState | null): boolean {
     state &&
       request &&
       state.connection === "connected" &&
-      !state.recovering &&
       !state.native?.active_request &&
       !state.native?.pending_user_request &&
       !state.native?.requests.some(
@@ -2135,7 +2062,7 @@ export function codingSendBlockedReason(
   state: CodingRunState | null,
 ): string | null {
   if (!state) return "Choose a project folder first.";
-  if (state.connection !== "connected" || state.recovering)
+  if (state.connection !== "connected")
     return "Waiting for a connected, reconstructed native view.";
   if (state.storageError) return "Browser storage is unavailable.";
   if (state.uncertainSubmission)
@@ -2173,11 +2100,7 @@ export function codingModeControlReason(
   state: CodingRunState | null,
 ): string | null {
   if (!state?.native) return "Open a coding conversation first.";
-  if (
-    state.connection !== "connected" ||
-    state.disconnected ||
-    state.recovering
-  )
+  if (state.connection !== "connected" || state.disconnected)
     return "Wait for a connected, reconstructed native view.";
   if (state.planControl)
     return state.planControlReconciling
@@ -2243,7 +2166,6 @@ export function codingRunLabel(state: CodingRunState): string {
       : "Disconnected · work may still be running";
   if (state.connection === "loading") return "Loading native conversation…";
   if (state.stopping) return "Stopping… waiting for terminal cleanup";
-  if (state.recovering) return "Recovering native history…";
   const preparation = state.native?.execution_preparation;
   if (preparation?.phase === "cleanup_pending")
     return "Cleanup pending · local model protection retained";

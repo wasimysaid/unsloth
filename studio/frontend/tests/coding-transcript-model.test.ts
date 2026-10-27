@@ -96,7 +96,7 @@ test("consecutive reasoning and tools form one chronological activity tree; text
   );
   assert.equal(
     first.summary.text,
-    "Thought 2 times · ran 1 command · called 1 tool",
+    "Thought 2 times · Ran 1 command · called 1 tool",
   );
   assert.deepEqual(rows, before, "presentation never mutates native rows");
   assert.equal(
@@ -161,7 +161,8 @@ test("semantic public answers and delegated attempts stay visible in their chron
   const answer = tool("answer");
   if (answer.tool) answer.tool.semantic_content = "answer_markdown";
   const spawn = tool("spawn", { kind: "agent" });
-  if (spawn.tool)
+  if (spawn.tool) {
+    spawn.tool.name = "agent";
     spawn.tool.subagent = {
       agent_id: "child-handle",
       attempt: 1,
@@ -169,8 +170,10 @@ test("semantic public answers and delegated attempts stay visible in their chron
       description: "Scan repo",
       status: "running",
     };
+  }
   const unnamed = tool("agent-like", { kind: "agent" });
-  if (unnamed.tool)
+  if (unnamed.tool) {
+    unnamed.tool.name = "agent";
     unnamed.tool.subagent = {
       agent_id: "x",
       attempt: null,
@@ -178,34 +181,42 @@ test("semantic public answers and delegated attempts stay visible in their chron
       description: "No attempt identity",
       status: "running",
     };
+  }
+  const message = tool("message", { kind: "agent" });
+  if (message.tool) {
+    message.tool.name = "send_subagent_message";
+    message.tool.subagent = spawn.tool?.subagent;
+  }
+  // A record of an attempt with no launch card here (e.g. a continuation).
   const saved: CodingRow = {
     id: "child-row",
     kind: "child",
     child: {
       handle: "child-handle",
-      attempt: 1,
+      attempt: 2,
       status: "completed",
       completion_pending: false,
       cut: null,
     },
   };
   const blocks = projectTranscript(
-    [tool("one"), answer, tool("two"), spawn, unnamed, saved],
+    [tool("one"), answer, tool("two"), spawn, unnamed, message, saved],
     latestWindow(),
   );
-  // Subagent invocations never share a fold with ordinary tools.
+  // Launches never share a fold with ordinary tools; calls about an agent do.
   assert.deepEqual(
     blocks.map((block) => [
       block.kind,
       block.kind === "activity" && block.agents,
+      block.kind === "activity" ? block.items.length : 0,
     ]),
     [
-      ["activity", false],
-      ["semantic", false],
-      ["activity", false],
-      ["activity", true],
-      ["activity", false],
-      ["child", false],
+      ["activity", false, 1],
+      ["semantic", false, 0],
+      ["activity", false, 1],
+      ["activity", true, 2],
+      ["activity", false, 1],
+      ["child", false, 0],
     ],
   );
   const launched = blocks[3];
@@ -215,17 +226,16 @@ test("semantic public answers and delegated attempts stay visible in their chron
       : null,
     { handle: "child-handle", attempt: 1 },
   );
-  const anonymous = blocks[4];
   assert.equal(
-    anonymous.kind === "activity" && anonymous.items[0].kind === "tool"
-      ? anonymous.items[0].child
+    launched.kind === "activity" && launched.items[1].kind === "tool"
+      ? launched.items[1].child
       : undefined,
     null,
     "no exact attempt identity, no inspector link",
   );
   assert.equal(
     blocks[5].kind === "child" && blocks[5].key,
-    "child:child-handle:1",
+    "child:child-handle:2",
   );
 });
 
@@ -515,7 +525,6 @@ test("a frozen historical window of the still-active request infers nothing live
   const state = (viewingEarlier: boolean) =>
     ({
       connection: "connected",
-      recovering: false,
       stopping: null,
       storageError: null,
       viewingEarlier,
@@ -543,5 +552,68 @@ test("a frozen historical window of the still-active request infers nothing live
     latest?.kind === "activity" && latest.live,
     true,
     "the latest window keeps its genuine live tail",
+  );
+});
+
+test("only the active request's streaming tail prose is live", () => {
+  const prose = (id: string, request = "request"): CodingRow => ({
+    id,
+    kind: "assistant",
+    request_id: request,
+    text: `text ${id}`,
+  });
+  const live = projectTranscript(
+    [prose("a"), tool("t"), prose("b")],
+    latestWindow("request"),
+  );
+  assert.deepEqual(
+    live.map((block) => (block.kind === "prose" ? block.live : null)),
+    [false, null, true],
+  );
+  for (const window of [latestWindow(), { kind: "historical" } as const])
+    assert.ok(
+      projectTranscript([prose("a"), prose("b")], window).every(
+        (block) => block.kind !== "prose" || !block.live,
+      ),
+    );
+});
+
+test("a launched agent's later record and native-only inputs add no extra rows", () => {
+  const launch = tool("launch", { kind: "agent" });
+  if (launch.tool) {
+    launch.tool.name = "agent";
+    launch.tool.subagent = {
+      agent_id: "child-handle",
+      attempt: 1,
+      agent: "explore",
+      description: "test_subagent",
+      status: "completed",
+    };
+  }
+  const delivered: CodingRow = { id: "delivery", kind: "user", text: "" };
+  const record: CodingRow = {
+    id: "record",
+    kind: "child",
+    child: {
+      handle: "child-handle",
+      attempt: 1,
+      status: "completed",
+      completion_pending: false,
+      cut: null,
+    },
+  };
+  const other: CodingRow = {
+    ...record,
+    id: "other",
+    child: { ...record.child!, attempt: 2 },
+  };
+  const image: CodingRow = { id: "image", kind: "user", text: "", image_count: 1 };
+  const blocks = projectTranscript(
+    [launch, delivered, record, other, image],
+    latestWindow(),
+  );
+  assert.deepEqual(
+    blocks.map((block) => block.key),
+    ["activity:invocation:launch", "child:child-handle:2", "row:image"],
   );
 });

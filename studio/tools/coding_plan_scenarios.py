@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 
 from coding_recovery_scenarios import VIEW_FAULT_SCRIPT, captured_state, wait_native_terminal
+from coding_ui import enter_plan_mode, expect_connected, open_saved, opened_id
 
 
 ACTION_LABELS = {
@@ -65,7 +66,7 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
     from playwright.sync_api import expect
 
     assert provider is not None, "Plan acceptance requires the deterministic external provider"
-    conversation = page.get_by_test_id("coding-conversation-id").inner_text()
+    conversation = opened_id(page)
     headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')"),
                "X-Mimir-Runtime-Generation": str(opening_generation)}
     prefix = base + f"/api/coding/conversations/{conversation}"
@@ -74,7 +75,9 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
     transcript = page.get_by_test_id("coding-transcript")
     status = page.get_by_test_id("coding-run-status")
     card = page.get_by_test_id("coding-current-plan")
-    mode_output = page.get_by_test_id("coding-plan-mode")
+    # The footer chip exists only while native configuration reports Plan mode.
+    plan_chip = page.get_by_test_id("coding-plan-mode")
+    notices = page.get_by_test_id("coding-event-status")
     evidence = report.setdefault("plan", {"kind": "deterministic-http-provider-real-native-plan-actions",
                                           "requests": [], "actions": [], "plans": [], "tool_identities": []})
     current_request = None
@@ -83,27 +86,33 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
         return captured_state(base, headers, conversation)
 
     def reopen(identifier=conversation):
-        saved = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text=identifier)
-        expect(saved).to_be_visible(timeout=60000)
-        with page.expect_response(lambda response: response.url == base + f"/api/coding/conversations/{identifier}/open"
-                                  and response.request.method == "POST", timeout=60000) as opening:
-            saved.click()
-        assert opening.value.ok
-        headers["X-Mimir-Runtime-Generation"] = str(opening.value.json()["runtime_generation"])
-        expect(page.get_by_test_id("coding-conversation-id")).to_have_text(identifier, timeout=60000)
-        expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+        opening = open_saved(page, base, identifier, ready=False)
+        headers["X-Mimir-Runtime-Generation"] = str(opening.json()["runtime_generation"])
+        expect_connected(page)
 
     def mode(value):
-        radio = page.get_by_role("group", name="Coding mode").get_by_role("radio", name=value.title(), exact=True)
-        expect(radio).to_be_enabled(timeout=60000)
-        with page.expect_response(lambda response: response.url == mode_url and response.request.method == "POST", timeout=60000) as waiting:
-            radio.focus()
-            radio.press("Space")
-        assert waiting.value.ok, f"Native mode change failed ({waiting.value.status})"
-        assert waiting.value.request.post_data_json == {"mode": value}
-        assert waiting.value.json() == {"conversation_id": conversation, "mode": value}
-        expect(radio).to_be_checked(timeout=60000)
-        expect(mode_output).to_have_text("Native mode: " + value, timeout=60000)
+        if value == "plan":
+            # Entering Plan is the native `/plan` command typed into the composer
+            # and run with Enter (POST .../commands), not a mode route.
+            waiting = enter_plan_mode(page, base, conversation)
+            assert waiting.ok, f"Native /plan command failed ({waiting.status}): {waiting.text()}"
+            sent = waiting.request.post_data_json
+            assert sent["name"] == "plan" and sent["tail"] == "" and sent["operation_id"], sent
+            result = waiting.json()
+            assert result["conversation_id"] == conversation and result["operation_id"] == sent["operation_id"]
+            assert result["outcome"] == "handled", result
+            expect(plan_chip).to_be_visible(timeout=60000)
+        else:
+            # Leaving Plan is the chip's own control (POST .../mode build), by keyboard.
+            leave = plan_chip.get_by_role("button", name="Leave plan mode", exact=True)
+            expect(leave).to_be_enabled(timeout=60000)
+            with page.expect_response(lambda response: response.url == mode_url and response.request.method == "POST", timeout=60000) as waiting:
+                leave.focus()
+                leave.press("Enter")
+            assert waiting.value.ok, f"Native mode change failed ({waiting.value.status})"
+            assert waiting.value.request.post_data_json == {"mode": value}
+            assert waiting.value.json() == {"conversation_id": conversation, "mode": value}
+            expect(plan_chip).to_have_count(0, timeout=60000)
         assert state()["configuration"]["mode"] == value
 
     def submit(text):
@@ -183,22 +192,37 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
         evidence["actions"].append(ack)
         if ack["request_id"]:
             current_request = ack["request_id"]
-            expect(page.get_by_test_id("coding-request-id")).to_contain_text(ack["request_id"], timeout=60000)
+            # No request-ID readout remains; the admitted request is the one
+            # rendered as Running (asserted natively once the provider sees it).
+            expect(status).to_have_text("Running", timeout=60000)
         return ack
 
     def tool_row(call, name, marker):
         row = page.locator(f'[data-testid="coding-tool-row"][data-call-id="{call}"]')
+        if row.count() == 0:
+            # A settled turn folds its activity group; open the newest folded
+            # groups by keyboard until the exact native call is rendered.
+            groups = page.get_by_test_id("coding-activity-group")
+            for index in reversed(range(groups.count())):
+                toggle = groups.nth(index).locator(":scope > button")
+                if toggle.get_attribute("aria-expanded") != "true":
+                    toggle.focus()
+                    toggle.press("Enter")
+                    expect(toggle).to_have_attribute("aria-expanded", "true")
+                if row.count():
+                    break
         expect(row).to_have_count(1, timeout=60000)
-        summary = row.locator("summary")
-        summary.focus()
-        if row.get_attribute("open") is None:
-            summary.press("Enter")
-        expect(row.locator("pre")).to_be_visible()
-        expect(row).to_contain_text(name, timeout=60000)
+        line = row.locator("button[aria-expanded][aria-controls]").first
+        line.focus()
+        if line.get_attribute("aria-expanded") != "true":
+            line.press("Enter")
+        expect(line).to_have_attribute("aria-expanded", "true")
+        expect(row.locator(f'[id="{line.get_attribute("aria-controls")}"]')).to_be_visible()
         expect(row).to_contain_text(marker, timeout=60000)
-        identity = row.locator("p").first.inner_text()
-        assert "call " + call in identity, "Native call identity missing: " + repr(identity)
-        assert re.search(r"invocation (?!undefined|null|not supplied)\S+", identity), "Native invocation identity missing: " + repr(identity)
+        # The row's public identity is its native call and invocation attributes.
+        invocation = row.get_attribute("data-invocation-id")
+        assert invocation and invocation not in ("undefined", "null", "not supplied"), "Native invocation identity missing: " + repr(invocation)
+        identity = f"call {call} · invocation {invocation}"
         evidence["tool_identities"].append({"call_id": call, "name": name, "public_identity": identity})
 
     def build(request, label, filename):
@@ -240,7 +264,7 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
     settled()
     original_plan = plan_capture("PLAN_KEEP_239")
     tool_row("plan-denied-write", "write_file", "Plan mode is read-only")
-    scenario("A2-native-plan-write-refusal", "Rendered Plan selection supplied a real write_file call; native read-only policy refused execution, the exact call/invocation identities and refusal were visible, no file was created, and a native saved review plan settled")
+    scenario("A2-native-plan-write-refusal", "Rendered /plan command selected native Plan mode; a real write_file call was refused by native read-only policy, the exact call/invocation identities and refusal were visible, no file was created, and a native saved review plan settled")
 
     # Mode selection changes native configuration only; the pending plan stays
     # exactly the same artifact/lifecycle and does not admit a provider request.
@@ -251,7 +275,7 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
     mode("plan")
     assert state()["plan"] == original_plan
     provider.assert_no_request()
-    scenario("A2-mode-is-not-plan-acceptance", "Keyboard Build/Plan selection matched authoritative native configuration without accepting, revising, or implementing the pending plan")
+    scenario("A2-mode-is-not-plan-acceptance", "Keyboard Leave plan mode control and typed /plan command matched authoritative native configuration without accepting, revising, or implementing the pending plan")
 
     # Expand/collapse with native summary keyboard behavior at both viewports;
     # controls and full plan text must stay reachable without horizontal overflow.
@@ -318,7 +342,7 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
     # direct authenticated coding command must not rewrite the admitted Plan run.
     changed = context.request.post(mode_url, data={"mode": "build"}, headers=headers, timeout=60000)
     assert changed.ok and changed.json() == {"conversation_id": conversation, "mode": "build"}
-    expect(mode_output).to_have_text("Native mode: build", timeout=60000)
+    expect(plan_chip).to_have_count(0, timeout=60000)
     held.tool("plan-running-denied-write", "write_file", {"path": "plan-running-must-not-write.txt", "content": "MUST_NOT_EXIST\n"})
     followup = provider.request()
     assert "Plan mode is read-only" in followup.tool_result("plan-running-denied-write")
@@ -332,6 +356,7 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
 
     ack = act(original_plan, "implement")
     request = provider.request()
+    assert state()["active_request"] == ack["request_id"], "Rendered action admitted a different native request"
     text = provider_context(request)
     assert initial in text, "Current-context implementation lost the original prompt"
     assert original_plan["markdown"] in text, "Current-context implementation lost the proposed plan"
@@ -339,7 +364,7 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
     # only fresh handoff adds an accepted_plan checkpoint wrapper.
     assert "The user accepted the plan you proposed. Implement it now." in text
     assert original_plan["path"] in text, "Implementation guidance targeted a different plan artifact"
-    expect(mode_output).to_have_text("Native mode: build", timeout=60000)
+    expect(plan_chip).to_have_count(0, timeout=60000)
     assert state()["configuration"]["mode"] == "build"
     build(request, "PLAN_KEEP_NATIVE_239", "plan-keep.txt")
     completed = plan_capture("PLAN_KEEP_239", "completed")
@@ -354,11 +379,12 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
     reject(original_plan, "implement_fresh", "superseded-plan")
     ack = act(fresh_plan, "implement_fresh")
     request = provider.request()
+    assert state()["active_request"] == ack["request_id"], "Rendered action admitted a different native request"
     text = provider_context(request)
     assert initial not in text and fresh_prompt not in text, "Fresh implementation retained earlier model context"
     assert "PLAN_FRESH_239" in text and "<accepted_plan>" in text
     assert state()["configuration"]["mode"] == "build"
-    expect(mode_output).to_have_text("Native mode: build", timeout=60000)
+    expect(plan_chip).to_have_count(0, timeout=60000)
     build(request, "PLAN_FRESH_NATIVE_239", "plan-fresh.txt")
     completed = plan_capture("PLAN_FRESH_239", "completed")
     assert completed["id"] == fresh_plan["id"]
@@ -370,7 +396,7 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
 
     save_plan, save_prompt = propose("Save without implementation", "PLAN_SAVE_239", "plan-save-must-not-exist.txt")
     act(save_plan, "save_and_stop")
-    expect(mode_output).to_have_text("Native mode: build", timeout=60000)
+    expect(plan_chip).to_have_count(0, timeout=60000)
     saved = plan_capture("PLAN_SAVE_239", "saved_stopped")
     assert saved["id"] == save_plan["id"] and state()["active_request"] is None
     provider.assert_no_request()
@@ -426,14 +452,15 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
         page.get_by_role("button", name="Implement", exact=True).focus()
         page.keyboard.press("Enter")
         # Pump browser callbacks until the real ACK has been dropped before
-        # waiting synchronously on the external provider's queue.
-        expect(page.get_by_test_id("coding-event-status")).to_contain_text("work may still be running", timeout=60000)
+        # waiting synchronously on the external provider's queue. Only the lost
+        # ACK raises this request-status alert; the view-drop banner alone does not.
+        unconfirmed = notices.get_by_role("alert").filter(has_text=re.compile("unconfirmed", re.I))
+        expect(unconfirmed).to_contain_text("work may still be running", timeout=60000)
         request = provider.request()
         assert len(deliveries) == 1
         current_request = deliveries[0]["request_id"]
         evidence["actions"].append(dict(deliveries[0], acknowledgement_lost=True))
-        expect(page.get_by_role("region", name="Coding project and prompt", exact=True)
-               .get_by_role("alert").filter(has_text=re.compile("unconfirmed", re.I))).to_be_visible(timeout=60000)
+        expect(unconfirmed).to_be_visible(timeout=60000)
         for name in ACTION_LABELS.values():
             expect(page.get_by_role("button", name=name, exact=True)).to_be_disabled()
         for width, height, label in ((1440, 1000, "desktop"), (390, 844, "narrow")):
@@ -454,12 +481,14 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
         assert (first / "plan-lost-ack.txt").read_text() == "PLAN_LOST_ACK_NATIVE_239\n"
         page.evaluate("window.codingDropView = false")
         outage["active"] = False
-        expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+        expect_connected(page)
         expect(page.get_by_test_id("coding-plan-reconciliation")).to_contain_text("No command was replayed", timeout=60000)
         settled("PLAN_LOST_ACK_COMPLETED_239")
-        expect(page.get_by_test_id("coding-request-id")).to_contain_text(deliveries[0]["request_id"])
+        # settled() matched the exact accepted request natively; no request-ID readout remains.
+        assert state()["requests"][-1]["id"] == deliveries[0]["request_id"], "Reconnect reconciled a different native request"
         recovered = plan_capture("PLAN_LOST_ACK_239", "completed")
         assert recovered["id"] == lost_plan["id"] and state()["configuration"]["mode"] == "build"
+        expect(plan_chip).to_have_count(0, timeout=60000)
         assert attempts == [action_body(lost_plan, "implement")], "Uncertain plan command was replayed"
         provider.assert_no_request()
         tool_row("PLAN_LOST_ACK_239-write", "write_file", "plan-lost-ack.txt")
@@ -485,8 +514,8 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
         expect(page.get_by_role("button", name=name, exact=True)).to_be_disabled()
     card.locator("summary").press("Space")
     expect(card).not_to_have_attribute("open", "")
-    for old_plan, marker, lifecycle_label in ((original_plan, "PLAN_KEEP_239", "Implementation completed"),
-                                               (save_plan, "PLAN_SAVE_239", "Saved · implementation not started")):
+    for old_plan, marker, lifecycle_label in ((original_plan, "PLAN_KEEP_239", "Implemented"),
+                                               (save_plan, "PLAN_SAVE_239", "Saved")):
         history = page.get_by_test_id("coding-historical-plan").and_(page.locator('[data-plan-id="' + old_plan["id"] + '"]')).last
         expect(history).to_be_visible(timeout=60000)
         summary = history.locator("summary")
@@ -494,7 +523,7 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
         if history.get_attribute("open") is None:
             summary.press("Enter")
         expect(history.get_by_test_id("coding-plan-content")).to_contain_text(marker)
-        expect(summary).to_contain_text(lifecycle_label)
+        expect(summary.locator("span").last).to_have_text(lifecycle_label)
         expect(history.get_by_role("button")).to_have_count(0)
         summary.scroll_into_view_if_needed()
         expect(summary).to_be_in_viewport(ratio=1)

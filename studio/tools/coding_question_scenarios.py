@@ -14,6 +14,7 @@ from urllib.parse import quote
 import urllib.request
 
 from coding_recovery_scenarios import VIEW_FAULT_SCRIPT, captured_state, wait_native_terminal
+from coding_ui import expect_connected, expect_ready, open_saved, opened_id
 
 
 QUESTION_SET = [
@@ -89,7 +90,7 @@ def run_question_scenarios(page, context, base, provider, first, second_id, repo
     from playwright.sync_api import expect
 
     assert provider is not None, "Question acceptance uses the clearly labeled deterministic HTTP provider"
-    conversation = page.get_by_test_id("coding-conversation-id").inner_text()
+    conversation = opened_id(page)
     headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')")}
     headers["X-Mimir-Runtime-Generation"] = str(context.request.get(base + "/api/coding/runtime", headers=headers).json()["generation"])
     evidence = report.setdefault("questions", {
@@ -107,11 +108,15 @@ def run_question_scenarios(page, context, base, provider, first, second_id, repo
     page.on("request", count_answer)
 
     def reopen():
-        saved = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text=conversation)
-        expect(saved).to_be_visible(timeout=60000)
-        saved.click()
-        expect(page.get_by_test_id("coding-conversation-id")).to_have_text(conversation, timeout=60000)
-        expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+        # A waiting question blocks sending, so only require a connected native view.
+        open_saved(page, base, conversation, ready=False)
+        expect_connected(page)
+
+    # Accepted answers render as durable transcript rows tagged with their
+    # native question identity (the visible label is "Your answer").
+    accepted_rows = page.get_by_test_id("coding-transcript").locator("[data-native-answer]").filter(
+        has=page.get_by_text("Your answer", exact=True))
+    send_blocker = page.locator("#coding-send-explanation")
 
     # This existing shim discards actual SSE bytes and cancels only that view. It
     # does not change native state or manufacture a reset/accepted result.
@@ -166,7 +171,7 @@ def run_question_scenarios(page, context, base, provider, first, second_id, repo
     reopen()
 
     def submit_prompt(marker):
-        expect(page.get_by_label("Coding prompt", exact=True)).to_be_enabled(timeout=60000)
+        expect_ready(page)
         page.get_by_label("Coding prompt", exact=True).fill(marker)
         with page.expect_response(lambda response: response.url == prompt_url and response.request.method == "POST", timeout=60000) as waiting:
             page.get_by_label("Coding prompt", exact=True).press("Enter")
@@ -186,7 +191,8 @@ def run_question_scenarios(page, context, base, provider, first, second_id, repo
         state = captured_state(base, headers, conversation)
         assert state["active_request"] == request_id and state["pending_user_request"] is True
         assert state["user_request"] == {"id": target["user_request_id"], "questions": questions}
-        expect(page.get_by_label("Coding prompt", exact=True)).to_be_disabled()
+        # The prompt stays editable, but sending is blocked until the question is answered.
+        expect(send_blocker).to_have_text("Answer the native question first.", timeout=60000)
         expect(card.get_by_role("heading", name="Mimir needs your input")).to_be_visible()
         return card, target
 
@@ -250,7 +256,7 @@ def run_question_scenarios(page, context, base, provider, first, second_id, repo
             latest.press("Enter")
         # Once native history contains this accepted input, the frontend replaces
         # the ephemeral controls with its durable accepted-answer transcript row.
-        expect(page.get_by_test_id("coding-transcript").get_by_text("You · accepted answer", exact=True)).to_have_count(len(expected), timeout=60000)
+        expect(accepted_rows).to_have_count(len(expected), timeout=60000)
         expect(card).to_have_count(0, timeout=60000)
         if len(expected) == 1:
             accepted = page.locator(f'[data-native-answer="{target["user_request_id"]}"]')
@@ -340,7 +346,7 @@ def run_question_scenarios(page, context, base, provider, first, second_id, repo
         scenario("A2-exact-live-question-validation", "Wrong conversation/request/question/subscription and invalid answer controls were rejected by actual native admission, preserving the waiting question and producing no provider continuation")
         send(card, target, answers)
         complete(result_request("question-keyboard", answers), "QUESTION_KEYBOARD_COMPLETED")
-        expect(page.get_by_test_id("coding-transcript").get_by_text("You · accepted answer", exact=True)).to_have_count(1)
+        expect(accepted_rows).to_have_count(1)
         audit()
         accepted = page.locator(f'[data-native-answer="{target["user_request_id"]}"]')
         accepted.scroll_into_view_if_needed()
@@ -352,7 +358,7 @@ def run_question_scenarios(page, context, base, provider, first, second_id, repo
         page.set_viewport_size({"width": 1440, "height": 1000})
         reopen()
         expect(page.get_by_test_id("coding-transcript")).to_contain_text("QUESTION_CUSTOM_ACCEPTED", timeout=60000)
-        expect(page.get_by_test_id("coding-transcript").get_by_text("You · accepted answer", exact=True)).to_have_count(1)
+        expect(accepted_rows).to_have_count(1)
         reject(target, answers, "completed-and-reopened-question")
         audit()
         scenario("A2-A10-keyboard-accepted-restored", "Native single/multiple/freeform controls operated by Tab/Space/arrow keys and typing; accepted public input restored after reopen, desktop/narrow layouts captured, exact values retained once")
@@ -373,7 +379,7 @@ def run_question_scenarios(page, context, base, provider, first, second_id, repo
         expect(page.get_by_test_id("coding-disconnect-banner")).to_be_visible(timeout=60000)
         assert page.evaluate("document.activeElement === document.body"), "Disconnected card stole deliberately released focus"
         page.evaluate("window.codingDropView = false")
-        expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+        expect_connected(page)
         assert page.evaluate("document.activeElement === document.body"), "Reconnected card stole earlier-reading focus"
         before_target = {**before_target, "subscription": card.get_attribute("data-subscription")}
         reject(focus_target, before_answers, "outside-focus-reconnect-stale-view", live_target=before_target)
@@ -440,8 +446,8 @@ def run_question_scenarios(page, context, base, provider, first, second_id, repo
         assert len(evidence["answer_attempts"]) == count + 1
         page.evaluate("window.codingDropView = false")
         outage["active"] = False
-        expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
-        expect(page.get_by_test_id("coding-transcript").get_by_text("You · accepted answer", exact=True)).to_have_count(len(expected), timeout=60000)
+        expect_connected(page)
+        expect(accepted_rows).to_have_count(len(expected), timeout=60000)
         expect(card).to_have_count(0, timeout=60000)
         assert len(evidence["answer_attempts"]) == count + 1
         page.unroute(event_url, unavailable_view)
@@ -480,7 +486,7 @@ def run_question_scenarios(page, context, base, provider, first, second_id, repo
         wait_native_terminal(base, headers, conversation, stopped_target["request_id"], expected_status="cancelled")
         expect(page.get_by_test_id("coding-run-status")).to_contain_text("Stopped", timeout=60000)
         expect(page.get_by_role("button", name="Stop", exact=True)).to_have_count(0)
-        expect(page.get_by_label("Coding prompt", exact=True)).to_be_enabled(timeout=60000)
+        expect_ready(page)
         state = captured_state(base, headers, conversation)
         assert state["active_request"] is None and state["user_request"] is None and state["pending_user_request"] is False
         assert any(item["id"] == stopped_target["request_id"] and item["status"] == "cancelled" for item in state["requests"])
@@ -489,7 +495,7 @@ def run_question_scenarios(page, context, base, provider, first, second_id, repo
         snapshot(page, "questions-stop-terminal-cleanup")
         reopen()
         expect(page.get_by_test_id("coding-question-card")).to_have_count(0)
-        expect(page.get_by_test_id("coding-transcript").get_by_text("You · accepted answer", exact=True)).to_have_count(len(expected))
+        expect(accepted_rows).to_have_count(len(expected))
         audit()
         scenario("A2-A7-stop-waiting-terminal-cleanup", "Deliberate waiting reopen rejected old subscription; Stop targeted the exact native request, eventual cancelled state cleared active/pending question, stale answer rejected, no continuation or accepted stopped draft")
 

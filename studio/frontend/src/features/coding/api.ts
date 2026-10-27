@@ -5,22 +5,11 @@ import { authFetch } from "@/features/auth/api";
 import { readFastApiError } from "@/lib/format-fastapi-error";
 import { CodingHttpError, CodingOverlapError, projectOverlap } from "./errors";
 import { consumeCodingEvents } from "./events";
-import type {
-  ExtensionInventory,
-  MaintenanceApi,
-  PluginReloadStatus,
-  RuntimeDiagnostics,
-} from "./maintenance";
 import type { CodingRuntimeApi } from "./runtime-maintenance";
 import type {
-  McpDraft,
-  McpInventory,
-  McpOperation,
-  McpOperationInspection,
-  McpSaveResult,
-  McpSettingsApi,
-} from "./mcp-types";
-import type { CodingModelApi } from "./model-selection";
+  CodingModelApi,
+  CodingProviderChoice,
+} from "./model-selection";
 import type { EntryPage, RunApi } from "./run-types";
 import type {
   CodingApi,
@@ -119,11 +108,11 @@ export const codingApi: CodingApi = {
       "The native conversation catalog exceeded 100 pages. The full history could not be loaded.",
     );
   },
-  async createConversation(cwd) {
+  async createConversation(cwd, configuration) {
     const response = await codingRequest("/conversations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd }),
+      body: JSON.stringify(configuration ? { cwd, configuration } : { cwd }),
     });
     return openedConversation((await response.json()) as CodingConversation);
   },
@@ -158,95 +147,19 @@ export const codingRuntimeApi: CodingRuntimeApi = {
   },
 };
 
-/** Explicit Settings access; neither browser nor backend owns configuration files.
- * Disable caches and transport replay: a lost save reply is an uncertain write,
- * reconciled by an explicit editor read, not a second submission.
- */
-export const mcpSettingsApi: McpSettingsApi = {
-  async apply(id, operationId) {
-    return (await (
-      await codingRequest(
-        `/conversations/${encodeURIComponent(id)}/mcp/apply`,
-        {
-          method: "POST",
-          cache: "no-store",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ operation_id: operationId }),
-        },
-      )
-    ).json()) as McpOperation;
-  },
-  async reconnect(id, operationId, name) {
-    return (await (
-      await codingRequest(
-        `/conversations/${encodeURIComponent(id)}/mcp/reconnect`,
-        {
-          method: "POST",
-          cache: "no-store",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            operation_id: operationId,
-            name: name ?? null,
-          }),
-        },
-      )
-    ).json()) as McpOperation;
-  },
-  async inspectOperation(id, operationId) {
-    return (await (
-      await codingRequest(
-        `/conversations/${encodeURIComponent(id)}/mcp/operations/${encodeURIComponent(operationId)}`,
-        { cache: "no-store" },
-      )
-    ).json()) as McpOperationInspection;
-  },
-  async inventory(id) {
-    const response = await codingRequest(
-      `/conversations/${encodeURIComponent(id)}/mcp/inventory`,
-      { cache: "no-store" },
-    );
-    return (await response.json()) as McpInventory;
-  },
-  async edit(id, source, name) {
-    const response = await codingRequest(
-      `/conversations/${encodeURIComponent(id)}/mcp/edit`,
-      {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source, name }),
-      },
-    );
-    return (await response.json()) as McpDraft;
-  },
-  async save(id, draft, json) {
-    const response = await codingRequest(
-      `/conversations/${encodeURIComponent(id)}/mcp/save`,
-      {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          edit_id: draft.edit_id,
-          revision: draft.revision,
-          json,
-        }),
-      },
-    );
-    return (await response.json()) as McpSaveResult;
-  },
-  async release(id, editId) {
-    await codingRequest(
-      `/conversations/${encodeURIComponent(id)}/mcp/release`,
-      {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ edit_id: editId }),
-      },
-    );
-  },
-};
+/** Model choices before a conversation exists: the folder's effective settings,
+ * or the host home's when no folder is chosen yet. */
+export async function readCodingCatalog(
+  cwd: string | null,
+  signal: AbortSignal,
+): Promise<CodingProviderChoice[]> {
+  const query = cwd ? `?${new URLSearchParams({ cwd })}` : "";
+  const response = await codingRequest(`/catalog${query}`, {
+    signal,
+    cache: "no-store",
+  });
+  return await response.json();
+}
 
 export const codingModelApi: CodingModelApi = {
   async catalog(id, signal) {
@@ -262,37 +175,6 @@ export const codingModelApi: CodingModelApi = {
       { method: "POST", signal, cache: "no-store" },
     );
     return await response.json();
-  },
-};
-
-export async function readCodingDiagnostics(): Promise<RuntimeDiagnostics> {
-  return (await (
-    await codingRequest("/diagnostics")
-  ).json()) as RuntimeDiagnostics;
-}
-
-export const codingMaintenanceApi: MaintenanceApi = {
-  async inspect(id, operationId) {
-    const query = operationId
-      ? `?${new URLSearchParams({ operation_id: operationId })}`
-      : "";
-    return (await (
-      await codingRequest(
-        `/conversations/${encodeURIComponent(id)}/extensions${query}`,
-      )
-    ).json()) as ExtensionInventory;
-  },
-  async reload(id, operationId) {
-    return (await (
-      await codingRequest(
-        `/conversations/${encodeURIComponent(id)}/plugins/reload`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ operation_id: operationId }),
-        },
-      )
-    ).json()) as PluginReloadStatus;
   },
 };
 
@@ -423,12 +305,6 @@ export function createCodingRunApi(openingGeneration: number): RunApi {
     );
     return await response.json();
   },
-  async diagnostics(id, kind) {
-    const response = await codingRequest(
-      `/conversations/${encodeURIComponent(id)}/diagnostics/${kind}`,
-    );
-    return await response.json();
-  },
   async checkOverlap(id) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/overlap`,
@@ -470,7 +346,7 @@ export function createCodingRunApi(openingGeneration: number): RunApi {
       );
       return await response.json();
     },
-    async readPublicEntry(id, reference, offset, signal) {
+    async readPublicEntry(id, reference, signal) {
       const response = await codingRequest(
         `/conversations/${encodeURIComponent(id)}/public-entry`,
         {
@@ -480,8 +356,6 @@ export function createCodingRunApi(openingGeneration: number): RunApi {
           body: JSON.stringify({
             cut: reference.cut,
             entry_id: reference.entry_id,
-            offset,
-            max_bytes: 65536,
           }),
         },
       );

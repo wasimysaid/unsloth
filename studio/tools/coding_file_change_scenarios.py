@@ -12,6 +12,8 @@ import hashlib
 import json
 import re
 
+from coding_ui import expect_connected, open_saved, opened_id
+
 
 FILE_PATH = "studio-file-changes.txt"
 INITIAL = "FILE_CHANGE_HEADER\nphase=one\nFILE_CHANGE_FOOTER\n"
@@ -20,6 +22,8 @@ FINAL = EDITED.replace("FILE_CHANGE_FOOTER", "FILE_CHANGE_FOOTER_FINAL")
 OUTSIDE = "OUTSIDE_NATIVE_CURRENT_STATE_NOT_REPORTED\n"
 SHELL_MARKER = "FILE_CHANGES_REAL_SHELL_OUTPUT"
 CALLS = ("file-change-write", "file-change-edit-one", "file-change-edit-two")
+# Tool output and diff viewports are max-h-108 (27rem = 432px at the default UI scale).
+OUTPUT_BOUND = 433
 
 # Installed before navigation. Clone consumption is read-only; original fetch
 # response/body remains untouched. Never retain request bodies, auth or model data.
@@ -141,11 +145,28 @@ def inject_synthetic_history(body):
     return result
 
 
+def tool_header(row):
+    """A tool row's "<Verb> <argument>" disclosure button; output renders only when expanded."""
+    return row.locator(":scope > div > button[aria-expanded]")
+
+
+def expand_activity(scope):
+    """Settled activity groups are folded and render no tool rows: open each by keyboard."""
+    from playwright.sync_api import expect
+
+    headers = scope.locator('[data-testid="coding-activity-group"] > button[aria-expanded]')
+    for index in range(headers.count()):
+        header = headers.nth(index)
+        if header.get_attribute("aria-expanded") == "false":
+            header.press("Enter")
+            expect(header).to_have_attribute("aria-expanded", "true", timeout=60000)
+
+
 def run_file_change_scenarios(page, context, base, provider, first, second_id,
                               report, scenario, snapshot, *, live=False):
     from playwright.sync_api import expect
 
-    conversation = page.get_by_test_id("coding-conversation-id").inner_text()
+    conversation = opened_id(page)
     status = page.get_by_test_id("coding-run-status")
     composer = page.get_by_label("Coding prompt", exact=True)
     prompt_url = base + f"/api/coding/conversations/{conversation}/prompts"
@@ -172,48 +193,53 @@ def run_file_change_scenarios(page, context, base, provider, first, second_id,
         return page.locator('[data-testid="coding-tool-row"][data-call-id=' + json.dumps(call) + ']')
 
     def file_row(call, path=FILE_PATH):
-        # The file renderer is a sibling beneath this precise tool result.
-        return tool_row(call).locator("..").locator(
+        # The file diff renders inside this precise tool result once expanded.
+        return tool_row(call).locator(
             '[data-testid="coding-file-change-row"][data-path=' + json.dumps(path) + ']')
 
     def keyboard_expand(row):
-        summary = row.locator(":scope > summary")
-        summary.focus()
-        expect(summary).to_be_focused()
-        assert not row.evaluate("element => element.open"), "Rows must initially be collapsed"
-        summary.press("Enter")
-        expect(row).to_have_attribute("open", "")
-        expect(summary).to_be_focused()
+        header = tool_header(row)
+        header.focus()
+        expect(header).to_be_focused()
+        assert header.get_attribute("aria-expanded") == "false", "Rows must initially be collapsed"
+        header.press("Enter")
+        expect(header).to_have_attribute("aria-expanded", "true")
+        expect(header).to_be_focused()
 
-    def inspect(call, file, *, historical=False, reopen=False):
+    def keyboard_collapse(row):
+        tool_header(row).press("Enter")
+        expect(tool_header(row)).to_have_attribute("aria-expanded", "false")
+
+    def inspect(call, file, *, reopen=False):
+        expand_activity(page)
         row = tool_row(call)
         expect(row).to_have_count(1, timeout=60000)
         invocation = row.get_attribute("data-invocation-id")
         assert invocation and invocation not in ("null", "undefined", "not supplied")
+        # Before expansion the row header already shows the supplied counts.
+        expect(tool_header(row)).to_contain_text(f'+{file["additions"]} −{file["deletions"]}')
+        keyboard_expand(row)
         changed = file_row(call, file["path"])
         expect(changed).to_have_count(1, timeout=60000)
-        expect(changed.locator("summary")).to_contain_text(file["path"])
-        expect(changed.locator("summary")).to_contain_text(f'+{file["additions"]} added')
-        expect(changed.locator("summary")).to_contain_text(f'−{file["deletions"]} removed')
-        keyboard_expand(changed)
-        diff = changed.get_by_label("Reported unified diff for " + file["path"], exact=True)
+        heading = changed.locator("p").first
+        expect(heading).to_contain_text(file["path"])
+        expect(heading).to_contain_text(f'+{file["additions"]}')
+        expect(heading).to_contain_text(f'−{file["deletions"]}')
+        diff = changed.get_by_label("Diff for " + file["path"], exact=True)
         expect(diff).to_be_visible()
         diff.focus()
         expect(diff).to_be_focused()
-        text = diff.text_content()
-        actual_lines = [line for line in text.splitlines() if not line.startswith(("--- ", "+++ ", "@@ "))]
+        # One block per diff line; the ---/+++ header repeats the path line above.
+        text = diff.inner_text()
+        lines = text.splitlines()
+        actual_lines = [line for line in lines if not line.startswith("@@ ")]
         assert actual_lines == supplied_lines(file), "Rendered diff altered supplied native lines"
-        assert text.startswith("--- ") and "\n+++ " in text and "\n@@ -" in text
-        assert diff.evaluate("element => element.clientHeight <= 321"), "Diff viewport is not bounded"
-        if historical:
-            expect(row.locator("summary")).to_contain_text("Historical report")
-            expect(changed).to_contain_text("Historical reported change")
-            expect(changed).to_contain_text("not current filesystem state")
+        assert lines and lines[0].startswith("@@ -"), "Rendered diff omitted its supplied hunk header"
+        assert diff.evaluate("(element, bound) => element.clientHeight <= bound", OUTPUT_BOUND), "Diff viewport is not bounded"
         result = {"call_id": call, "invocation_id": invocation, "path": file["path"],
                   "diff": text, "diff_sha256": hashlib.sha256(text.encode()).hexdigest()}
         if not reopen:
-            changed.locator("summary").press("Enter")
-            expect(changed).not_to_have_attribute("open", "")
+            keyboard_collapse(row)
         return result
 
     def observed():
@@ -243,14 +269,17 @@ def run_file_change_scenarios(page, context, base, provider, first, second_id,
         assert [row["name"] for row in effects] == ["write_file", "edit_file", "edit_file"], "Live model must complete exactly the requested sequential native operations"
         calls = [row["call_id"] for row in effects]
         assert len(set(calls)) == 3 and len({row["invocation_id"] for row in effects}) == 3
-        shell_rows = page.get_by_test_id("coding-tool-row").filter(has_text="shell")
+        expand_activity(page)
+        # Folded rows read "<Verb> <argument>": the shell row names its command,
+        # the read row its file.
+        shell_rows = page.get_by_test_id("coding-tool-row").filter(has_text=SHELL_MARKER)
         assert shell_rows.count() == 1
         shell_call = shell_rows.first.get_attribute("data-call-id")
-        read = page.get_by_test_id("coding-tool-row").filter(has_text="read_file")
+        read = page.get_by_test_id("coding-tool-row").filter(has_text=re.compile(r"^Read")).filter(has_text=FILE_PATH)
         expect(read).to_have_count(1)
         keyboard_expand(read)
-        expect(read.get_by_label("Actual public tool output", exact=True)).to_contain_text("phase=two")
-        expect(read.get_by_label("Actual public tool output", exact=True)).to_contain_text("FILE_CHANGE_FOOTER_FINAL")
+        expect(read.get_by_label("Tool output", exact=True)).to_contain_text("phase=two")
+        expect(read.get_by_label("Tool output", exact=True)).to_contain_text("FILE_CHANGE_FOOTER_FINAL")
     else:
         submit("FILE_CHANGES_ACCEPTANCE: write one disposable file, edit it twice sequentially, then report a real shell output")
         request = provider.request()
@@ -272,19 +301,18 @@ def run_file_change_scenarios(page, context, base, provider, first, second_id,
             evidence["operations"].append(dict(rendered, name=name,
                 content_sha256=hashlib.sha256(expected.encode()).hexdigest(), source="actual native live activity"))
             expect(status).to_have_text("Running")
-            changed = file_row(calls[index])
+            changed = tool_row(calls[index])
             keyboard_expand(changed)
-            changed.get_by_label("Reported unified diff for " + FILE_PATH, exact=True).scroll_into_view_if_needed()
+            file_row(calls[index]).get_by_label("Diff for " + FILE_PATH, exact=True).scroll_into_view_if_needed()
             no_approval_or_overflow()
             snapshot(page, f"file-changes-live-operation-{index + 1}")
             if index == 2:
                 page.set_viewport_size({"width": 390, "height": 844})
-                changed.get_by_label("Reported unified diff for " + FILE_PATH, exact=True).scroll_into_view_if_needed()
+                file_row(calls[index]).get_by_label("Diff for " + FILE_PATH, exact=True).scroll_into_view_if_needed()
                 no_approval_or_overflow()
                 snapshot(page, "file-changes-live-narrow")
                 page.set_viewport_size({"width": 1440, "height": 1000})
-            changed.locator("summary").press("Enter")
-            expect(changed).not_to_have_attribute("open", "")
+            keyboard_collapse(changed)
         shell_call = "file-change-shell"
         request.tool(shell_call, "shell", {"command": "printf " + SHELL_MARKER, "timeout_seconds": 30, "yield_time_ms": 10000})
         request = provider.request()
@@ -312,17 +340,15 @@ def run_file_change_scenarios(page, context, base, provider, first, second_id,
     shell = tool_row(shell_call)
     expect(shell).to_have_count(1)
     keyboard_expand(shell)
-    expect(shell.get_by_label("Actual public tool output", exact=True)).to_contain_text(SHELL_MARKER)
-    expect(shell.locator("..").get_by_test_id("coding-file-changes")).to_have_count(0)
-    expect(shell.locator("..")).not_to_contain_text(re.compile(r"no (?:files? )?chang(?:e|es|ed)", re.I))
+    expect(shell.get_by_label("Tool output", exact=True)).to_contain_text(SHELL_MARKER)
+    expect(shell.get_by_test_id("coding-file-changes")).to_have_count(0)
+    expect(shell).not_to_contain_text(re.compile(r"no (?:files? )?chang(?:e|es|ed)", re.I))
     scenario("A3-no-profile-output", "Actual native shell output remains inspectable without fabricated diff or false no-change assertion")
 
     def reopen():
-        page.locator('[aria-label="Saved coding conversations"] button').filter(has_text=second_id).click()
-        expect(page.get_by_test_id("coding-conversation-id")).to_have_text(second_id, timeout=60000)
-        page.locator('[aria-label="Saved coding conversations"] button').filter(has_text=conversation).click()
-        expect(page.get_by_test_id("coding-conversation-id")).to_have_text(conversation, timeout=60000)
-        expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+        open_saved(page, base, second_id, ready=False)
+        open_saved(page, base, conversation, ready=False)
+        expect_connected(page)
 
     # External mutation is deliberately after all real execution/content checks.
     (first / FILE_PATH).write_text(OUTSIDE)
@@ -330,40 +356,40 @@ def run_file_change_scenarios(page, context, base, provider, first, second_id,
     replay = []
     for call in calls:
         live_row = wait_observed(call)
-        replay.append(inspect(call, live_row["output_profile"]["files"][0], historical=True, reopen=True))
+        replay.append(inspect(call, live_row["output_profile"]["files"][0], reopen=True))
     assert replay == original, "Replay changed call/invocation/file identity or supplied unified diff"
     assert [row.get_attribute("data-call-id") for row in page.get_by_test_id("coding-tool-row").all()][:3] == calls, "Replay reordered repeated edits"
     keyboard_expand(tool_row(shell_call))
-    expect(tool_row(shell_call).get_by_label("Actual public tool output", exact=True)).to_contain_text(SHELL_MARKER)
-    expect(tool_row(shell_call).locator("..").get_by_test_id("coding-file-changes")).to_have_count(0)
+    expect(tool_row(shell_call).get_by_label("Tool output", exact=True)).to_contain_text(SHELL_MARKER)
+    expect(tool_row(shell_call).get_by_test_id("coding-file-changes")).to_have_count(0)
     assert (first / FILE_PATH).read_text() == OUTSIDE
     expect(page.get_by_test_id("coding-transcript")).not_to_contain_text(OUTSIDE.strip())
     for width, height, name in ((1440, 1000, "desktop"), (390, 844, "narrow")):
         page.set_viewport_size({"width": width, "height": height})
-        file_row(calls[-1]).get_by_label("Reported unified diff for " + FILE_PATH, exact=True).scroll_into_view_if_needed()
+        file_row(calls[-1]).get_by_label("Diff for " + FILE_PATH, exact=True).scroll_into_view_if_needed()
         no_approval_or_overflow()
         snapshot(page, "file-changes-historical-" + name)
     page.set_viewport_size({"width": 1440, "height": 1000})
     # Read an earlier record rather than letting expansion jump to the latest tool.
-    earlier = file_row(calls[0])
-    summary = earlier.locator(":scope > summary")
+    earlier = tool_row(calls[0])
+    summary = tool_header(earlier)
     summary.focus()
     summary.press("Enter")
-    expect(earlier).not_to_have_attribute("open", "")
+    expect(summary).to_have_attribute("aria-expanded", "false")
     summary.scroll_into_view_if_needed()
     summary.focus()
     viewport = page.get_by_test_id("coding-transcript")
     before_expand = viewport.evaluate("element => element.scrollTop")
     summary.press("Enter")
-    expect(earlier.get_by_label("Reported unified diff for " + FILE_PATH, exact=True)).to_be_visible()
+    expect(file_row(calls[0]).get_by_label("Diff for " + FILE_PATH, exact=True)).to_be_visible()
     assert abs(viewport.evaluate("element => element.scrollTop") - before_expand) <= 2, "Expanding an earlier diff moved the reading position"
     expect(summary).to_be_focused()
     evidence["reading_position"] = {"before_expand": before_expand, "after_expand": viewport.evaluate("element => element.scrollTop")}
     scenario("A10-diff-reading-position", "Expanding an earlier historical diff preserved transcript scroll position and keyboard focus without jumping to latest")
     evidence["replay"] = replay
     evidence["outside_mutation_sha256"] = hashlib.sha256(OUTSIDE.encode()).hexdigest()
-    scenario("A1-A3-historical-state", "Reopened same native conversation after external file mutation: explicit historical/not-current labels, unchanged separate chronological diffs and exact tool/file identities")
-    scenario("A10-file-diff-keyboard-bounds", "Initially collapsed details, Enter expansion with retained summary focus, focusable bounded unified diff; inspection only, no Apply/Revert, desktop/narrow screenshots and no document overflow")
+    scenario("A1-A3-historical-state", "Reopened same native conversation after external file mutation: unchanged separate chronological reported diffs and exact tool/file identities; the mutated current file content is not shown")
+    scenario("A10-file-diff-keyboard-bounds", "Folded settled activity and initially collapsed tool rows, Enter expansion with retained header focus, focusable bounded diff; inspection only, no Apply/Revert, desktop/narrow screenshots and no document overflow")
 
     if not live:
         _synthetic_scenarios(page, base, conversation, reopen, tool_row, file_row,
@@ -392,36 +418,40 @@ def _synthetic_scenarios(page, base, conversation, reopen, tool_row, file_row,
     page.route(entry_url, synthetic)
     try:
         reopen()
+        expand_activity(page)
         for index, source in enumerate(synthetic_history_rows("unused")):
             tool = source["tool"]
             file = tool["output_profile"]["files"][0]
             call = tool["call_id"]
             row = file_row(call, file["path"])
             expect(tool_row(call)).to_contain_text("SYNTHETIC rendered profile fixture")
-            expect(row.locator("summary")).to_contain_text("Historical reported change")
-            keyboard_expand(row)
+            keyboard_expand(tool_row(call))
+            heading = row.locator("p").first
+            expect(heading).to_contain_text(file["path"])
+            # Supplied reporting limits are named exactly; unknown counts are omitted, never zero.
+            notes = " · ".join(label for key, label in (("binary", "binary"), ("partial", "partial"),
+                               ("truncated", "truncated"), ("unavailable", "diff unavailable")) if file[key])
+            expect(heading.locator("span").filter(has_text=re.compile("^" + notes + "$"))).to_have_count(1)
             if file["additions"] is None:
-                expect(row).to_contain_text("Added count unavailable")
-                expect(row).to_contain_text("Removed count unavailable")
-                expect(row.locator("summary")).not_to_contain_text("+0 added")
+                expect(heading).not_to_contain_text("+0")
+                expect(heading).not_to_contain_text("−0")
+                expect(tool_header(tool_row(call))).not_to_contain_text("+0")
             if file["binary"]:
-                expect(row).to_contain_text("Binary metadata only")
                 expect(row.locator("pre")).to_have_count(0)
             elif file["unavailable"]:
-                expect(row).to_contain_text("Diff unavailable")
                 expect(row.locator("pre")).to_have_count(0)
             else:
-                diff = row.get_by_label("Reported unified diff for " + file["path"], exact=True)
+                diff = row.get_by_label("Diff for " + file["path"], exact=True)
                 expect(diff).to_be_visible()
                 diff.focus()
                 expect(diff).to_be_focused()
-                expect(row).to_contain_text("Partial reported content")
                 if file["truncated"]:
-                    expect(row).to_contain_text("Diff truncated to a presentation bound")
-                    assert len(diff.text_content()) <= 16 * 1024
-                    assert len(diff.text_content().splitlines()) <= 400
+                    # One bounded section of the supplied report is mounted at a time.
+                    text = diff.inner_text()
+                    assert len(text.encode()) <= 16 * 1024
+                    assert len(text.splitlines()) <= 400
                     expect(diff).not_to_contain_text("SYNTHETIC_LARGE_449_")
-                    assert diff.evaluate("element => element.clientHeight <= 321 && element.scrollHeight > element.clientHeight")
+                    assert diff.evaluate("(element, bound) => element.clientHeight <= bound && element.scrollHeight > element.clientHeight", OUTPUT_BOUND)
                     diff.press("End")
                 else:
                     expect(diff).to_contain_text("SYNTHETIC_PARTIAL_REPORTED_LINE")
@@ -438,5 +468,8 @@ def _synthetic_scenarios(page, base, conversation, reopen, tool_row, file_row,
         page.unroute(entry_url, synthetic)
         page.set_viewport_size({"width": 1440, "height": 1000})
     reopen()
+    # Folded groups render no tool rows; open them so absence is meaningful.
+    expand_activity(page)
     expect(page.get_by_test_id("coding-transcript")).not_to_contain_text("SYNTHETIC rendered profile fixture")
+    expect(page.locator('[data-testid="coding-tool-row"][data-call-id^="synthetic-call-"]')).to_have_count(0)
     scenario("A1-SYNTHETIC-not-persisted", "Removed acceptance-only history interception and reopened real native history; synthetic profiles did not persist")

@@ -8,9 +8,7 @@ export function CodingUnsentDraft({ text }: { text: string }) {
       className="space-y-2 rounded-2xl border border-border/60 p-3 text-xs"
       aria-label="Unsent prompt recovery"
     >
-      <p className="font-medium">
-        No prompt was sent. Your unsent draft is retained below.
-      </p>
+      <p className="font-medium">Not sent · copy your message below.</p>
       <textarea
         aria-label="Unsent coding prompt"
         data-testid="coding-unsent-draft"
@@ -19,11 +17,6 @@ export function CodingUnsentDraft({ text }: { text: string }) {
         rows={3}
         value={text}
       />
-      <p className="text-muted-foreground">
-        Copy this draft before reopening or leaving this view. It is only
-        retained in memory, not saved history. Resolve any reported error before
-        sending. Nothing will be sent automatically.
-      </p>
     </section>
   );
 }

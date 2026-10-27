@@ -36,7 +36,7 @@ export const modelIdentity = (provider: string, model: string) =>
 
 export function findCodingModel(
   catalog: CodingProviderChoice[],
-  selection: CodingConfiguration | null,
+  selection: Pick<CodingConfiguration, "provider" | "model"> | null,
 ) {
   const provider = catalog.find((item) => item.id === selection?.provider);
   const model = provider?.models.find((item) => item.id === selection?.model);

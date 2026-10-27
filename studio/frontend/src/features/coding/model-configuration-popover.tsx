@@ -1,24 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Slider } from "@/components/ui/slider";
 import {
   ArrowLeft,
   Check,
   ChevronRight,
   LoaderCircle,
   RefreshCw,
+  Search,
   Star,
 } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
-import { codingModelApi } from "./api";
+import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import {
   STARRED_GROUP,
   filterCodingModels,
@@ -28,7 +25,6 @@ import {
   readCodingFavorites,
 } from "./model-selection";
 import type {
-  CodingConfiguration,
   CodingConfigurationChange,
   CodingModelChoice,
   CodingProviderChoice,
@@ -43,8 +39,16 @@ function initialFavorites() {
   }
 }
 
-/** One native catalog choice. Long native labels wrap inside the choice (the
- * shared Button is `whitespace-nowrap`), never under the Favorite control. */
+/** "xhigh" -> "X-High", "medium" -> "Medium". */
+export const effortLabel = (level: string) =>
+  level
+    .replace(/^x(?=high$)/i, "x-")
+    .split(/([-_ ])/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("")
+    .replace(/_/g, " ");
+
+/** One native catalog choice; the favorite star appears on hover. */
 export function ModelChoiceRow({
   provider,
   model,
@@ -63,83 +67,185 @@ export function ModelChoiceRow({
   onFavorite: () => void;
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-1 rounded-xl hover:bg-muted/50">
-      <Button
+    <div className="group/model flex min-w-0 items-center rounded-md hover:bg-accent">
+      <button
         type="button"
-        variant="ghost"
         disabled={disabled}
         data-provider={provider}
         data-model={model.id}
         aria-pressed={selected}
-        className="h-auto min-h-10 min-w-0 flex-1 shrink justify-start gap-2 whitespace-normal rounded-xl px-2 py-1.5 text-left"
+        title={`${provider}/${model.id}`}
+        className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1 text-left text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
         onClick={onSelect}
       >
-        <Check
-          className={`size-3.5 shrink-0 ${selected ? "" : "invisible"}`}
-          aria-hidden="true"
-        />
-        <span className="min-w-0 flex-1">
-          <span className="block [overflow-wrap:anywhere]">
-            {model.name}
-            {selected && <span className="ml-1 text-[10px]">· Selected</span>}
-          </span>
-          <span className="block break-all text-[10px] text-muted-foreground">
-            {provider}/{model.id}
-          </span>
+        <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+          {model.name}
         </span>
-      </Button>
-      <Button
+        {selected && (
+          <Check className="size-3.5 shrink-0" aria-label="Selected" />
+        )}
+      </button>
+      <button
         type="button"
-        variant="ghost"
-        size="icon-sm"
-        className="shrink-0"
+        className={`mr-1 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${favorite ? "" : "opacity-0 group-hover/model:opacity-100"}`}
         aria-label={`Favorite ${provider}/${model.id}`}
         aria-pressed={favorite}
         onClick={onFavorite}
       >
         <Star
-          className={`size-3.5 ${favorite ? "fill-current" : ""}`}
+          className={`size-3 ${favorite ? "fill-current" : ""}`}
           aria-hidden="true"
         />
-      </Button>
+      </button>
     </div>
   );
 }
 
-/** Selection is native next-request configuration, not a browser prompt option. */
+/** Discrete effort rail: drag, click a stop, or use the arrow keys. */
+export function EffortSlider({
+  levels,
+  value,
+  disabled,
+  onPreview,
+  onCommit,
+}: {
+  levels: readonly string[];
+  value: number;
+  disabled: boolean;
+  onPreview: (index: number) => void;
+  onCommit: (index: number) => void;
+}) {
+  const rail = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+  const last = levels.length - 1;
+  const at = (clientX: number) => {
+    const box = rail.current?.getBoundingClientRect();
+    if (!box || last <= 0) return value;
+    const share = (clientX - box.left - 22) / Math.max(1, box.width - 44);
+    return Math.round(Math.min(1, Math.max(0, share)) * last);
+  };
+  const position = (index: number) =>
+    `calc(22px + (100% - 44px) * ${last > 0 ? index / last : 0})`;
+  return (
+    <div
+      ref={rail}
+      role="slider"
+      tabIndex={disabled ? -1 : 0}
+      aria-label="Reasoning effort"
+      aria-valuemin={0}
+      aria-valuemax={last}
+      aria-valuenow={value}
+      aria-valuetext={levels[value] ? effortLabel(levels[value]) : undefined}
+      aria-disabled={disabled || undefined}
+      data-testid="coding-reasoning-control"
+      className={`relative h-9 touch-none select-none rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${disabled ? "opacity-50" : "cursor-pointer"}`}
+      onPointerDown={(event) => {
+        if (disabled) return;
+        dragging.current = true;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        onPreview(at(event.clientX));
+      }}
+      onPointerMove={(event) => {
+        if (dragging.current) onPreview(at(event.clientX));
+      }}
+      onPointerUp={(event) => {
+        if (!dragging.current) return;
+        dragging.current = false;
+        onCommit(at(event.clientX));
+      }}
+      onPointerCancel={() => {
+        dragging.current = false;
+        onCommit(value);
+      }}
+      onKeyDown={(event) => {
+        if (disabled) return;
+        const next =
+          event.key === "ArrowRight" || event.key === "ArrowUp"
+            ? Math.min(last, value + 1)
+            : event.key === "ArrowLeft" || event.key === "ArrowDown"
+              ? Math.max(0, value - 1)
+              : event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? last
+                  : null;
+        if (next === null) return;
+        event.preventDefault();
+        if (next !== value) onCommit(next);
+      }}
+    >
+      <div className="absolute inset-x-0 top-1/2 h-7 -translate-y-1/2 overflow-hidden rounded-full coding-wash ring-1 ring-inset ring-border">
+        <div
+          className="absolute inset-y-0 left-0 rounded-full bg-primary/20 transition-[width] duration-150"
+          style={{ width: `calc(${position(value)} + 22px)` }}
+        />
+        {levels.map((level, index) => (
+          <span
+            key={level}
+            aria-hidden="true"
+            className={`absolute top-1/2 size-1 -translate-x-1/2 -translate-y-1/2 rounded-full ${index <= value ? "bg-primary/70" : "bg-muted-foreground/40"}`}
+            style={{ left: position(index) }}
+          />
+        ))}
+      </div>
+      <div
+        aria-hidden="true"
+        className="absolute top-1/2 h-8 w-11 -translate-x-1/2 -translate-y-1/2 rounded-full bg-background shadow-[0_1px_3px_rgba(0,0,0,0.25)] ring-1 ring-border transition-[left] duration-150 dark:bg-zinc-200"
+        style={{ left: position(value) }}
+      />
+    </div>
+  );
+}
+
+export interface ModelPickerSelection {
+  provider: string | null;
+  model: string | null;
+  reasoning: string | null;
+}
+
+/** Next-request model and effort. The catalog source is a live conversation or,
+ * before one exists, the chosen folder's effective settings. Give each source
+ * its own `key`: a new source never shows the previous one's inventory. */
 export function CodingModelPicker({
-  conversationId,
+  readCatalog,
   configuration,
-  unavailable,
+  unavailable = null,
   disabled,
   configuring,
   configure,
 }: {
-  conversationId: string | null;
-  configuration: CodingConfiguration | null;
-  unavailable: string | null;
+  readCatalog: (
+    refresh: boolean,
+    signal: AbortSignal,
+  ) => Promise<CodingProviderChoice[]>;
+  configuration: ModelPickerSelection | null;
+  unavailable?: string | null;
   disabled: boolean;
   configuring: boolean;
   configure: (change: CodingConfigurationChange) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState<"configuration" | "models">("configuration");
+  // Read once on mount (the trigger needs the model's name); Retry and
+  // Refresh are further explicit attempts. Loading is the unsettled attempt.
+  const [request, setRequest] = useState({ refresh: false, attempt: 1 });
+  const [result, setResult] = useState<{
+    attempt: number;
+    catalog: CodingProviderChoice[] | null;
+    error: string | null;
+  } | null>(null);
   const [catalog, setCatalog] = useState<CodingProviderChoice[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const loading = result?.attempt !== request.attempt;
+  const catalogRead = catalog.length > 0 || Boolean(result?.catalog);
+  const catalogError = loading ? null : (result?.error ?? null);
   const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [catalogRead, setCatalogRead] = useState(false);
-  const [request, setRequest] = useState<{ refresh: boolean }>({
-    refresh: false,
-  });
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<string | null>(null);
   const [favorites, setFavorites] = useState(initialFavorites);
   const listId = useId();
   const heading = useRef<HTMLButtonElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
-  const back = useRef<HTMLButtonElement>(null);
+  const read = useEffectEvent(readCatalog);
   const selected = findCodingModel(catalog, configuration);
   const identity =
     configuration?.provider && configuration.model
@@ -151,55 +257,42 @@ export function CodingModelPicker({
       : [];
   const effort = configuration?.reasoning ?? selected?.model.default_reasoning;
   const effortIndex = levels.indexOf(effort ?? "");
-  const [draftIndex, setDraftIndex] = useState<number | null>(null);
+  // An in-progress slider gesture belongs to the choice it started on.
+  const gesture = `${identity}:${effort}`;
+  const [draft, setDraft] = useState<{ gesture: string; index: number } | null>(
+    null,
+  );
+  const draftIndex = draft?.gesture === gesture ? draft.index : null;
+  const setDraftIndex = (index: number | null) =>
+    setDraft(index === null ? null : { gesture, index });
   const valueIndex = draftIndex ?? effortIndex;
   const blocked = disabled || configuring || loading;
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: controller identity is the reset trigger, not a value used inside the reset.
   useEffect(() => {
-    // Do not carry a different conversation's inventory into this controller.
-    setCatalog([]);
-    setCatalogRead(false);
-    setTab(null);
-  }, [conversationId]);
-  useEffect(() => {
-    if (!open || !conversationId) return;
     const controller = new AbortController();
-    setLoading(true);
-    setRefreshing(request.refresh);
-    setCatalogError(null);
-    const operation = request.refresh
-      ? codingModelApi.refresh
-      : codingModelApi.catalog;
-    void operation(conversationId, controller.signal)
-      .then((choices) => {
-        if (!controller.signal.aborted) {
-          setCatalog(choices);
-          setCatalogRead(true);
-        }
-      })
-      .catch((reason: unknown) => {
-        if (!controller.signal.aborted)
-          setCatalogError(
+    const { attempt, refresh } = request;
+    read(refresh, controller.signal).then(
+      (choices) => {
+        if (controller.signal.aborted) return;
+        setCatalog(choices);
+        setResult({ attempt, catalog: choices, error: null });
+      },
+      (reason: unknown) => {
+        if (controller.signal.aborted) return;
+        setResult({
+          attempt,
+          catalog: null,
+          error:
             reason instanceof Error
               ? reason.message
               : "Models could not be loaded.",
-          );
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-          setRefreshing(false);
-        }
-      });
-    // Aborting browser delivery does not cancel native work. Next opening reads
-    // the controller to reconcile; it never automatically repeats a refresh.
+        });
+      },
+    );
+    // Aborting browser delivery does not cancel native work; the next read
+    // reconciles. A refresh is never repeated automatically.
     return () => controller.abort();
-  }, [open, conversationId, request]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: discard only the in-progress slider gesture when authoritative identity/effort changes.
-  useEffect(() => {
-    setDraftIndex(null);
-  }, [identity, effort]);
+  }, [request]);
   useEffect(() => {
     if (!open) return;
     if (page === "models") searchInput.current?.focus();
@@ -220,7 +313,7 @@ export function CodingModelPicker({
       setError(
         reason instanceof Error
           ? reason.message
-          : "Native configuration was not confirmed.",
+          : "The model selection was not confirmed.",
       );
     }
   }
@@ -238,7 +331,11 @@ export function CodingModelPicker({
   }
   const groups = modelGroups(filterCodingModels(catalog, search), favorites);
   const modelLabel =
-    selected?.model.name ?? configuration?.model ?? "Choose model";
+    selected?.model.name ?? configuration?.model ?? "Default model";
+  const shownEffort = levels[valueIndex] ?? effort;
+  const missing =
+    unavailable ||
+    (catalogRead && !selected && configuration?.model ? true : null);
   return (
     <Popover
       open={open}
@@ -247,48 +344,54 @@ export function CodingModelPicker({
         if (value) {
           setPage("configuration");
           setError(null);
-          setRequest({ refresh: false });
+          if (catalogError)
+            setRequest((prior) => ({
+              refresh: false,
+              attempt: prior.attempt + 1,
+            }));
         }
       }}
     >
       <PopoverTrigger asChild={true}>
-        <Button
+        <button
           type="button"
-          variant="ghost"
-          size="sm"
-          disabled={!conversationId || !configuration}
-          aria-label="Configure next coding request"
+          aria-label={`Model: ${modelLabel}${effort ? ` · ${effortLabel(effort)}` : ""}`}
           data-testid="coding-model-trigger"
-          className="h-9 min-w-0 max-w-[min(18rem,42vw)] gap-1.5 rounded-full px-3 text-sm font-medium data-[state=open]:bg-muted"
+          className="flex h-8 min-w-0 max-w-[min(15.5rem,46vw)] shrink items-center gap-1.5 rounded-lg px-1.5 text-[13px] font-medium text-foreground/90 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 data-[state=open]:bg-accent"
         >
-          <span className="truncate">{modelLabel}</span>
-          {unavailable && (
-            <span className="shrink-0 text-xs text-destructive">
+          <span className="min-w-0 truncate">{modelLabel}</span>
+          {missing && (
+            <span className="shrink-0 text-[11px] font-normal text-destructive">
               Unavailable
             </span>
           )}
-          {configuration?.reasoning && (
-            <span className="shrink-0 font-normal text-muted-foreground max-sm:hidden">
-              {configuration.reasoning}
+          {effort && !missing && (
+            <span className="shrink-0 font-normal text-muted-foreground/80 max-sm:hidden">
+              {effortLabel(effort)}
             </span>
           )}
-        </Button>
+          {configuring && (
+            <LoaderCircle
+              className="size-3 shrink-0 animate-spin text-muted-foreground"
+              aria-hidden="true"
+            />
+          )}
+        </button>
       </PopoverTrigger>
       <PopoverContent
         side="top"
         align="end"
         sideOffset={8}
         collisionPadding={16}
-        className="w-[min(18rem,calc(100vw-2rem))] min-h-0 gap-2 rounded-[21px] border border-border/60 p-3 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.16)] dark:bg-card"
+        className="w-[min(16rem,calc(100vw-2rem))] min-h-0 gap-1 rounded-xl border border-border p-1.5 shadow-[0_8px_24px_-8px_rgba(0,0,0,0.3)] dark:bg-card"
         data-testid="coding-model-picker"
-        aria-label="Next coding request configuration"
+        aria-label="Model and reasoning"
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           heading.current?.focus();
         }}
         onEscapeKeyDown={(event) => {
           // Radix handles Escape at document capture, before input onKeyDown.
-          // Intercept dismissal here so Back navigation restores heading focus.
           if (page === "models") {
             event.preventDefault();
             setPage("configuration");
@@ -297,47 +400,46 @@ export function CodingModelPicker({
       >
         {page === "configuration" ? (
           <>
-            <div className="min-w-0">
-              {levels.length > 0 && (
-                <p className="px-1 text-base font-semibold capitalize">
-                  {levels[valueIndex] ?? effort ?? "Default"}
-                </p>
-              )}
-              <Button
-                ref={heading}
-                type="button"
-                variant="ghost"
-                aria-label="Choose coding model"
-                className={`h-auto min-h-8 max-w-full justify-start gap-1 rounded-xl px-1 py-1 text-left ${levels.length > 0 ? "text-sm font-normal text-muted-foreground" : "text-base font-semibold"}`}
-                onClick={() => setPage("models")}
-              >
-                <span className="min-w-0 truncate">{modelLabel}</span>
-                <ChevronRight
-                  className="size-3.5 shrink-0"
-                  aria-hidden="true"
-                />
-                {(configuring || loading) && (
-                  <LoaderCircle
-                    className="size-3.5 shrink-0 animate-spin"
-                    aria-label={configuring ? "Applying" : "Loading models"}
-                  />
+            <button
+              ref={heading}
+              type="button"
+              aria-label="Choose model"
+              className="group/heading flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => setPage("models")}
+            >
+              <span className="min-w-0 flex-1">
+                {shownEffort && (
+                  <span className="block text-sm font-semibold">
+                    {effortLabel(shownEffort)}
+                  </span>
                 )}
-              </Button>
-            </div>
-            {levels.length > 0 &&
+                <span
+                  className={`flex min-w-0 items-center gap-1 ${shownEffort ? "text-xs text-muted-foreground" : "text-sm font-semibold"}`}
+                >
+                  <span className="min-w-0 truncate">{modelLabel}</span>
+                  <ChevronRight
+                    className="size-3 shrink-0 transition-transform group-hover/heading:translate-x-0.5"
+                    aria-hidden="true"
+                  />
+                </span>
+              </span>
+              {(configuring || loading) && (
+                <LoaderCircle
+                  className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+                  aria-label={configuring ? "Applying" : "Loading models"}
+                />
+              )}
+            </button>
+            {levels.length > 1 &&
               (effortIndex >= 0 ? (
-                <div data-testid="coding-reasoning-control">
-                  <Slider
-                    aria-label="Reasoning effort"
-                    min={0}
-                    max={levels.length - 1}
-                    step={1}
-                    value={[valueIndex]}
-                    disabled={blocked || levels.length === 1}
-                    thumbValueText={(value) => levels[value] ?? "Not offered"}
-                    onValueChange={([value]) => setDraftIndex(value)}
-                    onValueCommit={([value]) => {
-                      const reasoning = levels[value];
+                <div className="px-1 pb-1">
+                  <EffortSlider
+                    levels={levels}
+                    value={valueIndex}
+                    disabled={blocked}
+                    onPreview={setDraftIndex}
+                    onCommit={(index) => {
+                      const reasoning = levels[index];
                       if (reasoning && reasoning !== effort)
                         void apply({ reasoning });
                       else setDraftIndex(null);
@@ -345,37 +447,31 @@ export function CodingModelPicker({
                   />
                 </div>
               ) : (
-                <p className="px-1 text-xs text-muted-foreground">
-                  This model doesn't offer the configured effort. Choose a model
-                  to use its default.
+                <p className="px-2 pb-1 text-xs text-muted-foreground">
+                  This model doesn't offer the chosen effort.
                 </p>
               ))}
           </>
         ) : (
           <>
             <div className="flex min-w-0 items-center gap-1">
-              <Button
-                ref={back}
+              <button
                 type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="shrink-0 rounded-full"
-                aria-label="Back to model configuration"
+                className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="Back"
                 onClick={() => setPage("configuration")}
               >
                 <ArrowLeft className="size-4" aria-hidden="true" />
-              </Button>
+              </button>
               <nav
                 aria-label="Model providers"
-                className="flex min-w-0 flex-1 gap-1 overflow-x-auto"
+                className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto [scrollbar-width:none]"
               >
                 {groups.map((group) => (
-                  <Button
+                  <button
                     key={group.key}
                     type="button"
-                    variant={tab === group.key ? "secondary" : "ghost"}
-                    size="sm"
-                    className="h-7 shrink-0 rounded-full px-2.5 text-xs"
+                    className={`flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs ${tab === group.key ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`}
                     aria-current={tab === group.key ? "true" : undefined}
                     data-provider-nav={group.key}
                     onClick={() => {
@@ -386,22 +482,23 @@ export function CodingModelPicker({
                     }}
                   >
                     {group.key === STARRED_GROUP && (
-                      <Star
-                        className="size-3 fill-current"
-                        aria-hidden="true"
-                      />
+                      <Star className="size-3 fill-current" aria-hidden="true" />
                     )}
                     {group.name}
-                  </Button>
+                  </button>
                 ))}
               </nav>
             </div>
-            <div className="flex items-center gap-1">
-              <Input
+            <div className="flex items-center gap-1.5 border-b border-border/60 px-2 pb-1">
+              <Search
+                className="size-3.5 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <input
                 ref={searchInput}
-                aria-label="Search coding models"
-                placeholder="Search models"
-                className="h-9 rounded-full"
+                aria-label="Search models"
+                placeholder="Search models…"
+                className="h-8 min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 onKeyDown={(event) => {
@@ -415,34 +512,36 @@ export function CodingModelPicker({
                   }
                 }}
               />
-              <Button
+              <button
                 type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="shrink-0 rounded-full"
-                aria-label="Refresh model list"
+                className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground disabled:opacity-50"
+                aria-label="Refresh models"
                 disabled={blocked}
-                onClick={() => setRequest({ refresh: true })}
+                onClick={() =>
+                  setRequest((prior) => ({
+                    refresh: true,
+                    attempt: prior.attempt + 1,
+                  }))
+                }
               >
                 <RefreshCw
-                  className={`size-3.5 ${refreshing ? "animate-spin" : ""}`}
+                  className={`size-3 ${loading && request.refresh ? "animate-spin" : ""}`}
                   aria-hidden="true"
                 />
-              </Button>
+              </button>
             </div>
             <div
-              className="max-h-[min(18rem,45dvh)] min-h-0 space-y-2 overflow-y-auto overscroll-contain"
+              className="max-h-[min(18rem,45dvh)] min-h-0 space-y-1 overflow-y-auto overscroll-contain"
               data-testid="coding-model-list"
-              aria-label="Coding models"
+              aria-label="Models"
             >
               {groups.map((group) => (
                 <section
                   key={group.key}
                   id={`${listId}-${group.key}`}
                   aria-label={group.name}
-                  className="space-y-0.5"
                 >
-                  <h3 className="px-2 text-xs font-medium text-muted-foreground">
+                  <h3 className="px-2 pb-0.5 pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                     {group.name}
                   </h3>
                   {group.models.map(({ provider, model }) => {
@@ -464,74 +563,74 @@ export function CodingModelPicker({
                   })}
                 </section>
               ))}
-              {!loading && groups.length === 0 && (
+              {loading && !catalog.length && (
+                <p className="flex items-center gap-2 p-2 text-xs text-muted-foreground">
+                  <LoaderCircle
+                    className="size-3 animate-spin"
+                    aria-hidden="true"
+                  />
+                  Loading models
+                </p>
+              )}
+              {!loading && catalogRead && groups.length === 0 && (
                 <p className="p-2 text-xs text-muted-foreground">
-                  No matching models.
+                  No matching models
                 </p>
               )}
             </div>
           </>
         )}
-        {(unavailable ||
-          (catalogRead && !selected && configuration?.model)) && (
+        {missing && (
           <div
-            className="space-y-2 rounded-2xl bg-destructive/5 p-3 text-xs"
+            className="space-y-1.5 rounded-lg bg-destructive/5 p-2 text-xs"
             data-testid="coding-model-unavailable"
           >
-            <p className="font-medium text-destructive">
-              Selected model unavailable
-            </p>
-            {unavailable && <p>{unavailable}</p>}
-            <div className="flex flex-wrap gap-2">
-              <Button
+            <p className="font-medium text-destructive">Model unavailable</p>
+            {unavailable && <p className="break-words">{unavailable}</p>}
+            <div className="flex gap-1">
+              <button
                 type="button"
-                variant="outline"
-                size="sm"
-                className="rounded-full"
+                className="rounded-md px-2 py-1 hover:bg-accent disabled:opacity-50"
                 disabled={blocked}
                 onClick={() => void apply({})}
               >
                 Retry
-              </Button>
+              </button>
               {page === "configuration" && (
-                <Button
+                <button
                   type="button"
-                  variant="outline"
-                  size="sm"
-                  className="rounded-full"
+                  className="rounded-md px-2 py-1 hover:bg-accent disabled:opacity-50"
                   disabled={disabled || configuring}
                   onClick={() => setPage("models")}
                 >
                   Choose another
-                </Button>
+                </button>
               )}
             </div>
           </div>
         )}
         {catalogError && (
-          <div role="alert" className="flex items-center gap-2 px-1 text-xs">
+          <div role="alert" className="flex items-center gap-2 px-2 text-xs">
             <span className="min-w-0 flex-1 text-destructive">
               {catalogError}
             </span>
-            <Button
+            <button
               type="button"
-              variant="ghost"
-              size="sm"
-              className="shrink-0 rounded-full"
+              className="shrink-0 rounded-md px-2 py-1 hover:bg-accent disabled:opacity-50"
               disabled={blocked}
-              onClick={() => setRequest({ refresh: false })}
+              onClick={() =>
+                setRequest((prior) => ({
+                  refresh: false,
+                  attempt: prior.attempt + 1,
+                }))
+              }
             >
               Retry
-            </Button>
+            </button>
           </div>
         )}
-        {disabled && (
-          <output className="block px-1 text-xs text-muted-foreground">
-            Available once the conversation reconnects.
-          </output>
-        )}
         {error && (
-          <p role="alert" className="break-words px-1 text-xs text-destructive">
+          <p role="alert" className="break-words px-2 text-xs text-destructive">
             {error}
           </p>
         )}

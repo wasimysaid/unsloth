@@ -8,8 +8,13 @@ reset are deterministic fixtures, not live-model acceptance.
 from __future__ import annotations
 
 import json
-import re
 import urllib.request
+
+from coding_ui import expect_connected, expect_opened, opened_id, prompt, saved_row
+
+# The send explanation names the first blocker; it replaces disabled-prompt checks
+# because typing stays enabled while native admission is withheld.
+VIEW_BLOCKED = "Waiting for a connected, reconstructed native view."
 
 
 VIEW_FAULT_SCRIPT = """(() => {
@@ -55,7 +60,7 @@ def run_recovery_scenarios(page, context, base, provider, first, second_id, repo
                            scenario, snapshot, restart_server):
     from playwright.sync_api import expect
 
-    conversation = page.get_by_test_id("coding-conversation-id").inner_text()
+    conversation = opened_id(page)
     headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')")}
     headers["X-Mimir-Runtime-Generation"] = str(context.request.get(base + "/api/coding/runtime", headers=headers).json()["generation"])
     evidence = report.setdefault("recovery", {"kind": "deterministic-transport-faults-real-native-execution", "requests": []})
@@ -64,15 +69,31 @@ def run_recovery_scenarios(page, context, base, provider, first, second_id, repo
     entry_url = base + f"/api/coding/conversations/{conversation}/entries"
 
     def reopen(target=page, identifier=conversation):
-        saved = target.locator('[aria-label="Saved coding conversations"] button').filter(has_text=identifier)
+        saved = saved_row(target, identifier)
         expect(saved).to_be_visible(timeout=60000)
         with target.expect_response(lambda response: response.url == base + f"/api/coding/conversations/{identifier}/events" and response.request.method == "GET", timeout=60000) as fresh_view:
             with target.expect_response(lambda response: response.url == base + f"/api/coding/conversations/{identifier}/open" and response.request.method == "POST", timeout=60000) as opening:
                 saved.click()
         assert opening.value.ok and fresh_view.value.ok
         headers["X-Mimir-Runtime-Generation"] = str(opening.value.json()["runtime_generation"])
-        expect(target.get_by_test_id("coding-conversation-id")).to_have_text(identifier, timeout=60000)
-        expect(target.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+        expect_opened(target, identifier)
+        expect_connected(target)
+
+    def running(request_id):
+        # The rendered view no longer shows request IDs; a fresh native capture
+        # supplies the exact running identity behind the rendered Running status.
+        expect(page.get_by_test_id("coding-run-status")).to_have_text("Running", timeout=60000)
+        assert captured_state(base, headers, conversation)["active_request"] == request_id
+
+    def expand_latest_activity():
+        # Settled turns fold their activity group and unmount its tool rows.
+        group = page.get_by_test_id("coding-transcript").get_by_test_id("coding-activity-group").last
+        toggle = group.locator("button").first
+        expect(toggle).to_be_visible(timeout=60000)
+        if toggle.get_attribute("aria-expanded") != "true":
+            toggle.click()
+        expect(toggle).to_have_attribute("aria-expanded", "true")
+        return group
 
     def settled(marker):
         expect(page.get_by_test_id("coding-run-status")).to_have_text("Completed", timeout=60000)
@@ -97,15 +118,14 @@ def run_recovery_scenarios(page, context, base, provider, first, second_id, repo
     provider.assert_no_request()
     page.goto(base + "/coding")
     reopen()
-    expect(page.get_by_test_id("coding-run-status")).to_have_text("Running", timeout=60000)
-    expect(page.get_by_test_id("coding-request-id")).to_contain_text(ack["request_id"])
+    running(ack["request_id"])
     page.reload()
     reopen()
     tab = context.new_page()
     tab.goto(base + "/coding")
     reopen(tab)
     tab.close()
-    expect(page.get_by_test_id("coding-request-id")).to_contain_text(ack["request_id"])
+    running(ack["request_id"])
     provider.assert_no_request()
     scenario("A7-navigation-refresh-tab", "Actual full-page navigation, refresh, deliberate reopen and closing a second viewing tab retained the exact running native request; no provider replay")
 
@@ -115,7 +135,7 @@ def run_recovery_scenarios(page, context, base, provider, first, second_id, repo
     def disconnect(route):
         route.abort("connectionreset") if outage["active"] else route.continue_()
     page.route(event_url, disconnect)
-    reopen_button = page.locator('[aria-label="Saved coding conversations"] button').filter(has_text=conversation)
+    reopen_button = saved_row(page, conversation)
     reopen_button.click()
     expect(page.get_by_test_id("coding-event-status")).to_contain_text("work may still be running", timeout=60000)
     snapshot(page, "recovery-desktop-disconnected")
@@ -126,8 +146,8 @@ def run_recovery_scenarios(page, context, base, provider, first, second_id, repo
     page.wait_for_timeout(1600)
     expect(page.get_by_test_id("coding-event-status")).to_contain_text("work may still be running")
     outage["active"] = False
-    expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
-    expect(page.get_by_test_id("coding-request-id")).to_contain_text(ack["request_id"])
+    expect_connected(page)
+    running(ack["request_id"])
     provider.assert_no_request()
     page.unroute(event_url, disconnect)
     scenario("A7-automatic-authoritative-reconnect", "Outage persisted over automatic retries at 1440x1000 and 390x844; banner retained work-unknown state; automatic fresh captured view recovered the original running request without user replay")
@@ -139,18 +159,22 @@ def run_recovery_scenarios(page, context, base, provider, first, second_id, repo
     page.route(entry_url, fail_history)
     reopen_button.click()
     expect(page.get_by_test_id("coding-event-status")).to_contain_text("work may still be running", timeout=60000)
-    expect(page.get_by_label("Coding prompt", exact=True)).to_be_disabled()
+    expect(page.locator("#coding-send-explanation")).to_have_text(VIEW_BLOCKED)
     snapshot(page, "recovery-incomplete-history")
     incomplete["active"] = False
-    expect(page.get_by_test_id("coding-event-status")).to_contain_text("Native event stream connected", timeout=60000)
+    expect_connected(page)
     page.unroute(entry_url, fail_history)
-    scenario("A1-incomplete-history", "Injected bounded-entry transport failure withheld connected/ready state and disabled submission until automatic captured-cut reconstruction succeeded")
+    scenario("A1-incomplete-history", "Injected bounded-entry transport failure withheld connected/ready state and blocked submission (send explanation names the unreconstructed view) until automatic captured-cut reconstruction succeeded")
 
     reset = context.request.post(base + f"/api/coding-acceptance/reset/{conversation}", headers=headers)
     assert reset.ok
-    reopen_button.click()
-    expect(page.get_by_test_id("coding-run-status")).to_contain_text("Recovering", timeout=60000)
-    expect(page.get_by_label("Coding prompt", exact=True)).to_be_disabled()
+    # The redesigned view has no separate Recovering label: await the faulted
+    # view (start duplicated as a recovering reset) and its reconstruction, which
+    # still shows only the held native request with Stop instead of Send.
+    reopen()
+    running(ack["request_id"])
+    expect(page.get_by_role("button", name="Stop", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Send", exact=True)).to_have_count(0)
     snapshot(page, "recovery-native-cut-reset")
     held.tool("recovery-write", "write_file", {"path": "recovery.txt", "content": "RECOVERY_NATIVE_FILE\n"})
     request = provider.request()
@@ -158,18 +182,21 @@ def run_recovery_scenarios(page, context, base, provider, first, second_id, repo
     request.text("RECOVERY_NATIVE_COMPLETED")
     settled("RECOVERY_NATIVE_COMPLETED")
     assert (first / "recovery.txt").read_text() == "RECOVERY_NATIVE_FILE\n"
-    # Bounded reports mount identity/output text only when expanded; the native
-    # call identity remains on the collapsed chronological row.
+    # A settled turn folds its activity group; the native call identity and
+    # status stay on the chronological row once the group is expanded.
     rows = page.locator('[data-testid="coding-tool-row"][data-call-id="recovery-write"]')
+    expand_latest_activity()
     expect(rows).to_have_count(1)
     expect(page.get_by_test_id("coding-transcript").get_by_text("RECOVERY_NAVIGATION_HELD", exact=True)).to_have_count(1)
     # Await the actual open response before inspecting the same-ID incarnation;
     # the previous view's Completed label alone can satisfy this assertion early.
     reopen()
     expect(page.get_by_test_id("coding-run-status")).to_have_text("Completed", timeout=60000)
+    group = expand_latest_activity()
     expect(rows).to_have_count(1)
-    expect(rows).not_to_contain_text(" · running")
-    expect(rows.locator("summary")).to_contain_text("completed")
+    expect(group).not_to_have_attribute("data-live", "true")
+    expect(rows).not_to_have_attribute("data-tool-status", "running")
+    expect(rows).to_have_attribute("data-tool-status", "completed")
     scenario("A1-reset-recovering-checkpoint", "Acceptance-only transport duplicated a real atomic native start as recovering reset; real tool/checkpoint settled recovery, one input/tool row remained, filesystem effect verified and reopen did not make historical activity live")
 
     # A failed-before-delivery attempt survives frontend reload. The UI retries
@@ -181,12 +208,12 @@ def run_recovery_scenarios(page, context, base, provider, first, second_id, repo
     page.route(prompt_url, lose_before_delivery, times=1)
     page.get_by_label("Coding prompt", exact=True).fill("RECOVERY_RETRY_AFTER_RELOAD")
     page.get_by_label("Coding prompt", exact=True).press("Enter")
-    expect(page.get_by_role("button", name=re.compile("Retry.*submission", re.I))).to_be_visible(timeout=60000)
+    expect(page.get_by_test_id("coding-retry-submission")).to_be_visible(timeout=60000)
     assert len(captured) == 1
     provider.assert_no_request()
     page.reload()
     reopen()
-    retry = page.get_by_role("button", name=re.compile("Retry.*submission", re.I))
+    retry = page.get_by_test_id("coding-retry-submission")
     expect(retry).to_be_visible(timeout=60000)
     with page.expect_response(lambda response: response.url == prompt_url and response.request.method == "POST", timeout=60000) as waiting:
         retry.click()
@@ -255,7 +282,7 @@ def run_recovery_scenarios(page, context, base, provider, first, second_id, repo
     page.reload()
     reopen()
     settled("RECOVERY_LOST_ACK_COMPLETED")
-    expect(page.get_by_role("button", name=re.compile("Retry.*submission", re.I))).to_have_count(0)
+    expect(page.get_by_test_id("coding-retry-submission")).to_have_count(0)
     duplicate = context.request.post(prompt_url, data=lost[0]["body"], headers=headers)
     assert duplicate.status == 202
     assert duplicate.json() == lost[0]["ack"], "Restarted native deduplication must return original accepted identity"
@@ -284,24 +311,38 @@ def run_recovery_scenarios(page, context, base, provider, first, second_id, repo
         created.append(response.json())
         route.abort("connectionreset")
     page.route(create_url, lose_create_ack)
-    page.get_by_role("button", name="Choose another project", exact=True).click()
+    # Choosing a folder only selects it; the landing Send creates the
+    # conversation and would then send its text once, only after a confirmed open.
+    page.get_by_role("button", name="New conversation", exact=True).click()
+    page.get_by_test_id("coding-project-chooser").click()
+    page.get_by_role("menuitem", name="Choose folder…", exact=True).click()
     page.get_by_label("Host folder path", exact=True).fill(str(uncertain_project))
     page.get_by_role("button", name="Browse", exact=True).click()
     expect(page.get_by_test_id("coding-browsed-path")).to_have_text(str(uncertain_project))
-    page.get_by_role("button", name="Open project", exact=True).click()
-    expect(page.get_by_role("alert").filter(has_text="Opening is unconfirmed")).to_be_visible(timeout=60000)
-    expect(page.get_by_role("button", name="Open project", exact=True)).to_be_disabled()
+    page.get_by_role("button", name="Use this folder", exact=True).click()
+    expect(page.get_by_test_id("coding-project-chooser")).to_have_attribute("title", str(uncertain_project))
+    prompt(page).fill("RECOVERY_UNCONFIRMED_OPENING_TEXT_NOT_SENT")
+    with page.expect_request(lambda request: request.url == create_url and request.method == "POST", timeout=60000) as creating:
+        prompt(page).press("Enter")
+    assert creating.value.post_data_json["cwd"] == str(uncertain_project)
+    expect(page.get_by_test_id("coding-opening-reconciliation")).to_have_text("The conversation may have been created. Open it from the sidebar if it's there.", timeout=60000)
+    expect(page.get_by_test_id("coding-opening-error")).to_contain_text("check the sidebar before starting another")
+    expect(page.locator("#coding-send-explanation")).to_have_text("Check the sidebar: the last conversation may already have been created.")
+    expect(page.get_by_role("button", name="Send", exact=True)).to_be_disabled()
     assert len(created) == 1
-    page.get_by_role("button", name="Cancel", exact=True).click()
     snapshot(page, "recovery-opening-ack-lost")
     identifier = created[0]["id"]
     reopen(identifier=identifier)
-    expect(page.get_by_test_id("coding-canonical-cwd")).to_have_text(str(uncertain_project))
+    expect(page.get_by_test_id("coding-canonical-cwd")).to_have_attribute("title", str(uncertain_project))
+    expect(page.get_by_test_id("coding-opening-reconciliation")).to_have_count(0)
     assert len(created) == 1
+    # The unconfirmed landing text is never auto-sent by a deliberate reopen.
+    assert not captured_state(base, headers, identifier)["requests"]
+    provider.assert_no_request()
     page.unroute(create_url, lose_create_ack)
     report["conversation_ids"].append(identifier)
     reopen()
-    scenario("A7-uncertain-opening-reconciliation", "Real create ACK was lost; UI inspected authenticated native history, blocked another creation, and deliberately reopened the exact saved identity without substituting cwd or assuming generic exactly-once")
+    scenario("A7-uncertain-opening-reconciliation", "Real create ACK of a landing Send was lost; UI inspected authenticated native history, blocked another creation from the landing, and deliberately reopened the exact saved identity from the sidebar without substituting cwd, sending the landing text, or assuming generic exactly-once")
 
     prompt_attempts = []
     def count_prompt(request):

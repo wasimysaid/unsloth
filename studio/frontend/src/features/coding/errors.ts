@@ -3,6 +3,11 @@
 
 import type { ProjectOverlap } from "./run-types.ts";
 
+export const needsReopen = (reason: unknown) =>
+  reason instanceof Error &&
+  "requiresReopen" in reason &&
+  reason.requiresReopen === true;
+
 /** Parse only the public overlap DTO, never native diagnostics or display paths. */
 export function projectOverlap(value: unknown): ProjectOverlap | null {
   if (!value || typeof value !== "object") return null;

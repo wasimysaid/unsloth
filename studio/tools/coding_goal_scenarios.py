@@ -6,14 +6,17 @@ native ownership, tools, lifecycle and persisted history are real, not UI mocks.
 """
 from __future__ import annotations
 
+from coding_ui import expect_ready, open_saved, opened_id, run_command
+
 
 def run_goal_scenarios(page, context, base, provider, first, report, scenario, snapshot, restart_server):
     from playwright.sync_api import expect
 
-    conversation = page.get_by_test_id("coding-conversation-id").inner_text()
+    conversation = opened_id(page)
     headers = {"Authorization": "Bearer " + page.evaluate("localStorage.getItem('unsloth_auth_token')")}
     headers["X-Mimir-Runtime-Generation"] = str(context.request.get(base + "/api/coding/runtime", headers=headers).json()["generation"])
     endpoint = base + f"/api/coding/conversations/{conversation}/goal"
+    commands = base + f"/api/coding/conversations/{conversation}/commands"
     evidence = report.setdefault("goals", {"kind": "deterministic-http-provider-real-native-goals", "actions": []})
     summary = page.get_by_label("Autonomous goal details", exact=True)
     status = page.get_by_test_id("coding-goal-status")
@@ -68,29 +71,49 @@ def run_goal_scenarios(page, context, base, provider, first, report, scenario, s
             expect(page.get_by_label("Goal objective", exact=True)).to_have_count(0, timeout=60000)
             expect(summary).to_be_focused()
 
+    def start_goal(objective):
+        # Without a goal there is no goal summary or Start control: the native
+        # `/goal <objective>` command, sent with Enter, starts one.
+        captured = native_state()
+        expect_ready(page)
+        with page.expect_response(lambda response: response.url == commands and response.request.method == "POST", timeout=60000) as pending:
+            run_command(page, "/goal " + objective)
+        ack = pending.value
+        assert ack.ok, ("start", ack.status, ack.text())
+        sent = ack.request.post_data_json
+        assert sent["name"] == "goal" and sent["tail"] == objective, sent
+        outcome = ack.json()
+        assert outcome["outcome"] == "submitted" and outcome["request_id"], outcome
+        evidence["actions"].append({"action": "start", "command": "/goal", "conversation_id": conversation,
+                                   "revision": captured["goal_controls"]["revision"], **outcome})
+        # The summary mounts with the native goal, closed; open it for its controls.
+        expect(page.get_by_test_id("coding-goal")).to_be_visible(timeout=60000)
+        summary.focus()
+        summary.press("Enter")
+        expect(details).to_be_visible()
+
     def idle():
         expect(page.get_by_role("button", name="Stop", exact=True)).to_have_count(0, timeout=60000)
         expect(page.get_by_role("button", name="Stopping…", exact=True)).to_have_count(0, timeout=60000)
 
-    summary.focus()
-    summary.press("Enter")
-    expect(details).to_be_visible()
-    expect(status).to_have_text("No autonomous goal")
+    # No native goal: the goal summary is not rendered at all.
+    expect(page.get_by_test_id("coding-goal")).to_have_count(0)
     # Busy refusal is native, not an optimistic UI gate. Unrelated ordinary work
-    # may not be converted into an autonomous goal by clicking Start.
+    # may not be converted into an autonomous goal. While it runs the composer
+    # shows Stop instead of Send, so `/goal` cannot be sent; native is asked directly.
     composer = page.get_by_label("Coding prompt", exact=True)
     composer.fill("Unrelated native work held for goal admission check")
     composer.press("Enter")
     unrelated = provider.request()
     expect(page.get_by_test_id("coding-run-status")).to_have_text("Running", timeout=60000)
-    expect(page.get_by_role("button", name="Start goal", exact=True)).to_be_disabled(timeout=60000)
+    expect(page.get_by_role("button", name="Start goal", exact=True)).to_have_count(0)
     busy_state = native_state()
     refused = context.request.post(endpoint, data={"revision": busy_state["goal_controls"]["revision"], "action": "start", "objective": "Must not replace unrelated work"}, headers=headers)
     assert refused.status == 409
     unrelated.text("Unrelated native work settled.")
     idle()
-    scenario("A2-goal-unrelated-busy-refusal", "Native owner refused Start during unrelated request, matching actionable disabled UI; no guard bypass or replacement of active work")
-    action("start", "Verify goal-evidence.txt using native tools and independent review")
+    scenario("A2-goal-unrelated-busy-refusal", "Native owner refused an authenticated API Start during unrelated request while the UI offered no goal start (Stop, not Send, while Running); no guard bypass or replacement of active work")
+    start_goal("Verify goal-evidence.txt using native tools and independent review")
     provider_request = provider.request()
     state = native_state()
     evidence["start_capture_goal"] = state["goal"]
@@ -101,7 +124,7 @@ def run_goal_scenarios(page, context, base, provider, first, report, scenario, s
     initial_revision = state["goal_controls"]["revision"]
     evidence["goal_id"] = original_goal_id
     snapshot(page, "goal-desktop-running")
-    scenario("A2-goal-start", "Keyboard start accepted native goal/request identity; compact summary rendered running from native view")
+    scenario("A2-goal-start", "Keyboard `/goal` command start accepted native goal/request identity; compact summary rendered running from native view")
 
     action("edit", "Verify edited goal-evidence.txt using native tools and independent review")
     expect(page.get_by_test_id("coding-goal-objective")).to_contain_text("edited", timeout=60000)
@@ -234,16 +257,13 @@ def run_goal_scenarios(page, context, base, provider, first, report, scenario, s
     restart_server(native_crash=True)
     # Deliberate reopening after actual native owner process loss/release, never replay.
     page.goto(base + "/coding")
-    page.get_by_role("button", name="Refresh coding conversations", exact=True).click()
-    with page.expect_response(lambda response: response.url == base + f"/api/coding/conversations/{conversation}/open" and response.request.method == "POST", timeout=60000) as reopened:
-        page.locator('[aria-label="Saved coding conversations"] button').filter(has_text=conversation).click()
-    assert reopened.value.ok
+    reopened = open_saved(page, base, conversation, refresh=True, ready=False)
     expect(status).to_have_text("Interrupted · explicit resume required", timeout=60000)
     idle()
     provider.assert_no_request()
     stale = context.request.post(endpoint, data={"revision": before, "action": "resume"}, headers=headers)
     assert stale.status == 409, "Old owner incarnation must reject controls after reopening"
-    headers["X-Mimir-Runtime-Generation"] = str(reopened.value.json()["runtime_generation"])
+    headers["X-Mimir-Runtime-Generation"] = str(reopened.json()["runtime_generation"])
     summary.focus()
     summary.press("Enter")
     expect(details).to_be_visible()

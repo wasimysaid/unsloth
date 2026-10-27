@@ -148,7 +148,6 @@ function harness() {
       deliver({
         type: "start",
         state,
-        recovering: false,
         root: { cut: { journal: "root", leaf: null }, live_invocations: [] },
       }),
     state: (state: NativeState) => deliver({ type: "state", state }),

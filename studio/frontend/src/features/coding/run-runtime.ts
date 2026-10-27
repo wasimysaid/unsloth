@@ -5,7 +5,7 @@ import type {
   ExternalStoreAdapter,
   ThreadMessageLike,
 } from "@assistant-ui/react";
-import { parseCodingCommand } from "./command-types.ts";
+import { LOCAL_COMMANDS, parseCodingCommand } from "./command-types.ts";
 import type { CodingInputDraft } from "./input.ts";
 import {
   type CodingRun,
@@ -18,6 +18,24 @@ import {
   createTranscriptProjection,
   transcriptWindow,
 } from "./transcript-model.ts";
+
+/** Browser-side commands apply only when the native registry lacks them. */
+export async function runLocalCommand(run: CodingRun, text: string) {
+  const command = parseCodingCommand(text);
+  if (
+    !command ||
+    !LOCAL_COMMANDS.some((local) => local.name === command.name) ||
+    run
+      .getSnapshot()
+      .commands?.some(
+        (native) =>
+          native.name === command.name || native.aliases.includes(command.name),
+      )
+  )
+    return false;
+  await run.setMode("build");
+  return true;
+}
 
 const blockText = (block: TranscriptBlock) =>
   block.kind === "activity"
@@ -67,11 +85,16 @@ export function codingRunAdapter(
         .filter((part) => part.type === "text")
         .map((part) => part.text)
         .join("\n");
+      const command = parseCodingCommand(text);
+      if (command && (await runLocalCommand(run, text))) {
+        draft?.syncText("");
+        return;
+      }
       const extras = draft?.input(text);
       // This message owns these associations from now on; its outcome must
       // never clear a newer draft. Every refusal keeps them in run state.
       // A slash command takes no rich input, so its images stay attached.
-      if (parseCodingCommand(text)) draft?.syncText("");
+      if (command) draft?.syncText("");
       else draft?.clear();
       try {
         await run.send(text, extras);

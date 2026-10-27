@@ -40,23 +40,18 @@ function client(
   return { api, requests };
 }
 
-test("public entry chunks use exact cut, byte offset, generation and abort signal without replay", async () => {
-  const response = {
-    conversation_id: "conversation/id",
-    cut: { journal: { child: "agent" }, leaf: "end" },
-    entry_id: "entry",
-    offset: 7,
-    total_bytes: 90,
-    data: "漢🙂",
-    next_offset: 14,
-  };
+test("public entry uses one request with exact cut, generation and abort signal without replay", async () => {
+  const cut = { journal: { child: "agent" }, leaf: "end" };
+  const response = [
+    { id: "row", entry_id: "entry", kind: "assistant", text: "漢🙂" },
+  ];
   const c = client(() => Response.json(response));
   const signal = new AbortController().signal;
-  const reference = { cut: response.cut, entry_id: "entry", total_bytes: 90 };
+  const reference = { cut, entry_id: "entry" };
   assert.deepEqual(
     await c.api
       .createCodingRunApi(7)
-      .readPublicEntry("conversation/id", reference, 7, signal),
+      .readPublicEntry("conversation/id", reference, signal),
     response,
   );
   assert.deepEqual(c.requests, [
@@ -70,10 +65,8 @@ test("public entry chunks use exact cut, byte offset, generation and abort signa
         },
         signal,
         body: JSON.stringify({
-          cut: response.cut,
+          cut,
           entry_id: "entry",
-          offset: 7,
-          max_bytes: 65536,
         }),
       },
       options: { retryNetworkErrors: false },
@@ -174,7 +167,7 @@ test("browse uses authenticated host API with query encoding and cancellation", 
   assert.equal(c.requests[0].init?.signal, abort.signal);
 });
 
-test("native creation sends only cwd with no transport replay, prompts, settings or tools", async () => {
+test("native creation sends cwd and the chosen first model, without transport replay, prompts or tools", async () => {
   const native = {
     id: "native-1",
     cwd: "/canonical/project",
@@ -185,6 +178,8 @@ test("native creation sends only cwd with no transport replay, prompts, settings
     await c.api.codingApi.createConversation("/host/link"),
     native,
   );
+  const model = { provider: "p", model: "m", reasoning: "high" };
+  await c.api.codingApi.createConversation("/host/link", model);
   assert.deepEqual(c.requests, [
     {
       path: "/api/coding/conversations",
@@ -195,7 +190,30 @@ test("native creation sends only cwd with no transport replay, prompts, settings
       },
       options: { retryNetworkErrors: false },
     },
+    {
+      path: "/api/coding/conversations",
+      init: {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd: "/host/link", configuration: model }),
+      },
+      options: { retryNetworkErrors: false },
+    },
   ]);
+});
+
+test("model choices before a conversation read the folder catalog, or the host default without one", async () => {
+  const c = client(() => Response.json([{ id: "p", name: "P", models: [] }]));
+  const abort = new AbortController();
+  await c.api.readCodingCatalog("/host/a & b", abort.signal);
+  await c.api.readCodingCatalog(null, abort.signal);
+  assert.deepEqual(
+    c.requests.map((request) => [request.path, request.init?.signal]),
+    [
+      ["/api/coding/catalog?cwd=%2Fhost%2Fa+%26+b", abort.signal],
+      ["/api/coding/catalog", abort.signal],
+    ],
+  );
 });
 
 test("list and explicit reopen consume native records; IDs are encoded as one path segment", async () => {
@@ -466,45 +484,6 @@ test("event stream uses authenticated fetch, exposes a disconnect event and is c
   assert.deepEqual(c.requests[0].options, { retryNetworkErrors: false });
 });
 
-test("MCP Settings reads and saves only native scoped identities, without caches or replay", async () => {
-  const draft = {
-    edit_id: "native-edit",
-    revision: "native-revision",
-    source: "native-source",
-    name: "server",
-    json: "{}",
-  };
-  const c = client(() => Response.json(draft));
-  await c.api.mcpSettingsApi.inventory("native/id");
-  await c.api.mcpSettingsApi.edit("native/id", "native-source", "server");
-  await c.api.mcpSettingsApi.save("native/id", draft, '{"enabled":false}');
-  assert.deepEqual(
-    c.requests.map((row) => row.path),
-    [
-      "/api/coding/conversations/native%2Fid/mcp/inventory",
-      "/api/coding/conversations/native%2Fid/mcp/edit",
-      "/api/coding/conversations/native%2Fid/mcp/save",
-    ],
-  );
-  assert.deepEqual(JSON.parse(c.requests[1].init?.body as string), {
-    source: "native-source",
-    name: "server",
-  });
-  assert.deepEqual(JSON.parse(c.requests[2].init?.body as string), {
-    edit_id: "native-edit",
-    revision: "native-revision",
-    json: '{"enabled":false}',
-  });
-  assert.ok(c.requests.every((row) => row.init?.cache === "no-store"));
-  assert.ok(
-    c.requests.every(
-      (row) =>
-        (row.options as { retryNetworkErrors: boolean }).retryNetworkErrors ===
-        false,
-    ),
-  );
-});
-
 test("picker reads only authenticated native catalog and sends identity patches separately from prompts", async () => {
   const c = client(() => Response.json([]));
   const controller = new AbortController();
@@ -564,57 +543,6 @@ test("explicit model refresh updates the native owner without automatic transpor
     /selection retained/,
   );
   assert.equal(failure.requests.length, 1);
-});
-
-test("MCP native errors stay actionable refusals, never successful persistence", async () => {
-  const draft = {
-    edit_id: "native-edit",
-    revision: "native-revision",
-    source: "native-source",
-    name: "server",
-    json: "{}",
-  };
-  for (const status of [400, 403, 409, 502, 504]) {
-    const c = client(() =>
-      Response.json({ detail: "Native refusal; draft retained" }, { status }),
-    );
-    await assert.rejects(
-      c.api.mcpSettingsApi.save("native-id", draft, "my draft"),
-      /Native refusal; draft retained/,
-    );
-    assert.equal(c.requests.length, 1);
-  }
-});
-
-test("Settings maintenance encodes exact targets and reconciliation IDs without replay", async () => {
-  const c = client(() =>
-    Response.json({ operation_id: "one-op", status: "deferred" }),
-  );
-  await c.api.codingMaintenanceApi.inspect("native/id?", "one-op");
-  const result = await c.api.codingMaintenanceApi.reload(
-    "native/id?",
-    "one-op",
-  );
-  assert.equal(result.status, "deferred");
-  await c.api.readCodingDiagnostics();
-  assert.deepEqual(
-    c.requests.map((request) => request.path),
-    [
-      "/api/coding/conversations/native%2Fid%3F/extensions?operation_id=one-op",
-      "/api/coding/conversations/native%2Fid%3F/plugins/reload",
-      "/api/coding/diagnostics",
-    ],
-  );
-  assert.deepEqual(JSON.parse(c.requests[1].init!.body as string), {
-    operation_id: "one-op",
-  });
-  assert.ok(
-    c.requests.every(
-      (request) =>
-        JSON.stringify(request.options) ===
-        JSON.stringify({ retryNetworkErrors: false }),
-    ),
-  );
 });
 
 test("coding transport failure stays unconfirmed without claiming native work died or suggesting relaunch", async () => {
@@ -1124,48 +1052,4 @@ test("structured overlap refusal is distinct from native busy/capacity and malfo
     malformed.api.createCodingRunApi(7).checkOverlap("id"),
     /could not be confirmed.*No prompt was sent/,
   );
-});
-
-test("MCP apply/reconnect and read-only reconciliation use exact native identities with no caching or replay", async () => {
-  const native = { operation_id: "operation/id?", status: "running" };
-  const c = client(() => Response.json(native));
-  assert.deepEqual(
-    await c.api.mcpSettingsApi.apply("conversation/id?", "operation/id?"),
-    native,
-  );
-  assert.deepEqual(
-    await c.api.mcpSettingsApi.reconnect(
-      "conversation/id?",
-      "reconnect-id",
-      "configured",
-    ),
-    native,
-  );
-  assert.deepEqual(
-    await c.api.mcpSettingsApi.inspectOperation(
-      "conversation/id?",
-      "operation/id?",
-    ),
-    native,
-  );
-  assert.deepEqual(
-    c.requests.map((request) => request.path),
-    [
-      "/api/coding/conversations/conversation%2Fid%3F/mcp/apply",
-      "/api/coding/conversations/conversation%2Fid%3F/mcp/reconnect",
-      "/api/coding/conversations/conversation%2Fid%3F/mcp/operations/operation%2Fid%3F",
-    ],
-  );
-  assert.deepEqual(JSON.parse(c.requests[0].init!.body as string), {
-    operation_id: "operation/id?",
-  });
-  assert.deepEqual(JSON.parse(c.requests[1].init!.body as string), {
-    operation_id: "reconnect-id",
-    name: "configured",
-  });
-  for (const request of c.requests) {
-    assert.equal(request.init?.cache, "no-store");
-    assert.deepEqual(request.options, { retryNetworkErrors: false });
-  }
-  assert.equal(c.requests[2].init?.method, undefined);
 });

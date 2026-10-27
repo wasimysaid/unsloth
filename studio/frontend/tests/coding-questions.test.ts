@@ -136,11 +136,10 @@ function harness() {
       position: ++position,
       event,
     });
-  const start = (state = waiting(), recovering = false) =>
+  const start = (state = waiting()) =>
     event({
       type: "start",
       state,
-      recovering,
       root: {
         cut: { journal: "root", leaf: `cut-${generation}` },
         live_invocations: [],
@@ -551,7 +550,7 @@ test("failed delivery retains actionable draft only after fresh native waiting e
   h.run.detach();
 });
 
-test("recovering capture reconciles uncertain answers only after its checkpoint", async () => {
+test("pending capture reconciles uncertain answers only after its history arrives", async () => {
   for (const stillWaiting of [true, false]) {
     const h = harness();
     await h.start();
@@ -561,18 +560,26 @@ test("recovering capture reconciles uncertain answers only after its checkpoint"
       throw new Error("Lost ACK");
     });
     await h.run.answer(target);
-    await h.start(
+    let release!: () => void;
+    const history = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const read = h.api.readEntries;
+    h.api.readEntries = async (...args) => {
+      await history;
+      return read(...args);
+    };
+    const capture = h.start(
       stillWaiting
         ? waiting()
         : { ...waiting(), user_request: null, pending_user_request: false },
-      true,
     );
+    assert.equal(h.run.getSnapshot().connection, "loading");
     assert.equal(h.run.getSnapshot().answerForms[0].status, "uncertain");
-    await h.event({
-      type: "checkpoint",
-      cut: { journal: "root", leaf: "cut-2" },
-      live_invocations: [],
-    });
+    await h.run.answer(target);
+    assert.equal(h.calls.length, 1);
+    release();
+    await capture;
     assert.equal(
       h.run.getSnapshot().answerForms[0].status,
       stillWaiting ? "error" : "inactive",

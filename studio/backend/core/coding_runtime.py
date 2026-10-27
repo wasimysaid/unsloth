@@ -15,6 +15,7 @@ import logging
 import os
 import secrets
 import struct
+import tempfile
 import uuid
 from typing import Any
 
@@ -86,6 +87,7 @@ class CodingRuntime:
         self._overflowed: set[str] = set()
         self._abandoned_views: set[int] = set()
         self._cleanup_tasks: set[asyncio.Task] = set()
+        self._content_files: set = set()
         self._shutdown_task: asyncio.Task | None = None
         self._sequence = 0
         self._reader: asyncio.Task | None = None
@@ -390,6 +392,8 @@ class CodingRuntime:
 
     def _fail(self, error: CodingRuntimeError) -> None:
         self._failure = error
+        for content in tuple(self._content_files):
+            self.release_content(content)
         for future in self._pending.values():
             if not future.done():
                 future.set_exception(error)
@@ -519,7 +523,7 @@ class CodingRuntime:
         assert self.process and self.process.stdin
         generation = self._generation
         process = self.process
-        if len(self._pending) + len(self._abandoned_views) >= 128:
+        if method != "close_public_entry" and len(self._pending) + len(self._abandoned_views) >= 128:
             raise CodingRuntimeError("limit", "Too many pending native operations. Wait for their results before retrying.")
         self._sequence += 1
         identifier = self._sequence
@@ -582,6 +586,63 @@ class CodingRuntime:
                 future.cancel()
             elif not future.cancelled():
                 future.exception()  # Observe a failure delivered before a write refusal.
+
+    def release_content(self, content) -> None:
+        self._content_files.discard(content)
+        content.close()
+
+    async def public_entry(self, conversation_id: str, cut: dict, entry_id: str, *, expected_generation: int):
+        identity = {"conversation_id": conversation_id, "cut": cut, "entry_id": entry_id,
+                    "transfer_id": uuid.uuid4().hex}
+        selection = {"conversation_id": conversation_id, "transfer_id": identity["transfer_id"]}
+        content = tempfile.TemporaryFile(mode = "w+b")
+        self._content_files.add(content)
+        complete = False
+        try:
+            opened = await self.command("open_public_entry", identity, expected_generation = expected_generation)
+            if opened != identity:
+                raise CodingRuntimeError("protocol", "Native entry transfer identity changed.")
+            offset = 0
+            while True:
+                chunk = await self.command("read_public_entry", {**selection, "max_bytes": 65536},
+                                           expected_generation = expected_generation)
+                if (not isinstance(chunk, dict) or any(chunk.get(key) != value for key, value in identity.items())
+                        or type(chunk.get("offset")) is not int or chunk["offset"] != offset
+                        or not isinstance(chunk.get("data"), str) or type(chunk.get("done")) is not bool
+                        or (not chunk["data"] and not chunk["done"])):
+                    raise CodingRuntimeError("protocol", "Native entry transfer was inconsistent.")
+                data = chunk["data"].encode("utf-8")
+                await anyio.to_thread.run_sync(content.write, data)
+                offset += len(data)
+                if chunk["done"]:
+                    break
+            content.seek(0)
+            complete = True
+        finally:
+            async def release():
+                if self._generation == expected_generation and self.process is not None and not self._failure:
+                    await self._request("close_public_entry", selection, maintenance = True,
+                                        expected_generation = expected_generation)
+            cleanup = asyncio.create_task(release())
+            self._cleanup_tasks.add(cleanup)
+            cleanup.add_done_callback(self._cleanup_tasks.discard)
+            cancelled = False
+            try:
+                with anyio.CancelScope(shield = True):
+                    while not cleanup.done():
+                        try:
+                            await asyncio.shield(cleanup)
+                        except asyncio.CancelledError:
+                            cancelled = True
+                    cleanup.result()
+            except BaseException:
+                self.release_content(content)
+                raise
+            if not complete or cancelled:
+                self.release_content(content)
+            if cancelled:
+                raise asyncio.CancelledError
+        return content
 
     async def subscribe(self, conversation_id: str, *, expected_generation: int | None = None) -> tuple[str, asyncio.Queue]:
         opening = asyncio.create_task(self.command("view", {"conversation_id": conversation_id}, expected_generation = expected_generation))
@@ -659,6 +720,8 @@ class CodingRuntime:
         if self._cleanup_tasks:
             await asyncio.gather(*tuple(self._cleanup_tasks), return_exceptions = True)
         self._abandoned_views.clear()
+        for content in tuple(self._content_files):
+            self.release_content(content)
         return self._record_cleanup(native_confirmed, forced, exit_code, local_confirmed=local_confirmed)
 
     def _record_cleanup(self, native_confirmed: bool, forced: bool, exit_code: int | None, *, local_confirmed: bool = True) -> dict[str, Any]:
