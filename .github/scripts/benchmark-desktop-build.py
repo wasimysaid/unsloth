@@ -10,8 +10,32 @@ import os
 import pathlib
 import platform
 import shutil
+import struct
 import subprocess
 import time
+
+
+def binary_details(data):
+    """Separate Windows machine code from linker/debug build identifiers."""
+    if data[:2] != b"MZ":
+        return {}
+    offset = struct.unpack_from("<I", data, 0x3C)[0]
+    if data[offset:offset + 4] != b"PE\0\0":
+        return {}
+    sections = struct.unpack_from("<H", data, offset + 6)[0]
+    optional_size = struct.unpack_from("<H", data, offset + 20)[0]
+    details = {"pe_timestamp": struct.unpack_from("<I", data, offset + 8)[0],
+               "section_hashes": {}}
+    table = offset + 24 + optional_size
+    for i in range(sections):
+        section = table + 40 * i
+        name = data[section:section + 8].rstrip(b"\0").decode("ascii", errors="replace")
+        size, start = struct.unpack_from("<II", data, section + 16)
+        details["section_hashes"][name] = hashlib.sha256(data[start:start + size]).hexdigest()
+    codeview = data.find(b"RSDS")
+    if codeview >= 0:
+        details["codeview_guid"] = data[codeview + 4:codeview + 20].hex()
+    return details
 
 
 def main():
@@ -54,6 +78,7 @@ def main():
     def persist():
         (output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
 
+    initial_bytes = None
     for phase in ("initial", "application-rebuild"):
         if phase == "application-rebuild":
             # Keep dependency artifacts, but actually recompile and relink the app.
@@ -67,8 +92,22 @@ def main():
         item = {"phase": phase, "seconds": round(time.monotonic() - start, 3),
                 "exit_code": completed.returncode}
         if completed.returncode == 0:
+            binary_bytes = binary.read_bytes()
             item.update(size_bytes=binary.stat().st_size,
-                        sha256=hashlib.sha256(binary.read_bytes()).hexdigest())
+                        sha256=hashlib.sha256(binary_bytes).hexdigest(),
+                        binary_details=binary_details(binary_bytes))
+            if phase == "initial":
+                initial_bytes = binary_bytes
+            elif binary_bytes != initial_bytes:
+                # Capture a small byte-level diff rather than assume an unequal
+                # Windows SHA is explained by timestamps or debug identifiers.
+                differences = []
+                for offset, (before, after) in enumerate(zip(initial_bytes, binary_bytes)):
+                    if before != after:
+                        differences.append({"offset": offset, "before": before, "after": after})
+                        if len(differences) == 64:
+                            break
+                result["first_byte_differences"] = differences
             if args.keep_binary and phase == "initial":
                 shutil.copy2(binary, output / binary.name)
         result["builds"].append(item)
