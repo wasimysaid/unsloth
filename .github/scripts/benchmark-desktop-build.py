@@ -67,6 +67,7 @@ def main():
         "target": args.target,
         "system": platform.platform(),
         "cpus": os.cpu_count(),
+        "cache_hit": env.get("BENCHMARK_CACHE_HIT"),
         "rustc": subprocess.check_output(["rustc", "-Vv"], text=True),
         "source": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
         "settings": {key: env.get(key) for key in [
