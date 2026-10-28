@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright 2026-present the Unsloth AI Inc. team. All rights reserved.
+name: Desktop paired build comparisons (fork only)
+on:
+  push:
+    branches: [perf/desktop-size-speed-experiments]
+    paths:
+      - .github/workflows/desktop-paired-builds.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: desktop-size-speed-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  compare:
+    if: github.repository == 'wasimysaid/unsloth'
+    name: ${{ matrix.platform.label }} / ${{ matrix.variant }}
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      max-parallel: 60
+      matrix:
+        variant: [opt2, aws-only]
+        platform:
+          - {label: linux-x64, runner: ubuntu-22.04, target: x86_64-unknown-linux-gnu}
+          - {label: linux-arm64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu}
+          - {label: windows-x64, runner: windows-latest, target: x86_64-pc-windows-msvc}
+          - {label: windows-arm64, runner: windows-latest, target: aarch64-pc-windows-msvc}
+          - {label: macos-arm64, runner: macos-latest, target: aarch64-apple-darwin}
+    env:
+      CARGO_INCREMENTAL: '0'
+      UNSLOTH_DESKTOP_BACKEND_VERSION: '2026.10.9'
+      UNSLOTH_DESKTOP_SOURCE_BACKEND: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        timeout-minutes: 15
+        env:
+          RETRY_ATTEMPTS: '2'
+          RETRY_ATTEMPT_TIMEOUT: '360'
+        run: |
+          bash .github/scripts/retry-with-apt-lock.sh sudo sh -c \
+            'apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf || { apt-get update && apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf; }'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: studio/frontend/package-lock.json
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: '1.99.1'
+          targets: ${{ matrix.platform.target }}
+      - name: Keep only the measured compiler in the cache inventory
+        shell: bash
+        run: |
+          rustup toolchain uninstall stable
+          rustc -Vv
+      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: studio/src-tauri -> target
+          shared-key: desktop-experiment-registry
+          add-job-id-key: false
+          cache-targets: false
+      - name: Audit dependency lockfiles
+        shell: bash
+        run: |
+          if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
+          "$PY" scripts/lockfile_supply_chain_audit.py
+      - name: Build identical frontend assets
+        working-directory: studio/frontend
+        run: |
+          npm ci --no-fund --no-audit
+          npm run build
+      - name: Compare control and candidate on the same runner
+        shell: bash
+        env:
+          EXPERIMENT_TARGET: ${{ matrix.platform.target }}
+          EXPERIMENT_LABEL: ${{ matrix.platform.label }}
+          EXPERIMENT_VARIANT: ${{ matrix.variant }}
+        run: |
+          if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
+          "$PY" .github/scripts/paired-desktop-build.py
+      - name: Upload binary and measurements
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: paired-${{ matrix.platform.label }}-${{ matrix.variant }}
+          path: experiment-results
+          retention-days: 7
+          if-no-files-found: warn
