@@ -35,7 +35,7 @@ jobs:
       UNSLOTH_DESKTOP_BACKEND_VERSION: '2026.10.9'
       UNSLOTH_DESKTOP_SOURCE_BACKEND: '0'
       RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: ${{ runner.temp }}/desktop-sccache
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
       SCCACHE_CACHE_SIZE: 1G
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
