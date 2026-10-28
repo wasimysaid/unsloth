@@ -38,7 +38,9 @@ open = "5"
 process-wrap = { version = "10", features = ["std"] }
 strip-ansi-escapes = "0.2"
 tauri-plugin-opener = "2.5.4"
-tauri-plugin-updater = "2"
+# Reqwest already supplies rustls/AWS-LC. Keep updater proxy/archive support
+# without linking a second crypto provider or switching the process default.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["system-proxy", "zip"] }
 tauri-plugin-clipboard-manager = "2"
 arboard = "3.6.1"
 tauri-plugin-dialog = "2"
