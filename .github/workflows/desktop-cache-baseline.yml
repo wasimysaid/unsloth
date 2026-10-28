@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright 2026-present the Unsloth AI Inc. team. All rights reserved.
+
+name: Desktop baseline cache verification (fork only)
+
+on:
+  push:
+    branches: [perf/desktop-ci-build-experiments]
+    paths:
+      - .github/workflows/desktop-cache-baseline.yml
+      - .github/scripts/benchmark-desktop-build.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-baseline-cache-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    if: github.repository == 'wasimysaid/unsloth'
+    name: ${{ matrix.platform.label }} / ${{ matrix.profile.label }}
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - {label: linux-x64, runner: ubuntu-22.04, target: x86_64-unknown-linux-gnu}
+          - {label: linux-arm64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu}
+        profile:
+          - {label: fat-1, lto: fat, units: 1}
+    env:
+      CARGO_PROFILE_RELEASE_LTO: ${{ matrix.profile.lto }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ matrix.profile.units }}
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: '3'
+      CARGO_INCREMENTAL: '0'
+      UNSLOTH_DESKTOP_BACKEND_VERSION: '2026.10.9'
+      UNSLOTH_DESKTOP_SOURCE_BACKEND: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        timeout-minutes: 15
+        env:
+          RETRY_ATTEMPTS: '2'
+          RETRY_ATTEMPT_TIMEOUT: '360'
+        run: |
+          bash .github/scripts/retry-with-apt-lock.sh sudo sh -c \
+            'apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf || { apt-get update && apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf; }'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: studio/frontend/package-lock.json
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: '1.99.1'
+          targets: ${{ matrix.platform.target }}
+      - name: Normalize the benchmark toolchain inventory
+        shell: bash
+        run: |
+          rustup show active-toolchain
+          rustup toolchain uninstall stable
+          rustc -Vv
+      - name: Restore and save unsigned release dependencies
+        id: rust-cache
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: studio/src-tauri -> target
+          prefix-key: desktop-benchmark-v1
+          shared-key: ${{ matrix.platform.target }}-${{ matrix.profile.label }}
+          add-job-id-key: false
+          save-if: true
+      - name: Audit frontend lockfiles
+        shell: bash
+        run: |
+          if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
+          "$PY" scripts/lockfile_supply_chain_audit.py
+      - name: Build pinned frontend
+        working-directory: studio/frontend
+        run: |
+          npm ci --no-fund --no-audit
+          npm run build
+      - name: Compile, rebuild and compare hashes
+        env:
+          BENCHMARK_CACHE_HIT: ${{ steps.rust-cache.outputs.cache-hit }}
+        shell: bash
+        run: |
+          if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
+          "$PY" .github/scripts/benchmark-desktop-build.py \
+            --label '${{ matrix.platform.label }}-${{ matrix.profile.label }}' \
+            --target '${{ matrix.platform.target }}' --output benchmark-results \
+            ${{ runner.os != 'Windows' && '--initial-only' || '' }}
+      - name: Upload measurements
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: benchmark-${{ matrix.platform.label }}-${{ matrix.profile.label }}
+          path: benchmark-results
+          if-no-files-found: warn
+          retention-days: 7
