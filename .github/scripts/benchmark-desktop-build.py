@@ -44,6 +44,7 @@ def main():
     parser.add_argument("--target", default="")
     parser.add_argument("--output", required=True)
     parser.add_argument("--keep-binary", action="store_true")
+    parser.add_argument("--initial-only", action="store_true")
     args = parser.parse_args()
     root = pathlib.Path(__file__).resolve().parents[2]
     crate = root / "studio/src-tauri"
@@ -80,7 +81,8 @@ def main():
         (output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
 
     initial_bytes = None
-    for phase in ("initial", "application-rebuild"):
+    phases = ("initial",) if args.initial_only else ("initial", "application-rebuild")
+    for phase in phases:
         if phase == "application-rebuild":
             # Keep dependency artifacts, but actually recompile and relink the app.
             # A second no-op cargo invocation would not test reproducibility.
@@ -117,7 +119,10 @@ def main():
         if completed.returncode:
             print(log.read_text(encoding="utf-8", errors="replace")[-18000:], flush=True)
             raise SystemExit(completed.returncode)
-    result["identical_application_rebuild"] = result["builds"][0]["sha256"] == result["builds"][1]["sha256"]
+    result["identical_application_rebuild"] = (
+        result["builds"][0]["sha256"] == result["builds"][1]["sha256"]
+        if len(result["builds"]) > 1 else None
+    )
     persist()
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
