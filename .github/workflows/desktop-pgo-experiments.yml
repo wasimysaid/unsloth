@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright 2026-present the Unsloth AI Inc. team. All rights reserved.
+name: Desktop PGO experiments (fork only)
+on:
+  push:
+    branches: [perf/desktop-size-speed-experiments]
+    paths: [.github/workflows/desktop-pgo-experiments.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  pgo:
+    if: github.repository == 'wasimysaid/unsloth'
+    name: PGO ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      max-parallel: 60
+      matrix:
+        include:
+          - {label: linux-x64, runner: ubuntu-22.04, target: x86_64-unknown-linux-gnu}
+          - {label: linux-arm64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu}
+    env:
+      UNSLOTH_DESKTOP_BACKEND_VERSION: '2026.10.9'
+      UNSLOTH_DESKTOP_SOURCE_BACKEND: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install native app and automation dependencies
+        env:
+          RETRY_ATTEMPTS: '2'
+          RETRY_ATTEMPT_TIMEOUT: '360'
+        run: |
+          bash .github/scripts/retry-with-apt-lock.sh sudo sh -c \
+            'apt-get update && apt-get install -y libwebkit2gtk-4.1-dev webkit2gtk-driver libappindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf xvfb xauth'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: studio/frontend/package-lock.json
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: '1.99.1'
+          targets: ${{ matrix.target }}
+          components: llvm-tools-preview
+      - name: Install pinned Tauri WebDriver
+        run: cargo install tauri-driver --version 2.0.6 --locked
+      - name: Audit lockfiles and build frontend
+        run: |
+          python3 scripts/lockfile_supply_chain_audit.py
+          npm ci --prefix studio/frontend --no-fund --no-audit
+          npm run build --prefix studio/frontend
+      - name: Download matching-source control binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 40693403588 --repo wasimysaid/unsloth \
+            --name size-speed-${{ matrix.label }}-baseline --dir control
+          cmp control/Cargo.toml studio/src-tauri/Cargo.toml
+      - name: Profile real app operations and evaluate a separate workload
+        run: |
+          python3 .github/scripts/desktop-pgo-experiment.py \
+            --target '${{ matrix.target }}' --control control/unsloth-studio \
+            --out pgo-results
+      - name: Upload measurements, profiles and optimized app
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: pgo-${{ matrix.label }}
+          path: |
+            pgo-results/result.json
+            pgo-results/*.log
+            pgo-results/*.txt
+            pgo-results/training.profdata
+            pgo-results/unsloth-studio-pgo
+          if-no-files-found: warn
+          retention-days: 7
