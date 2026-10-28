@@ -7,12 +7,13 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import time
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--variant", choices=["baseline", "opt2", "opts", "optz", "tokio-min", "tokio-parking"], required=True)
+parser.add_argument("--variant", choices=["baseline", "opt2", "opts", "optz", "tokio-min", "tokio-parking", "aws-only"], required=True)
 parser.add_argument("--target", default="")
 parser.add_argument("--output", required=True)
 parser.add_argument("--tests", action="store_true")
@@ -26,6 +27,8 @@ os.environ.update(CARGO_PROFILE_RELEASE_LTO="fat", CARGO_PROFILE_RELEASE_CODEGEN
                   CARGO_PROFILE_RELEASE_OPT_LEVEL=opt, CARGO_INCREMENTAL="0")
 toml = crate / "Cargo.toml"
 original = toml.read_text()
+lock = crate / "Cargo.lock"
+original_lock = lock.read_text()
 if args.variant.startswith("tokio-"):
     # Every used public API remains enabled; retain fs for Tauri's runtime.
     features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"]
@@ -34,12 +37,26 @@ if args.variant.startswith("tokio-"):
     needle = 'tokio = { version = "1", features = ["full"] }'
     assert original.count(needle) == 1
     toml.write_text(original.replace(needle, 'tokio = { version = "1", features = ' + json.dumps(features) + ' }'))
+elif args.variant == "aws-only":
+    needle = 'tauri-plugin-updater = "2"'
+    assert original.count(needle) == 1
+    # Reqwest's existing default still enables rustls/AWS-LC and certificate
+    # verification. Keep updater proxy/archive support; omit its second (ring)
+    # provider and the corresponding process-global provider switch.
+    toml.write_text(original.replace(needle, 'tauri-plugin-updater = { version = "2", default-features = false, features = ["system-proxy", "zip"] }'))
 (out / "Cargo.toml").write_text(toml.read_text())
 feature_command = ["cargo", "tree", "--locked", "-e", "normal,build,features"]
+if toml.read_text() != original:
+    # Removing an optional dependency edge legitimately updates Cargo.lock.
+    # Permit that graph change, but reject any dependency version changes.
+    feature_command.remove("--locked")
 if args.target:
     feature_command += ["--target", args.target]
 with (out / "features.txt").open("w") as handle:
     subprocess.run(feature_command, cwd=crate, stdout=handle, check=True)
+versions = lambda text: set(re.findall(r'^name = "([^"]+)"\nversion = "([^"]+)"', text, re.M))
+assert versions(lock.read_text()) <= versions(original_lock), "An experiment changed dependency versions"
+(out / "Cargo.lock").write_text(lock.read_text())
 
 command = [sys.executable, str(root / ".github/scripts/benchmark-desktop-build.py"),
            "--label", args.variant, "--target", args.target, "--output", str(out),
