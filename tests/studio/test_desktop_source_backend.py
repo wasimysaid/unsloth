@@ -193,7 +193,7 @@ class SourceBackendTests(unittest.TestCase):
                 ["sh", "-c", command], env = env, capture_output = True, text = True, check = True
             )
             self.assertEqual(
-                default.stdout.splitlines(), ["unsloth>=2026.9.12", "unsloth-zoo>=2026.10.7"]
+                default.stdout.splitlines(), ["unsloth>=2026.9.12", "unsloth-zoo>=2026.10.9"]
             )
             self.assertEqual(probes.read_text().splitlines(), ["probe"])
             probes.write_text("")

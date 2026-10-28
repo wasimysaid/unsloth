@@ -4,7 +4,7 @@ This is an opt-in mode on `wasimysaid/unsloth`'s dedicated
 `release/desktop-source-backend` branch. It does **not** change the upstream
 release flow, and it is not `install.sh --local` / `install.ps1 --local` (those
 require a development checkout and Windows checks for `pyproject.toml`).
-The branch records upstream zoo commit `0ad7986ba679cf52c94f71d15d6dfe2636359ce3`
+The branch records upstream zoo commit `82d41e13fc68e62f3159e078bfa8ec07ee4317a9`
 (observed upstream HEAD at this branch refresh); the workflow requires an
 explicit full SHA value and records the actual selected SHA in each release bundle.
 
@@ -22,7 +22,7 @@ than the published desktop version. Verify the tag and immutable zoo commit firs
 gh workflow run release-desktop.yml --repo wasimysaid/unsloth \
   --ref release/desktop-source-backend \
   -f studio_version=v0.1.52-beta -f source_backend=true \
-  -f zoo_sha=0ad7986ba679cf52c94f71d15d6dfe2636359ce3 \
+  -f zoo_sha=82d41e13fc68e62f3159e078bfa8ec07ee4317a9 \
   -f draft=true
 ```
 If the source tag's `unsloth` package version differs from its
