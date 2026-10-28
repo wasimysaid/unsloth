@@ -624,6 +624,10 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            studio/package-lock.json
+            studio/frontend/package-lock.json
 
       - name: Lockfile supply-chain audit (pre-install scan)
         shell: bash
@@ -828,6 +832,8 @@ jobs:
         uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
         with:
           workspaces: 'studio/src-tauri -> target'
+          shared-key: desktop-release-${{ matrix.artifact }}
+          add-job-id-key: false
 
           # Restore only: this job holds signing secrets, and caches saved on main are readable by
           # every PR. Cargo fingerprints can capture rerun-if-env-changed values.

@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright 2026-present the Unsloth AI Inc. team. All rights reserved.
+
+name: Warm desktop release dependencies
+
+on:
+  push:
+    branches: [main, release/desktop-source-backend]
+    paths:
+      - studio/src-tauri/**
+      - studio/frontend/package-lock.json
+      - studio/package-lock.json
+      - scripts/lockfile_supply_chain_audit.py
+      - .github/workflows/desktop-release-cache.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-cache-${{ github.ref }}
+  # Finish the running producer; GitHub replaces only the pending run.
+  cancel-in-progress: false
+
+jobs:
+  dependencies:
+    name: Unsigned release dependencies (${{ matrix.artifact }})
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {platform: ubuntu-22.04, artifact: linux-x64, args: '', targets: ''}
+          - {platform: ubuntu-24.04-arm, artifact: linux-arm64, args: '', targets: ''}
+          - {platform: windows-latest, artifact: windows-x64, args: '', targets: ''}
+          - {platform: windows-latest, artifact: windows-arm64, args: '--target aarch64-pc-windows-msvc', targets: aarch64-pc-windows-msvc}
+          - {platform: macos-latest, artifact: macos-aarch64, args: '--target aarch64-apple-darwin', targets: 'aarch64-apple-darwin,x86_64-apple-darwin'}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            studio/package-lock.json
+            studio/frontend/package-lock.json
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          targets: ${{ matrix.targets }}
+      - name: Restore release dependencies
+        id: rust-cache
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: studio/src-tauri -> target
+          shared-key: desktop-release-${{ matrix.artifact }}
+          add-job-id-key: false
+          # This workflow has no signing environment or signing secrets.
+          # Keep the signed release workflow restore-only.
+          save-if: true
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux' && steps.rust-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 15
+        env:
+          RETRY_ATTEMPTS: '2'
+          RETRY_ATTEMPT_TIMEOUT: '360'
+        run: |
+          bash .github/scripts/retry-with-apt-lock.sh sudo sh -c \
+            'apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf || { apt-get update && apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf; }'
+      - name: Audit frontend lockfiles
+        if: steps.rust-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
+          "$PY" scripts/lockfile_supply_chain_audit.py
+      - name: Build frontend assets
+        if: steps.rust-cache.outputs.cache-hit != 'true'
+        working-directory: studio/frontend
+        run: |
+          npm ci --no-fund --no-audit
+          npm run build
+      - name: Compile unsigned release dependencies
+        if: steps.rust-cache.outputs.cache-hit != 'true'
+        working-directory: studio/src-tauri
+        # Mirror the release target and features exactly, including native vs
+        # explicit --target paths. Only dependency artifacts are saved.
+        run: cargo build --locked --release --bins --features tauri/custom-protocol ${{ matrix.args }}
