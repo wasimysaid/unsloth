@@ -17,20 +17,21 @@ parser=argparse.ArgumentParser()
 parser.add_argument('--target',required=True)
 parser.add_argument('--control',required=True)
 parser.add_argument('--out',required=True)
+parser.add_argument('--opt-level',choices=['3','s'],default='3')
 args=parser.parse_args()
 root=pathlib.Path(__file__).resolve().parents[2]
 crate=root/'studio/src-tauri'
 out=pathlib.Path(args.out).resolve();out.mkdir(parents=True,exist_ok=True)
 control=pathlib.Path(args.control).resolve();control.chmod(0o755)
 env=dict(os.environ,CARGO_INCREMENTAL='0',CARGO_PROFILE_RELEASE_LTO='fat',
-         CARGO_PROFILE_RELEASE_CODEGEN_UNITS='1',CARGO_PROFILE_RELEASE_OPT_LEVEL='3',
+         CARGO_PROFILE_RELEASE_CODEGEN_UNITS='1',CARGO_PROFILE_RELEASE_OPT_LEVEL=args.opt_level,
          CARGO_TERM_COLOR='never')
 env.pop('RUSTFLAGS',None)
 host=next(line.split(': ',1)[1] for line in subprocess.check_output(['rustc','-Vv'],text=True).splitlines() if line.startswith('host: '))
 sdk=pathlib.Path(subprocess.check_output(['rustc','--print','sysroot'],text=True).strip())
 profdata=sdk/'lib/rustlib'/host/'bin/llvm-profdata'
 raw=out/'raw';raw.mkdir(exist_ok=True)
-result={'target':args.target,'source':subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),
+result={'target':args.target,'opt_level':args.opt_level,'source':subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),
         'control_sha256':hashlib.sha256(control.read_bytes()).hexdigest(),'builds':{},'measurements':[]}
 def save():(out/'result.json').write_text(json.dumps(result,indent=2)+'\n')
 def build(name,flags):
