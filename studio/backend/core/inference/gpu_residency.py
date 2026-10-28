@@ -1,13 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
-"""Whether an image or video model can stay on a GPU next to chat, and what to unload when it can't.
-
-Keep multiple models loaded set to When they fit or Always lets the GPU arbiter keep several residents. This module
-prices them: a media resident holds the weights plus generation headroom it was admitted with, a new media load is
-priced from the files already on disk, and live free VRAM decides whether it fits. Anything it cannot price is
-treated as not fitting, so the caller frees memory first (fit) or refuses (always). Modelled on training_vram.py.
-"""
+"""Prices image/video residents against live free VRAM; anything unpriceable counts as not fitting"""
 
 from __future__ import annotations
 
@@ -220,7 +214,11 @@ def _image_need(request: Any, gpu_ordinal: Optional[int]) -> Optional[tuple[int,
         resolve_model_kind,
     )
     from core.inference.diffusion_auto_policy import resident_bytes_from_declared
-    from core.inference.diffusion_engine_router import predict_engine
+    from core.inference.diffusion_engine_router import (
+        has_active_loras,
+        mlx_load_blocker,
+        predict_engine,
+    )
     from core.inference.diffusion_families import (
         detect_family_for_pick,
         local_pipeline_components_are_complete,
@@ -244,7 +242,18 @@ def _image_need(request: Any, gpu_ordinal: Optional[int]) -> Optional[tuple[int,
     fam = detect_family_for_pick(repo, name, request.family_override)
     if (
         fam is None
-        or predict_engine(fam, model_kind = kind, gpu_ordinal = gpu_ordinal, gguf_filename = name)
+        or predict_engine(
+            fam,
+            model_kind = kind,
+            gpu_ordinal = gpu_ordinal,
+            gguf_filename = name,
+            with_loras = has_active_loras(getattr(request, "loras", None)),
+            # An explicit precision keeps a default-routed Apple Silicon load on diffusers, as the load does.
+            mlx_blocker = mlx_load_blocker(
+                transformer_quant = getattr(request, "transformer_quant", None),
+                text_encoder_quant = getattr(request, "text_encoder_quant", None),
+            ),
+        )
         != ENGINE_DIFFUSERS
     ):
         return None
@@ -701,6 +710,45 @@ def media_fit_kwargs(
     if need:
         kwargs["need_mib"] = need
     return kwargs
+
+
+def refuse_unless_fits(
+    owner: str,
+    *,
+    policy: str = "off",
+    gpu_ids: Optional[Iterable[int]] = None,
+    need_mib: Optional[dict] = None,
+    cancel: Any = None,
+) -> None:
+    """acquire_for(allow_evict=False)'s check for an owner already holding its claim; mutates nothing.
+
+    For loads inside a generation (MLX diffusers fallback). Gives up on ``cancel``: a lock-holding evictor awaits our drain."""
+    from utils.account_context import current_account_id
+
+    while not arb._lock.acquire(timeout = 0.05):
+        if cancel is not None and cancel.is_set():
+            from core.inference.diffusion_families import DIFFUSION_CANCELLED_MSG
+            raise RuntimeError(DIFFUSION_CANCELLED_MSG)
+    try:
+        arb._sync_from_view()
+        others = [name for name in arb._residents if name != owner]
+        if not others:
+            return
+        if policy != "off" and owner in arb._KEPT_UNDER_ALWAYS:
+            coreside_locked(
+                owner,
+                policy = policy,
+                need_mib = need_mib,
+                gpu_ids = gpu_ids,
+                allow_evict = False,
+                evict_first = False,
+                acting = current_account_id(),
+                evicted = None,
+            )
+            return
+        raise arb.GpuOwnerBusyError(others[-1])
+    finally:
+        arb._lock.release()
 
 
 def free_for(

@@ -1,41 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
-"""CFG batching: both guidance branches of a step through ONE forward of the denoiser.
-
-A guided step calls the denoiser twice (conditional, then unconditional). ComfyUI batches the two branches into one
-call by default whenever memory allows (``comfy/samplers.py`` ``calc_cond_batch``), resident or not; diffusers pipelines
-call the transformer once per branch. A denoiser streamed from host memory pays its weight upload once instead of
-twice; a resident one gains where one doubled call keeps the GPU busier than two (small images). This router batches
-them for the classes whose forward keeps no state between calls:
-
-- the first branch of a step builds the second branch's arguments from the previous step's second call (same latent
-  object, the first branch's per-step tensors, the second branch's constants), runs both as one call of twice the
-  batch, returns the first half and keeps the second;
-- the second call is verified against what was batched (every argument bitwise) and gets the kept half; anything
-  else (a changed argument, no second call, a third call) reruns that branch plain and counts as a miss.
-
-Priced once per request shape, before any batched result is used: steps 1-2 run plain (step 2 is timed); a resident
-pair >= ``_RESIDENT_MAX_PAIR_S`` stays plain untried. Otherwise a discarded trial (plain pairs interleaved with doubled
-calls) batches steps 3+ only if the fastest batched step (predict, merge, snapshot, doubled call, split, verify) beats the
-fastest plain pair by ``_MEASURED_FRACTION``, so every render of a shape takes one path (same seed, same image). The
-verdict is latched for the load (memory pressure never re-times it) and stored per (model, speed tier, offload policy,
-card, compiled or eager, request shape, runtimes) next to the learned peaks, first writer wins: a borderline shape
-cannot land on a different path in another process (``UNSLOTH_DIFFUSION_CFG_BATCH_VERDICTS=0`` keeps it per load;
-``UNSLOTH_DIFFUSION_CFG_BATCH_VERDICTS_FILE`` names the file). The doubled call needs room for twice a plain call's
-activations; no room, or an OOM, turns the shape plain for the rest of that render.
-
-Not always bit-exact (other GEMM / attention tiles): B200 bf16 resident FLUX.2-klein-base-4B is bitwise equal,
-Wan2.1-T2V-1.3B LPIPS 0.019 mean; offloaded FLUX.2-klein-base LPIPS ~0.01. ``UNSLOTH_DIFFUSION_CFG_BATCH=0`` keeps the exact
-one-branch-per-call path, as does a request with ``speed_mode="off"``; ``force`` batches anyway, an unlisted class too
-(the trial's discarded calls must be side-effect free). Declined for per-call activation scaling (NVFP4 without frozen
-global scales), whose scale would change with the doubled batch, and for denoisers already wrapped by another forward
-layer.
-
-Compiled denoisers: the doubled shape compiles a second graph per block, allowed only in a shape's trial render.
-Offloaded compiled denoisers batch; resident compiled ones and shapes judged before a later compile stay plain. A
-follow-up-render compile ends batching for the load; under Dynamo tracing the router passes straight through.
-"""
+"""Batches CFG branches into one forward for stateless denoisers only; a second call differing from
+the batched inputs reruns that branch plain; not always bit-exact; UNSLOTH_DIFFUSION_CFG_BATCH=0
+keeps one branch per call"""
 
 from __future__ import annotations
 
@@ -248,12 +216,14 @@ def cfg_batch_decline(
 
 
 def _usable_free_mib(device: Any) -> Optional[int]:
-    """Driver free plus this process's reserved-but-unallocated cache on ``device``."""
+    """Driver free plus reusable cache (graph pools excluded) on ``device``, less the VRAM Budget reserve."""
     torch = _torch()
     try:
-        free, _total = torch.cuda.mem_get_info(device)
-        idle = torch.cuda.memory_reserved(device) - torch.cuda.memory_allocated(device)
-        return int(free + max(0, idle)) >> 20
+        from .diffusion_memory import _user_budget_reserve_mib, cuda_reusable_cache_bytes
+
+        free, total = torch.cuda.mem_get_info(device)
+        idle = cuda_reusable_cache_bytes(device)
+        return (int(free + idle) >> 20) - _user_budget_reserve_mib(int(total) >> 20)
     except Exception:  # noqa: BLE001 - unreadable: the out-of-memory backstop decides
         return None
 
@@ -262,6 +232,8 @@ VERDICTS_ENV = "UNSLOTH_DIFFUSION_CFG_BATCH_VERDICTS"
 VERDICTS_FILE_ENV = "UNSLOTH_DIFFUSION_CFG_BATCH_VERDICTS_FILE"
 _VERDICTS_FILE = "diffusion_cfg_batch_verdicts.json"
 _VERDICTS_MAX = 512
+# v1 keyed a bf16 load and its torchao INT8 / FP8 load alike
+_VERDICTS_VERSION = 2
 _BATCH = "batch"
 _PLAIN = "plain"
 
@@ -290,8 +262,12 @@ def _read_verdicts(path: Any) -> dict:
         data = json.loads(path.read_text(encoding = "utf-8"))
     except Exception:  # noqa: BLE001 - absent or corrupt: an empty store
         return {}
-    if not isinstance(data, dict) or data.get("runtime") != peaks.runtime_stamp():
-        return {}  # written under other kernels: their timings do not apply
+    if (
+        not isinstance(data, dict)
+        or data.get("version") != _VERDICTS_VERSION
+        or data.get("runtime") != peaks.runtime_stamp()
+    ):
+        return {}
     entries = data.get("entries")
     return entries if isinstance(entries, dict) else {}
 
@@ -338,7 +314,11 @@ def _settle_verdict(key: str, verdict: dict) -> dict:
             try:
                 with os.fdopen(fd, "w", encoding = "utf-8") as handle:
                     json.dump(
-                        {"version": 1, "runtime": peaks.runtime_stamp(), "entries": entries},
+                        {
+                            "version": _VERDICTS_VERSION,
+                            "runtime": peaks.runtime_stamp(),
+                            "entries": entries,
+                        },
                         handle,
                         indent = 1,
                     )
@@ -363,22 +343,41 @@ def _card_name(latent: Any) -> Optional[str]:
     return device_name(latent.device)
 
 
-def _load_identity(denoiser: Any, offload_policy: str, speed_mode: Optional[str]) -> Optional[str]:
-    """What a doubled call's timing depends on in the load: class, config, weight dtypes / layer classes (quant),
-    offload policy and speed tier. Hashed: it is a store key, never read back."""
+def _weight_kind(p: Any) -> str:
+    """torchao ``quantize_`` keeps ``nn.Linear`` and a bf16 ``.dtype``: only the tensor class tells the loads apart."""
+    data = getattr(p, "data", p)
+    kind = type(data) if type(p).__name__ == "Parameter" else type(p)
+    names = list(getattr(kind, "tensor_attribute_names", None) or ()) + list(
+        getattr(kind, "optional_tensor_attribute_names", None) or ()
+    )
+    attrs = [f"{n}={getattr(data, n, None)!r}" for n in names if n != "block_size"]
+    return f"{kind.__module__}.{kind.__qualname__}" + (f"({','.join(attrs)})" if attrs else "")
+
+
+def _load_identity(
+    denoiser: Any,
+    offload_policy: str,
+    speed_mode: Optional[str],
+    transformer_quant: Optional[str] = None,
+) -> Optional[str]:
+    """What a doubled call's timing depends on in the load. Hashed: it is a store key, never read back."""
     import hashlib
     import json
 
     try:
         config = getattr(denoiser, "config", None)
         layers = sorted({f"{type(m).__module__}.{type(m).__name__}" for m in denoiser.modules()})
-        dtypes = sorted({str(p.dtype) for p in denoiser.parameters()})
+        params = list(denoiser.parameters())
+        dtypes = sorted({str(p.dtype) for p in params})
+        weights = sorted({_weight_kind(p) for p in params})
         blob = json.dumps(
             [
                 f"{type(denoiser).__module__}.{type(denoiser).__name__}",
                 dict(config) if config is not None else None,
                 layers,
                 dtypes,
+                weights,
+                None if transformer_quant is None else str(transformer_quant),
                 offload_policy,
                 speed_mode,
             ],
@@ -633,7 +632,9 @@ class CfgBatchRouter:
     def _sync(self, latent: Any) -> bool:
         if getattr(latent.device, "type", None) != "cuda":
             return False
-        _torch().cuda.synchronize(latent.device)
+        from .diffusion_cuda_graph import synchronize_outside_capture
+
+        synchronize_outside_capture(latent.device)
         return True
 
     def _measured_plain(self, args: tuple, kwargs: dict, latent: Any, shape: _Shape) -> Any:
@@ -735,7 +736,12 @@ class CfgBatchRouter:
         if not card:
             return None
         compiled = "compiled" if self.render_compiled is not None else "eager"
-        return f"{self.identity}|{card}|{compiled}|{shape.key}"
+        module = self.module_ref()
+        # Read live: set_attention_backend() changes neither the module classes nor the config.
+        attention = (
+            getattr(module, "_unsloth_attention_backend", None) if module is not None else None
+        )
+        return f"{self.identity}|{card}|{compiled}|{attention}|{shape.key}"
 
     def _stored_verdict(self, shape: _Shape, latent: Any) -> Optional[dict]:
         key = self._verdict_key(shape, latent)
@@ -1049,12 +1055,19 @@ def install_cfg_batch(
     *,
     offload_policy: str,
     speed_mode: Optional[str] = None,
+    transformer_quant: Optional[str] = None,
     logger: Any = None,
 ) -> Optional[str]:
     """Arm :class:`CfgBatchRouter` on ``pipe.transformer``; the decline reason, or None when armed. An optional lever:
     it never fails a load. ``speed_mode`` is the request's value (None = unset)."""
     try:
-        return _install(pipe, offload_policy = offload_policy, speed_mode = speed_mode, logger = logger)
+        return _install(
+            pipe,
+            offload_policy = offload_policy,
+            speed_mode = speed_mode,
+            transformer_quant = transformer_quant,
+            logger = logger,
+        )
     except Exception as exc:  # noqa: BLE001
         if logger is not None:
             logger.info("diffusion.cfg_batch: not armed (%s: %s)", type(exc).__name__, exc)
@@ -1066,6 +1079,7 @@ def _install(
     *,
     offload_policy: str,
     speed_mode: Optional[str] = None,
+    transformer_quant: Optional[str] = None,
     logger: Any = None,
 ) -> Optional[str]:
     reason = cfg_batch_decline(pipe, offload_policy = offload_policy, speed_mode = speed_mode)
@@ -1086,7 +1100,7 @@ def _install(
         logger = logger,
     )
     router.offloaded = _offloaded(denoiser, offload_policy)
-    router.identity = _load_identity(denoiser, offload_policy, speed_mode)
+    router.identity = _load_identity(denoiser, offload_policy, speed_mode, transformer_quant)
     try:
         _ROUTERS[pipe] = router
     except TypeError:

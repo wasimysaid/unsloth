@@ -111,14 +111,14 @@ class DesktopIconTests(unittest.TestCase):
         self.assertEqual(linux_icons, {f"icons/linux/{size}x{size}.png" for size in [16, 22, 24, 32, 48, 64, 96, 128, 256, 512]})
         self.assertEqual(self.config("windows")["bundle"]["windows"]["nsis"]["installerIcon"], "./icons/icon.ico")
 
-    def test_trays_use_platform_specific_originals(self):
+    def test_trays_use_original_artwork(self):
         source = (TAURI / "src/main.rs").read_text(encoding="utf-8")
-        for platform, image in [
-            ("macos", "tray-icon@2x.png"),
-            ("windows", "legacy-tray/windows.png"),
-            ("linux", "legacy-tray/linux.png"),
-        ]:
-            self.assertIn(f'#[cfg(target_os = "{platform}")]\n    let tray_icon = tauri::include_image!("./icons/{image}");', source)
+        self.assertIn('#[cfg(target_os = "macos")]\n    let tray_icon = tauri::include_image!("./icons/tray-icon@2x.png");', source)
+        self.assertIn('#[cfg(not(target_os = "macos"))]\n    let tray_icon = tauri::include_image!("./icons/tray-icon-color.png");', source)
+        self.assertEqual(
+            hashlib.sha256((TAURI / "icons/tray-icon-color.png").read_bytes()).hexdigest(),
+            "791d080e9e7d2f3bf2164bdbeea7ba416b7f9e6c4c06e892ade72b06563fd0fc",
+        )
         self.assertNotIn("let tray_icon = app.default_window_icon()", source)
 
 
