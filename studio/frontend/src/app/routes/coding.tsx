@@ -8,7 +8,7 @@ import { Route as rootRoute } from "./__root";
 export const Route = createRoute({
   getParentRoute: () => rootRoute,
   path: "/coding",
-  staticData: { title: "Coding" },
+  staticData: { titleKey: "routes.coding" },
   beforeLoad: () => requireAuth(),
   component: lazyRouteComponent(
     () => import("@/features/coding/coding-page"),
