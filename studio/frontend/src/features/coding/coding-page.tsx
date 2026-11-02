@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -20,7 +19,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Link } from "@tanstack/react-router";
-import { ArrowLeft, LoaderCircle, RefreshCw, SquarePen } from "lucide-react";
+import { LoaderCircle, RefreshCw, SquarePen } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -60,6 +59,8 @@ function CodingSidebar({
       <SidebarHeader className="gap-4 p-4">
         <Link
           to="/chat"
+          aria-label="Back to Studio"
+          title="Back to Studio"
           className="flex items-center gap-2 rounded-lg font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <img
@@ -87,12 +88,16 @@ function CodingSidebar({
       </SidebarHeader>
       <SidebarContent ref={setScrollElement}>
         <SidebarGroup>
-          <SidebarGroupLabel className="flex items-center justify-between">
+          <SidebarGroupLabel className="group/history flex items-center justify-between">
             <span>Conversations</span>
             <Button
               variant="ghost"
               size="icon-sm"
               aria-label="Refresh conversations"
+              title="Refresh conversations"
+              className={state.historyError || state.loadingConversations
+                ? "text-muted-foreground"
+                : "text-muted-foreground transition-opacity [@media(hover:hover)]:opacity-0 group-hover/history:opacity-100 focus:opacity-100"}
               disabled={state.loadingConversations}
               onClick={() => void session.refreshConversations()}
             >
@@ -140,13 +145,6 @@ function CodingSidebar({
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="p-4">
-        <Button asChild={true} variant="ghost" className="justify-start">
-          <Link to="/chat">
-            <ArrowLeft className="size-4" aria-hidden="true" /> Back to Studio
-          </Link>
-        </Button>
-      </SidebarFooter>
     </Sidebar>
   );
 }

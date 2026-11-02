@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createTranscriptReader } from "../src/features/coding/transcript-reader.ts";
 
-test("paging-control removal cannot checkpoint clamped geometry before prepended rows mount", () => {
+test("paging preserves prepend anchors and restores lost focus when a child window is replaced", () => {
   // Geometry-only reproduction of the Firefox oldest-page failure. The real
   // rendered reading workload separately checks browser layout, focus and paging.
   let viewport: GeometryNode;
@@ -125,6 +125,30 @@ test("paging-control removal cannot checkpoint clamped geometry before prepended
       "Intermediate clamping or owned focus restoration replaced the original visual anchor",
     );
     assert.equal(documentState.activeElement, viewport);
+
+    const retry = new GeometryNode(0, { readingControl: "retry-before" });
+    retry.tagName = "BUTTON";
+    controls = [retry];
+    retry.focus();
+    reader.pause();
+    retry.isConnected = false;
+    retained.isConnected = false;
+    controls = [];
+    documentState.activeElement = body;
+    const replacement = new GeometryNode(2200, {
+      readingKey: "older-child-entry",
+    });
+    rows = [replacement];
+    viewport.scrollHeight = 2400;
+    reader.replaceAtEnd();
+    assert.equal(viewport.scrollTop, 1930);
+    assert.equal(replacement.getBoundingClientRect().top, 270);
+    assert.equal(reader.following, false);
+    assert.equal(documentState.activeElement, viewport);
+    replacement.offset += 40;
+    viewport.scrollHeight += 40;
+    reader.restore();
+    assert.equal(replacement.getBoundingClientRect().top, 270);
   } finally {
     reader?.dispose();
     for (const [name, descriptor] of prior) {

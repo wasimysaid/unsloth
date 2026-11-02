@@ -116,14 +116,14 @@ export function ComposerFooter({
       )}
       {mode === "plan" && (
         <span
-          className="flex h-6 shrink-0 items-center gap-1 rounded-md bg-primary/10 pl-2 pr-1 font-medium text-primary"
+          className="flex h-7 shrink-0 items-center gap-1 pl-2 text-muted-foreground"
           data-testid="coding-plan-mode"
         >
           <MapIcon className="size-3.5" aria-hidden="true" />
           Plan mode
           <button
             type="button"
-            className="flex size-4 items-center justify-center rounded hover:bg-primary/15 disabled:opacity-50"
+            className="flex size-7 items-center justify-center rounded-md hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
             aria-label="Leave plan mode"
             title={codingModeControlReason(state) ?? "Leave plan mode"}
             disabled={Boolean(codingModeControlReason(state)) || leaving}

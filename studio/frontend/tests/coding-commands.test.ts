@@ -2,6 +2,13 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 import assert from "node:assert/strict";
 import test from "node:test";
+import type * as Composer from "../src/features/coding/coding-composer.tsx";
+import * as commandTypes from "../src/features/coding/command-types.ts";
+import * as codingInput from "../src/features/coding/input.ts";
+import * as mentionMenu from "../src/features/coding/mention-menu.ts";
+import * as pendingSubmission from "../src/features/coding/pending-submission.ts";
+import * as runRuntime from "../src/features/coding/run-runtime.ts";
+import * as runSession from "../src/features/coding/run-session.ts";
 import {
   type CommandOutcome,
   parseCodingCommand,
@@ -13,6 +20,11 @@ import {
   memoryImageStorage,
   memorySubmissionStorage,
 } from "./coding-storage-fixture.ts";
+import {
+  loadWithStubs,
+  stubJsxRuntime,
+  type StubElement,
+} from "./helpers/module-stubs.ts";
 
 function harness(storage = memorySubmissionStorage()) {
   let deliver!: (value: unknown) => Promise<void>;
@@ -154,6 +166,269 @@ function harness(storage = memorySubmissionStorage()) {
     views: () => views,
   };
 }
+
+function commandComposer(run: ReturnType<typeof createCodingRun>) {
+  let text = "";
+  let hook = 0;
+  const hooks: unknown[] = [];
+  const draft = codingInput.createInputDraft();
+  const node = {
+    get value() {
+      return text;
+    },
+    selectionStart: 0,
+    focus() {},
+    setSelectionRange(start: number) {
+      this.selectionStart = start;
+    },
+  };
+  const composer = loadWithStubs<typeof Composer>(
+    new URL("../src/features/coding/coding-composer.tsx", import.meta.url),
+    {
+      "react/jsx-runtime": stubJsxRuntime(),
+      "@/components/ui/button": { Button: "button" },
+      "@/components/ui/dialog": {},
+      "@assistant-ui/react": {
+        ComposerPrimitive: { Root: "root", Input: "input", Send: "send" },
+        useComposerRuntime: () => ({
+          getState: () => ({ text }),
+          setText: (next: string) => {
+            text = next;
+          },
+        }),
+      },
+      "@assistant-ui/tap": {
+        flushResourcesSync: (apply: () => void) => apply(),
+      },
+      "@/features/native-intents": {
+        useNativeFileDrop: () => ({ dragging: false, dragHandlers: {} }),
+      },
+      "react-dom": { flushSync: (apply: () => void) => apply() },
+      "lucide-react": {},
+      react: {
+        useEffect: () => {},
+        useRef: (current: unknown) => {
+          const index = hook++;
+          return (hooks[index] ??= { current });
+        },
+        useState: (initial: unknown) => {
+          const index = hook++;
+          if (!(index in hooks)) hooks[index] = initial;
+          return [
+            hooks[index],
+            (next: unknown) => {
+              hooks[index] =
+                typeof next === "function" ? next(hooks[index]) : next;
+            },
+          ];
+        },
+        useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) =>
+          snapshot(),
+      },
+      "./api": {},
+      "./command-types": commandTypes,
+      "./input": codingInput,
+      "./mention-list": {
+        CompletionList: "completion-list",
+        mentionOptionId: () => "",
+      },
+      "./mention-menu": mentionMenu,
+      "./pending-submission": pendingSubmission,
+      "./run-runtime": runRuntime,
+      "./run-session": runSession,
+    },
+  );
+  const nodes = (value: unknown): StubElement[] => {
+    if (Array.isArray(value)) return value.flatMap(nodes);
+    if (!value || typeof value !== "object" || !("props" in value)) return [];
+    const element = value as StubElement;
+    return [element, ...nodes(element.props.children)];
+  };
+  const render = () => {
+    hook = 0;
+    return nodes(
+      composer.CodingComposer({
+        conversationId: "session",
+        run,
+        state: run.getSnapshot(),
+        draft,
+        canEdit: true,
+        sendBlocked: null,
+        inputRef: { current: node as unknown as HTMLTextAreaElement },
+      }),
+    );
+  };
+  const input = () => {
+    const element = render().find((element) => element.type === "input");
+    assert.ok(element, "The coding prompt is rendered");
+    return element;
+  };
+  return {
+    type(value: string, cursor = value.length) {
+      const element = input();
+      text = value;
+      node.selectionStart = cursor;
+      (element.props.onChange as (event: unknown) => void)({
+        currentTarget: node,
+        nativeEvent: { isComposing: false },
+      });
+    },
+    options() {
+      const list = render().find(
+        (element) => element.type === "completion-list",
+      );
+      return (list?.props.items as { label: string }[] | undefined)?.map(
+        (item) => item.label,
+      );
+    },
+    async press(key: string, shiftKey = false) {
+      let prevented = false;
+      (input().props.onKeyDown as (event: unknown) => void)({
+        key,
+        shiftKey,
+        nativeEvent: { isComposing: false },
+        currentTarget: node,
+        preventDefault() {
+          prevented = true;
+        },
+      });
+      // The primitive sends only when the production handler leaves Enter alone.
+      if (key === "Enter" && !shiftKey && !prevented) await run.send(text);
+      return { prevented, text };
+    },
+  };
+}
+
+test("cold Enter preserves /plan while native command discovery is pending", async () => {
+  const h = harness();
+  await h.start();
+  let release!: () => void;
+  const catalog = await h.api.commands!("session");
+  const pending = new Promise<typeof catalog>((resolve) => {
+    release = () => resolve(catalog);
+  });
+  h.api.commands = async () => await pending;
+  try {
+    const composer = commandComposer(h.run);
+    composer.type("/plan");
+    assert.equal(h.run.getSnapshot().discoveringCommands, true);
+    assert.equal(h.run.getSnapshot().commands, null);
+    assert.deepEqual(composer.options(), ["/build"]);
+    assert.deepEqual(await composer.press("Enter"), {
+      prevented: false,
+      text: "/plan",
+    });
+    assert.deepEqual(h.invocations, [{ name: "plan", tail: "" }]);
+
+    composer.type("  /plan preserve this tail", 7);
+    assert.deepEqual(await composer.press("Enter"), {
+      prevented: false,
+      text: "  /plan preserve this tail",
+    });
+    assert.deepEqual(h.invocations, [
+      { name: "plan", tail: "" },
+      { name: "plan", tail: "preserve this tail" },
+    ]);
+    assert.deepEqual(h.prompts, []);
+
+    composer.type("/b");
+    assert.deepEqual(await composer.press("Tab"), {
+      prevented: true,
+      text: "/build ",
+    });
+  } finally {
+    release();
+    h.run.detach();
+  }
+});
+
+test("Enter dispatches a fully typed native alias without canonicalizing it", async () => {
+  const h = harness();
+  await h.start();
+  await h.run.discoverCommands();
+  try {
+    const composer = commandComposer(h.run);
+    composer.type("/inspect");
+    assert.deepEqual(await composer.press("Enter"), {
+      prevented: false,
+      text: "/inspect",
+    });
+    assert.deepEqual(h.invocations, [{ name: "inspect", tail: "" }]);
+    assert.deepEqual(h.prompts, []);
+  } finally {
+    h.run.detach();
+  }
+});
+
+test("Enter honors an exact command even when a longer prefix match is highlighted", async () => {
+  const h = harness();
+  await h.start();
+  h.api.commands = async (id) => ({
+    conversation_id: id,
+    commands: ["planner", "plan"].map((name) => ({
+      name,
+      aliases: [],
+      description: "Plan work",
+      argument: null,
+      availability: "any",
+    })),
+  });
+  await h.run.discoverCommands();
+  try {
+    const composer = commandComposer(h.run);
+    composer.type("/plan");
+    assert.deepEqual(composer.options(), ["/planner", "/plan", "/build"]);
+    assert.deepEqual(await composer.press("Enter"), {
+      prevented: false,
+      text: "/plan",
+    });
+    assert.deepEqual(h.invocations, [{ name: "plan", tail: "" }]);
+  } finally {
+    h.run.detach();
+  }
+});
+
+for (const key of ["Enter", "Tab"]) {
+  test(`${key} still completes a partial command after native discovery`, async () => {
+    const h = harness();
+    await h.start();
+    await h.run.discoverCommands();
+    try {
+      const composer = commandComposer(h.run);
+      composer.type("/ins");
+      assert.deepEqual(await composer.press(key), {
+        prevented: true,
+        text: "/project:inspect ",
+      });
+      await composer.press("Enter");
+      assert.deepEqual(h.invocations, [{ name: "project:inspect", tail: "" }]);
+    } finally {
+      h.run.detach();
+    }
+  });
+}
+
+test("failed native discovery cannot replace a typed /plan with a description match", async () => {
+  const h = harness();
+  await h.start();
+  h.api.commands = async () => {
+    throw new Error("Catalog unavailable");
+  };
+  await h.run.discoverCommands();
+  try {
+    const composer = commandComposer(h.run);
+    composer.type("/plan");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(h.run.getSnapshot().commandError, "Catalog unavailable");
+    assert.deepEqual(await composer.press("Enter"), {
+      prevented: false,
+      text: "/plan",
+    });
+    assert.deepEqual(h.invocations, [{ name: "plan", tail: "" }]);
+  } finally {
+    h.run.detach();
+  }
+});
 
 test("all leading slash attempts parse for native dispatch, not model input", () => {
   assert.deepEqual(

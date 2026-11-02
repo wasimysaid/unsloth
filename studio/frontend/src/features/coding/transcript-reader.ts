@@ -246,6 +246,22 @@ export function createTranscriptReader(
       return following;
     },
     restore,
+    replaceAtEnd() {
+      // Child history replaces a bounded page rather than prepending to it.
+      following = false;
+      anchors = [];
+      const last = Array.from(
+        content.querySelectorAll<HTMLElement>("[data-reading-key]"),
+      ).at(-1);
+      scrollTop = last
+        ? viewport.scrollTop +
+          topOf(last) +
+          last.getBoundingClientRect().height -
+          viewport.clientHeight
+        : viewport.scrollHeight;
+      restore();
+      emit();
+    },
     pause() {
       following = false;
       capture();

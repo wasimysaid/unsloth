@@ -21,6 +21,12 @@ import { ChildInspector } from "./child-inspector";
 import { CodingComposer } from "./coding-composer";
 import { CommandFeedback, ComposerFooter } from "./composer-footer";
 import { GoalSummary } from "./goal-summary";
+import { HistoryEdge } from "./history-edge";
+import {
+  createHistoryScroll,
+  type HistoryDirection,
+  type HistoryScroll,
+} from "./history-scroll";
 import type { CodingInputDraft } from "./input";
 import { CodingModelPicker } from "./model-configuration-popover";
 import type { CodingConfiguration } from "./model-selection";
@@ -272,9 +278,7 @@ export function CodingSurface({
   const [projection] = useState(createTranscriptProjection);
   const [disclosures] = useState(() => new Map<string, boolean>());
   const isLanding = !conversationId && Boolean(landing);
-  const canEdit = isLanding
-    ? !landing?.starting
-    : codingCanEdit(state, run);
+  const canEdit = isLanding ? !landing?.starting : codingCanEdit(state, run);
   const sendBlocked = isLanding
     ? (landing?.blocked ?? null)
     : codingSendBlockedReason(state);
@@ -288,6 +292,11 @@ export function CodingSurface({
   const statusFocus = useRef<HTMLDivElement>(null);
   const transcriptContent = useRef<HTMLDivElement>(null);
   const reader = useRef<TranscriptReader | null>(null);
+  const historyScroll = useRef<HistoryScroll | null>(null);
+  const [historyRequest, setHistoryRequest] = useState<{
+    direction: HistoryDirection;
+    phase: "loading" | "failed";
+  } | null>(null);
   const [reading, setReading] = useState({ away: false, newActivity: false });
   useLayoutEffect(() => {
     if (!viewport.current || !transcriptContent.current) return;
@@ -307,6 +316,38 @@ export function CodingSurface({
     return () => {
       controller.dispose();
       reader.current = null;
+    };
+  }, [run]);
+  useLayoutEffect(() => {
+    if (!viewport.current || !run) return;
+    let pagingFailed = false;
+    const controller = createHistoryScroll(
+      viewport.current,
+      () => {
+        const current = run.getSnapshot();
+        return {
+          before: current.older,
+          after: current.newer,
+          ready: current.connection === "connected",
+          busy: current.loadingEarlier,
+          error: pagingFailed,
+        };
+      },
+      async (direction) => {
+        setHistoryRequest({ direction, phase: "loading" });
+        reader.current?.pause();
+        const result =
+          direction === "before"
+            ? await run.loadEarlier()
+            : await run.loadNewer();
+        pagingFailed = result === "failed";
+        setHistoryRequest(pagingFailed ? { direction, phase: "failed" } : null);
+      },
+    );
+    historyScroll.current = controller;
+    return () => {
+      controller.dispose();
+      historyScroll.current = null;
     };
   }, [run]);
   useEffect(() => {
@@ -485,34 +526,18 @@ export function CodingSurface({
                       This conversation needs to be reopened from the sidebar.
                     </p>
                   )}
-                  {state?.older && (
-                    <div className="text-center">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        // Native disabled drops focus in Firefox during the read.
-                        // Keep the control focusable, but refuse repeat activation.
-                        aria-disabled={
-                          state.loadingEarlier ||
-                          state.connection !== "connected"
-                        }
-                        className="rounded-full text-xs text-muted-foreground aria-disabled:pointer-events-none aria-disabled:opacity-50"
-                        data-reading-control="earlier"
-                        onClick={() => {
-                          if (
-                            state.loadingEarlier ||
-                            state.connection !== "connected"
-                          )
-                            return;
-                          reader.current?.pause();
-                          void run?.loadEarlier();
-                        }}
-                      >
-                        {state.loadingEarlier
-                          ? "Loading earlier messages…"
-                          : "Load earlier messages"}
-                      </Button>
-                    </div>
+                  {historyRequest?.direction === "before" && state && (
+                    <HistoryEdge
+                      direction="before"
+                      loading={historyRequest.phase === "loading"}
+                      error={historyRequest.phase === "failed"}
+                      disabled={
+                        state.loadingEarlier || state.connection !== "connected"
+                      }
+                      onRetry={() =>
+                        void historyScroll.current?.retry("before")
+                      }
+                    />
                   )}
                   {state?.viewingEarlier && (
                     <p className="text-center text-xs text-muted-foreground">
@@ -594,32 +619,16 @@ export function CodingSurface({
                         hidden={tailStreaming}
                       />
                     )}
-                  {state?.newer && (
-                    <div className="text-center">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        data-reading-control="newer"
-                        aria-disabled={
-                          state.loadingEarlier ||
-                          state.connection !== "connected"
-                        }
-                        className="rounded-full text-xs text-muted-foreground aria-disabled:pointer-events-none aria-disabled:opacity-50"
-                        onClick={() => {
-                          if (
-                            state.loadingEarlier ||
-                            state.connection !== "connected"
-                          )
-                            return;
-                          reader.current?.pause();
-                          void run?.loadNewer();
-                        }}
-                      >
-                        {state.loadingEarlier
-                          ? "Loading…"
-                          : "Load newer messages"}
-                      </Button>
-                    </div>
+                  {historyRequest?.direction === "after" && state && (
+                    <HistoryEdge
+                      direction="after"
+                      loading={historyRequest.phase === "loading"}
+                      error={historyRequest.phase === "failed"}
+                      disabled={
+                        state.loadingEarlier || state.connection !== "connected"
+                      }
+                      onRetry={() => void historyScroll.current?.retry("after")}
+                    />
                   )}
                 </div>
               </section>
@@ -628,20 +637,34 @@ export function CodingSurface({
                 <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
                   <Button
                     variant="outline"
-                    size="sm"
-                    className="pointer-events-auto h-7 gap-1.5 rounded-full bg-background/95 text-xs shadow-sm dark:bg-card"
+                    size="icon-sm"
+                    className="pointer-events-auto relative rounded-full bg-background/95 text-muted-foreground shadow-sm dark:bg-card"
+                    aria-label="Jump to latest"
+                    title={
+                      reading.newActivity
+                        ? "New activity. Jump to latest"
+                        : "Jump to latest"
+                    }
                     onClick={() => {
                       run?.showLatest();
                       reader.current?.jump();
                     }}
                   >
-                    <ArrowDown className="size-3" aria-hidden="true" />
-                    {reading.newActivity ? (
-                      <output aria-live="polite" data-testid="coding-new-activity">
-                        New activity
-                      </output>
-                    ) : (
-                      "Jump to latest"
+                    <ArrowDown className="size-3.5" aria-hidden="true" />
+                    {reading.newActivity && (
+                      <>
+                        <span
+                          className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-primary"
+                          aria-hidden="true"
+                        />
+                        <output
+                          className="sr-only"
+                          aria-live="polite"
+                          data-testid="coding-new-activity"
+                        >
+                          New activity
+                        </output>
+                      </>
                     )}
                   </Button>
                 </div>

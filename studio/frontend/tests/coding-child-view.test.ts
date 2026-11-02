@@ -78,6 +78,89 @@ function harness() {
   };
 }
 
+test("child paging replaces bounded windows and retains the displayed page through an explicit retry", async () => {
+  const entry = (index: number): CodingRow => ({
+    id: `row-${index}`,
+    entry_id: `entry-${index}`,
+    kind: "assistant",
+    text: `Child message ${index}`,
+  });
+  const range = (start: number, end: number) =>
+    Array.from({ length: end - start }, (_, index) => entry(start + index));
+  const anchors: unknown[] = [];
+  let rejectRead!: (error: Error) => void;
+  let fail = true;
+  const view = createChildView("parent", {
+    async readPublicEntry() {
+      throw new Error("No content references expected");
+    },
+    async readChild() {
+      return { child: null, outcome: null };
+    },
+    async readEntries(_id, cut, anchor) {
+      anchors.push(anchor);
+      if (anchor !== "latest" && fail)
+        await new Promise<void>((_resolve, reject) => {
+          rejectRead = reject;
+        });
+      const rows =
+        anchor === "latest"
+          ? range(300, 500)
+          : "before" in anchor && anchor.before === "entry-300"
+            ? range(0, 300)
+            : range(0, 100);
+      return {
+        cut,
+        rows,
+        older: anchor === "latest",
+        newer: anchor !== "latest",
+        first_id: rows[0].entry_id!,
+        last_id: rows.at(-1)!.entry_id!,
+      };
+    },
+  });
+  await view.capture([child()], []);
+  view.setConnected(true);
+  await view.open(child());
+  assert.equal(
+    view.getSnapshot().inspection?.rows[0].text,
+    "Child message 300",
+  );
+  const pending = view.loadEarlier();
+  await view.loadEarlier();
+  assert.deepEqual(anchors, ["latest", { before: "entry-300" }]);
+  rejectRead(new Error("Earlier read interrupted"));
+  await pending;
+  assert.equal(
+    view.getSnapshot().inspection?.error,
+    "Earlier read interrupted",
+  );
+  assert.equal(view.getSnapshot().inspection?.loadingEarlier, false);
+  assert.equal(
+    view.getSnapshot().inspection?.rows[0].text,
+    "Child message 300",
+  );
+  fail = false;
+  await view.loadEarlier();
+  const earlier = view.getSnapshot().inspection!;
+  assert.equal(earlier.error, null);
+  assert.equal(earlier.rows.length, 200);
+  assert.equal(earlier.rows[0].text, "Child message 100");
+  assert.equal(earlier.rows.at(-1)?.text, "Child message 299");
+  assert.equal(earlier.first, "entry-100");
+  assert.equal(earlier.older, true);
+  assert.equal(earlier.earlier, true);
+  await view.loadEarlier();
+  assert.equal(view.getSnapshot().inspection?.rows.length, 100);
+  assert.equal(view.getSnapshot().inspection?.rows[0].text, "Child message 0");
+  assert.equal(
+    view.getSnapshot().inspection?.rows.at(-1)?.text,
+    "Child message 99",
+  );
+  assert.equal(view.getSnapshot().inspection?.older, false);
+  view.detach();
+});
+
 test("child latest and earlier history use complete entry resolution while uninspected deltas keep their exact base", async () => {
   const cut = child().cut!;
   const rows: CodingRow[] = [
@@ -200,15 +283,32 @@ test("uninspected child activity stays complete across selection and close/reope
 test("child saved results retain their invocation's arguments", async () => {
   const h = harness();
   const tool: NonNullable<CodingRow["tool"]> = {
-    invocation_id: "search-invocation", call_id: "search-call", request_id: null,
-    name: "search_paths_by_glob", title: "Find files", status: "saved",
-    argument: "**/*.rs", output: "", clipped: false, quiet: false,
-    row_group: null, display_kind: "file_path_search",
+    invocation_id: "search-invocation",
+    call_id: "search-call",
+    request_id: null,
+    name: "search_paths_by_glob",
+    title: "Find files",
+    status: "saved",
+    argument: "**/*.rs",
+    output: "",
+    clipped: false,
+    quiet: false,
+    row_group: null,
+    display_kind: "file_path_search",
   };
   h.setRows([
     { id: "call", entry_id: "call-entry", kind: "tool", tool },
-    { id: "result", entry_id: "result-entry", kind: "tool",
-      tool: { ...tool, argument: null, status: "completed", output: "src/main.rs" } },
+    {
+      id: "result",
+      entry_id: "result-entry",
+      kind: "tool",
+      tool: {
+        ...tool,
+        argument: null,
+        status: "completed",
+        output: "src/main.rs",
+      },
+    },
   ]);
   await h.view.capture([child()], []);
   await h.view.open(child());

@@ -714,11 +714,21 @@ export function CodingComposer({
                   );
                   return;
                 }
-                // A command typed out in full runs on Enter; Tab completes.
+                // An incomplete catalog cannot tell a full command from a prefix.
+                // Enter preserves that intent; Tab still completes explicitly.
+                const command =
+                  menu?.kind === "command"
+                    ? parseCodingCommand(event.currentTarget.value)
+                    : null;
                 const typed =
-                  menu?.kind === "command" &&
-                  current?.label === `/${menu.query}` &&
-                  event.key === "Enter";
+                  event.key === "Enter" &&
+                  command !== null &&
+                  command.name.length > 0 &&
+                  (!state?.commands ||
+                    commands.some(
+                      ({ name, aliases }) =>
+                        name === command.name || aliases.includes(command.name),
+                    ));
                 if (
                   ((event.key === "Enter" && !event.shiftKey) ||
                     event.key === "Tab") &&

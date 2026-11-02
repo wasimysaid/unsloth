@@ -14,6 +14,8 @@ import * as transcriptModel from "../src/features/coding/transcript-model.ts";
 import * as answerFocus from "../src/features/coding/answer-focus.ts";
 import * as boundedContent from "../src/features/coding/bounded-content.ts";
 import * as transcriptReader from "../src/features/coding/transcript-reader.ts";
+import * as historyScroll from "../src/features/coding/history-scroll.ts";
+import type * as HistoryEdge from "../src/features/coding/history-edge.tsx";
 import type * as Composer from "../src/features/coding/coding-composer.tsx";
 import type { RunApi } from "../src/features/coding/run-types.ts";
 import { createCodingSession } from "../src/features/coding/session.ts";
@@ -112,6 +114,14 @@ const notice = loadWithStubs<typeof RuntimeNotice>(
     "react/jsx-runtime": stubJsxRuntime(),
     "@/components/ui/button": { Button: "button" },
     "lucide-react": { LoaderCircle: "icon", TriangleAlert: "icon" },
+  },
+);
+const historyEdge = loadWithStubs<typeof HistoryEdge>(
+  new URL("../src/features/coding/history-edge.tsx", import.meta.url),
+  {
+    "react/jsx-runtime": stubJsxRuntime(),
+    "@/components/ui/button": { Button: "button" },
+    "lucide-react": { LoaderCircle: "icon" },
   },
 );
 const showNotice = (maintenance: ReturnType<typeof createRuntimeMaintenance>) =>
@@ -575,6 +585,8 @@ for (const ownerGeneration of [1, 2, 100]) {
       "./answer-focus": answerFocus,
       "./bounded-content": boundedContent,
       "./transcript-reader": transcriptReader,
+      "./history-scroll": historyScroll,
+      "./history-edge": historyEdge,
       "./question-card": { QuestionCard: "question-card" },
       "./plan-card": { PlanCard: "plan-card" },
       "./goal-summary": { GoalSummary: "goal-summary" },

@@ -2,8 +2,14 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 import { MarkdownPreview } from "@/components/markdown/markdown-preview";
 import { Button } from "@/components/ui/button";
-import { Bot, LoaderCircle, X } from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { ArrowDown, Bot, LoaderCircle, X } from "lucide-react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   childDescription,
   childKey,
@@ -11,6 +17,12 @@ import {
   terminalChild,
 } from "./child-types";
 import type { ChildView } from "./child-view";
+import { HistoryEdge } from "./history-edge";
+import { createHistoryScroll, type HistoryScroll } from "./history-scroll";
+import {
+  createTranscriptReader,
+  type TranscriptReader,
+} from "./transcript-reader";
 import { DisclosureMemory } from "./tool-report";
 import { TranscriptBlocks } from "./transcript";
 import {
@@ -19,12 +31,15 @@ import {
 } from "./transcript-model";
 
 /** The delegated brief is long and structured; show its objective, collapsed. */
-function TaskBrief({ text }: { text: string }) {
+function TaskBrief({ text, readingKey }: { text: string; readingKey: string }) {
   const objective =
     /## Objective\s*\n([^\n]+)/.exec(text)?.[1]?.trim() ||
     text.trim().split("\n")[0];
   return (
-    <details className="group/task min-w-0 rounded-lg bg-muted/50 text-xs dark:bg-accent/60">
+    <details
+      data-reading-key={readingKey}
+      className="group/task min-w-0 rounded-lg bg-muted/50 text-xs dark:bg-accent/60"
+    >
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         <span className="shrink-0 font-medium text-muted-foreground">Task</span>
         <span className="min-w-0 truncate">{objective}</span>
@@ -77,6 +92,94 @@ export function ChildInspector({ view }: { view: ChildView }) {
   const [disclosures] = useState(() => new Map<string, boolean>());
   const open = Boolean(inspection);
   const key = inspection ? childKey(inspection) : null;
+  const viewport = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  const reader = useRef<TranscriptReader | null>(null);
+  const historyScroll = useRef<HistoryScroll | null>(null);
+  const replacingPage = useRef<{
+    key: string;
+    first: string | null;
+  } | null>(null);
+  const [pagingKey, setPagingKey] = useState<string | null>(null);
+  const paging = Boolean(inspection?.earlier && pagingKey === key);
+  const [reading, setReading] = useState({ away: false, newActivity: false });
+  useLayoutEffect(() => {
+    if (!key || !viewport.current || !content.current) return;
+    const controller = createTranscriptReader(
+      viewport.current,
+      content.current,
+      (next) => {
+        setReading((prior) =>
+          prior.away === next.away && prior.newActivity === next.newActivity
+            ? prior
+            : next,
+        );
+      },
+    );
+    reader.current = controller;
+    return () => {
+      controller.dispose();
+      reader.current = null;
+    };
+  }, [key]);
+  useLayoutEffect(() => {
+    if (!key || !viewport.current) return;
+    let active = true;
+    const controller = createHistoryScroll(
+      viewport.current,
+      () => {
+        const current = view.getSnapshot();
+        return {
+          before: Boolean(current.inspection?.older),
+          after: false,
+          ready: current.connected,
+          busy: Boolean(
+            current.inspection?.loading || current.inspection?.loadingEarlier,
+          ),
+          error: Boolean(current.inspection?.error),
+        };
+      },
+      async () => {
+        replacingPage.current = {
+          key,
+          first: view.getSnapshot().inspection?.first ?? null,
+        };
+        setPagingKey(key);
+        reader.current?.pause();
+        await view.loadEarlier();
+        if (active && !view.getSnapshot().inspection?.error) setPagingKey(null);
+      },
+    );
+    historyScroll.current = controller;
+    return () => {
+      active = false;
+      replacingPage.current = null;
+      controller.dispose();
+      historyScroll.current = null;
+    };
+  }, [key, view]);
+  useLayoutEffect(() => {
+    if (!inspection) return;
+    reader.current?.activity(0, inspection.earlier);
+    const replacement = replacingPage.current;
+    if (
+      inspection.earlier &&
+      !inspection.loadingEarlier &&
+      !inspection.error &&
+      replacement?.key === key &&
+      replacement.first !== inspection.first
+    )
+      reader.current?.replaceAtEnd();
+    else reader.current?.restore();
+    if (!inspection.loadingEarlier) replacingPage.current = null;
+  }, [
+    key,
+    inspection?.rows,
+    inspection?.earlier,
+    inspection?.first,
+    inspection?.loadingEarlier,
+    inspection?.error,
+  ]);
   useEffect(() => {
     if (!open) return;
     invoker.current =
@@ -127,7 +230,9 @@ export function ChildInspector({ view }: { view: ChildView }) {
   const presentation = child.presentation;
   const live = !child.historical && !terminalChild(child);
   const status = outcome?.status ?? child.status;
-  const attempts = state.attempts.filter((item) => item.handle === child.handle);
+  const attempts = state.attempts.filter(
+    (item) => item.handle === child.handle,
+  );
   const meta = [
     child.model,
     presentation?.turns ? `${presentation.turns} turns` : null,
@@ -222,98 +327,127 @@ export function ChildInspector({ view }: { view: ChildView }) {
           ))}
         </nav>
       )}
-      <div
-        className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3"
-        data-testid="coding-child-content"
-      >
-        {inspection.error && (
-          <div className="flex items-center gap-2 text-xs">
-            <p role="alert" className="min-w-0 flex-1 break-words text-destructive">
-              {inspection.error}
-            </p>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 shrink-0"
-              onClick={() => void view.open(child)}
-            >
-              Retry
-            </Button>
-          </div>
-        )}
-        {inspection.older && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 w-full text-xs text-muted-foreground"
-            disabled={inspection.loadingEarlier || !state.connected}
-            onClick={() => void view.loadEarlier()}
-          >
-            {inspection.loadingEarlier ? "Loading…" : "Load earlier"}
-          </Button>
-        )}
-        <DisclosureMemory value={disclosures}>
-          <div className="flex min-w-0 flex-col gap-2">
-            {segments(blocks).map((part) =>
-              Array.isArray(part) ? (
-                <TranscriptBlocks
-                  key={part[0].key}
-                  blocks={part}
-                  childView={null}
-                />
-              ) : (
-                <TaskBrief key={part.key} text={part.row.text ?? ""} />
-              ),
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={viewport}
+          className="h-full overflow-y-auto px-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          style={{ overflowAnchor: "none" }}
+          data-testid="coding-child-content"
+          aria-label="Subagent transcript"
+          aria-busy={inspection.loading || inspection.loadingEarlier}
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: Reading viewport supports keyboard scrolling and retained focus.
+          tabIndex={0}
+        >
+          <div ref={content} className="min-h-full space-y-3">
+            {inspection.error && (
+              <div className="flex items-center gap-2 text-xs">
+                <p
+                  role="alert"
+                  className="min-w-0 flex-1 break-words text-destructive"
+                >
+                  {inspection.error}
+                </p>
+                {!paging && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 shrink-0"
+                    disabled={!state.connected}
+                    onClick={() => void view.open(child)}
+                  >
+                    Retry
+                  </Button>
+                )}
+              </div>
             )}
-          </div>
-        </DisclosureMemory>
-        {inspection.earlier && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 w-full text-xs text-muted-foreground"
-            onClick={() => void view.showLatest()}
-          >
-            Show latest
-          </Button>
-        )}
-        {inspection.loading && (
-          <output className="flex items-center gap-2 text-xs text-muted-foreground">
-            <LoaderCircle className="size-3 animate-spin" aria-hidden="true" />
-            Loading
-          </output>
-        )}
-        {inspection.cut &&
-          !inspection.loading &&
-          !inspection.rows.length &&
-          !outcome && (
-            <p className="text-xs text-muted-foreground">No activity yet</p>
-          )}
-        {outcome && (result || outcome.error) && (
-          <section
-            aria-label="Subagent result"
-            className="min-w-0 space-y-1 border-t border-border/60 pt-3"
-          >
-            <h3 className="text-xs font-medium text-muted-foreground">
-              Result
-            </h3>
-            {result && (
-              <MarkdownPreview
-                markdown={result}
-                className="max-h-none overflow-visible rounded-none border-0 bg-transparent p-0 text-sm leading-6 text-foreground"
+            {paging && (
+              <HistoryEdge
+                direction="before"
+                loading={inspection.loadingEarlier}
+                error={Boolean(inspection.error)}
+                disabled={inspection.loadingEarlier || !state.connected}
+                onRetry={() => void historyScroll.current?.retry("before")}
               />
             )}
-            {outcome.error && (
-              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-xs text-destructive">
-                {outcome.error}
-              </pre>
+            <DisclosureMemory value={disclosures}>
+              <div className="flex min-w-0 flex-col gap-2">
+                {segments(blocks).map((part) =>
+                  Array.isArray(part) ? (
+                    <TranscriptBlocks
+                      key={part[0].key}
+                      blocks={part}
+                      childView={null}
+                    />
+                  ) : (
+                    <TaskBrief
+                      key={part.key}
+                      readingKey={part.key}
+                      text={part.row.text ?? ""}
+                    />
+                  ),
+                )}
+              </div>
+            </DisclosureMemory>
+            {inspection.loading && (
+              <output className="flex items-center gap-2 text-xs text-muted-foreground">
+                <LoaderCircle
+                  className="size-3 animate-spin"
+                  aria-hidden="true"
+                />
+                Loading
+              </output>
             )}
-            {(outcome.result_clipped || outcome.error_clipped) && (
-              <p role="note" className="text-[11px] text-muted-foreground">
-                Result clipped
-              </p>
+            {inspection.cut &&
+              !inspection.loading &&
+              !inspection.rows.length &&
+              !outcome && (
+                <p className="text-xs text-muted-foreground">No activity yet</p>
+              )}
+            {outcome && (result || outcome.error) && (
+              <section
+                aria-label="Subagent result"
+                className="min-w-0 space-y-1 border-t border-border/60 pt-3"
+              >
+                <h3 className="text-xs font-medium text-muted-foreground">
+                  Result
+                </h3>
+                {result && (
+                  <MarkdownPreview
+                    markdown={result}
+                    className="max-h-none overflow-visible rounded-none border-0 bg-transparent p-0 text-sm leading-6 text-foreground"
+                  />
+                )}
+                {outcome.error && (
+                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-xs text-destructive">
+                    {outcome.error}
+                  </pre>
+                )}
+                {(outcome.result_clipped || outcome.error_clipped) && (
+                  <p role="note" className="text-[11px] text-muted-foreground">
+                    Result clipped
+                  </p>
+                )}
+              </section>
             )}
-          </section>
+          </div>
+        </div>
+        {(reading.away || inspection.earlier) && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+            <Button
+              variant="outline"
+              size="icon-sm"
+              className="pointer-events-auto rounded-full bg-background/95 text-muted-foreground shadow-sm dark:bg-card"
+              aria-label="Jump to latest subagent activity"
+              title="Jump to latest"
+              onClick={() => {
+                setPagingKey(null);
+                void view.showLatest();
+                reader.current?.jump();
+              }}
+            >
+              <ArrowDown className="size-3.5" aria-hidden="true" />
+            </Button>
+          </div>
         )}
       </div>
     </dialog>

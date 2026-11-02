@@ -1394,7 +1394,9 @@ export function createCodingRun(
       }
     }
   }
-  async function loadHistory(direction: "before" | "after") {
+  async function loadHistory(
+    direction: "before" | "after",
+  ): Promise<"loaded" | "failed" | "ignored"> {
     const previousWindow = historyWindow;
     const anchor =
       direction === "before"
@@ -1407,7 +1409,7 @@ export function createCodingRun(
       state.connection !== "connected" ||
       !(direction === "before" ? state.older : state.newer)
     )
-      return;
+      return "ignored";
     const current = incarnation;
     const captured = previousWindow?.cut ?? cut;
     const intentRevision = readingIntentRevision;
@@ -1425,7 +1427,7 @@ export function createCodingRun(
         historyWindow !== previousWindow ||
         (!previousWindow && cut !== captured)
       )
-        return;
+        return "ignored";
       const edge = direction === "before" ? page.first_id : page.last_id;
       if (!page.rows.length || !edge || edge === anchor)
         throw new Error(
@@ -1468,11 +1470,14 @@ export function createCodingRun(
           page.last_id,
       };
       publishRows();
+      return "loaded";
     } catch (reason) {
       if (current === incarnation && intentRevision === readingIntentRevision) {
         if (needsReopen(reason)) requireRuntimeReopen();
         update({ error: errorText(reason) });
+        return "failed";
       }
+      return "ignored";
     } finally {
       // Even superseded reading intent must release this incarnation's loading
       // flag. Jump does not abort the authoritative native watcher or its reads.
