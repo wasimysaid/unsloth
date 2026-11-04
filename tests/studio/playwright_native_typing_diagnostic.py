@@ -4,6 +4,7 @@ import os
 import subprocess
 import time
 import urllib.request
+import traceback
 from pathlib import Path
 from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright
@@ -13,16 +14,18 @@ harness.CURRENT_VERSION = 'v0.1.914-beta-native'
 harness.SIZES = [1, 500]
 harness.RATES = [1, 4]
 results = []
+failures = []
 with sync_playwright() as pw:
-    for gpu in ['auto', 'off']:
+    for gpu in ['off', 'auto']:
         config = Path(os.environ['APPDATA']) / 'ai.unsloth.studio'
         config.mkdir(parents=True, exist_ok=True)
         (config / 'gpu-rendering-v1').write_text(gpu, encoding='utf-8')
         env = dict(os.environ, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--remote-debugging-port=9222', UNSLOTH_DISABLE_UPDATE_CHECK='1')
-        app = subprocess.Popen([os.environ['APP_EXE']], env=env)
+        app_log = open(harness.OUT/f'native-process-{gpu}.log', 'w', encoding='utf-8')
+        app = subprocess.Popen([os.environ['APP_EXE']], env=env, stdout=app_log, stderr=subprocess.STDOUT)
         browser = None
         try:
-            for _ in range(180):
+            for _ in range(45):
                 if app.poll() is not None:
                     raise RuntimeError(f'Desktop exited: {app.returncode}')
                 try:
@@ -69,16 +72,27 @@ with sync_playwright() as pw:
                         print(json.dumps(row), flush=True)
                         (harness.OUT/'native-results.json').write_text(json.dumps(results,indent=2),encoding='utf-8')
                 page.screenshot(path=str(harness.OUT/f'native-gpu-{gpu}-motion-{motion}.png'))
-        except Exception:
+        except Exception as error:
+            failures.append(dict(gpu=gpu,error=str(error)))
+            print(traceback.format_exc(), flush=True)
+            (harness.OUT/f'native-error-{gpu}.txt').write_text(traceback.format_exc(),encoding='utf-8')
+            probe = subprocess.run(['powershell','-NoProfile','-Command', "Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'unsloth|msedgewebview2|python' } | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Depth 3"],capture_output=True,text=True)
+            (harness.OUT/f'native-processes-{gpu}.txt').write_text(probe.stdout+'\n'+probe.stderr,encoding='utf-8')
+            screen = r'''Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $bounds=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $bitmap=New-Object System.Drawing.Bitmap($bounds.Width,$bounds.Height); $g=[System.Drawing.Graphics]::FromImage($bitmap); $g.CopyFromScreen($bounds.Location,[System.Drawing.Point]::Empty,$bounds.Size); $bitmap.Save($env:TYPING_SCREENSHOT); $g.Dispose(); $bitmap.Dispose()'''
+            subprocess.run(['powershell','-NoProfile','-Command',screen], env=dict(os.environ,TYPING_SCREENSHOT=str(harness.OUT/f'desktop-failure-{gpu}.png')),capture_output=True)
             if browser and 'page' in locals():
                 try:
                     page.screenshot(path=str(harness.OUT/f'native-failure-{gpu}.png'))
                     (harness.OUT/f'native-failure-{gpu}.txt').write_text(page.locator('body').inner_text(),encoding='utf-8')
                 except Exception:
                     pass
-            raise
         finally:
             if browser:
                 browser.close()
             subprocess.run(['taskkill', '/PID', str(app.pid), '/T', '/F'], capture_output=True)
+            app_log.close()
             time.sleep(3)
+
+(harness.OUT/'native-failures.json').write_text(json.dumps(failures,indent=2),encoding='utf-8')
+if failures:
+    raise RuntimeError(f'{len(failures)} native variants failed; see artifacts')

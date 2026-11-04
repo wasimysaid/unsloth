@@ -57,5 +57,7 @@ jobs:
             logs/typing-diagnostic/*.json
             logs/typing-diagnostic/*.png
             logs/typing-diagnostic/*.txt
-            ~/AppData/Local/ai.unsloth.studio/logs/*.log
+            logs/typing-diagnostic/*.log
+            ~/.unsloth/studio/tauri.log*
+            ~/.unsloth/studio/logs/server/*.log
           retention-days: 7
