@@ -1,7 +1,5 @@
 name: Long chat typing diagnostic
 on:
-  push:
-    branches: [diagnostic/long-chat-typing-20261104]
   workflow_dispatch:
 permissions:
   contents: read

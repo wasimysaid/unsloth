@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 OUT = Path(os.environ.get('PW_ART_DIR', ROOT / 'logs/typing-diagnostic')).resolve()
 OUT.mkdir(parents=True, exist_ok=True)
 BASE = os.environ.get('BASE_URL', 'http://127.0.0.1:8899')
+API_BASE = ''
 PASSWORD = os.environ.get('DIAGNOSTIC_PASSWORD') or secrets.token_urlsafe(24)
 SIZES = [int(x) for x in os.environ.get('TYPING_SIZES', '1,200,500').split(',')]
 RATES = [int(x) for x in os.environ.get('TYPING_RATES', '1,4').split(',')]
@@ -31,12 +32,12 @@ def seed(page):
             messages.append(dict(id=user, threadId=ident, parentId=f'{ident}-a{i-1}' if i else None, role='user', content=[dict(type='text', text=f'Turn {i+1}: Explain this implementation, tradeoffs, and test cases.')], createdAt=now+i*2000))
             answer = f'## Analysis {i+1}\n\n' + ('This is a representative response with **formatted text**, a useful explanation, and details about the implementation. The interface should remain responsive while reading and writing messages.\n\n')*8 + '\n```python\ndef example(value):\n    return [item * 2 for item in range(value)]\n```\n\n| Case | Result |\n| --- | --- |\n| Small | Works |\n| Large | Check performance |\n'
             messages.append(dict(id=assistant, threadId=ident, parentId=user, role='assistant', content=[dict(type='text', text=answer)], metadata={}, createdAt=now+i*2000+1000))
-        page.evaluate('''async ({thread,messages})=>{
+        page.evaluate('''async ({thread,messages,apiBase})=>{
           const headers={'Content-Type':'application/json',Authorization:`Bearer ${localStorage.getItem('unsloth_auth_token')}`};
           for(const [url,method,body] of [['/api/chat/threads','POST',thread],[`/api/chat/threads/${thread.id}/messages`,'PUT',{messages}]]) {
-            const r=await fetch(url,{method,headers,body:JSON.stringify(body)});if(!r.ok)throw new Error(await r.text());
+            const r=await fetch(apiBase+url,{method,headers,body:JSON.stringify(body)});if(!r.ok)throw new Error(await r.text());
           }
-        }''', dict(thread=thread,messages=messages))
+        }''', dict(thread=thread,messages=messages,apiBase=API_BASE))
 
 
 def set_motion_ui(page, value):
@@ -100,47 +101,52 @@ def wait_server(proc):
     raise RuntimeError('Studio did not start')
 
 
-results=[]
-versions=os.environ.get('TYPING_VERSIONS','v0.1.913-beta,v0.1.914-beta').split(',')
-with sync_playwright() as pw:
-    options=dict(headless=True)
-    if os.environ.get('PW_EXECUTABLE'):options['executable_path']=os.environ['PW_EXECUTABLE']
-    elif os.name=='nt':options['channel']='msedge'
-    for CURRENT_VERSION in versions:
-        proc=None
-        log=None
-        try:
-            if not os.environ.get('BASE_URL'):
-                env=dict(os.environ,UNSLOTH_STUDIO_HOME=str(OUT/'studio-home'),UNSLOTH_STUDIO_PASSWORD=PASSWORD,UNSLOTH_DISABLE_UPDATE_CHECK='1')
-                log=open(OUT/f'{CURRENT_VERSION}-server.log','w',encoding='utf-8')
-                dist=ROOT/'temp'/'typing-versions'/CURRENT_VERSION/'studio'/'frontend'/'dist'
-                proc=subprocess.Popen([os.environ['STUDIO_PYTHON'],str(ROOT/'studio/backend/run.py'),'--port','8899','--frontend',str(dist)],env=env,stdout=log,stderr=subprocess.STDOUT)
-                wait_server(proc)
-            browser=pw.chromium.launch(**options)
-            context=browser.new_context(viewport=dict(width=1440,height=900))
-            page=context.new_page();page.set_default_timeout(30000)
-            errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
-            page.goto(BASE)
-            page.get_by_role('textbox',name='Password',exact=True).fill(PASSWORD)
-            page.get_by_role('button',name='Login',exact=True).click()
-            page.locator('textarea[aria-label="Message input"]').wait_for()
-            seed(page)
-            cdp=context.new_cdp_session(page);cdp.send('Performance.enable')
-            for motion in ['off','on']:
-                set_motion_ui(page,motion)
-                for rate in RATES:
-                    for turns in SIZES:
-                        result=measure(page,cdp,turns,rate,motion,False)
-                        results.append(result);print(json.dumps(result),flush=True)
-                        (OUT/'results.json').write_text(json.dumps(dict(platform=platform.platform(),browser=browser.version,results=results,pageErrors=errors),indent=2),encoding='utf-8')
-                result=measure(page,cdp,max(SIZES),max(RATES),motion,True)
-                results.append(result);print(json.dumps(result),flush=True)
-                (OUT/'results.json').write_text(json.dumps(dict(platform=platform.platform(),browser=browser.version,results=results,pageErrors=errors),indent=2),encoding='utf-8')
-            page.screenshot(path=str(OUT/f'{CURRENT_VERSION}-long-chat.png'))
-            browser.close()
-        finally:
-            if proc:
-                proc.terminate()
-                try:proc.wait(timeout=15)
-                except subprocess.TimeoutExpired:proc.kill();proc.wait()
-            if log:log.close()
+def main():
+    global CURRENT_VERSION
+    results=[]
+    versions=os.environ.get('TYPING_VERSIONS','v0.1.913-beta,v0.1.914-beta').split(',')
+    with sync_playwright() as pw:
+        options=dict(headless=True)
+        if os.environ.get('PW_EXECUTABLE'):options['executable_path']=os.environ['PW_EXECUTABLE']
+        elif os.name=='nt':options['channel']='msedge'
+        for CURRENT_VERSION in versions:
+            proc=None
+            log=None
+            try:
+                if not os.environ.get('BASE_URL'):
+                    env=dict(os.environ,UNSLOTH_STUDIO_HOME=str(OUT/'studio-home'),UNSLOTH_STUDIO_PASSWORD=PASSWORD,UNSLOTH_DISABLE_UPDATE_CHECK='1')
+                    log=open(OUT/f'{CURRENT_VERSION}-server.log','w',encoding='utf-8')
+                    dist=ROOT/'temp'/'typing-versions'/CURRENT_VERSION/'studio'/'frontend'/'dist'
+                    proc=subprocess.Popen([os.environ['STUDIO_PYTHON'],str(ROOT/'studio/backend/run.py'),'--port','8899','--frontend',str(dist)],env=env,stdout=log,stderr=subprocess.STDOUT)
+                    wait_server(proc)
+                browser=pw.chromium.launch(**options)
+                context=browser.new_context(viewport=dict(width=1440,height=900))
+                page=context.new_page();page.set_default_timeout(30000)
+                errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+                page.goto(BASE)
+                page.get_by_role('textbox',name='Password',exact=True).fill(PASSWORD)
+                page.get_by_role('button',name='Login',exact=True).click()
+                page.locator('textarea[aria-label="Message input"]').wait_for()
+                seed(page)
+                cdp=context.new_cdp_session(page);cdp.send('Performance.enable')
+                for motion in ['off','on']:
+                    set_motion_ui(page,motion)
+                    for rate in RATES:
+                        for turns in SIZES:
+                            result=measure(page,cdp,turns,rate,motion,False)
+                            results.append(result);print(json.dumps(result),flush=True)
+                            (OUT/'results.json').write_text(json.dumps(dict(platform=platform.platform(),browser=browser.version,results=results,pageErrors=errors),indent=2),encoding='utf-8')
+                    result=measure(page,cdp,max(SIZES),max(RATES),motion,True)
+                    results.append(result);print(json.dumps(result),flush=True)
+                    (OUT/'results.json').write_text(json.dumps(dict(platform=platform.platform(),browser=browser.version,results=results,pageErrors=errors),indent=2),encoding='utf-8')
+                page.screenshot(path=str(OUT/f'{CURRENT_VERSION}-long-chat.png'))
+                browser.close()
+            finally:
+                if proc:
+                    proc.terminate()
+                    try:proc.wait(timeout=15)
+                    except subprocess.TimeoutExpired:proc.kill();proc.wait()
+                if log:log.close()
+
+if __name__ == "__main__":
+    main()

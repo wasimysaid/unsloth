@@ -1,0 +1,61 @@
+name: Native WebView2 typing diagnostic
+on:
+  push:
+    branches: [diagnostic/long-chat-typing-20261104]
+    paths:
+      - '.github/workflows/native-typing-diagnostic.yml'
+      - 'tests/studio/playwright_native_typing_diagnostic.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  webview2:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      UNSLOTH_DISABLE_UPDATE_CHECK: '1'
+      UNSLOTH_SKIP_AUTOSTART: '1'
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Install local backend without inference dependencies
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./install.ps1 --local --no-torch --skip-autostart
+          if ($LASTEXITCODE -ne 0) { throw 'Studio installation failed' }
+      - name: Download and install the actual 914 desktop release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download v0.1.914-beta --repo unslothai/unsloth --pattern Unsloth-Desktop-Windows.exe --dir temp/desktop-release
+          if ($LASTEXITCODE -ne 0) { throw 'Release download failed' }
+          $installer = Resolve-Path temp/desktop-release/Unsloth-Desktop-Windows.exe
+          $p = Start-Process $installer -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "NSIS exited $($p.ExitCode)" }
+          $exe = Get-ChildItem -Path "$env:LOCALAPPDATA", "$env:ProgramFiles" -Recurse -Filter '*Unsloth*.exe' -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notmatch 'uninstall|setup|Desktop-Windows' } | Select-Object -First 1
+          if (-not $exe) { throw 'Installed desktop executable not found' }
+          "APP_EXE=$($exe.FullName)" >> $env:GITHUB_ENV
+      - name: Install Playwright driver
+        run: python -m pip install playwright==1.62.0
+      - name: Test real WebView2 with motion Off and On and GPU Auto and Off
+        run: python tests/studio/playwright_native_typing_diagnostic.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: native-webview2-typing
+          path: |
+            logs/typing-diagnostic/*.json
+            logs/typing-diagnostic/*.png
+            logs/typing-diagnostic/*.txt
+            ~/AppData/Local/ai.unsloth.studio/logs/*.log
+          retention-days: 7
