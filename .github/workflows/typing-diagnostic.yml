@@ -1,5 +1,10 @@
 name: Long chat typing diagnostic
 on:
+  push:
+    branches: [diagnostic/long-chat-typing-20261104]
+    paths:
+      - .github/workflows/typing-diagnostic.yml
+      - tests/studio/playwright_typing_diagnostic.py
   workflow_dispatch:
 permissions:
   contents: read

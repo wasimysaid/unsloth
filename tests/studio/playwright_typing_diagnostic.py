@@ -114,7 +114,11 @@ def main():
             log=None
             try:
                 if not os.environ.get('BASE_URL'):
-                    env=dict(os.environ,UNSLOTH_STUDIO_HOME=str(OUT/'studio-home'),UNSLOTH_STUDIO_PASSWORD=PASSWORD,UNSLOTH_DISABLE_UPDATE_CHECK='1')
+                    env=dict(os.environ,UNSLOTH_STUDIO_HOME=str(OUT/'studio-home'),UNSLOTH_DISABLE_UPDATE_CHECK='1')
+                    if CURRENT_VERSION == versions[0]:
+                        env['UNSLOTH_STUDIO_PASSWORD'] = PASSWORD
+                    else:
+                        env.pop('UNSLOTH_STUDIO_PASSWORD', None)
                     log=open(OUT/f'{CURRENT_VERSION}-server.log','w',encoding='utf-8')
                     dist=ROOT/'temp'/'typing-versions'/CURRENT_VERSION/'studio'/'frontend'/'dist'
                     proc=subprocess.Popen([os.environ['STUDIO_PYTHON'],str(ROOT/'studio/backend/run.py'),'--port','8899','--frontend',str(dist)],env=env,stdout=log,stderr=subprocess.STDOUT)
