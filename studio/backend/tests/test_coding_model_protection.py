@@ -368,8 +368,13 @@ def test_coding_admission_replaces_an_idle_primary_like_chat(admission, monkeypa
     loads = []
 
     async def load(request, fastapi_request, subject, **kwargs):
+        from core.inference.llama_cpp import chat_load_in_flight
+
         assert kwargs["allow_gpu_owner_eviction"] is False
-        kwargs["on_reload_confirmed"](cancel = True)
+        # The real loader confirms the reload while its own chat load is in flight.
+        with chat_load_in_flight():
+            kwargs["on_reload_confirmed"](cancel = False)
+            kwargs["on_reload_confirmed"](cancel = True)
         name, variant = request.model_path.split(":")
         primary.model_identifier, primary.hf_variant = name, variant
         loads.append(request.model_path)
