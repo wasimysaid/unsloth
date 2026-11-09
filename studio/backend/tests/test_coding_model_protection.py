@@ -340,15 +340,13 @@ def test_coding_admission_borrows_exact_kept_slot_with_primary_busy(admission):
     assert orchestrator.routed_slot.get() is None
 
 
-@pytest.mark.parametrize("busy", ["primary", "variant", "loading", "kept", "stuck", "decisions", "diffusion", "video"])
+@pytest.mark.parametrize("busy", ["starting", "loading", "kept", "stuck", "decisions", "diffusion", "video"])
 def test_coding_admission_never_replaces_or_evicts_other_work(admission, monkeypatch, busy):
     primary, backend, acquire = admission
     requested = "org/B:Q4_K_M"
-    if busy != "primary":
-        primary.is_loaded = primary.is_active = False
-    if busy == "variant":
-        primary.is_loaded = primary.is_active = True
-        requested = "org/A:Q8_0"
+    primary.is_loaded = primary.is_active = False
+    if busy == "starting":
+        primary.is_active = True
     if busy == "loading":
         backend.loading_models.add("org/loading")
     if busy == "kept":
@@ -362,6 +360,36 @@ def test_coding_admission_never_replaces_or_evicts_other_work(admission, monkeyp
     assert error.value.status_code == 409
     assert error.value.detail["error"] == "coding_model_busy"
     assert primary.calls == [] and kw.coding_model_protection_count() == 0
+
+
+@pytest.mark.parametrize("requested", ["org/B:Q4_K_M", "org/A:Q8_0"])
+def test_coding_admission_replaces_an_idle_primary_like_chat(admission, monkeypatch, requested):
+    primary, _, acquire = admission
+    loads = []
+
+    async def load(request, fastapi_request, subject, **kwargs):
+        assert kwargs["allow_gpu_owner_eviction"] is False
+        kwargs["on_reload_confirmed"](cancel = True)
+        name, variant = request.model_path.split(":")
+        primary.model_identifier, primary.hf_variant = name, variant
+        loads.append(request.model_path)
+
+    monkeypatch.setattr(inf, "_run_tracked_load_model_impl", load)
+    hold = acquire(requested)
+    assert loads == [requested] and hold.backend is primary
+    assert kw.coding_model_protection_count(primary) == 1
+
+
+def test_coding_admission_never_replaces_a_protected_primary(admission, monkeypatch):
+    primary, _, acquire = admission
+    acquire(token = "first")
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("A protected primary must not be replaced")
+
+    monkeypatch.setattr(inf, "_run_tracked_load_model_impl", forbidden)
+    assert_protected(lambda: acquire("org/B:Q4_K_M", token = "second"))
+    assert kw.coding_model_protection_count(primary) == 1
 
 
 def test_empty_admission_disables_force_and_publishes_before_unlock(admission, monkeypatch):
@@ -428,9 +456,16 @@ def test_failed_admission_keeps_existing_hold_and_never_publishes_new_owner(admi
     assert primary.calls == []
 
 
-def test_queued_coding_admission_checks_resident_after_the_gate_not_at_selection(admission):
+def test_queued_coding_admission_checks_resident_after_the_gate_not_at_selection(admission, monkeypatch):
     primary, _, _ = admission
     request = Request({"type": "http", "method": "POST", "path": "/api/coding/local-models/acquire", "headers": []})
+    loads = []
+
+    async def load(request, fastapi_request, subject, **kwargs):
+        loads.append(request.model_path)
+        primary.model_identifier, primary.hf_variant = "org/A", "Q4_K_M"
+
+    monkeypatch.setattr(inf, "_run_tracked_load_model_impl", load)
 
     async def drive():
         async with kw.model_load_gate():
@@ -440,12 +475,11 @@ def test_queued_coding_admission_checks_resident_after_the_gate_not_at_selection
             await asyncio.sleep(0)
             assert not task.done()
             primary.model_identifier = "org/different"
-        with pytest.raises(HTTPException) as error:
-            await task
-        assert error.value.status_code == 409
+        return await task
 
-    asyncio.run(drive())
-    assert kw.coding_model_protection_count() == 0 and primary.calls == []
+    # The stale resident is not borrowed: the requested model is loaded in its place.
+    hold = asyncio.run(drive())
+    assert loads == ["org/A:Q4_K_M"] and hold.identity == kw.coding_model_identity(primary)
 
 
 def test_failed_loader_does_not_publish_a_hold_or_unload_a_partial_resident(admission, monkeypatch):

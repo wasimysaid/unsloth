@@ -12336,11 +12336,13 @@ async def load_model_for_coding(
     current_subject: str,
     protection_token: str,
 ):
-    """Non-evicting host admission plus whole-request protection, under the existing gates.
+    """Host admission plus whole-request protection, under the existing gates.
 
     A resident primary/kept model is borrowed exactly as-is: selection is not a settings
-    update. Otherwise only an empty chat owner may load. The returned CodingModelHold is
-    concrete evidence; its owner token must be explicitly released after native cleanup.
+    update. Otherwise the chat owner may load, replacing an idle primary model the same
+    way choosing another model in Chat does; anything in use is never evicted. The
+    returned CodingModelHold is concrete evidence; its owner token must be explicitly
+    released after native cleanup.
     """
     from core.inference.llama_cpp import chat_load_active
     from core.inference.llama_keepwarm import (
@@ -12384,7 +12386,8 @@ async def load_model_for_coding(
                 llama = _llama_cpp_backend
                 backend = _peek_inference_backend()
                 busy = (
-                    (llama is not None and (llama.is_active or llama.is_loaded))
+                    # A healthy idle primary is replaceable; a starting or failed server is not.
+                    (llama is not None and llama.is_active and not llama.is_loaded)
                     or (backend is not None and (
                         backend.active_model_name or getattr(backend, "loading_models", None)
                     ))
@@ -12396,7 +12399,7 @@ async def load_model_for_coding(
                 if busy:
                     raise HTTPException(status_code = 409, detail = {
                         "error": "coding_model_busy",
-                        "message": "Studio is serving another workload. Finish it or unload its model, then retry; coding never evicts it.",
+                        "message": "Studio is busy with another task. Retry when it finishes; coding never interrupts it.",
                     })
 
             require_empty_chat()
