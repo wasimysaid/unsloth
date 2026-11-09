@@ -22,12 +22,13 @@ def cached_gguf(monkeypatch, repos=(), variants=None):
     async def cached():
         return {"cached": list(repos), "scan_confirmed": True}
 
-    async def listing(repo_id, prefer_local_cache, offline):
-        assert prefer_local_cache and offline
-        return SimpleNamespace(variants=(variants or {})[repo_id])
+    async def listing(repo_id, prefer_local_cache, offline, include_cache_locations):
+        assert prefer_local_cache and offline and include_cache_locations
+        return SimpleNamespace(response=SimpleNamespace(variants=(variants or {})[repo_id]),
+                               context_source=None, variant_context_sources=None)
 
     monkeypatch.setattr(cache_inventory, "list_cached_gguf_response", cached)
-    monkeypatch.setattr(gguf_variants, "get_gguf_variants_response", listing)
+    monkeypatch.setattr(gguf_variants, "get_gguf_variants_answer", listing)
 
 
 def inventory(monkeypatch, rows):
@@ -91,9 +92,8 @@ async def test_catalog_reuses_current_downloaded_inventory_and_exact_identity(mo
 def test_identity_survives_label_changes_and_never_encodes_credentials():
     choice = local_choice(row())
     assert choice["id"] == local_choice(row(display_name="renamed"))["id"]
-    assert set(choice) == {"id", "name", "api_model", "reasoning", "default_reasoning"}
-    assert choice["reasoning"] == "unsupported"
-    assert choice["default_reasoning"] is None
+    assert set(choice) == {"id", "name", "api_model", "reasoning"}
+    assert choice["reasoning"] == {"thinking": False, "toggle": False, "levels": []}
 
 
 def test_api_mapping_preserves_exact_repository_variant_but_not_duplicate_file_suffix():
@@ -140,6 +140,38 @@ async def test_native_admission_reuses_studio_launch_preferences_without_force_o
     assert len(launches) == 1
     with pytest.raises(CodingRuntimeError, match="identity"):
         await serving.acquire({**request, "api_model": "different"}, None)
-    with pytest.raises(CodingRuntimeError, match="No fallback"):
+    with pytest.raises(CodingRuntimeError, match="identity changed"):
         await serving.acquire({**request, "operation_id": "forged-op", "api_model": "different"}, None)
     assert len(launches) == 1
+
+
+@pytest.mark.parametrize("template, expected", [
+    ("{% if enable_thinking %}<think>{% endif %}", {"thinking": True, "toggle": True, "levels": []}),
+    ("{{ reasoning_effort }} {% if reasoning_effort == 'low' %}{% elif reasoning_effort == 'high' %}{% endif %}",
+     {"thinking": True, "toggle": False, "levels": ["low", "high"]}),
+    ("<think>{{ content }}</think>", {"thinking": True, "toggle": False, "levels": []}),
+    ("{{ messages }}", {"thinking": False, "toggle": False, "levels": []}),
+])
+def test_reasoning_controls_follow_studio_template_detection(monkeypatch, tmp_path, template, expected):
+    from core import coding_local_models
+    from utils.models import gguf_metadata
+    path = tmp_path / "model.gguf"
+    path.write_bytes(b"GGUF")
+    coding_local_models._template_reasoning.cache_clear()
+    monkeypatch.setattr(gguf_metadata, "read_gguf_chat_template", lambda read: template if read == str(path) else None)
+    controls = coding_local_models.reasoning_controls(str(path), "org/model")
+    assert {**controls, "levels": [level for level in controls["levels"] if level in ("low", "high")]} == expected
+    assert coding_local_models.reasoning_controls(str(tmp_path / "missing.gguf"), "org/model")["thinking"] is False
+
+
+def test_load_errors_say_why_without_host_paths():
+    from fastapi import HTTPException
+    from core.coding_local_models import _load_error
+    busy = _load_error(HTTPException(409, detail={"error": "coding_model_busy",
+                                                  "message": "Studio is loading another model. Retry when it finishes."}))
+    assert (busy.code, busy.message) == ("busy", "Studio is loading another model. Retry when it finishes.")
+    failed = _load_error(HTTPException(500, detail="Not enough GPU memory for /home/someone/.cache/huggingface/hub/x.gguf"))
+    assert failed.code == "failed" and "Not enough GPU memory" in failed.message
+    assert "/home/someone" not in failed.message
+    unknown = _load_error(RuntimeError("secret token sk-abc at /home/someone"))
+    assert unknown.code == "failed" and "sk-abc" not in unknown.message and "/home" not in unknown.message
