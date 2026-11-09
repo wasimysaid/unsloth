@@ -10,11 +10,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 from core.coding_runtime import CodingRuntimeError
 
 PROVIDER_ID = "studio-local"
 PROVIDER_NAME = "Studio local"
+_CHAT = SimpleNamespace(can_chat = True)
 
 
 def local_choice(row) -> dict:
@@ -35,14 +37,46 @@ def local_choice(row) -> dict:
     }
 
 
+async def _cached_gguf_rows() -> tuple[list, set[str]]:
+    """One row per fully downloaded quant, as Chat's On Device list shows them."""
+    from hub.services.models.cache_inventory import list_cached_gguf_response
+    from hub.services.models.gguf_variants import get_gguf_variants_response
+
+    repos = [repo for repo in (await list_cached_gguf_response())["cached"]
+             if (repo.get("capabilities") or {}).get("can_chat")]
+    answers = await asyncio.gather(
+        *(get_gguf_variants_response(repo["repo_id"], prefer_local_cache = True, offline = True)
+          for repo in repos),
+        return_exceptions = True,
+    )
+    rows = []
+    for repo, answer in zip(repos, answers):
+        if isinstance(answer, BaseException):
+            continue
+        repo_id = repo["repo_id"]
+        for variant in answer.variants:
+            if not variant.downloaded or variant.partial:
+                continue
+            rows.append(SimpleNamespace(
+                inventory_id = f"{repo.get('inventory_id') or repo_id}:{variant.quant}",
+                id = repo_id, load_id = repo.get("load_id") or repo_id, model_format = "gguf",
+                display_name = f"{repo_id.split('/')[-1]} · {variant.display_label or variant.quant}",
+                format_variant = variant.quant, partial = False, capabilities = _CHAT,
+            ))
+    return rows, {repo["repo_id"] for repo in repos}
+
+
 async def downloaded_rows():
     from hub.services.models.local_inventory import list_local_models_response
 
+    gguf_rows, gguf_repos = await _cached_gguf_rows()
     response = await list_local_models_response()
-    # This is the existing Studio inventory's chat/load classification, not a
-    # Mimir capability filter. Partial downloads stay in Studio model management.
-    return [row for row in response.models
-            if row.capabilities.can_chat and not row.partial]
+    # Studio's inventory chat classification covers everything outside the GGUF cache
+    # (custom folders, loose files, safetensors). Partial downloads stay in model management.
+    others = [row for row in response.models
+              if row.capabilities.can_chat and not row.partial and row.id not in gguf_repos
+              and not (row.source == "hf_cache" and row.model_format in ("gguf", "unknown"))]
+    return gguf_rows + others
 
 
 async def local_catalog() -> dict:
