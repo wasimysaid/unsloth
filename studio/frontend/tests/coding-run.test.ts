@@ -801,7 +801,7 @@ test("local preparation comes from native state; retry does not replay and clean
   await h.event({ type: "state", state });
   assert.equal(
     codingRunLabel(h.run.getSnapshot()),
-    "Local model busy · explicit retry required",
+    "Studio busy · retry when it's free",
   );
   const configurations: unknown[] = [];
   h.api.configure = async (_id, change) => {
