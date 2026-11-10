@@ -39,6 +39,8 @@ Paired tickets merge the private Mimir PR first, pin its resulting revision in t
 
 The launcher resolves the current configured integration branch into an owned checkout; it does not use or switch the original checkout's `main`. The feature branch contains `studio/mimir-runtime.lock.json`. Its frontend descriptor is populated by the initial Studio–Mimir integration ticket, not invented by this scheduler. The launch command refuses an incomplete descriptor. Once available it obtains/builds the pinned private runtime and plugin, builds the frontend, and uses the existing backend startup command on localhost. It never vendors private Mimir source into the public fork.
 
+For day-to-day work on the integration, `python3 scripts/mimir_dev.py --mimir ../mimir --watch` serves this Studio checkout against a local Mimir working tree instead: incremental builds, no lock or hash checks, and on Mimir edits it rebuilds and restarts only the Mimir runtime, so loaded models stay loaded (set `UNSLOTH_STUDIO_PASSWORD` to let it restart without the UI). When the Mimir change is merged, `python3 scripts/mimir_dev.py --mimir ../mimir --pin` writes its commit and package hashes into the lock. The toolchain is pinned by Mimir's `rust-toolchain.toml`, so the hashes match CI.
+
 ## Human and resource gates
 
 The final implemented-UI review is human work. An operator must provide a review URL tied to the current integrated revisions; a worker may not approve itself. Resource grants are explicit, recorded, and time-bounded; GPU 7 is excluded unless repair is independently confirmed. GPU visibility does not reserve capacity. No new paid services or purchases are authorized by a campaign configuration.

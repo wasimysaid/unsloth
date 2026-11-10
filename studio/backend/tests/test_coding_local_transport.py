@@ -331,6 +331,51 @@ async def test_private_bootstrap_pipe_never_exports_key_and_closes_on_every_spaw
 
 
 @pytest.mark.asyncio
+async def test_prewarm_installs_once_before_first_start_and_close_cancels_it(monkeypatch, tmp_path):
+    from unittest.mock import AsyncMock
+
+    (tmp_path / "mimir-plugin.toml").write_text('id = "studio.frontend"\n')
+    calls = []
+    install_gate = asyncio.Event()
+
+    async def spawn(*args, **kwargs):
+        calls.append(args[2])
+        if args[2] == "install":
+            async def wait():
+                await install_gate.wait()
+                return 0
+            return SimpleNamespace(wait=wait, returncode=None, terminate=lambda: install_gate.set())
+        return SimpleNamespace(stdin=None, returncode=0, wait=AsyncMock(return_value=0))
+
+    async def idle():
+        return
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    runtime = CodingRuntime("bounded-native-fixture")
+    runtime.package = str(tmp_path)
+    monkeypatch.setattr(runtime, "_read_responses", idle)
+    monkeypatch.setattr(runtime, "_drain_stderr", idle)
+    runtime.prewarm()
+    runtime.prewarm()
+    await asyncio.sleep(0)
+    # The first start waits for the compile already under way instead of starting another.
+    start = asyncio.create_task(runtime.start())
+    await asyncio.sleep(0)
+    assert calls == ["install"]
+    install_gate.set()
+    await start
+    assert calls == ["install", "run"]
+
+    slow = CodingRuntime("bounded-native-fixture")
+    slow.package = str(tmp_path)
+    install_gate.clear()
+    slow.prewarm()
+    await asyncio.sleep(0)
+    await asyncio.wait_for(slow.close(), 5)
+    assert slow._prewarm_task.cancelled()
+
+
+@pytest.mark.asyncio
 async def test_failed_mint_retirement_is_reconciled_before_replacement_key(coding_app, monkeypatch):
     import threading
 

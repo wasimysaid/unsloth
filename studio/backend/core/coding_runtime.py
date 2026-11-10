@@ -112,6 +112,65 @@ class CodingRuntime:
         self._cleanup_failed = False
         self._restart_uncertain = False
         self._restart_prepared = False
+        self._prewarm_task: asyncio.Task | None = None
+        self._preinstalled = False
+
+    def prewarm(self) -> None:
+        # A cold Wasm compile of the package takes up to a minute; do it before
+        # Coding is first opened instead of inside its first request.
+        if self.package and self._prewarm_task is None:
+            self._prewarm_task = asyncio.create_task(self._prewarm())
+
+    async def _prewarm(self) -> None:
+        async with self._start_lock:
+            if self.process is not None or self._closing or self._failure:
+                return
+            try:
+                await self._install(self._environment())
+                self._preinstalled = True
+            except (CodingRuntimeError, OSError) as exc:
+                # The first start installs again and reports the failure there.
+                log.warning("Mimir frontend prewarm failed: %s", getattr(exc, "message", exc))
+
+    @staticmethod
+    def _environment() -> dict[str, str]:
+        environment = dict(os.environ)
+        # Neither installer nor native guests inherit an old incarnation.
+        for name in ("MIMIR_STUDIO_LOCAL_URL", "MIMIR_STUDIO_LOCAL_KEY",
+                     "MIMIR_STUDIO_LOCAL_INCARNATION", "MIMIR_STUDIO_LOCAL_FD"):
+            environment.pop(name, None)
+        return environment
+
+    async def _install(self, environment: dict[str, str]) -> None:
+        from pathlib import Path
+        import tomllib
+        try:
+            manifest = tomllib.loads((Path(self.package) / "mimir-plugin.toml").read_text(encoding = "utf-8"))
+            if manifest.get("id") != PLUGIN_ID:
+                raise ValueError("unexpected plugin ID")
+        except (OSError, ValueError) as exc:
+            raise CodingRuntimeError("unavailable", "The configured Mimir frontend package is invalid; rebuild the pinned studio.frontend package.") from exc
+        installer = await asyncio.create_subprocess_exec(
+            self.executable, "plugin", "install", self.package,
+            stdin = asyncio.subprocess.DEVNULL, stdout = asyncio.subprocess.DEVNULL,
+            stderr = asyncio.subprocess.DEVNULL, env = environment,
+        )
+        try:
+            installed = await asyncio.wait_for(installer.wait(), timeout = INSTALL_TIMEOUT)
+        except BaseException as exc:
+            with anyio.CancelScope(shield = True):
+                if installer.returncode is None:
+                    installer.terminate()
+                    try:
+                        await asyncio.wait_for(installer.wait(), timeout = 10)
+                    except TimeoutError:
+                        installer.kill()
+                        await installer.wait()
+            if isinstance(exc, TimeoutError):
+                raise CodingRuntimeError("unavailable", "Mimir frontend installation timed out. Check the pinned package on the host.") from exc
+            raise
+        if installed != 0:
+            raise CodingRuntimeError("unavailable", "Mimir could not install the configured studio.frontend package. Rebuild it against the pinned SDK.")
 
     def status(self) -> dict[str, Any]:
         # Reading diagnostics never launches a process or opens an execution owner.
@@ -301,41 +360,11 @@ class CodingRuntime:
             if self.process is not None:
                 return
             try:
-                environment = dict(os.environ)
-                # Neither installer nor native guests inherit an old incarnation.
-                for name in ("MIMIR_STUDIO_LOCAL_URL", "MIMIR_STUDIO_LOCAL_KEY",
-                             "MIMIR_STUDIO_LOCAL_INCARNATION", "MIMIR_STUDIO_LOCAL_FD"):
-                    environment.pop(name, None)
-                if self.package:
-                    from pathlib import Path
-                    import tomllib
-                    try:
-                        manifest = tomllib.loads((Path(self.package) / "mimir-plugin.toml").read_text(encoding = "utf-8"))
-                        if manifest.get("id") != PLUGIN_ID:
-                            raise ValueError("unexpected plugin ID")
-                    except (OSError, ValueError) as exc:
-                        raise CodingRuntimeError("unavailable", "The configured Mimir frontend package is invalid; rebuild the pinned studio.frontend package.") from exc
-                    installer = await asyncio.create_subprocess_exec(
-                        self.executable, "plugin", "install", self.package,
-                        stdin = asyncio.subprocess.DEVNULL, stdout = asyncio.subprocess.DEVNULL,
-                        stderr = asyncio.subprocess.DEVNULL, env = environment,
-                    )
-                    try:
-                        installed = await asyncio.wait_for(installer.wait(), timeout = INSTALL_TIMEOUT)
-                    except BaseException as exc:
-                        with anyio.CancelScope(shield = True):
-                            if installer.returncode is None:
-                                installer.terminate()
-                                try:
-                                    await asyncio.wait_for(installer.wait(), timeout = 10)
-                                except TimeoutError:
-                                    installer.kill()
-                                    await installer.wait()
-                        if isinstance(exc, TimeoutError):
-                            raise CodingRuntimeError("unavailable", "Mimir frontend installation timed out. Check the pinned package on the host.") from exc
-                        raise
-                    if installed != 0:
-                        raise CodingRuntimeError("unavailable", "Mimir could not install the configured studio.frontend package. Rebuild it against the pinned SDK.")
+                environment = self._environment()
+                if self._preinstalled:
+                    self._preinstalled = False
+                elif self.package:
+                    await self._install(environment)
                 read_fd = write_fd = None
                 try:
                     if self.local_serving is not None:
@@ -852,6 +881,8 @@ class CodingRuntime:
 
     async def _close(self) -> None:
         self._closing = True
+        if self._prewarm_task is not None:
+            self._prewarm_task.cancel()
         async with self._maintenance_lock:
             async with self._start_lock:
                 pass

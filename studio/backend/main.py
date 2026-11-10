@@ -981,6 +981,11 @@ async def lifespan(app: FastAPI):
     sweep_slot_save_dir()
     app.state.idle_unload_task = asyncio.create_task(idle_unload_loop())
 
+    # Compile the Coding plugin now, not inside the first Coding request.
+    from core.coding_runtime import runtime_for
+
+    runtime_for(app).prewarm()
+
     # Initialize RSA key pair for API key encryption (external providers).
     _install_key_pair()
 
