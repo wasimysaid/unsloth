@@ -77,7 +77,6 @@ const OPEN_DIALOG_SELECTOR =
 
 function SidebarProvider({
   defaultOpen = true,
-  shortcutEnabled = true,
   open: openProp,
   onOpenChange: setOpenProp,
   pinned: pinnedProp,
@@ -89,8 +88,6 @@ function SidebarProvider({
   ...props
 }: React.ComponentProps<"div"> & {
   defaultOpen?: boolean
-  /** Parked workspace shells must not compete with the visible sidebar chord. */
-  shortcutEnabled?: boolean
   open?: boolean
   onOpenChange?: (open: boolean) => void
   pinned?: boolean
@@ -148,7 +145,6 @@ function SidebarProvider({
   useShortcut("toggleSidebar", toggleSidebar, {
     claims: () =>
       (isMobile && openMobile) || document.querySelector(OPEN_DIALOG_SELECTOR) === null,
-    enabled: shortcutEnabled,
   })
 
   const pinned = pinnedProp ?? false

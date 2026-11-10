@@ -291,11 +291,9 @@ function ChatSettingsHydrationMount() {
 
 function CredentialBootstrapGate({
   active,
-  settingsActive = true,
   children,
 }: {
   active: boolean;
-  settingsActive?: boolean;
   children: ReactNode;
 }) {
   const [ready, setReady] = useState(false);
@@ -342,7 +340,7 @@ function CredentialBootstrapGate({
 
   return (
     <>
-      <SettingsDialogMount active={active && ready && settingsActive} />
+      <SettingsDialogMount active={active && ready} />
       {active && !ready ? <RouteFallback /> : children}
     </>
   );
@@ -406,46 +404,21 @@ export const Route = createRootRoute({
       throw redirect({ to: "/chat" });
     }
   },
-  component: RootRouteLayout,
+  component: RootLayout,
 });
-
-// A direct coding visit does not mount the general-chat shell or its engine
-// hydration. If Studio was already visited, park its retained workspaces rather
-// than cancelling unrelated in-flight work when switching to the coding route.
-function RootRouteLayout() {
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const isCodingRoute = pathname === "/coding";
-  const isAuthRoute = HIDDEN_NAVBAR_ROUTES.includes(pathname);
-  const [studioMounted, setStudioMounted] = useState(!isCodingRoute && !isAuthRoute);
-  if (!isCodingRoute && !isAuthRoute && !studioMounted) setStudioMounted(true);
-  return (
-    <AppProvider>
-      {studioMounted && (
-        <div className={isCodingRoute ? "hidden" : "contents"} inert={isCodingRoute || undefined}>
-          <RootLayout parked={isCodingRoute} />
-        </div>
-      )}
-      {!studioMounted && isAuthRoute && <RootLayout />}
-      {isCodingRoute && (
-        <RouteBoundary readyWhenCommitted={false}>
-          <Outlet />
-        </RouteBoundary>
-      )}
-    </AppProvider>
-  );
-}
 
 const HIDDEN_NAVBAR_ROUTES = ["/login", "/change-password"];
 
 const DEFAULT_DOCUMENT_TITLE = "Unsloth";
 
-function RootLayout({ parked = false }: { parked?: boolean }) {
+function RootLayout() {
   const t = useT();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const hideNavbar = HIDDEN_NAVBAR_ROUTES.includes(pathname);
   const routeOwnsReloadReadiness =
     pathname === "/hub" ||
     pathname === "/projects" ||
+    pathname === "/coding" ||
     pathname === "/export" ||
     pathname === "/studio" ||
     pathname === "/api-monitor" ||
@@ -534,6 +507,8 @@ function RootLayout({ parked = false }: { parked?: boolean }) {
   const shouldMountAudio = isAudioRoute || audioMounted;
   // All four pages render their own full-height shell: no outer inset or scroll.
   const isChatLike = isChatRoute || isImagesRoute || isVideoRoute || isAudioRoute;
+  // Coding is a full-height shell too, though it unmounts off-route like any page.
+  const ownsItsShell = isChatLike || pathname === "/coding";
   // Uses Navbar's hook, not the md breakpoint: a narrowed desktop window keeps the desktop navbar.
   const nonChatTopInset = useIsMobileShell()
     ? "pt-14"
@@ -558,11 +533,10 @@ function RootLayout({ parked = false }: { parked?: boolean }) {
     settingsDialogOpen && !isAuthFlowRoute ? t("settings.title") : matchedTitle;
 
   useLayoutEffect(() => {
-    if (parked) return;
     document.title = documentTitle
       ? `${documentTitle} - ${DEFAULT_DOCUMENT_TITLE}`
       : DEFAULT_DOCUMENT_TITLE;
-  }, [documentTitle, parked]);
+  }, [documentTitle]);
 
   // Desktop mounts this root before the port exists; authFetch retries keep the URL it started with.
   const desktopShellReady = useDesktopShellReady();
@@ -585,13 +559,13 @@ function RootLayout({ parked = false }: { parked?: boolean }) {
   useShortcut(
     "openSettings",
     () => useSettingsDialogStore.getState().openDialog(),
-    { enabled: !parked && !isAuthFlowRoute },
+    { enabled: !isAuthFlowRoute },
   );
   useShortcut(
     "openKeyboardShortcuts",
     () =>
       useSettingsDialogStore.getState().openDialog("keyboard-shortcuts"),
-    { enabled: !parked && !isAuthFlowRoute },
+    { enabled: !isAuthFlowRoute },
   );
   const startNewChat = (options?: {
     incognito?: boolean;
@@ -617,7 +591,7 @@ function RootLayout({ parked = false }: { parked?: boolean }) {
 
   // Gated like the workspace chords below: /login has no shell, and /chat
   // bounces straight back off requireAuth.
-  const routeShortcutEnabled = !parked && !isAuthFlowRoute && !settingsDialogOpen;
+  const routeShortcutEnabled = !isAuthFlowRoute && !settingsDialogOpen;
   useShortcut("newChat", () => startNewChat(), {
     enabled: routeShortcutEnabled,
   });
@@ -642,14 +616,14 @@ function RootLayout({ parked = false }: { parked?: boolean }) {
     mounted ? () => void triggerShortcut(id) : null;
   const isOwner = useIsAccountOwner();
   const helpAction = (action: HelpAction) =>
-    parked || isAuthFlowRoute || !helpActionAvailable(action, isOwner) ? null : () => runHelpAction(action);
+    isAuthFlowRoute || !helpActionAvailable(action, isOwner) ? null : () => runHelpAction(action);
   const goTo = (to: string) => () => void navigate({ to });
   const goAction = (enabled: boolean, go: () => void) => (enabled ? go : null);
   // Go > Settings: the pages this account can open.
   const settingsActions = Object.fromEntries(
     SETTINGS_TABS.map((tab) => [
       `settings-${tab}`,
-      !parked && !isAuthFlowRoute && settingsTabVisible(tab, isOwner)
+      !isAuthFlowRoute && settingsTabVisible(tab, isOwner)
         ? () => useSettingsDialogStore.getState().openDialog(tab)
         : null,
     ]),
@@ -756,20 +730,17 @@ function RootLayout({ parked = false }: { parked?: boolean }) {
       <ReloadSnapshotPrivacy />
       {!isAuthFlowRoute && <ChatSettingsHydrationMount />}
       {!isAuthFlowRoute && <LowDiskNoticeMount />}
-      {/* Parked Studio must not leak body-portaled controls over Coding. */}
-      {!parked && <>
-        {!isAuthFlowRoute && <ApiMonitorOverlay />}
-        <HfTokenWarningDialog />
-        <RemoteCodeConsentDialog />
-        <DownloadApprovalDialog />
-        <TransformersUpgradeDialog />
-        <ManagedEngineOfferDialog />
-        <LlmCompressorConsentDialog />
-        {/* At the root, not under /chat: a swap can start from the Hub too. */}
-        <StopRunningChatsDialog />
-        <ImageViewer />
-        {!hideNavbar && <CommandPalette />}
-      </>}
+      {!isAuthFlowRoute && <ApiMonitorOverlay />}
+      <HfTokenWarningDialog />
+      <RemoteCodeConsentDialog />
+      <DownloadApprovalDialog />
+      <TransformersUpgradeDialog />
+      <ManagedEngineOfferDialog />
+      <LlmCompressorConsentDialog />
+      {/* At the root, not under /chat: a swap can start from the Hub too. */}
+      <StopRunningChatsDialog />
+      <ImageViewer />
+      {!hideNavbar && <CommandPalette />}
       {hideNavbar ? (
         <main className="flex-1 pt-[var(--studio-hidden-route-top-inset,0px)] [--studio-titlebar-height:var(--studio-hidden-route-top-inset,0px)]">
           <RouteBoundary readyWhenCommitted={!routeOwnsReloadReadiness}>
@@ -778,7 +749,6 @@ function RootLayout({ parked = false }: { parked?: boolean }) {
         </main>
       ) : (
         <SidebarProvider
-          shortcutEnabled={!parked}
           pinned={pinned}
           setPinned={setPinned}
           togglePinned={togglePinned}
@@ -787,11 +757,11 @@ function RootLayout({ parked = false }: { parked?: boolean }) {
           className="relative !min-h-0 h-[calc(100dvh-var(--studio-titlebar-height,0px))] overflow-hidden"
         >
           <ChatBackground route={isChatRoute ? "chat" : "page"} backdrop />
-          {!parked && <AppSidebar />}
-          {!parked && <SidebarEdgeTrigger />}
+          <AppSidebar />
+          <SidebarEdgeTrigger />
           <SidebarInset
             className={
-              isChatLike
+              ownsItsShell
                 ? "overflow-hidden"
                 :
                   isLibraryRoute
@@ -802,7 +772,7 @@ function RootLayout({ parked = false }: { parked?: boolean }) {
             <Navbar />
             <div
               {...{ [FIND_SCOPE_ATTRIBUTE]: "" }}
-              className={`relative flex min-h-0 min-w-0 flex-1 basis-0 flex-col ${isChatLike ? "overflow-hidden" : "overflow-visible"} ${isChatLike ? "" : nonChatTopInset}`}
+              className={`relative flex min-h-0 min-w-0 flex-1 basis-0 flex-col ${ownsItsShell ? "overflow-hidden" : "overflow-visible"} ${ownsItsShell ? "" : nonChatTopInset}`}
             >
               {/* The find bar floats over this region and searches it: the workspace on screen,
                   without the sidebar, the navbar, or the off-route workspaces parked here under
@@ -884,7 +854,7 @@ function RootLayout({ parked = false }: { parked?: boolean }) {
                   "popLayout" allows the new route to mount immediately while the
                   old one animates out, avoiding blocking on expensive exit renders.
                   See issue #5850. */}
-              {!parked && !isChatRoute && !isImagesRoute && !isVideoRoute && !isAudioRoute && (
+              {!isChatRoute && !isImagesRoute && !isVideoRoute && !isAudioRoute && (
                 <AnimatePresence initial={false} mode="popLayout">
                   <motion.div
                     key={pathname}
@@ -911,11 +881,13 @@ function RootLayout({ parked = false }: { parked?: boolean }) {
   );
 
   return (
-    <CredentialBootstrapGate active={!isAuthFlowRoute} settingsActive={!parked}>
-      {!parked && <SharedRunConfigLinkHandler
-        chatSearch={shouldMountChat ? chatSearch : null}
-      />}
-      {content}
-    </CredentialBootstrapGate>
+    <AppProvider>
+      <CredentialBootstrapGate active={!isAuthFlowRoute}>
+        <SharedRunConfigLinkHandler
+          chatSearch={shouldMountChat ? chatSearch : null}
+        />
+        {content}
+      </CredentialBootstrapGate>
+    </AppProvider>
   );
 }

@@ -334,7 +334,7 @@ test("the workspace chords land where the guard lets them", async () => {
   );
   assert.match(
     SRC__ROOT,
-    /const routeShortcutEnabled = !parked && !isAuthFlowRoute && !settingsDialogOpen;/,
+    /const routeShortcutEnabled = !isAuthFlowRoute && !settingsDialogOpen;/,
   );
   assert.match(
     SRC__ROOT,
@@ -1558,7 +1558,7 @@ test("the published chat lists stop where the sidebar stops", async () => {
   // Plus the icon rail, which hides the groups in CSS rather than dropping them.
   assert.match(
     APP_SIDEBAR,
-    /const chatListsOnScreen =\n\s*!isStudioRoute &&\n\s*!showTrainingRecents &&\n\s*\(isMobile \|\| sidebarState !== "collapsed"\);/,
+    /const chatListsOnScreen =\n\s*!chatSectionsReplaced &&\n\s*\(isMobile \|\| sidebarState !== "collapsed"\);/,
   );
   for (const group of [
     /if \(!chatListsOnScreen \|\| organizeBy !== "project" \|\| !open\) return \[\];/,

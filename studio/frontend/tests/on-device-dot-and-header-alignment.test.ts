@@ -531,7 +531,7 @@ test("every list header takes the same alignment", () => {
       /"sidebar-sticky-label sidebar-sticky-label-following group\/sidebar-header gap-1",\n\s*headerInset,/g,
     ) ?? []
   ).length;
-  assert.equal(shared, 4, "Pinned, custom sections, Projects and Recents");
+  assert.equal(shared, 5, "Pinned, custom sections, Projects, Recents and Coding's Recents");
   assert.ok(!SIDEBAR.includes("translate-x-[2px]"));
 });
 

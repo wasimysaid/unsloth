@@ -159,7 +159,11 @@ test("a route that borrows the section does not bring the row back", async () =>
   );
   assert.match(
     sidebar,
-    /const projectsSectionRendered =\n\s*!isStudioRoute && !showTrainingRecents && projectsSectionConfigured;/,
+    /const chatSectionsReplaced = isStudioRoute \|\| showTrainingRecents \|\| isCodingRoute;/,
+  );
+  assert.match(
+    sidebar,
+    /const projectsSectionRendered =\n\s*!chatSectionsReplaced && projectsSectionConfigured;/,
   );
   const showing = sidebar.slice(
     sidebar.indexOf("const projectsSectionShowing ="),

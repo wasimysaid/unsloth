@@ -1,9 +1,12 @@
 # Coding native execution, recovery, questions, goals, reported changes, rich inputs and concurrency
 
-`/coding` keeps Studio’s authenticated route gate, sidebar primitives and composer
-CSS, without importing ordinary chat execution, tool orchestration, model loading
-or transcript persistence. An already-visited ordinary workspace remains parked,
-not cancelled. Direct coding visits do not mount its model observers.
+`/coding` is a page of Studio's shell: the same authenticated route gate, app
+sidebar and composer CSS as Chat, without importing ordinary chat execution, tool
+orchestration, model loading or transcript persistence. On this route the app
+sidebar's Recents lists the saved coding conversations instead of chats. The
+sidebar and the page are siblings in the shell, so they share one session
+(`shared-session.ts`) that lasts for the tab: leaving the route and coming back
+keeps the opened conversation.
 
 Mimir’s production `studio.frontend` plugin owns Session Control attachments and
 saved public history. The browser keeps only an ephemeral Session View projection;
@@ -621,18 +624,13 @@ cancelled.
 
 ## Saved conversation list
 
-The sidebar mounts only the saved rows near its viewport (`conversation-list.tsx`,
-`@tanstack/react-virtual` on the sidebar's own `SidebarContent` scroll container).
-Every row has a fixed slot (`h-13` plus the 1px menu gap, scaled with the UI font
-size) and the list keeps the height of the whole inventory, so each saved
-conversation is reachable by scrolling. Mounted rows keep `data-conversation-id`,
-`aria-current`, `aria-busy`, the cwd title and the disclosure description, and add
-`aria-posinset`/`aria-setsize`. Tab still moves through the mounted rows; Arrow
-Up/Down, Page Up/Down, Home and End move focus across the whole list, focusing a
-row only once it is mounted, and the focused row stays mounted while scrolled away.
-A newly active conversation is scrolled into view once, not on later refreshes or
-events. Rows outside the window are not in the DOM, so find-in-page and DOM
-selectors only see mounted rows until the list is scrolled to them.
+`coding-recents.tsx` draws the saved conversations in the app sidebar's Recents
+section with the chat row's own shape (one line, the title, and the project folder
+as a quiet trailing label), a page of rows at a time (`ProgressiveRows`). Rows keep
+`data-conversation-id`, `aria-current`, `aria-busy` and the cwd title. The Recents
+header carries **Refresh conversations** and **New conversation**, shown on hover
+or focus like chat's header actions; clicking the **Coding** row while already on
+the route also starts a new conversation, which is the way in from the icon rail.
 
 ## Long-conversation reading (#253)
 

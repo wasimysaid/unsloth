@@ -182,12 +182,12 @@ test("the pin item says Pin, not what it is pinning", () => {
 test("a section's chevron appears on hovering anywhere in it", () => {
   assert.equal(
     (APP_SIDEBAR.match(/group\/sb-section/g) ?? []).length,
-    5,
+    6,
     "a collapsible section is not its own hover group",
   );
   assert.equal(
     (APP_SIDEBAR.match(/group-hover\/sb-section:opacity-100/g) ?? []).length,
-    5,
+    6,
     "a section chevron still waits for its header to be hovered",
   );
   assert.match(

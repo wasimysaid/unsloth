@@ -321,7 +321,7 @@ def run_catalog_scenarios(page, context, base, provider, native, first, report, 
     server_pid = restart_server()
     page.goto(base + "/coding")
     if page.viewport_size["width"] < 768:
-        page.get_by_role("button", name="Toggle sidebar", exact=True).click()
+        page.get_by_role("button", name="Toggle Sidebar", exact=True).click()
     # The narrow sidebar is a sheet that closes on open, so the open reply (not
     # the row's aria-current) identifies the reopened native conversation.
     saved = saved_row(page, conversation)

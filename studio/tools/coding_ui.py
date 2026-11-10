@@ -33,6 +33,13 @@ def saved_row(page, identifier):
     return page.locator(f'{SAVED} button[data-conversation-id="{identifier}"]')
 
 
+def header_action(page, name):
+    """A Recents header button. They show while the header is hovered, as chat's do."""
+    button = page.get_by_role("button", name=name, exact=True)
+    button.locator("xpath=..").hover()
+    return button
+
+
 def show_sidebar(page):
     """Open the narrow-layout sidebar sheet when needed; returns whether this call opened it."""
     expect = _expect()
@@ -42,7 +49,7 @@ def show_sidebar(page):
         return False
     # A row click closes the sheet; let that exit finish before reopening it.
     expect(page.locator(MOBILE_SIDEBAR)).to_have_count(0, timeout=60000)
-    page.get_by_role("button", name="Toggle sidebar", exact=True).click()
+    page.get_by_role("button", name="Toggle Sidebar", exact=True).click()
     expect(page.locator(SAVED)).to_be_attached(timeout=60000)
     return True
 
@@ -95,7 +102,7 @@ def create_conversation(context, base, headers, project, **body):
 def refresh_saved(page):
     expect = _expect()
     show_sidebar(page)
-    refresh = page.get_by_role("button", name="Refresh conversations", exact=True)
+    refresh = header_action(page, "Refresh conversations")
     expect(refresh).to_be_enabled(timeout=60000)
     with page.expect_response(lambda response: urlparse(response.url).path == "/api/coding/conversations"
                               and response.request.method == "GET", timeout=60000):

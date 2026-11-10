@@ -364,7 +364,7 @@ class InteractionRun:
         self.stage("new-conversation-blank")
         page, expect = self.page, self.expect
         before = self.creations()
-        page.get_by_role("button", name="New conversation", exact=True).click()
+        coding_ui.header_action(page, "New conversation").click()
         self.snapshot("new-conversation")
         assert page.get_by_role("dialog").count() == 0, "New conversation forced the folder picker"
         expect(page.get_by_test_id("coding-opened-conversation")).to_have_text("New conversation")

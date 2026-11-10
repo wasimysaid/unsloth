@@ -11,7 +11,7 @@ import re
 import time
 
 from coding_recovery_scenarios import captured_state
-from coding_ui import create_and_open, expect_connected, expect_opened, opened_id, saved_row
+from coding_ui import create_and_open, expect_connected, expect_opened, header_action, opened_id, saved_row
 
 
 def run_concurrency_scenarios(page, context, base, provider, first, second, second_id,
@@ -141,7 +141,7 @@ def run_concurrency_scenarios(page, context, base, provider, first, second, seco
     # Choosing it only selects the landing folder, and a landing Send would also
     # auto-send its text, so the idle conversation is created in the selected
     # folder through the authenticated API and deliberately opened from the sidebar.
-    page.get_by_role("button", name="New conversation", exact=True).click()
+    header_action(page, "New conversation").click()
     page.get_by_test_id("coding-project-chooser").click()
     page.get_by_role("menuitem", name="Choose folder…", exact=True).click()
     page.get_by_label("Host folder path", exact=True).fill(str(alias))

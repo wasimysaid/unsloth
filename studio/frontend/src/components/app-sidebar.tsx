@@ -141,9 +141,10 @@ import {
   LeftToRightListBulletIcon,
   LayerIcon,
   ApiIcon,
+  SourceCodeIcon,
   Clock01Icon,
 } from "@hugeicons/core-free-icons";
-import { Folder01Icon, Folder02Icon, FolderExportIcon } from "@/lib/folder-icons";
+import { Folder02Icon, FolderExportIcon } from "@/lib/folder-icons";
 import { Copy01Icon } from "@/lib/copy-icon";
 import { AiSpeechIcon, ChipIcon, MessageCircleIcon, Settings01Icon, TestTubeOutlineIcon, TrashIcon, withNoticeDot } from "@/lib/hugeicons-derived";
 import {
@@ -290,6 +291,8 @@ import type { TrainingRunSummary } from "@/features/training";
 import { useExportRuntimeStore } from "@/features/export";
 import {
   Fragment,
+  Suspense,
+  lazy,
   useCallback,
   useEffect,
   useMemo,
@@ -416,6 +419,14 @@ const MOVE_TO_MAX = 12;
 // Folder rows match their hover pill.
 const DROP_INTO_ROW_CUE = `${DROP_CUE_CLASS} before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:bottom-px before:rounded-full before:bg-wash-8 before:border-[1.5px] before:border-foreground before:content-['']`;
 /** Reports while it is mounted, so a folder row ProgressiveRows has not drawn reads nothing. */
+// Coding's conversations take the Recents slot on its route; loaded with the route's own chunk.
+const CodingRecents = lazy(() =>
+  import("@/features/coding/coding-recents").then((m) => ({ default: m.CodingRecents })),
+);
+const CodingRecentsActions = lazy(() =>
+  import("@/features/coding/coding-recents").then((m) => ({ default: m.CodingRecentsActions })),
+);
+
 function MountedFolder({
   id,
   onChange,
@@ -1457,6 +1468,7 @@ export function AppSidebar() {
 
   const isChatRoute = pathname.startsWith("/chat");
   const isStudioRoute = pathname === "/studio" || pathname.startsWith("/studio/");
+  const isCodingRoute = pathname === "/coding";
   const [chatOpen, setChatOpen] = useState(true);
 
   const [morePinnedOpen, setMorePinnedOpen] = useState(false);
@@ -1487,6 +1499,7 @@ export function AppSidebar() {
     if (!(next && moreFocusReturning.current)) setMoreTooltipOpen(next);
   }, []);
   const [runsOpen, setRunsOpen] = useState(true);
+  const [codingOpen, setCodingOpen] = useState(true);
 
   useEffect(() => {
     if (!isChatRoute) return;
@@ -1596,6 +1609,8 @@ export function AppSidebar() {
   );
   const showTrainingRecents =
     !trainUnavailable && trainingRecentsRoute && runItems.length > 0;
+  // Train, its runs and Coding each put their own list where the chat sections go.
+  const chatSectionsReplaced = isStudioRoute || showTrainingRecents || isCodingRoute;
   const { displayTitle, avatarDataUrl } = useEffectiveProfile();
 
   const { projects, hasLoaded: projectsLoaded } = useChatProjects();
@@ -1656,7 +1671,7 @@ export function AppSidebar() {
     !projectsSectionHidden &&
     (projects.length > 0 || projectsLoaded);
   const projectsSectionRendered =
-    !isStudioRoute && !showTrainingRecents && projectsSectionConfigured;
+    !chatSectionsReplaced && projectsSectionConfigured;
   // Deliberately not the rendered flag: Train and Recipes swap the section for their runs, and a
   // row reappearing there reads as a setting turning itself back on. The icon rail is the one
   // exception, since it hides the section in CSS without unmounting it and the row is then the
@@ -2376,8 +2391,7 @@ export function AppSidebar() {
   // Whole lists, not visible slices, so a drop cannot lose rows hidden by "Show more".
   // Mobile sheet excluded: it would strand the chords on narrow windows.
   const chatListsOnScreen =
-    !isStudioRoute &&
-    !showTrainingRecents &&
+    !chatSectionsReplaced &&
     (isMobile || sidebarState !== "collapsed");
   // Selecting needs the rows, not just the lists. A closed mobile sheet unmounts them as the icon
   // rail does, so Select All would build a selection with nothing on screen and Archive, Pin and Mark
@@ -4598,7 +4612,7 @@ export function AppSidebar() {
   // Pinned: folders and chats in one list, in the order they were dropped into.
   function renderPinnedSection(): ReactNode {
     // Kept while pages are filed elsewhere, so they can be dragged back.
-    if (isStudioRoute || showTrainingRecents || (pinnedRows.length === 0 && pinnedPages.length === 0)) return null;
+    if (chatSectionsReplaced || (pinnedRows.length === 0 && pinnedPages.length === 0)) return null;
     const firstPinnedRow = pinnedRows[0];
     return (
       <Collapsible open={pinnedOpen} onOpenChange={setPinnedOpen} asChild>
@@ -4710,7 +4724,7 @@ export function AppSidebar() {
 
   // Drawn empty too: a new section is somewhere to drag to.
   function renderCustomSection(section: SidebarCustomSection): ReactNode {
-    if (isStudioRoute || showTrainingRecents || hiddenSectionSet.has(section.id)) return null;
+    if (chatSectionsReplaced || hiddenSectionSet.has(section.id)) return null;
     const scope = customSectionScope(section.id);
     const rows = customSectionRows.get(section.id) ?? [];
     const ids = customSectionIds.get(section.id) ?? {
@@ -6115,12 +6129,17 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               <NavItem
-                icon={Folder01Icon}
+                icon={SourceCodeIcon}
                 label="Coding"
-                active={false}
+                active={isCodingRoute}
                 testId="nav-row-coding"
                 onClick={() => {
-                  void navigate({ to: "/coding" });
+                  // Already there: the row starts a new conversation, as the rail has no other way to.
+                  if (isCodingRoute) {
+                    void import("@/features/coding/shared-session").then((m) =>
+                      m.codingSession.startNew(),
+                    );
+                  } else void navigate({ to: "/coding" });
                   closeMobileIfOpen();
                 }}
               />
@@ -6384,7 +6403,7 @@ export function AppSidebar() {
           <Fragment key={key}>{renderOrderedSection(key)}</Fragment>
         ))}
 
-        {!isStudioRoute && !showTrainingRecents && (
+        {!chatSectionsReplaced && (
           <Collapsible open={chatOpen} onOpenChange={setChatOpen} asChild>
             <SidebarGroup className="group/sb-section group-data-[collapsible=icon]:hidden px-0 py-0">
               <SidebarGroupLabel
@@ -6478,6 +6497,35 @@ export function AppSidebar() {
                         {t("shell.navigation.noChatsYet")}
                       </p>
                     )}
+                </SidebarGroupContent>
+              </CollapsibleContent>
+            </SidebarGroup>
+          </Collapsible>
+        )}
+
+        {isCodingRoute && (
+          <Collapsible open={codingOpen} onOpenChange={setCodingOpen} asChild>
+            <SidebarGroup className="group/sb-section group-data-[collapsible=icon]:hidden px-0 py-0">
+              <SidebarGroupLabel
+                className={cn(
+                  "sidebar-sticky-label sidebar-sticky-label-following group/sidebar-header gap-1",
+                  headerInset,
+                  scrolled && "is-scrolled",
+                )}
+              >
+                <CollapsibleTrigger className="cursor-pointer flex min-w-0 flex-1 items-center gap-1 group/sb-collap">
+                  {t("shell.navigation.recents")}
+                  <HugeiconsIcon icon={ChevronDownStandardIcon} className="size-3.5 opacity-0 transition-[transform,opacity] duration-200 group-hover/sb-section:opacity-100 group-hover/sb-collap:opacity-100 group-focus-visible/sb-collap:opacity-100 data-[state=open]:rotate-0 [[data-state=closed]_&]:rotate-[-90deg] [[data-state=closed]_&]:opacity-100" />
+                </CollapsibleTrigger>
+                <Suspense fallback={null}>
+                  <CodingRecentsActions />
+                </Suspense>
+              </SidebarGroupLabel>
+              <CollapsibleContent>
+                <SidebarGroupContent className={cn(unrailedRowPadding, "relative")}>
+                  <Suspense fallback={null}>
+                    <CodingRecents />
+                  </Suspense>
                 </SidebarGroupContent>
               </CollapsibleContent>
             </SidebarGroup>

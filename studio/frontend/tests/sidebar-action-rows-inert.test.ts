@@ -84,7 +84,7 @@ test("navigation rows align while the profile footer ignores the scroll rail", a
     /const unrailedRowPadding = usesDesktopTitlebar \? "px-\[5px\]" : "px-1\.5"/,
   );
   assert.equal(source.match(/(?<!const )rowPadding[,}]/g)?.length, 1);
-  assert.equal(source.match(/unrailedRowPadding[,}]/g)?.length, 7);
+  assert.equal(source.match(/unrailedRowPadding[,}]/g)?.length, 8);
 
   const footer = source
     .split("<SidebarFooter")[1]

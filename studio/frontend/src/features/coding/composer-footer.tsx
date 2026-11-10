@@ -7,7 +7,7 @@ import {
 } from "@/components/ui/popover";
 import { Folder, LoaderCircle, Map as MapIcon, X } from "lucide-react";
 import type { SessionUsage } from "./command-types";
-import { projectName } from "./conversation-list";
+import { projectName } from "./project-name";
 import type { CodingRun, CodingRunState } from "./run-session";
 import { codingModeControlReason } from "./run-session";
 

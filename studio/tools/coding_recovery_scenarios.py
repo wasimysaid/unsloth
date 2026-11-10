@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import urllib.request
 
-from coding_ui import expect_connected, expect_opened, opened_id, prompt, saved_row
+from coding_ui import expect_connected, expect_opened, header_action, opened_id, prompt, saved_row
 
 # The send explanation names the first blocker; it replaces disabled-prompt checks
 # because typing stays enabled while native admission is withheld.
@@ -313,7 +313,7 @@ def run_recovery_scenarios(page, context, base, provider, first, second_id, repo
     page.route(create_url, lose_create_ack)
     # Choosing a folder only selects it; the landing Send creates the
     # conversation and would then send its text once, only after a confirmed open.
-    page.get_by_role("button", name="New conversation", exact=True).click()
+    header_action(page, "New conversation").click()
     page.get_by_test_id("coding-project-chooser").click()
     page.get_by_role("menuitem", name="Choose folder…", exact=True).click()
     page.get_by_label("Host folder path", exact=True).fill(str(uncertain_project))

@@ -334,7 +334,7 @@ def run_child_scenarios(page, context, base, provider, first, second_id, report,
     # Full navigation must reconstruct historical row identities from native
     # saved data, not just the previous tab's in-memory live child inventory.
     page.reload()
-    page.get_by_role("button", name="Toggle sidebar", exact=True).click()
+    page.get_by_role("button", name="Toggle Sidebar", exact=True).click()
     # The narrow sidebar sheet unmounts its rows once one is chosen, so the
     # open response and the composer's canonical folder identify the reopen.
     with page.expect_response(lambda response: response.url == base + f"/api/coding/conversations/{conversation}/open"

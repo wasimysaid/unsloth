@@ -49,7 +49,7 @@ def run_retirement_scenarios(page, context, base, provider, first, second_id,
     def switch(identifier):
         button = saved_row(page, identifier)
         if not button.is_visible():
-            page.get_by_role("button", name="Toggle sidebar", exact=True).click()
+            page.get_by_role("button", name="Toggle Sidebar", exact=True).click()
         expect(button).to_be_visible(timeout=60000)
         button.click()
         expect_opened(page, identifier)

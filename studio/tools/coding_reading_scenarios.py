@@ -301,7 +301,7 @@ def run_reading_scenarios(page, context, base, provider, first, second_id,
         saved = saved_row(page, identifier)
         narrow = page.viewport_size["width"] < 768
         if narrow and not saved.is_visible():
-            page.get_by_role("button", name="Toggle sidebar", exact=True).click()
+            page.get_by_role("button", name="Toggle Sidebar", exact=True).click()
         expect(saved).to_be_visible(timeout=60000)
         # Every deliberate (even same-ID) open mounts a fresh view; await it
         # rather than asserting against the departing one.

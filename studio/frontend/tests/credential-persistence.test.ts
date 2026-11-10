@@ -693,11 +693,11 @@ test("credential gate follows authentication session transitions", () => {
   assert.match(rootSource, /AUTH_SESSION_STORED_EVENT, reconcile/);
   assert.match(
     rootSource,
-    /<CredentialBootstrapGate active=\{!isAuthFlowRoute\} settingsActive=\{!parked\}>/,
+    /<CredentialBootstrapGate active=\{!isAuthFlowRoute\}>/,
   );
   assert.match(
     rootSource,
-    /<SettingsDialogMount active=\{active && ready && settingsActive\} \/>/,
+    /<SettingsDialogMount active=\{active && ready\} \/>/,
   );
   assert.match(
     rootSource,

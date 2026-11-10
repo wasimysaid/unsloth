@@ -28,6 +28,6 @@ test("handoff keeps app geometry and identity while deferring native intents", (
   assert.match(source, /\{showApp && <NativeIntentDrain \/>\}/);
   assert.match(source, /fixed inset-0 z-40 bg-background/);
   const root = readSrc("app/routes/__root.tsx");
-  assert.match(root, /<CredentialBootstrapGate active=\{!isAuthFlowRoute\} settingsActive=\{!parked\}>/);
+  assert.match(root, /<CredentialBootstrapGate active=\{!isAuthFlowRoute\}>/);
   assert.match(root, /\{active && !ready \? <RouteFallback \/> : children\}/);
 });

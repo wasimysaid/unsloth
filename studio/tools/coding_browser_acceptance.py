@@ -63,7 +63,7 @@ from coding_concurrency_scenarios import run_concurrency_scenarios
 from coding_child_scenarios import CHILD_EVENT_CAPTURE, run_child_scenarios
 from coding_file_change_scenarios import LIVE_PROFILE_OBSERVER, run_file_change_scenarios
 from coding_reading_scenarios import READING_VIEW_FAULT, run_reading_scenarios
-from coding_ui import create_and_open, expect_connected, expect_opened, open_saved, prompt, refresh_saved, saved_row, show_sidebar
+from coding_ui import create_and_open, expect_connected, expect_opened, header_action, open_saved, prompt, refresh_saved, saved_row, show_sidebar
 
 
 WORKLOADS = ("opening", "deterministic", "picker", "catalog", "recovery", "maintenance", "plan", "goals", "questions", "commands", "retirement", "concurrency", "children", "inputs", "live", "inputs-live", "file-changes", "file-changes-live", "reading")
@@ -383,7 +383,7 @@ def main() -> None:
             for name, message in (("native-missing", "does not exist"), ("native-denied", "denies access")):
                 changing = projects / name
                 changing.mkdir(exist_ok = True)
-                page.get_by_role("button", name = "New conversation", exact = True).click()
+                header_action(page, "New conversation").click()
                 expect(page.get_by_test_id("coding-opened-conversation")).to_have_text("New conversation")
                 select_folder(changing)
                 if name == "native-missing":
@@ -575,7 +575,7 @@ def main() -> None:
             page.set_viewport_size({"width": 390, "height": 844})
             # The folder chooser belongs to a new conversation's landing.
             show_sidebar(page)
-            page.get_by_role("button", name = "New conversation", exact = True).click()
+            header_action(page, "New conversation").click()
             expect(chooser).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
             chooser.click()
