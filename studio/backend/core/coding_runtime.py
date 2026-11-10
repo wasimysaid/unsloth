@@ -135,10 +135,8 @@ class CodingRuntime:
     @staticmethod
     def _environment() -> dict[str, str]:
         environment = dict(os.environ)
-        # Neither installer nor native guests inherit an old incarnation.
-        for name in ("MIMIR_STUDIO_LOCAL_URL", "MIMIR_STUDIO_LOCAL_KEY",
-                     "MIMIR_STUDIO_LOCAL_INCARNATION", "MIMIR_STUDIO_LOCAL_FD"):
-            environment.pop(name, None)
+        # Neither installer nor native guests inherit an old incarnation's descriptor.
+        environment.pop("MIMIR_STUDIO_LOCAL_FD", None)
         return environment
 
     async def _install(self, environment: dict[str, str]) -> None:

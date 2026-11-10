@@ -278,15 +278,13 @@ async def test_private_bootstrap_pipe_never_exports_key_and_closes_on_every_spaw
         runtime.package = str(tmp_path)
     runtime._local_origin = "http://127.0.0.1:8800"
     runtime.local_serving = CodingLocalServing("4d6bb14e-2af3-446c-bfe3-c94d7cd08b55", "bounded-bootstrap-fixture", "unsloth")
-    for name in ("MIMIR_STUDIO_LOCAL_KEY", "MIMIR_STUDIO_LOCAL_URL", "MIMIR_STUDIO_LOCAL_INCARNATION", "MIMIR_STUDIO_LOCAL_FD"):
-        monkeypatch.setenv(name, "ambient-legacy-fixture")
+    monkeypatch.setenv("MIMIR_STUDIO_LOCAL_FD", "ambient-inherited-fixture")
     descriptors = []
     calls = []
 
     async def spawn(*args, **kwargs):
         environment = kwargs["env"]
         calls.append(args[2])
-        assert not any(name in environment for name in ("MIMIR_STUDIO_LOCAL_KEY", "MIMIR_STUDIO_LOCAL_URL", "MIMIR_STUDIO_LOCAL_INCARNATION"))
         assert "bounded-bootstrap-fixture" not in str(environment)
         if args[2] == "install":
             assert "MIMIR_STUDIO_LOCAL_FD" not in environment

@@ -11,7 +11,6 @@ import asyncio
 import functools
 import hashlib
 import os
-import re
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -21,8 +20,6 @@ PROVIDER_ID = "studio-local"
 PROVIDER_NAME = "Studio local"
 _CHAT = SimpleNamespace(can_chat = True)
 _NO_REASONING = (False, False, ())
-# An absolute POSIX or Windows path in free text, not the path part of a URL.
-_HOST_PATH = re.compile(r"(?<![\w:/\\])(?:[A-Za-z]:)?[/\\](?:[^\s/\\'\"]+[/\\])*([^\s/\\'\"]*)")
 
 
 def reasoning_controls(path: str | None, model_id: str) -> dict:
@@ -144,9 +141,9 @@ def _load_error(exc: BaseException) -> CodingRuntimeError:
     detail = exc.detail.get("message") if isinstance(exc.detail, dict) else exc.detail
     if isinstance(detail, str) and detail.strip():
         from hub.utils.download_registry import scrub_secrets
+        from hub.utils.host_paths import redact_paths_in_text
 
-        # Keep only file names: host paths are not shown to the native runtime.
-        reason = _HOST_PATH.sub(r"\1", scrub_secrets(detail.strip()))[:400]
+        reason = redact_paths_in_text(scrub_secrets(detail.strip()))[:400]
     else:
         reason = "Studio refused the load without a reason."
     if exc.status_code == 409:
@@ -232,7 +229,6 @@ class CodingLocalServing:
             operation.task.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
         if operation.error:
             raise operation.error
-        assert operation.task is not None
         return await asyncio.shield(operation.task)
 
     def inspect(self, identifier: str) -> dict:
