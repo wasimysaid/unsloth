@@ -126,7 +126,6 @@ async def test_host_origin_is_socket_not_browser_host_and_key_is_revoked(coding_
     assert runtime._local_origin == "http://127.0.0.1:8800"
     key = runtime.local_serving.key
     assert storage.validate_api_key(key) == "unsloth"
-    assert key not in str(runtime.diagnostics())
     await runtime.close()
     assert storage.validate_api_key(key) is None
 

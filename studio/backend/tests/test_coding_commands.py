@@ -10,7 +10,7 @@ from .test_coding import coding_app  # Reuse the isolated authenticated app fixt
 
 
 @pytest.mark.asyncio
-async def test_commands_and_bounded_diagnostics_preserve_native_shapes(coding_app):
+async def test_commands_preserve_native_shapes(coding_app):
     app, headers = coding_app
     calls = []
 
@@ -20,11 +20,9 @@ async def test_commands_and_bounded_diagnostics_preserve_native_shapes(coding_ap
             calls.append((method, params))
             if method == "commands":
                 return {"conversation_id": params["conversation_id"], "commands": [{"name": "project:inspect", "aliases": ["inspect"], "description": "Contributed command", "argument": "path", "availability": "any"}]}
-            if method == "command":
-                if params["name"] == "compress":
-                    raise CodingRuntimeError("busy", "Native session is busy")
-                return {"conversation_id": params["conversation_id"], "outcome": "display", "text": "Native transient output"}
-            return {"conversation_id": params["conversation_id"], "kind": params["kind"], "data": {"supported": True}}
+            if params["name"] == "compress":
+                raise CodingRuntimeError("busy", "Native session is busy")
+            return {"conversation_id": params["conversation_id"], "outcome": "display", "text": "Native transient output"}
 
     app.state.coding_runtime = Runtime()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
@@ -35,11 +33,7 @@ async def test_commands_and_bounded_diagnostics_preserve_native_shapes(coding_ap
         assert result.json() == {"conversation_id": "exact-id", "outcome": "display", "text": "Native transient output"}
         busy = await client.post("/api/coding/conversations/exact-id/commands", json={"operation_id": "busy-op", "name": "compress"})
         assert busy.status_code == 409 and busy.json()["detail"] == "Native session is busy"
-        for kind in ("context", "tokens", "retry", "execution"):
-            result = await client.get(f"/api/coding/conversations/exact-id/diagnostics/{kind}")
-            assert result.status_code == 200 and result.json()["kind"] == kind
-    assert calls[:3] == [("commands", {"conversation_id": "exact-id"}), ("command", {"conversation_id": "exact-id", "operation_id": "inspect-op", "name": "inspect", "tail": "a path"}), ("command", {"conversation_id": "exact-id", "operation_id": "busy-op", "name": "compress", "tail": ""})]
-    assert [params["kind"] for method, params in calls if method == "diagnostics"] == ["context", "tokens", "retry", "execution"]
+    assert calls == [("commands", {"conversation_id": "exact-id"}), ("command", {"conversation_id": "exact-id", "operation_id": "inspect-op", "name": "inspect", "tail": "a path"}), ("command", {"conversation_id": "exact-id", "operation_id": "busy-op", "name": "compress", "tail": ""})]
 
 
 @pytest.mark.asyncio
@@ -63,7 +57,7 @@ async def test_unsupported_native_command_is_a_client_refusal_not_a_gateway_fail
 
 
 @pytest.mark.asyncio
-async def test_slash_prompt_bypass_and_invalid_diagnostics_never_reach_native_execution(coding_app):
+async def test_slash_prompt_bypass_and_invalid_commands_never_reach_native_execution(coding_app):
     app, headers = coding_app
 
     class Runtime:
@@ -77,4 +71,3 @@ async def test_slash_prompt_bypass_and_invalid_diagnostics_never_reach_native_ex
             assert response.status_code == 400 and "no model prompt" in response.json()["detail"]
         for body in ({"name": ""}, {"name": "/compress"}, {"name": "two names"}, {"name": "inspect", "tail": "x" * 16385}, {"name": "inspect", "api_key": "must-not-pass"}):
             assert (await client.post("/api/coding/conversations/exact-id/commands", json={"operation_id": "validation-op", **body})).status_code == 422
-        assert (await client.get("/api/coding/conversations/exact-id/diagnostics/config" )).status_code == 422

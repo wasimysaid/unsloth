@@ -322,32 +322,6 @@ class CodingRuntime:
         self._local_credential_generation = credential_generation
         self.local_serving = CodingLocalServing(incarnation, key, subject)
 
-    def diagnostics(self) -> dict[str, Any]:
-        """Bounded supervisor facts only; inspecting must not start/restart Mimir.
-
-        Never expose executable/package paths, environment, stderr, pending command
-        bodies, raw exceptions or credentials. Session execution remains native.
-        """
-        if self._closing:
-            connection = "closing"
-        elif self._failure:
-            connection = "disconnected"
-        elif self.process is None:
-            connection = "not_started"
-        elif self.process.returncode is not None:
-            connection = "exited"
-        else:
-            connection = "connected"
-        return {
-            "connection": connection,
-            "frontend_plugin": PLUGIN_ID,
-            "protocol": 1,
-            "pending_commands": len(self._pending),
-            "open_views": len(self._subscriptions),
-            "command_timeout_seconds": COMMAND_TIMEOUT,
-            "max_frame_bytes": MAX_FRAME,
-        }
-
     async def start(self, *, maintenance: bool = False) -> None:
         async with self._start_lock:
             if self._maintaining and not maintenance:
@@ -589,16 +563,10 @@ class CodingRuntime:
                 result = {**result, "info": {**result["info"], "runtime_generation": generation}}
             return result
         except TimeoutError as exc:
-            reconciliation = (
-                "load the saved MCP version for comparison before deliberately retrying. Your draft is retained."
-                if method == "mcp_save" else
-                "inspect the exact native MCP operation before another apply or reconnect. Saved configuration and drafts are retained."
-                if method in {"mcp_apply", "mcp_reconnect"} else
-                "reconnect the native view to reconcile its state. Prompt retries must reuse "
-                "the original submission identity; do not blindly retry other commands."
-            )
             raise CodingRuntimeError(
-                "uncertain", "Mimir has not confirmed this operation. It was not retried; " + reconciliation,
+                "uncertain", "Mimir has not confirmed this operation. It was not retried; "
+                "reconnect the native view to reconcile its state. Prompt retries must reuse "
+                "the original submission identity; do not blindly retry other commands.",
             ) from exc
         except (BrokenPipeError, ConnectionResetError) as exc:
             raise CodingRuntimeError("disconnected", "The coding runtime disconnected; nothing was replayed.") from exc

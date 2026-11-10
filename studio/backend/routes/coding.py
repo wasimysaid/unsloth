@@ -12,9 +12,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Path as ApiPath, Query, Request
-from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from auth.authentication import get_current_credential
@@ -445,32 +443,6 @@ async def browse_projects(path: str | None = Query(default = None, max_length = 
     return await asyncio.to_thread(_browse, path)
 
 
-@router.get("/diagnostics")
-async def diagnostics(request: Request):
-    # Does not launch Mimir. This is transport state, not a second execution owner.
-    return runtime_for(request.app).diagnostics()
-
-
-@router.get("/conversations/{conversation_id}/extensions")
-async def extensions(conversation_id: str, request: Request,
-                     operation_id: str | None = Query(default = None, min_length = 1, max_length = 128, pattern = r"^[A-Za-z0-9_-]+$")):
-    params = {"conversation_id": conversation_id}
-    if operation_id is not None:
-        params["operation_id"] = operation_id
-    return await _command(request, "extensions.inspect", params)
-
-
-class PluginReload(BaseModel):
-    model_config = ConfigDict(extra = "forbid")
-    operation_id: str = Field(min_length = 1, max_length = 128, pattern = r"^[A-Za-z0-9_-]+$")
-
-
-@router.post("/conversations/{conversation_id}/plugins/reload")
-async def reload_plugins(conversation_id: str, body: PluginReload, request: Request):
-    # No retry, cancellation, MCP apply, catalog refresh or frontend replacement.
-    return await _command(request, "plugins.reload", {"conversation_id": conversation_id, **body.model_dump()})
-
-
 @router.get("/catalog")
 async def catalog(request: Request, cwd: str | None = Query(default = None, min_length = 1, max_length = 32768)):
     # Model choices before any folder is chosen are the host home's effective settings.
@@ -621,12 +593,6 @@ async def inspect_command_receipt(conversation_id: str, operation_id: str, reque
     return await _command(request, "command_receipt", {"conversation_id": conversation_id, "operation_id": operation_id})
 
 
-@router.get("/conversations/{conversation_id}/diagnostics/{kind}")
-async def inspect_diagnostics(conversation_id: str, kind: Literal["context", "tokens", "retry", "execution"], request: Request):
-    # Native plugin returns an allowlisted bounded projection, never raw logs/config.
-    return await _command(request, "diagnostics", {"conversation_id": conversation_id, "kind": kind})
-
-
 @router.post("/conversations/{conversation_id}/entries")
 async def read_entries(conversation_id: str, body: HistorySelection, request: Request,
                        generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
@@ -687,95 +653,3 @@ async def conversation_events(conversation_id: str, request: Request,
 
     # Only this view is released on disconnect; native conversation owners survive.
     return NativeViewResponse(events(), runtime, subscription)
-
-
-class McpSettingsRoute(APIRoute):
-    """Do not echo raw MCP definitions in FastAPI's validation diagnostics."""
-    def get_route_handler(self):
-        handler = super().get_route_handler()
-
-        async def sanitized(request: Request):
-            try:
-                response = await handler(request)
-            except RequestValidationError:
-                response = JSONResponse(
-                    status_code = 422,
-                    content = {"detail": "Invalid MCP Settings request. Check the source, server name, edit identity, revision and definition size. Your draft was not saved."},
-                )
-            response.headers["Cache-Control"] = "no-store"
-            return response
-
-        return sanitized
-
-
-class McpEditRequest(BaseModel):
-    model_config = ConfigDict(extra = "forbid", strict = True)
-    source: str = Field(min_length = 1, max_length = 256)
-    name: str = Field(min_length = 1, max_length = 256)
-
-
-class McpEditIdentity(BaseModel):
-    model_config = ConfigDict(extra = "forbid", strict = True)
-    edit_id: str = Field(min_length = 1, max_length = 256)
-
-
-class McpSaveRequest(McpEditIdentity):
-    revision: str = Field(min_length = 1, max_length = 256)
-    definition_json: str = Field(alias = "json", max_length = 524288)
-
-
-mcp_router = APIRouter(route_class = McpSettingsRoute)
-
-
-@mcp_router.get("/conversations/{conversation_id}/mcp/inventory")
-async def mcp_inventory(conversation_id: str, request: Request):
-    # Neither a read nor save opens/closes a session, grants trust, or applies changes.
-    return await _command(request, "mcp_inventory", {"conversation_id": conversation_id})
-
-
-@mcp_router.post("/conversations/{conversation_id}/mcp/edit")
-async def mcp_edit(conversation_id: str, body: McpEditRequest, request: Request):
-    # Source is an opaque native identifier, never a Studio-resolved file path.
-    return await _command(request, "mcp_edit", {"conversation_id": conversation_id, **body.model_dump()})
-
-
-@mcp_router.post("/conversations/{conversation_id}/mcp/save")
-async def mcp_save(conversation_id: str, body: McpSaveRequest, request: Request):
-    return await _command(request, "mcp_save", {"conversation_id": conversation_id, **body.model_dump(by_alias = True)})
-
-
-@mcp_router.post("/conversations/{conversation_id}/mcp/release")
-async def mcp_release_edit(conversation_id: str, body: McpEditIdentity, request: Request):
-    # Drop only an obsolete editor handle, never a conversation or MCP attachment.
-    return await _command(request, "mcp_release_edit", {"conversation_id": conversation_id, **body.model_dump()})
-
-
-class McpOperationRequest(BaseModel):
-    model_config = ConfigDict(extra = "forbid", strict = True)
-    operation_id: str = Field(min_length = 1, max_length = 128)
-
-
-class McpReconnectRequest(McpOperationRequest):
-    name: str | None = Field(default = None, min_length = 1, max_length = 256)
-
-
-@mcp_router.post("/conversations/{conversation_id}/mcp/apply")
-async def mcp_apply(conversation_id: str, body: McpOperationRequest, request: Request):
-    # Native admission refuses active work; no Stop, reload, restart or transport retry.
-    return await _command(request, "mcp_apply", {"conversation_id": conversation_id, **body.model_dump()})
-
-
-@mcp_router.post("/conversations/{conversation_id}/mcp/reconnect")
-async def mcp_reconnect(conversation_id: str, body: McpReconnectRequest, request: Request):
-    # Configured connections retain their session owner, never transient SDK grants.
-    return await _command(request, "mcp_reconnect", {"conversation_id": conversation_id, **body.model_dump()})
-
-
-@mcp_router.get("/conversations/{conversation_id}/mcp/operations/{operation_id}")
-async def mcp_inspect_operation(conversation_id: str, request: Request,
-                                operation_id: str = ApiPath(min_length = 1, max_length = 128)):
-    # Read-only reconciliation of this exact operation. Absence is unknown, not failure.
-    return await _command(request, "mcp_inspect_operation", {"conversation_id": conversation_id, "operation_id": operation_id})
-
-
-router.include_router(mcp_router)
