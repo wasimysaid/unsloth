@@ -57,7 +57,7 @@ async def test_rich_input_crosses_transport_without_rewriting_exact_key_ranges_o
     app, headers = coding_app
     calls = []
     class Runtime(RuntimeDouble):
-        async def command(self, method, params, *, expected_generation=None):
+        async def command(self, method, params, *, expected_generation = None):
             assert expected_generation == 1
             calls.append((method, params))
             return {"conversation_id": params["conversation_id"], "submission_key": params["submission_key"], "request_id": "native"}
@@ -104,7 +104,7 @@ async def test_invalid_inputs_rejected_before_native_transport(coding_app, extra
 async def test_native_supported_input_failure_is_explicit_not_silent_drop(coding_app):
     app, headers = coding_app
     class Runtime(RuntimeDouble):
-        async def command(self, method, params, *, expected_generation=None):
+        async def command(self, method, params, *, expected_generation = None):
             assert expected_generation == 1
             assert method == "prompt" and params["images"][0]["data"] == PNG
             raise CodingRuntimeError("invalid", "Selected provider does not support image input.")
@@ -128,7 +128,7 @@ async def test_large_image_and_typed_subagent_reach_exact_generation(coding_app)
     app, headers = coding_app
     calls = []
     class Runtime(RuntimeDouble):
-        async def command(self, method, params, *, expected_generation=None):
+        async def command(self, method, params, *, expected_generation = None):
             calls.append((method, params, expected_generation))
             return {"request_id": "accepted-native", "submission_key": params["submission_key"]}
     app.state.coding_runtime = Runtime()

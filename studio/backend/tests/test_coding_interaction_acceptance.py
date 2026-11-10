@@ -25,7 +25,7 @@ class InteractionDriverTests(unittest.TestCase):
         text = 'é 😀 @"notes/é report.txt" @notes/ Inspect.'
         encoded = text.encode()
         mentions = []
-        for item, token in zip(selected, ('@"notes/é report.txt"', "@notes/"), strict=True):
+        for item, token in zip(selected, ('@"notes/é report.txt"', "@notes/"), strict = True):
             start = encoded.index(token.encode())
             mentions.append({**item, "start": start, "end": start + len(token.encode())})
         return {"text": text, "file_mentions": mentions}, selected
@@ -84,10 +84,10 @@ class InteractionDriverTests(unittest.TestCase):
             {"text": expected["text"], "images": expected["images"] * 2},
         ]
         for actual in mutations:
-            with self.subTest(actual=actual), self.assertRaises(AssertionError):
+            with self.subTest(actual = actual), self.assertRaises(AssertionError):
                 driver.assert_rich_draft(actual, expected, 1)
         for count in (0, 2):
-            with self.subTest(create_count=count), self.assertRaises(AssertionError):
+            with self.subTest(create_count = count), self.assertRaises(AssertionError):
                 driver.assert_rich_draft(expected, expected, count)
 
     def test_auto_send_requires_landing_text_and_exact_image_once(self):
@@ -104,21 +104,21 @@ class InteractionDriverTests(unittest.TestCase):
             {**body, "images": body["images"] * 2},
         ]
         for sent in mutations:
-            with self.subTest(sent=sent), self.assertRaises(AssertionError):
+            with self.subTest(sent = sent), self.assertRaises(AssertionError):
                 driver.assert_auto_sent(sent, expected, 1)
         with self.assertRaises(ValueError):
             driver.assert_auto_sent({**body, "images": [{"mime_type": "image/png", "data": "not base64!"}]}, expected, 1)
         for count in (0, 2):
-            with self.subTest(prompt_count=count), self.assertRaises(AssertionError):
+            with self.subTest(prompt_count = count), self.assertRaises(AssertionError):
                 driver.assert_auto_sent(body, expected, count)
 
     def test_create_gate_only_holds_post_and_forwards_original_201(self):
         page, listing, creation = Mock(), Mock(), Mock()
         listing.request.method = "GET"
         creation.request.method = "POST"
-        creation.fetch.return_value = SimpleNamespace(ok=True, status=201)
+        creation.fetch.return_value = SimpleNamespace(ok = True, status = 201)
         evidence = []
-        with driver.ResponseGate(page, "http://127.0.0.1/conversations", evidence, method="POST") as gate:
+        with driver.ResponseGate(page, "http://127.0.0.1/conversations", evidence, method = "POST") as gate:
             gate.hold(listing)
             listing.continue_.assert_called_once()
             listing.fetch.assert_not_called()
@@ -126,19 +126,19 @@ class InteractionDriverTests(unittest.TestCase):
             gate.hold(creation)
             creation.fulfill.assert_not_called()
             self.assertEqual(evidence[0]["backend_status"], 201)
-        creation.fulfill.assert_called_once_with(response=creation.fetch.return_value)
+        creation.fulfill.assert_called_once_with(response = creation.fetch.return_value)
         self.assertEqual(evidence[0]["state"], "released")
 
     def test_response_gate_holds_then_forwards_same_response(self):
         page, route = Mock(), Mock()
-        response = SimpleNamespace(ok=True, status=200)
+        response = SimpleNamespace(ok = True, status = 200)
         route.fetch.return_value = response
         evidence = []
         with driver.ResponseGate(page, "http://127.0.0.1/example", evidence) as gate:
             gate.hold(route)
             route.fulfill.assert_not_called()
             self.assertEqual(evidence[0]["state"], "held")
-        route.fulfill.assert_called_once_with(response=response)
+        route.fulfill.assert_called_once_with(response = response)
         self.assertEqual(evidence[0]["state"], "released")
         page.unroute.assert_called_once()
 
@@ -146,8 +146,8 @@ class InteractionDriverTests(unittest.TestCase):
         page, early, later = Mock(), Mock(), Mock()
         ready = False
         evidence = []
-        later.fetch.return_value = SimpleNamespace(ok=True, status=200)
-        with driver.ResponseGate(page, "http://127.0.0.1/entries", evidence, ready=lambda: ready) as gate:
+        later.fetch.return_value = SimpleNamespace(ok = True, status = 200)
+        with driver.ResponseGate(page, "http://127.0.0.1/entries", evidence, ready = lambda: ready) as gate:
             gate.hold(early)
             early.continue_.assert_called_once()
             early.fetch.assert_not_called()
@@ -155,17 +155,17 @@ class InteractionDriverTests(unittest.TestCase):
             ready = True
             gate.hold(later)
             self.assertEqual(evidence[0]["state"], "held")
-        later.fulfill.assert_called_once_with(response=later.fetch.return_value)
+        later.fulfill.assert_called_once_with(response = later.fetch.return_value)
 
     def test_response_gate_releases_after_assertion_failure(self):
         page, route = Mock(), Mock()
-        route.fetch.return_value = SimpleNamespace(ok=True, status=200)
+        route.fetch.return_value = SimpleNamespace(ok = True, status = 200)
         evidence = []
         with self.assertRaisesRegex(AssertionError, "scenario failed"):
             with driver.ResponseGate(page, "http://127.0.0.1/open", evidence) as gate:
                 gate.hold(route)
                 raise AssertionError("scenario failed")
-        route.fulfill.assert_called_once_with(response=route.fetch.return_value)
+        route.fulfill.assert_called_once_with(response = route.fetch.return_value)
         self.assertEqual(evidence[0]["state"], "released")
 
 

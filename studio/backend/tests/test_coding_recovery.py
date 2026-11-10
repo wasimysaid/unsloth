@@ -51,8 +51,8 @@ async def test_uncertain_command_is_not_replayed_and_late_ack_does_not_poison_re
             commands.append({"method": "stdin-close"})
 
     runtime = CodingRuntime()
-    runtime.process = SimpleNamespace(stdout=stream, stdin=Writer(), returncode=0,
-                                      wait=AsyncMock(return_value=0))
+    runtime.process = SimpleNamespace(stdout = stream, stdin = Writer(), returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     reader = asyncio.create_task(runtime._read_responses())
     with pytest.raises(CodingRuntimeError) as failure:
         await runtime.command(operation, {"conversation_id": "saved", "submission_key": "original"})
@@ -73,12 +73,12 @@ async def test_last_event_id_does_not_turn_new_view_into_arbitrary_replay(monkey
     monkeypatch.setattr(storage, "DB_PATH", tmp_path / "auth.db")
     storage.create_initial_user("unsloth", "isolated-test-password", "isolated-signing-secret-long-enough")
     app = FastAPI()
-    app.include_router(router, prefix="/api/coding")
+    app.include_router(router, prefix = "/api/coding")
     opened = []
     released = []
 
     class NativeViews(CodingRuntime):
-        async def subscribe(self, conversation, *, expected_generation=None):
+        async def subscribe(self, conversation, *, expected_generation = None):
             assert expected_generation == 1
             opened.append(conversation)
             queue = asyncio.Queue()
@@ -92,8 +92,8 @@ async def test_last_event_id_does_not_turn_new_view_into_arbitrary_replay(monkey
 
     app.state.coding_runtime = NativeViews()
     headers = {"Authorization": "Bearer " + create_access_token("unsloth"), "Last-Event-ID": "arbitrary-obsolete-position", "X-Mimir-Runtime-Generation": "1"}
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/api/coding/conversations/exact-saved-id/events", headers=headers)
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test") as client:
+        response = await client.get("/api/coding/conversations/exact-saved-id/events", headers = headers)
     assert response.status_code == 200
     assert '"type":"start"' in response.text
     assert '"leaf":"captured"' in response.text
@@ -152,15 +152,15 @@ async def test_admitted_view_keeps_its_observation_epoch_after_runtime_restart(c
             runtime.observation_epoch = "new-process-epoch"
             return native
 
-    async def subscribe(conversation, *, expected_generation=None):
+    async def subscribe(conversation, *, expected_generation = None):
         assert expected_generation == 1
         return "old-view", RetainedQueue()
 
     runtime.subscribe = subscribe
     runtime.unsubscribe = AsyncMock()
     app.state.coding_runtime = runtime
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/api/coding/conversations/saved/events", headers=headers)
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test") as client:
+        response = await client.get("/api/coding/conversations/saved/events", headers = headers)
     assert response.status_code == 200
     observed = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
     assert observed == [{**native, "observation_epoch": old_epoch}]
@@ -199,7 +199,7 @@ async def test_local_provider_is_fresh_and_authenticated_after_explicit_restart(
     runtime = CodingRuntime()
     await runtime.configure_local_serving(setup_request(app))
     old_serving, old_key = runtime.local_serving, runtime.local_serving.key
-    await child_runtime(tmp_path, runtime=runtime)
+    await child_runtime(tmp_path, runtime = runtime)
     runtime._generation = 1
     old_epoch = runtime.observation_epoch
     old_process = runtime.process
@@ -229,14 +229,14 @@ async def test_local_provider_is_fresh_and_authenticated_after_explicit_restart(
         assert json.loads(bootstrap.read_text()) == {
             "origin": "http://127.0.0.1:8800", "key": serving.key, "incarnation": serving.incarnation,
         }
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test") as client:
             native = {"Authorization": "Bearer " + serving.key}
-            assert (await client.get("/api/coding/local-models/catalog", headers=native)).json()["models"] == [{"id": "downloaded-model"}]
-            assert (await client.get("/api/coding/local-models/catalog", headers={"Authorization": "Bearer " + old_key})).status_code in (401, 403)
+            assert (await client.get("/api/coding/local-models/catalog", headers = native)).json()["models"] == [{"id": "downloaded-model"}]
+            assert (await client.get("/api/coding/local-models/catalog", headers = {"Authorization": "Bearer " + old_key})).status_code in (401, 403)
             stale = {"incarnation": old_serving.incarnation, "operation_id": "old-operation"}
-            assert (await client.post("/api/coding/local-models/release", headers=native, json=stale)).status_code == 403
+            assert (await client.post("/api/coding/local-models/release", headers = native, json = stale)).status_code == 403
         with pytest.raises(CodingRuntimeError) as failure:
-            await runtime.command("prompt", {"submission_key": "old-owner"}, expected_generation=1)
+            await runtime.command("prompt", {"submission_key": "old-owner"}, expected_generation = 1)
         assert failure.value.code == "runtime_changed" and failure.value.requires_reopen
         assert [json.loads(line)["method"] for line in trace.read_text().splitlines()] == ["ping"]
     finally:
@@ -252,9 +252,9 @@ async def test_cold_restart_sets_up_local_provider_before_native_launch(coding_a
     app.state.coding_runtime = runtime
     bootstrap, trace = replacement_frontend(tmp_path, runtime)
     try:
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/coding/runtime/restart", headers=headers,
-                                        json={"scope": "all_hosted_conversations"})
+        async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test") as client:
+            response = await client.post("/api/coding/runtime/restart", headers = headers,
+                                        json = {"scope": "all_hosted_conversations"})
         assert response.status_code == 200
         assert runtime.local_serving is not None
         assert not runtime.local_serving.closing
@@ -276,10 +276,10 @@ async def test_unconfirmed_local_hold_blocks_replacement_even_after_process_exit
     runtime = CodingRuntime()
     await runtime.configure_local_serving(setup_request(app))
     serving, key = runtime.local_serving, runtime.local_serving.key
-    backend = SimpleNamespace(is_loaded=True, model_identifier="resident-model")
-    hold = kw.hold_coding_model("unconfirmed-owner", backend, identity=kw.coding_model_identity(backend))
-    serving.operations["unconfirmed-owner"] = LocalOperation((), state="protected")
-    await child_runtime(tmp_path, runtime=runtime, exit_code=exit_code)
+    backend = SimpleNamespace(is_loaded = True, model_identifier = "resident-model")
+    hold = kw.hold_coding_model("unconfirmed-owner", backend, identity = kw.coding_model_identity(backend))
+    serving.operations["unconfirmed-owner"] = LocalOperation((), state = "protected")
+    await child_runtime(tmp_path, runtime = runtime, exit_code = exit_code)
     replacement_frontend(tmp_path, runtime)
     try:
         runtime.process.stdin.close()  # EOF/zero exit WITHOUT a native drain acknowledgment.
@@ -310,8 +310,8 @@ async def test_busy_restart_preserves_current_local_credentials_and_protections(
     runtime = CodingRuntime()
     await runtime.configure_local_serving(setup_request(app))
     serving = runtime.local_serving
-    serving.operations["active-request"] = LocalOperation((), state="protected")
-    await child_runtime(tmp_path, runtime=runtime, reject=True)
+    serving.operations["active-request"] = LocalOperation((), state = "protected")
+    await child_runtime(tmp_path, runtime = runtime, reject = True)
     old = runtime.process
     try:
         with pytest.raises(CodingRuntimeError) as failure:
@@ -339,10 +339,10 @@ async def test_failed_local_cleanup_retains_receipts_and_refuses_replacement(cod
     runtime = CodingRuntime()
     await runtime.configure_local_serving(setup_request(app))
     serving = runtime.local_serving
-    backend = SimpleNamespace(is_loaded=True, model_identifier="resident-model")
-    hold = kw.hold_coding_model("cleanup-owner", backend, identity=kw.coding_model_identity(backend))
-    serving.operations["cleanup-owner"] = LocalOperation((), state="protected")
-    await child_runtime(tmp_path, runtime=runtime)
+    backend = SimpleNamespace(is_loaded = True, model_identifier = "resident-model")
+    hold = kw.hold_coding_model("cleanup-owner", backend, identity = kw.coding_model_identity(backend))
+    serving.operations["cleanup-owner"] = LocalOperation((), state = "protected")
+    await child_runtime(tmp_path, runtime = runtime)
     old = runtime.process
     replacement_frontend(tmp_path, runtime)
     app.state.coding_runtime = runtime
@@ -375,11 +375,11 @@ async def test_failed_local_cleanup_retains_receipts_and_refuses_replacement(cod
                 assert runtime._local_key_id is not None
                 assert storage.validate_api_key(serving.key) == "unsloth"
                 # Storage failure cannot keep the old incarnation authoritative.
-                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test") as client:
                     native = {"Authorization": "Bearer " + serving.key}
-                    assert (await client.get("/api/coding/local-models/catalog", headers=native)).status_code == 403
-                    assert (await client.post("/api/coding/local-models/release", headers=native,
-                                              json={"incarnation": serving.incarnation, "operation_id": "cleanup-owner"})).status_code == 403
+                    assert (await client.get("/api/coding/local-models/catalog", headers = native)).status_code == 403
+                    assert (await client.post("/api/coding/local-models/release", headers = native,
+                                              json = {"incarnation": serving.incarnation, "operation_id": "cleanup-owner"})).status_code == 403
     finally:
         await runtime.close()
         kw.release_coding_model("cleanup-owner")
@@ -392,7 +392,7 @@ async def test_replacement_credential_remains_bound_to_authenticated_generation(
     runtime = CodingRuntime()
     await runtime.configure_local_serving(setup_request(app))
     old_key = runtime.local_serving.key
-    await child_runtime(tmp_path, runtime=runtime)
+    await child_runtime(tmp_path, runtime = runtime)
     old = runtime.process
     replacement_frontend(tmp_path, runtime)
     storage.update_password("unsloth", "isolated-rotated-password")

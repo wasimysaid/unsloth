@@ -47,7 +47,7 @@ async def test_selected_file_paths_ranges_and_generation_cross_unchanged(coding_
     app, headers = coding_app
     calls = []
     class Runtime(RuntimeDouble):
-        async def command(self, method, params, *, expected_generation=None):
+        async def command(self, method, params, *, expected_generation = None):
             calls.append((method, params, expected_generation))
             return {"request_id": "native-reference", "submission_key": params["submission_key"]}
     app.state.coding_runtime = Runtime()

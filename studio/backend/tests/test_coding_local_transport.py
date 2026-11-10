@@ -13,39 +13,39 @@ from core.coding_runtime import CodingRuntime, CodingRuntimeError
 from .test_coding import coding_app
 
 
-def body(operation="op-1"):
-    return dict(incarnation="incarnation", operation_id=operation, conversation_id="session",
-                request_id=operation, model_id="local-model", api_model="wire")
+def body(operation = "op-1"):
+    return dict(incarnation = "incarnation", operation_id = operation, conversation_id = "session",
+                request_id = operation, model_id = "local-model", api_model = "wire")
 
 
 @pytest.mark.asyncio
 async def test_browser_and_other_incarnation_cannot_control_protections(coding_app, monkeypatch):
     app, headers = coding_app
-    key, _ = storage.create_api_key("unsloth", "mimir coding incarnation", internal=True)
-    other, _ = storage.create_api_key("unsloth", "unrelated workflow", internal=True)
+    key, _ = storage.create_api_key("unsloth", "mimir coding incarnation", internal = True)
+    other, _ = storage.create_api_key("unsloth", "unrelated workflow", internal = True)
     serving = CodingLocalServing("incarnation", key, "unsloth")
-    app.state.coding_runtime = SimpleNamespace(local_serving=serving)
+    app.state.coding_runtime = SimpleNamespace(local_serving = serving)
     monkeypatch.setattr("core.coding_local_models.local_catalog", _empty_catalog)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test") as client:
         for credential in (headers, {"Authorization": "Bearer " + other}):
             for method, path, payload in (("GET", "/catalog", None), ("POST", "/acquire", body()),
-                                          ("POST", "/inspect", dict(incarnation="incarnation", operation_id="op-1")),
-                                          ("POST", "/release", dict(incarnation="incarnation", operation_id="op-1"))):
-                response = await client.request(method, "/api/coding/local-models" + path, json=payload, headers=credential)
+                                          ("POST", "/inspect", dict(incarnation = "incarnation", operation_id = "op-1")),
+                                          ("POST", "/release", dict(incarnation = "incarnation", operation_id = "op-1"))):
+                response = await client.request(method, "/api/coding/local-models" + path, json = payload, headers = credential)
                 assert response.status_code == 403
                 assert key not in response.text
         native = {"Authorization": "Bearer " + key}
-        response = await client.get("/api/coding/local-models/catalog", headers=native)
+        response = await client.get("/api/coding/local-models/catalog", headers = native)
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-store"
         assert key not in response.text
-        assert (await client.post("/api/coding/local-models/inspect", headers=native,
-                                  json=dict(incarnation="other", operation_id="op-1"))).status_code == 403
+        assert (await client.post("/api/coding/local-models/inspect", headers = native,
+                                  json = dict(incarnation = "other", operation_id = "op-1"))).status_code == 403
     assert not serving.operations
 
 
 async def _empty_catalog():
-    return dict(id="studio-local", name="Studio local", models=[])
+    return dict(id = "studio-local", name = "Studio local", models = [])
 
 
 @pytest.mark.asyncio
@@ -60,7 +60,7 @@ async def test_disconnected_acquire_and_early_release_reconcile_exact_operation(
         started.set()
         await finish.wait()
         operation.state = "protected"
-        operation.result = dict(token=data["operation_id"], model_id=data["model_id"], api_model=data["api_model"])
+        operation.result = dict(token = data["operation_id"], model_id = data["model_id"], api_model = data["api_model"])
         return operation.result
 
     monkeypatch.setattr(serving, "_load", load)
@@ -79,10 +79,10 @@ async def test_disconnected_acquire_and_early_release_reconcile_exact_operation(
     assert released == ["op-1"]
     assert await serving.release("op-1") == {"state": "released"}
     assert released == ["op-1"]
-    with pytest.raises(CodingRuntimeError, match="already released"):
+    with pytest.raises(CodingRuntimeError, match = "already released"):
         await serving.acquire(body(), None)
     await serving.release("not-delivered")
-    with pytest.raises(CodingRuntimeError, match="already released"):
+    with pytest.raises(CodingRuntimeError, match = "already released"):
         await serving.acquire(body("not-delivered"), None)
 
 
@@ -93,7 +93,7 @@ async def test_failed_cleanup_never_marks_released_or_drops_another_request(monk
 
     async def load(data, request, operation):
         operation.state = "protected"
-        operation.result = dict(token=data["operation_id"], model_id="local-model", api_model="wire")
+        operation.result = dict(token = data["operation_id"], model_id = "local-model", api_model = "wire")
         return operation.result
 
     monkeypatch.setattr(serving, "_load", load)
@@ -104,11 +104,11 @@ async def test_failed_cleanup_never_marks_released_or_drops_another_request(monk
         raise RuntimeError("failed cleanup fixture")
 
     monkeypatch.setattr(llama_keepwarm, "release_coding_model", fail)
-    with pytest.raises(RuntimeError, match="cleanup"):
+    with pytest.raises(RuntimeError, match = "cleanup"):
         await serving.release("op-1")
     assert serving.inspect("op-1")["state"] == "protected"
     assert serving.inspect("op-2")["state"] == "protected"
-    await serving.close(clean=False)
+    await serving.close(clean = False)
     assert serving.inspect("op-1")["state"] == "protected"
     assert serving.inspect("op-2")["state"] == "protected"
 
@@ -117,11 +117,11 @@ async def test_failed_cleanup_never_marks_released_or_drops_another_request(monk
 async def test_host_origin_is_socket_not_browser_host_and_key_is_revoked(coding_app, monkeypatch):
     app, _ = coding_app
     runtime = CodingRuntime()
-    scope = dict(type="http", app=app, server=("0.0.0.0", 8800), headers=[(b"host", b"credential-exfil.invalid")])
+    scope = dict(type = "http", app = app, server = ("0.0.0.0", 8800), headers = [(b"host", b"credential-exfil.invalid")])
     request = Request(scope)
     request.state.coding_subject = "unsloth"
     request.state.coding_credential_generation = storage.credential_generation(storage.get_jwt_secret("unsloth"))
-    monkeypatch.delenv("UNSLOTH_MIMIR_STUDIO_URL", raising=False)
+    monkeypatch.delenv("UNSLOTH_MIMIR_STUDIO_URL", raising = False)
     await runtime.configure_local_serving(request)
     assert runtime._local_origin == "http://127.0.0.1:8800"
     key = runtime.local_serving.key
@@ -137,20 +137,20 @@ async def test_cold_events_configure_local_serving_before_native_start(coding_ap
     app.state.coding_runtime = runtime
     monkeypatch.setenv("UNSLOTH_MIMIR_STUDIO_URL", "http://127.0.0.1:8800")
 
-    async def subscribe(identifier, *, expected_generation=None):
+    async def subscribe(identifier, *, expected_generation = None):
         assert expected_generation == 1, "SSE must preserve the opened owner's runtime fence"
         assert runtime.local_serving is not None, "SSE must configure serving before starting native execution"
         raise CodingRuntimeError("not_found", "Unknown saved conversation")
 
     monkeypatch.setattr(runtime, "subscribe", subscribe)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
         response = await client.get("/api/coding/conversations/unknown/events")
         assert response.status_code == 404
     await runtime.close()
 
 
 def setup_request(app):
-    request = Request(dict(type="http", app=app, server=("127.0.0.1", 8800), headers=[]))
+    request = Request(dict(type = "http", app = app, server = ("127.0.0.1", 8800), headers = []))
     request.state.coding_subject = "unsloth"
     request.state.coding_credential_generation = storage.credential_generation(storage.get_jwt_secret("unsloth"))
     return request
@@ -176,7 +176,7 @@ async def test_inflight_credential_mint_is_reconciled_on_shutdown_or_cancellatio
         return result
 
     monkeypatch.setattr(storage, "create_api_key", create)
-    monkeypatch.delenv("UNSLOTH_MIMIR_STUDIO_URL", raising=False)
+    monkeypatch.delenv("UNSLOTH_MIMIR_STUDIO_URL", raising = False)
     setup = asyncio.create_task(runtime.configure_local_serving(setup_request(app)))
     assert await asyncio.to_thread(entered.wait, 5)
     if cancel:
@@ -189,7 +189,7 @@ async def test_inflight_credential_mint_is_reconciled_on_shutdown_or_cancellatio
         closing = asyncio.create_task(runtime.close())
         await asyncio.sleep(0)
     proceed.set()
-    await asyncio.gather(setup, *([closing] if closing else []), return_exceptions=True)
+    await asyncio.gather(setup, *([closing] if closing else []), return_exceptions = True)
     assert await asyncio.to_thread(minted.wait, 5)
     assert len(keys) > 0
     active_credentials = sum(storage.validate_api_key(key) is not None for key in keys)
@@ -206,15 +206,15 @@ async def test_already_reaped_process_retires_key_but_retains_failed_cleanup_hol
     await runtime.configure_local_serving(setup_request(app))
     serving = runtime.local_serving
     key = serving.key
-    serving.operations["unconfirmed"] = LocalOperation((), state="protected")
+    serving.operations["unconfirmed"] = LocalOperation((), state = "protected")
     reader = asyncio.StreamReader()
     reader.feed_eof()
 
     async def wait():
         return 1
 
-    runtime.process = SimpleNamespace(stdout=reader, stdin=SimpleNamespace(close=lambda: None),
-                                      returncode=1, wait=wait)
+    runtime.process = SimpleNamespace(stdout = reader, stdin = SimpleNamespace(close = lambda: None),
+                                      returncode = 1, wait = wait)
     await runtime._read_responses()
     assert runtime._shutdown_task is not None
     await runtime._shutdown_task
@@ -238,7 +238,7 @@ async def test_unsafe_serving_origins_refused_without_minting_key(coding_app, mo
         raise AssertionError("An unsupported native serving origin must be refused before credential creation")
 
     monkeypatch.setattr(storage, "create_api_key", forbidden_mint)
-    request = Request(dict(type="http", app=app, headers=[]))
+    request = Request(dict(type = "http", app = app, headers = []))
     request.state.coding_subject = "unsloth"
     with pytest.raises(CodingRuntimeError) as refused:
         await runtime.configure_local_serving(request)
@@ -290,7 +290,7 @@ async def test_private_bootstrap_pipe_never_exports_key_and_closes_on_every_spaw
         if args[2] == "install":
             assert "MIMIR_STUDIO_LOCAL_FD" not in environment
             assert not kwargs.get("pass_fds")
-            return SimpleNamespace(wait=AsyncMock(return_value=0), returncode=0)
+            return SimpleNamespace(wait = AsyncMock(return_value = 0), returncode = 0)
         descriptor, = kwargs["pass_fds"]
         descriptors.append(descriptor)
         assert environment["MIMIR_STUDIO_LOCAL_FD"] == str(descriptor)
@@ -302,7 +302,7 @@ async def test_private_bootstrap_pipe_never_exports_key_and_closes_on_every_spaw
             raise OSError("bounded spawn failure")
         if outcome == "cancel":
             raise asyncio.CancelledError()
-        return SimpleNamespace(stdin=None, returncode=0, wait=AsyncMock(return_value=0))
+        return SimpleNamespace(stdin = None, returncode = 0, wait = AsyncMock(return_value = 0))
 
     async def idle_reader():
         return
@@ -315,7 +315,7 @@ async def test_private_bootstrap_pipe_never_exports_key_and_closes_on_every_spaw
             await runtime.start()
             assert runtime.process is not None
         elif outcome == "error":
-            with pytest.raises(CodingRuntimeError, match="could not start"):
+            with pytest.raises(CodingRuntimeError, match = "could not start"):
                 await runtime.start()
         else:
             with pytest.raises(asyncio.CancelledError):
@@ -342,8 +342,8 @@ async def test_prewarm_installs_once_before_first_start_and_close_cancels_it(mon
             async def wait():
                 await install_gate.wait()
                 return 0
-            return SimpleNamespace(wait=wait, returncode=None, terminate=lambda: install_gate.set())
-        return SimpleNamespace(stdin=None, returncode=0, wait=AsyncMock(return_value=0))
+            return SimpleNamespace(wait = wait, returncode = None, terminate = lambda: install_gate.set())
+        return SimpleNamespace(stdin = None, returncode = 0, wait = AsyncMock(return_value = 0))
 
     async def idle():
         return
@@ -403,13 +403,13 @@ async def test_failed_mint_retirement_is_reconciled_before_replacement_key(codin
 
     monkeypatch.setattr(storage, "create_api_key", mint)
     monkeypatch.setattr(storage, "revoke_internal_api_key", retire)
-    monkeypatch.delenv("UNSLOTH_MIMIR_STUDIO_URL", raising=False)
+    monkeypatch.delenv("UNSLOTH_MIMIR_STUDIO_URL", raising = False)
     setup = asyncio.create_task(runtime.configure_local_serving(setup_request(app)))
     try:
         assert await asyncio.to_thread(entered.wait, 5)
         setup.cancel()
         proceed.set()
-        with pytest.raises(RuntimeError, match="bounded retirement failure"):
+        with pytest.raises(RuntimeError, match = "bounded retirement failure"):
             await setup
         assert runtime._local_key_id is not None
         assert runtime.local_serving is None
@@ -422,7 +422,7 @@ async def test_failed_mint_retirement_is_reconciled_before_replacement_key(codin
         assert active_credentials == 0
     finally:
         proceed.set()
-        await asyncio.gather(setup, return_exceptions=True)
+        await asyncio.gather(setup, return_exceptions = True)
         await runtime.close()
         for identifier in key_ids:
             revoke(identifier)

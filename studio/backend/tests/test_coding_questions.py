@@ -25,14 +25,14 @@ async def test_answer_preserves_exact_identities_payload_and_native_ack(coding_a
            "user_request_id": "exact-user-request", "subscription": "exact-live-view", "accepted": True}
 
     class RecordingRuntime(RuntimeDouble):
-        async def command(self, method, params, *, expected_generation=None):
+        async def command(self, method, params, *, expected_generation = None):
             assert expected_generation == 1
             calls.append((method, params))
             return ack
 
     app.state.coding_runtime = RecordingRuntime()
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
-        response = await client.post(ANSWER_PATH, json=ANSWER_BODY)
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        response = await client.post(ANSWER_PATH, json = ANSWER_BODY)
     assert response.status_code == 200
     assert response.json() == ack, "The HTTP layer must not invent acceptance or terminal settlement"
     assert calls == [("answer", {"conversation_id": "exact-conversation", "request_id": "exact-request",
@@ -58,13 +58,13 @@ async def test_long_native_answer_fields_forward_verbatim(coding_app, question_l
            "user_request_id": "exact-user-request", "subscription": "exact-live-view", "accepted": True}
 
     class RecordingRuntime(RuntimeDouble):
-        async def command(self, method, params, *, expected_generation=None):
+        async def command(self, method, params, *, expected_generation = None):
             calls.append((method, params, expected_generation))
             return ack
 
     app.state.coding_runtime = RecordingRuntime()
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
-        response = await client.post(ANSWER_PATH, json=body)
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        response = await client.post(ANSWER_PATH, json = body)
     assert response.status_code == 200
     assert response.json() == ack
     assert calls == [("answer", {"conversation_id": "exact-conversation", "request_id": "exact-request",
@@ -89,8 +89,8 @@ async def test_long_native_answer_fields_forward_verbatim(coding_app, question_l
 ])
 async def test_invalid_answer_envelope_never_reaches_native(coding_app, body):
     app, headers = coding_app
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
-        response = await client.post(ANSWER_PATH, json=body)
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        response = await client.post(ANSWER_PATH, json = body)
     assert response.status_code == 422
     assert not hasattr(app.state, "coding_runtime")
 
@@ -106,12 +106,12 @@ async def test_answer_total_transport_bound_still_refuses_before_native_stdin(co
     runtime = CodingRuntime()
     runtime._generation = 1
     writer = Mock()
-    runtime.process = SimpleNamespace(stdin=writer)
+    runtime.process = SimpleNamespace(stdin = writer)
     app.state.coding_runtime = runtime
     answer = {"question_id": "exact-question", "selected_options": [], "freeform_text": None}
     answer[field] = ["x" * MAX_FRAME] if field == "selected_options" else "x" * MAX_FRAME
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
-        response = await client.post(ANSWER_PATH, json={"subscription": "exact-live-view", "answers": [answer]})
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        response = await client.post(ANSWER_PATH, json = {"subscription": "exact-live-view", "answers": [answer]})
     assert response.status_code == 400
     assert "too large" in response.json()["detail"]
     writer.write.assert_not_called()
@@ -127,14 +127,14 @@ async def test_native_invalid_stale_or_uncertain_answer_is_not_retried(coding_ap
     calls = []
 
     class RejectingRuntime(RuntimeDouble):
-        async def command(self, method, params, *, expected_generation=None):
+        async def command(self, method, params, *, expected_generation = None):
             assert expected_generation == 1
             calls.append((method, params))
             raise CodingRuntimeError(code, "The exact question was not confirmed; reconstruct its native view.")
 
     app.state.coding_runtime = RejectingRuntime()
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
-        response = await client.post(ANSWER_PATH, json=ANSWER_BODY)
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        response = await client.post(ANSWER_PATH, json = ANSWER_BODY)
     assert response.status_code == status
     assert "reconstruct" in response.json()["detail"]
     assert len(calls) == 1 and calls[0][0] == "answer", "No blind replay or polling may imply acceptance"
@@ -171,7 +171,7 @@ async def test_answer_ack_never_acquires_or_replaces_a_view_queue(view_open):
             pass
 
     runtime = CodingRuntime()
-    runtime.process = SimpleNamespace(stdout=stream, stdin=Writer(), returncode=0)
+    runtime.process = SimpleNamespace(stdout = stream, stdin = Writer(), returncode = 0)
     reader = asyncio.create_task(runtime._read_responses())
     try:
         queue = None
@@ -181,7 +181,7 @@ async def test_answer_ack_never_acquires_or_replaces_a_view_queue(view_open):
         assert await runtime.command("answer", ANSWER_BODY) == ack
         if view_open:
             assert runtime._subscriptions[subscription] is queue, "ACK replaced the live SSE queue"
-            assert await asyncio.wait_for(queue.get(), timeout=1) == state
+            assert await asyncio.wait_for(queue.get(), timeout = 1) == state
         else:
             assert not runtime._subscriptions, "ACK manufactured a view after teardown"
     finally:

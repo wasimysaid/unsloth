@@ -139,7 +139,6 @@ def _load_error(exc: BaseException) -> CodingRuntimeError:
     if isinstance(detail, str) and detail.strip():
         from hub.utils.download_registry import scrub_secrets
         from hub.utils.host_paths import redact_paths_in_text
-
         reason = redact_paths_in_text(scrub_secrets(detail.strip()))[:400]
     else:
         reason = "Studio refused the load without a reason."
@@ -189,9 +188,9 @@ class CodingLocalServing:
             _override_key, override = await asyncio.to_thread(
                 resolve_override_for_load, load_id, row.id, variant,
             )
-            launch = model_override_load_kwargs(override, is_gguf=row.model_format == "gguf")
-            launch.update(model_path=load_id, gguf_variant=variant, force_reload=False,
-                          force_cancel_active=False, alongside=False, force_alongside=False)
+            launch = model_override_load_kwargs(override, is_gguf = row.model_format == "gguf")
+            launch.update(model_path = load_id, gguf_variant = variant, force_reload = False,
+                          force_cancel_active = False, alongside = False, force_alongside = False)
             await load_model_for_coding(
                 LoadRequest(**launch), request, self.subject, body["operation_id"],
             )
@@ -237,7 +236,7 @@ class CodingLocalServing:
         if operation is None:
             if len(self.operations) >= 4096:
                 raise CodingRuntimeError("limit", "The serving receipt limit prevents release reconciliation. Keep cleanup pending.")
-            self.operations[identifier] = LocalOperation((), state="released")
+            self.operations[identifier] = LocalOperation((), state = "released")
             return {"state": "released"}
         if operation.state == "released":
             return {"state": "released"}

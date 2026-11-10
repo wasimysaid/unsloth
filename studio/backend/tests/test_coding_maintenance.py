@@ -19,7 +19,7 @@ from routes.coding import router
 from .test_coding import RuntimeDouble
 
 
-async def child_runtime(tmp_path, *, reject=False, confirm=True, exit_code=0, lose_guard=False, admitted=False, runtime=None):
+async def child_runtime(tmp_path, *, reject = False, confirm = True, exit_code = 0, lose_guard = False, admitted = False, runtime = None):
     # Actual owned subprocess and real framed transport; the native admission is
     # deliberately fault-injected here. Real native busy coverage is separate.
     code = '''import sys,struct,json
@@ -43,7 +43,7 @@ sys.exit(int(sys.argv[3]))
 '''
     runtime = runtime or CodingRuntime()
     runtime.process = await asyncio.create_subprocess_exec(sys.executable, "-c", code, str(reject), str(confirm), str(exit_code), str(lose_guard), str(admitted), str(tmp_path / "native-command-trace"),
-        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdin = asyncio.subprocess.PIPE, stdout = asyncio.subprocess.PIPE, stderr = asyncio.subprocess.PIPE)
     runtime._reader = asyncio.create_task(runtime._read_responses())
     runtime._stderr = asyncio.create_task(runtime._drain_stderr())
     return runtime
@@ -51,7 +51,7 @@ sys.exit(int(sys.argv[3]))
 
 @pytest.mark.asyncio
 async def test_restart_refusal_keeps_owned_process_and_transport_alive(tmp_path):
-    runtime = await child_runtime(tmp_path, reject=True)
+    runtime = await child_runtime(tmp_path, reject = True)
     process = runtime.process
     try:
         with pytest.raises(CodingRuntimeError) as failure:
@@ -67,7 +67,7 @@ async def test_restart_refusal_keeps_owned_process_and_transport_alive(tmp_path)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("confirm,exit_code", [(False, 0), (True, 9)])
 async def test_shutdown_helper_exit_is_not_proof_of_native_drain(tmp_path, confirm, exit_code):
-    runtime = await child_runtime(tmp_path, confirm=confirm, exit_code=exit_code)
+    runtime = await child_runtime(tmp_path, confirm = confirm, exit_code = exit_code)
     await runtime.close()
     status = runtime.status()
     assert status["state"] == "cleanup_failed"
@@ -80,7 +80,7 @@ async def test_shutdown_helper_exit_is_not_proof_of_native_drain(tmp_path, confi
 
 @pytest.mark.asyncio
 async def test_restart_does_not_launch_replacement_when_cleanup_unconfirmed(tmp_path, monkeypatch):
-    runtime = await child_runtime(tmp_path, confirm=False)
+    runtime = await child_runtime(tmp_path, confirm = False)
     launched = []
     async def launch(*args, **kwargs):
         launched.append(args)
@@ -156,7 +156,7 @@ async def test_runtime_scope_and_auth_are_explicit(monkeypatch, tmp_path):
     monkeypatch.setattr(storage, "DB_PATH", tmp_path / "auth.db")
     storage.create_initial_user("unsloth", "isolated-test-password", "isolated-signing-secret-long-enough")
     app = FastAPI()
-    app.include_router(router, prefix="/api/coding")
+    app.include_router(router, prefix = "/api/coding")
     headers = {"Authorization": "Bearer " + create_access_token("unsloth")}
     calls = []
     class Runtime(RuntimeDouble):
@@ -166,16 +166,16 @@ async def test_runtime_scope_and_auth_are_explicit(monkeypatch, tmp_path):
             calls.append("restart")
             raise CodingRuntimeError("busy", "Explicit Stop and confirmed cleanup required for all hosted conversations.")
     app.state.coding_runtime = Runtime()
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test") as client:
         for method, path in (("GET", "/runtime"), ("POST", "/runtime/restart")):
-            response = await client.request(method, "/api/coding" + path, json={"scope": "all_hosted_conversations"})
+            response = await client.request(method, "/api/coding" + path, json = {"scope": "all_hosted_conversations"})
             assert response.status_code in (401, 403)
-        response = await client.get("/api/coding/runtime", headers=headers)
+        response = await client.get("/api/coding/runtime", headers = headers)
         assert response.json()["state"] == "not_started"
         for body in ({}, {"scope": "this_conversation"}, {"scope": "all_hosted_conversations", "force": True}):
-            response = await client.post("/api/coding/runtime/restart", json=body, headers=headers)
+            response = await client.post("/api/coding/runtime/restart", json = body, headers = headers)
             assert response.status_code == 422
-        response = await client.post("/api/coding/runtime/restart", json={"scope": "all_hosted_conversations"}, headers=headers)
+        response = await client.post("/api/coding/runtime/restart", json = {"scope": "all_hosted_conversations"}, headers = headers)
         assert response.status_code == 409
         assert "all hosted" in response.json()["detail"]
     assert calls == ["restart"]
@@ -187,7 +187,7 @@ async def test_waiting_delivery_cannot_retarget_a_replaced_process(method, expec
     from types import SimpleNamespace
     entered = asyncio.Event()
     class Runtime(CodingRuntime):
-        async def start(self, *, maintenance=False):
+        async def start(self, *, maintenance = False):
             entered.set()
     class Writer:
         def __init__(self): self.frames = []
@@ -195,15 +195,15 @@ async def test_waiting_delivery_cannot_retarget_a_replaced_process(method, expec
         async def drain(self): pass
     runtime = Runtime()
     old, new = Writer(), Writer()
-    runtime.process = SimpleNamespace(stdin=old)
+    runtime.process = SimpleNamespace(stdin = old)
     runtime._generation = 1
     await runtime._write_lock.acquire()
     params = {"conversation_id": "saved"}
     if method == "configure":
         params["configuration"] = {"reasoning": "high"}
-    command = asyncio.create_task(runtime.command(method, params, expected_generation=expected_generation))
+    command = asyncio.create_task(runtime.command(method, params, expected_generation = expected_generation))
     await entered.wait()
-    runtime.process = SimpleNamespace(stdin=new)
+    runtime.process = SimpleNamespace(stdin = new)
     runtime._generation = 2
     runtime._write_lock.release()
     with pytest.raises(CodingRuntimeError) as failure:
@@ -230,8 +230,8 @@ async def test_open_stamp_uses_delivery_incarnation_not_later_status():
             runtime._generation = 2
         def close(self):
             stream.feed_eof()
-    runtime.process = SimpleNamespace(stdin=Writer(), stdout=stream, returncode=0,
-                                      wait=AsyncMock(return_value=0))
+    runtime.process = SimpleNamespace(stdin = Writer(), stdout = stream, returncode = 0,
+                                      wait = AsyncMock(return_value = 0))
     runtime._generation = 1
     reader = asyncio.create_task(runtime._read_responses())
     result = await runtime.command("open", {"conversation_id": "saved"})
@@ -248,11 +248,11 @@ async def test_shutdown_remains_stopping_until_native_drain_finishes(tmp_path):
     runtime = await child_runtime(tmp_path)
     entered, release = asyncio.Event(), asyncio.Event()
     original = runtime._request
-    async def delayed(method, params=None, *, maintenance=False, expected_generation=None):
+    async def delayed(method, params = None, *, maintenance = False, expected_generation = None):
         if method == "shutdown":
             entered.set()
             await release.wait()
-        return await original(method, params, maintenance=maintenance, expected_generation=expected_generation)
+        return await original(method, params, maintenance = maintenance, expected_generation = expected_generation)
     runtime._request = delayed
     closing = asyncio.create_task(runtime.close())
     await entered.wait()
@@ -282,7 +282,7 @@ while True: time.sleep(1)
 '''
     runtime = CodingRuntime()
     runtime.process = await asyncio.create_subprocess_exec(sys.executable, "-c", code,
-        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdin = asyncio.subprocess.PIPE, stdout = asyncio.subprocess.PIPE, stderr = asyncio.subprocess.PIPE)
     runtime._reader = asyncio.create_task(runtime._read_responses())
     runtime._stderr = asyncio.create_task(runtime._drain_stderr())
     await runtime.close()
@@ -295,14 +295,14 @@ while True: time.sleep(1)
 
 @pytest.mark.asyncio
 async def test_maintenance_closes_admission_and_survives_browser_cancellation(tmp_path):
-    runtime = await child_runtime(tmp_path, confirm=False)
+    runtime = await child_runtime(tmp_path, confirm = False)
     entered, release = asyncio.Event(), asyncio.Event()
     original = runtime._request
-    async def delayed(method, params=None, *, maintenance=False, expected_generation=None):
+    async def delayed(method, params = None, *, maintenance = False, expected_generation = None):
         if method == "prepare_restart":
             entered.set()
             await release.wait()
-        return await original(method, params, maintenance=maintenance, expected_generation=expected_generation)
+        return await original(method, params, maintenance = maintenance, expected_generation = expected_generation)
     runtime._request = delayed
     # An incomplete native response prevents replacement, but caller cancellation
     # must not abort the retained drain operation.
@@ -335,7 +335,7 @@ async def test_lost_restart_guard_preserves_process_and_requires_inspection_not_
     import core.coding_runtime as module
     normal_timeout = module.COMMAND_TIMEOUT
     monkeypatch.setattr(module, "COMMAND_TIMEOUT", 0.05)
-    runtime = await child_runtime(tmp_path, lose_guard=True, admitted=admitted)
+    runtime = await child_runtime(tmp_path, lose_guard = True, admitted = admitted)
     process = runtime.process
     with pytest.raises(CodingRuntimeError) as failure:
         await runtime.restart()
@@ -398,11 +398,11 @@ async def test_owner_http_calls_are_fenced_before_delivery_even_after_other_tab_
     runtime = await child_runtime(tmp_path)
     runtime._generation = 20  # Replacement owner deliberately opened by another tab.
     app = FastAPI()
-    app.include_router(router, prefix="/api/coding")
+    app.include_router(router, prefix = "/api/coding")
     app.state.coding_runtime = runtime
     token = {"Authorization": "Bearer " + create_access_token("unsloth")}
     try:
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test") as client:
             for method, path, body in (
                 ("POST", "/conversations/same-saved-id/prompts", {"submission_key": "old-tab-new-key", "text": "must not run"}),
                 ("POST", "/conversations/same-saved-id/commands", {"operation_id": "old-tab-command", "name": "compress", "tail": ""}),
@@ -416,10 +416,10 @@ async def test_owner_http_calls_are_fenced_before_delivery_even_after_other_tab_
                 ("GET", "/conversations/same-saved-id/events", None),
             ):
                 stale = await client.request(method, "/api/coding" + path,
-                    headers={**token, "X-Mimir-Runtime-Generation": "19"}, json=body)
+                    headers = {**token, "X-Mimir-Runtime-Generation": "19"}, json = body)
                 assert stale.status_code == 409
                 assert stale.headers["X-Mimir-Requires-Reopen"] == "true"
-                missing = await client.request(method, "/api/coding" + path, headers=token, json=body)
+                missing = await client.request(method, "/api/coding" + path, headers = token, json = body)
                 assert missing.status_code == 422
         assert runtime.process.returncode is None
         assert not (tmp_path / "native-command-trace").exists(), "No stale prompt, configuration, native command, Stop, view, or history command reached the new owner"

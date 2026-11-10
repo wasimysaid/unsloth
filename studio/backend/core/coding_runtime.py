@@ -274,8 +274,8 @@ class CodingRuntime:
             self._local_key_id = None
         incarnation = str(uuid.uuid4())
         mint = asyncio.create_task(asyncio.to_thread(
-            create_api_key, subject, "mimir coding " + incarnation, internal=True,
-            expect_gen=credential_generation,
+            create_api_key, subject, "mimir coding " + incarnation, internal = True,
+            expect_gen = credential_generation,
         ))
         try:
             key, record = await asyncio.shield(mint)
@@ -294,7 +294,7 @@ class CodingRuntime:
             retirement = asyncio.create_task(retire_mint())
             self._cleanup_tasks.add(retirement)
             retirement.add_done_callback(self._cleanup_tasks.discard)
-            with anyio.CancelScope(shield=True):
+            with anyio.CancelScope(shield = True):
                 while not retirement.done():
                     try:
                         await asyncio.shield(retirement)
@@ -306,8 +306,8 @@ class CodingRuntime:
             raise CodingRuntimeError("denied", "Your Studio sign-in changed. Sign in again, then try again.") from None
         self._local_key_id = record["id"]
         if self._closing:
-            with anyio.CancelScope(shield=True):
-                await self._close_local_serving(clean=True)
+            with anyio.CancelScope(shield = True):
+                await self._close_local_serving(clean = True)
             raise CodingRuntimeError("unavailable", "Studio is shutting down.")
         self._local_origin = origin
         self._local_subject = subject
@@ -340,7 +340,7 @@ class CodingRuntime:
                             "origin": self._local_origin,
                             "key": self.local_serving.key,
                             "incarnation": self.local_serving.incarnation,
-                        }, separators=(",", ":")).encode("utf-8")
+                        }, separators = (",", ":")).encode("utf-8")
                         read_fd, write_fd = os.pipe()
                         # Fit an atomic write before spawning; no buffered writer
                         # or credential-bearing environment survives into Mimir.
@@ -692,7 +692,7 @@ class CodingRuntime:
         try:
             # A clean helper exit alone is not native tool/child drain evidence.
             # Always retire the key, but only confirmed drain can release holds.
-            await self._close_local_serving(clean=native_confirmed and not forced and exit_code == 0)
+            await self._close_local_serving(clean = native_confirmed and not forced and exit_code == 0)
             if self.local_serving is not None:
                 local_confirmed = all(operation.state in ("failed", "released")
                                       for operation in self.local_serving.operations.values())
@@ -706,7 +706,7 @@ class CodingRuntime:
         self._abandoned_views.clear()
         for content in tuple(self._content_files):
             self.release_content(content)
-        return self._record_cleanup(native_confirmed, forced, exit_code, local_confirmed=local_confirmed)
+        return self._record_cleanup(native_confirmed, forced, exit_code, local_confirmed = local_confirmed)
 
     def _record_cleanup(self, native_confirmed: bool, forced: bool, exit_code: int | None, *, local_confirmed: bool = True) -> dict[str, Any]:
         confirmed = native_confirmed and not forced and exit_code == 0 and local_confirmed
@@ -851,10 +851,10 @@ class CodingRuntime:
                     # Setup may have minted a credential before any native process
                     # was published, including a failed or cancelled startup.
                     try:
-                        await self._close_local_serving(clean=True)
+                        await self._close_local_serving(clean = True)
                     except Exception:
                         self._cleanup_failed = True
-                        self._record_cleanup(False, False, None, local_confirmed=False)
+                        self._record_cleanup(False, False, None, local_confirmed = False)
                         log.error("Mimir local serving cleanup was not confirmed")
             finally:
                 self._maintaining = False
@@ -862,7 +862,7 @@ class CodingRuntime:
     async def _close_local_serving(self, *, clean: bool) -> None:
         try:
             if self.local_serving is not None:
-                await self.local_serving.close(clean=clean)
+                await self.local_serving.close(clean = clean)
         finally:
             if self._local_key_id is not None:
                 from auth.storage import revoke_internal_api_key

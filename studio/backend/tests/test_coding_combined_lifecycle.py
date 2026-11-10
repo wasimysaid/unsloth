@@ -40,8 +40,8 @@ async def test_authenticated_acquisition_survives_idle_and_only_confirmed_drain_
     await runtime.configure_local_serving(setup_request(app))
     serving = runtime.local_serving
     row = SimpleNamespace(
-        id="org/A", inventory_id="org/A:Q4_K_M", load_id="org/A",
-        display_name="A", format_variant="Q4_K_M", model_format="gguf",
+        id = "org/A", inventory_id = "org/A:Q4_K_M", load_id = "org/A",
+        display_name = "A", format_variant = "Q4_K_M", model_format = "gguf",
     )
 
     async def inventory():
@@ -79,11 +79,11 @@ async def test_authenticated_acquisition_survives_idle_and_only_confirmed_drain_
 
     choice = local_choice(row)
     native = {"Authorization": "Bearer " + serving.key}
-    await child_runtime(tmp_path, runtime=runtime, confirm=shutdown != "unconfirmed-drain")
+    await child_runtime(tmp_path, runtime = runtime, confirm = shutdown != "unconfirmed-drain")
     try:
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=native) as client:
+        async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = native) as client:
             for owner in ("request-a", "request-b"):
-                response = await client.post("/api/coding/local-models/acquire", json={
+                response = await client.post("/api/coding/local-models/acquire", json = {
                     "incarnation": serving.incarnation, "operation_id": owner,
                     "conversation_id": owner + "-conversation", "request_id": owner,
                     "model_id": choice["id"], "api_model": choice["api_model"],
@@ -93,7 +93,7 @@ async def test_authenticated_acquisition_survives_idle_and_only_confirmed_drain_
             assert kw.coding_model_protection_count(primary) == 2
             await expired_ticks()
             assert primary.is_loaded and primary.calls == []
-            released = await client.post("/api/coding/local-models/release", json={
+            released = await client.post("/api/coding/local-models/release", json = {
                 "incarnation": serving.incarnation, "operation_id": "request-a",
             })
             assert released.status_code == 200

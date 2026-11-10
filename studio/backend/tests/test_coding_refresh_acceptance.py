@@ -40,7 +40,7 @@ class RefreshEvidenceTests(unittest.TestCase):
 
     def test_javascript_character_offsets_are_not_accepted_as_bytes(self):
         body, project = self.prompt()
-        body["skill_mentions"][0].update(start=5, end=20)
+        body["skill_mentions"][0].update(start = 5, end = 20)
         with self.assertRaises(AssertionError):
             driver.validate_mentions(body, project)
 

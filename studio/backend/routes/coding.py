@@ -319,16 +319,16 @@ async def _command(request: Request, method: str, params: dict | None = None, *,
 
 
 class LocalOperationIdentity(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    incarnation: str = Field(min_length=1, max_length=128)
-    operation_id: str = Field(min_length=1, max_length=128)
+    model_config = ConfigDict(extra = "forbid")
+    incarnation: str = Field(min_length = 1, max_length = 128)
+    operation_id: str = Field(min_length = 1, max_length = 128)
 
 
 class LocalPreparation(LocalOperationIdentity):
-    conversation_id: str = Field(min_length=1, max_length=128)
-    request_id: str = Field(min_length=1, max_length=128)
-    model_id: str = Field(min_length=1, max_length=1024)
-    api_model: str = Field(min_length=1, max_length=32768)
+    conversation_id: str = Field(min_length = 1, max_length = 128)
+    request_id: str = Field(min_length = 1, max_length = 128)
+    model_id: str = Field(min_length = 1, max_length = 1024)
+    api_model: str = Field(min_length = 1, max_length = 32768)
 
 
 def _local_serving(request: Request, incarnation: str | None = None):
@@ -350,7 +350,7 @@ async def local_models_catalog(request: Request):
     _local_serving(request)
     from core.coding_local_models import local_catalog
     try:
-        return JSONResponse(await local_catalog(), headers={"Cache-Control": "no-store"})
+        return JSONResponse(await local_catalog(), headers = {"Cache-Control": "no-store"})
     except Exception:
         raise HTTPException(503, "Studio downloaded model inventory is unavailable. Retry explicitly.") from None
 

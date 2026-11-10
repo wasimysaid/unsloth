@@ -24,7 +24,7 @@ async def test_model_inventory_and_refresh_keep_native_identity_and_never_reopen
             return catalog
 
     app.state.coding_runtime = Runtime()
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
         for method, suffix in (("GET", ""), ("POST", "/refresh")):
             response = await client.request(method, "/api/coding/conversations/exact-id/models" + suffix)
             assert response.status_code == 200
@@ -46,7 +46,7 @@ async def test_refresh_failure_is_explicit_and_not_replayed(coding_app, code, st
             raise CodingRuntimeError(code, "Refresh failed; selection and history retained.")
 
     app.state.coding_runtime = Runtime()
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
         response = await client.post("/api/coding/conversations/exact-id/models/refresh")
         assert response.status_code == status
         assert "selection and history retained" in response.json()["detail"]

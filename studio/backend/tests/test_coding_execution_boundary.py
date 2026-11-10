@@ -15,7 +15,7 @@ async def test_coding_refusal_cannot_fallback_to_general_chat_and_chat_does_not_
     coding_app, monkeypatch,
 ):
     app, headers = coding_app
-    app.include_router(inference.router, prefix="/v1")
+    app.include_router(inference.router, prefix = "/v1")
     general_requests = []
 
     async def general(payload, request, subject, *, cancel_on_disconnect):
@@ -34,17 +34,17 @@ async def test_coding_refusal_cannot_fallback_to_general_chat_and_chat_does_not_
             return {"conversation_id": "native-conversation", "request_id": "native-request", "submission_key": params["submission_key"]}
 
     app.state.coding_runtime = Native()
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
-        accepted = await client.post("/api/coding/conversations/native-conversation/prompts", json={"submission_key": "exact-submission", "text": "coding"})
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        accepted = await client.post("/api/coding/conversations/native-conversation/prompts", json = {"submission_key": "exact-submission", "text": "coding"})
         assert accepted.status_code == 202
         assert accepted.json() == {"conversation_id": "native-conversation", "request_id": "native-request", "submission_key": "exact-submission"}
-        refused = await client.post("/api/coding/conversations/native-conversation/prompts", json={"submission_key": "refused-submission", "text": "refuse"})
+        refused = await client.post("/api/coding/conversations/native-conversation/prompts", json = {"submission_key": "refused-submission", "text": "refuse"})
         assert refused.status_code == 503
         assert "no fallback" in refused.json()["detail"]
         assert general_requests == []
         # Any routing through native now fails before producing an HTTP result.
         app.state.coding_runtime = object()
-        ordinary = await client.post("/v1/chat/completions", json={"model": "ordinary-local", "messages": [{"role": "user", "content": "general chat"}]})
+        ordinary = await client.post("/v1/chat/completions", json = {"model": "ordinary-local", "messages": [{"role": "user", "content": "general chat"}]})
         assert ordinary.status_code == 200
         assert ordinary.json()["choices"][0]["message"]["content"] == "ordinary-chat-result"
         assert general_requests == ["general chat"]

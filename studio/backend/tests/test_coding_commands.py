@@ -15,7 +15,7 @@ async def test_commands_preserve_native_shapes(coding_app):
     calls = []
 
     class Runtime(RuntimeDouble):
-        async def command(self, method, params, *, expected_generation=None):
+        async def command(self, method, params, *, expected_generation = None):
             assert expected_generation == (1 if method == "command" else None)
             calls.append((method, params))
             if method == "commands":
@@ -25,13 +25,13 @@ async def test_commands_preserve_native_shapes(coding_app):
             return {"conversation_id": params["conversation_id"], "outcome": "display", "text": "Native transient output"}
 
     app.state.coding_runtime = Runtime()
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
         catalog = await client.get("/api/coding/conversations/exact-id/commands")
         assert catalog.status_code == 200
         assert catalog.json()["commands"][0]["aliases"] == ["inspect"]
-        result = await client.post("/api/coding/conversations/exact-id/commands", json={"operation_id": "inspect-op", "name": "inspect", "tail": "a path"})
+        result = await client.post("/api/coding/conversations/exact-id/commands", json = {"operation_id": "inspect-op", "name": "inspect", "tail": "a path"})
         assert result.json() == {"conversation_id": "exact-id", "outcome": "display", "text": "Native transient output"}
-        busy = await client.post("/api/coding/conversations/exact-id/commands", json={"operation_id": "busy-op", "name": "compress"})
+        busy = await client.post("/api/coding/conversations/exact-id/commands", json = {"operation_id": "busy-op", "name": "compress"})
         assert busy.status_code == 409 and busy.json()["detail"] == "Native session is busy"
     assert calls == [("commands", {"conversation_id": "exact-id"}), ("command", {"conversation_id": "exact-id", "operation_id": "inspect-op", "name": "inspect", "tail": "a path"}), ("command", {"conversation_id": "exact-id", "operation_id": "busy-op", "name": "compress", "tail": ""})]
 
@@ -42,14 +42,14 @@ async def test_unsupported_native_command_is_a_client_refusal_not_a_gateway_fail
     calls = []
 
     class Runtime(RuntimeDouble):
-        async def command(self, method, params, *, expected_generation=None):
+        async def command(self, method, params, *, expected_generation = None):
             assert method == "command" and expected_generation == 1
             calls.append(params)
             raise CodingRuntimeError("unsupported_command", "Choose an effective native command.")
 
     app.state.coding_runtime = Runtime()
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
-        response = await client.post("/api/coding/conversations/exact-id/commands", json={"operation_id": "unsupported-op", "name": "unknown"})
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        response = await client.post("/api/coding/conversations/exact-id/commands", json = {"operation_id": "unsupported-op", "name": "unknown"})
     assert response.status_code == 400
     assert response.json()["detail"] == "Choose an effective native command."
     assert response.headers["cache-control"] == "no-store"
@@ -65,9 +65,9 @@ async def test_slash_prompt_bypass_and_invalid_commands_never_reach_native_execu
             raise AssertionError("Invalid browser data must not reach the native owner")
 
     app.state.coding_runtime = Runtime()
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
         for text in ("/unknown", "  /terminal-only", "/compress"):
-            response = await client.post("/api/coding/conversations/exact-id/prompts", json={"submission_key": "key", "text": text})
+            response = await client.post("/api/coding/conversations/exact-id/prompts", json = {"submission_key": "key", "text": text})
             assert response.status_code == 400 and "command menu" in response.json()["detail"]
         for body in ({"name": ""}, {"name": "/compress"}, {"name": "two names"}, {"name": "inspect", "tail": "x" * 16385}, {"name": "inspect", "api_key": "must-not-pass"}):
-            assert (await client.post("/api/coding/conversations/exact-id/commands", json={"operation_id": "validation-op", **body})).status_code == 422
+            assert (await client.post("/api/coding/conversations/exact-id/commands", json = {"operation_id": "validation-op", **body})).status_code == 422

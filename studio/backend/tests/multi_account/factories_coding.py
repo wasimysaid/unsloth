@@ -47,7 +47,7 @@ class NativeCodingBoundary:
     async def configure_local_serving(self, request):
         pass
 
-    async def command(self, method, params, *, expected_generation=None):
+    async def command(self, method, params, *, expected_generation = None):
         assert params["conversation_id"] == CONVERSATION_ID
         assert expected_generation == (1 if method in GENERATION_METHODS else None)
         self.subjects.append(current_account().username)
@@ -137,8 +137,8 @@ for method, suffix, operation, body, params, success in (
     key = f"routes.coding:{method}:/conversations/{{conversation_id}}/{suffix}"
     assert key not in FACTORIES and key not in NATIVE_OPERATIONS
     FACTORIES[key] = Factory(
-        "coding-conversation", body, success=success, fragment=SENTINEL,
-        owner=(success,), wrong=(success,), reason=_SHARED_HISTORY_REASON, extra_params=params,
+        "coding-conversation", body, success = success, fragment = SENTINEL,
+        owner = (success,), wrong = (success,), reason = _SHARED_HISTORY_REASON, extra_params = params,
     )
     NATIVE_OPERATIONS[key] = operation
 
