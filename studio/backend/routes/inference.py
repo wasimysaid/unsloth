@@ -12336,11 +12336,13 @@ async def load_model_for_coding(
     current_subject: str,
     protection_token: str,
 ):
-    """Non-evicting host admission plus whole-request protection, under the existing gates.
+    """Host admission plus whole-request protection, under the existing gates.
 
     A resident primary/kept model is borrowed exactly as-is: selection is not a settings
-    update. Otherwise only an empty chat owner may load. The returned CodingModelHold is
-    concrete evidence; its owner token must be explicitly released after native cleanup.
+    update. Otherwise the chat owner may load, replacing an idle primary model the same
+    way choosing another model in Chat does; anything in use is never evicted. The
+    returned CodingModelHold is concrete evidence; its owner token must be explicitly
+    released after native cleanup.
     """
     from core.inference.llama_cpp import chat_load_active
     from core.inference.llama_keepwarm import (
@@ -12377,18 +12379,21 @@ async def load_model_for_coding(
                     protection_token, backend, slot = slot, identity = identity
                 )
 
-            def require_empty_chat(*, cancel = False):
+            def require_empty_chat(*, cancel = False, own_load = False):
                 from core.inference.llama_keepwarm import require_coding_model_unprotected
 
                 require_coding_model_unprotected(action = "Loading a coding model")
                 llama = _llama_cpp_backend
                 backend = _peek_inference_backend()
                 busy = (
-                    (llama is not None and (llama.is_active or llama.is_loaded))
+                    # A healthy idle primary is replaceable; a starting or failed server is not.
+                    (llama is not None and llama.is_active and not llama.is_loaded)
                     or (backend is not None and (
                         backend.active_model_name or getattr(backend, "loading_models", None)
                     ))
-                    or chat_load_active() or model_slots.busy() or model_slots.holds_vram()
+                    # The reload confirmation runs inside this load, which is itself in flight.
+                    or (chat_load_active() and not own_load)
+                    or model_slots.busy() or model_slots.holds_vram()
                     or any(s.generations or s.refs for s in model_slots.resident())
                     or other_inference_request_count(current_request_counted = False, include_pending = False)
                     or current_owner() not in (None, CHAT)
@@ -12396,14 +12401,14 @@ async def load_model_for_coding(
                 if busy:
                     raise HTTPException(status_code = 409, detail = {
                         "error": "coding_model_busy",
-                        "message": "Studio is serving another workload. Finish it or unload its model, then retry; coding never evicts it.",
+                        "message": "Studio is busy with another task. Retry when it finishes; coding never interrupts it.",
                     })
 
             require_empty_chat()
             try:
                 await _run_tracked_load_model_impl(
                     request, fastapi_request, current_subject,
-                    on_reload_confirmed = require_empty_chat,
+                    on_reload_confirmed = lambda *, cancel: require_empty_chat(cancel = cancel, own_load = True),
                     allow_gpu_owner_eviction = False,
                 )
             except GpuOwnerBusyError as exc:

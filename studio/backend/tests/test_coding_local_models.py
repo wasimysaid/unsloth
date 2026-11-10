@@ -9,24 +9,71 @@ from core.coding_runtime import CodingRuntimeError
 
 
 def row(identity="semantic-a", **changes):
-    values = dict(inventory_id=identity, id="wire-a", load_id="/models/a.gguf",
+    values = dict(inventory_id=identity, id="wire-a", load_id="/models/a.gguf", source="custom",
                   display_name="Same label", partial=False, model_format="gguf", format_variant=None,
                   capabilities=SimpleNamespace(can_chat=True))
     values.update(changes)
     return SimpleNamespace(**values)
 
 
+def cached_gguf(monkeypatch, repos=(), variants=None):
+    from hub.services.models import cache_inventory, gguf_variants
+
+    async def cached():
+        return {"cached": list(repos), "scan_confirmed": True}
+
+    async def listing(repo_id, prefer_local_cache, offline):
+        assert prefer_local_cache and offline
+        return SimpleNamespace(variants=(variants or {})[repo_id])
+
+    monkeypatch.setattr(cache_inventory, "list_cached_gguf_response", cached)
+    monkeypatch.setattr(gguf_variants, "get_gguf_variants_response", listing)
+
+
+def inventory(monkeypatch, rows):
+    from hub.services.models import local_inventory
+
+    async def response():
+        return SimpleNamespace(models=rows)
+
+    monkeypatch.setattr(local_inventory, "list_local_models_response", response)
+
+
+@pytest.mark.asyncio
+async def test_catalog_lists_each_downloaded_quant_like_on_device(monkeypatch):
+    def repo(repo_id, **changes):
+        # list_cached_gguf_response returns plain dict rows.
+        values = dict(repo_id=repo_id, load_id=repo_id, inventory_id=None, capabilities={"can_chat": True})
+        values.update(changes)
+        return values
+
+    def quant(name, **changes):
+        values = dict(quant=name, display_label=None, downloaded=True, partial=False)
+        values.update(changes)
+        return SimpleNamespace(**values)
+
+    cached_gguf(monkeypatch, [repo("org/Split-27B-GGUF"), repo("org/Speech-GGUF", capabilities={"can_chat": False})], {
+        "org/Split-27B-GGUF": [quant("BF16"), quant("UD-Q4_K_XL", partial=True), quant("Q8_0", downloaded=False)],
+    })
+    # The inventory's own row for a cached GGUF repo has no exact quant and may call a
+    # complete split download "unknown"; the per-quant rows replace it.
+    inventory(monkeypatch, [row(id="org/Split-27B-GGUF", source="hf_cache", model_format="unknown",
+                                capabilities=SimpleNamespace(can_chat=False), partial=True),
+                            row("custom", id="/models/custom.gguf", load_id="/models/custom.gguf")])
+    models = (await local_catalog())["models"]
+    assert [model["name"] for model in models] == ["Split-27B-GGUF · BF16", "Same label"]
+    assert models[0]["api_model"] == "org/Split-27B-GGUF:BF16"
+    selected = await resolve_local_choice(models[0]["id"])
+    assert (selected.load_id, selected.format_variant) == ("org/Split-27B-GGUF", "BF16")
+
+
 @pytest.mark.asyncio
 async def test_catalog_reuses_current_downloaded_inventory_and_exact_identity(monkeypatch):
-    from hub.services.models import local_inventory
     rows = [row(), row("semantic-b", id="wire-b", load_id="/models/b.gguf"),
             row("partial", partial=True),
             row("encoder", capabilities=SimpleNamespace(can_chat=False))]
-
-    async def inventory():
-        return SimpleNamespace(models=rows)
-
-    monkeypatch.setattr(local_inventory, "list_local_models_response", inventory)
+    cached_gguf(monkeypatch)
+    inventory(monkeypatch, rows)
     catalog = await local_catalog()
     assert catalog["id"] == "studio-local"
     assert len(catalog["models"]) == 2
