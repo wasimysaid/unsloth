@@ -71,7 +71,7 @@ async def test_uncertain_command_is_not_replayed_and_late_ack_does_not_poison_re
 @pytest.mark.asyncio
 async def test_last_event_id_does_not_turn_new_view_into_arbitrary_replay(monkeypatch, tmp_path):
     monkeypatch.setattr(storage, "DB_PATH", tmp_path / "auth.db")
-    storage.create_initial_user("unsloth", "isolated-test-password", "isolated-signing-secret-236-long-enough")
+    storage.create_initial_user("unsloth", "isolated-test-password", "isolated-signing-secret-long-enough")
     app = FastAPI()
     app.include_router(router, prefix="/api/coding")
     opened = []

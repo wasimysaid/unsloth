@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""One supervised Mimir frontend process; no Studio execution or history owner.
+"""Supervises one `mimir plugin run studio.frontend` process per Studio backend.
 
-Only the installed product plugin owns Session Control handles. Browser lifetime
-never owns the process. Production inherits the ordinary Mimir configuration;
-MIMIR_CODING_AGENT_DIR is used only by isolated acceptance runs, not set here.
+Browser connections never own the process. Production inherits the ordinary
+Mimir configuration; MIMIR_CODING_AGENT_DIR is set only by isolated acceptance runs.
 """
 from __future__ import annotations
 
@@ -171,7 +170,6 @@ class CodingRuntime:
             raise CodingRuntimeError("unavailable", "Coding couldn't start because Mimir couldn't install its studio.frontend plugin. Rebuild the plugin for this Mimir version.")
 
     def status(self) -> dict[str, Any]:
-        # Reading diagnostics never launches a process or opens an execution owner.
         state = "not_started"
         if self._cleanup_failed:
             state = "cleanup_failed"
@@ -190,8 +188,7 @@ class CodingRuntime:
         return {"state": state, "generation": self._generation, "cleanup": self._cleanup}
 
     async def inspect_status(self) -> dict[str, Any]:
-        # Reconcile a lost maintenance ACK by inspection, never guard replay or
-        # process shutdown. A prepared runtime needs another explicit action.
+        # A lost restart ACK is reconciled by asking, never by stopping the process.
         if self._restart_uncertain and not self._maintaining and not self._failure and not self._closing:
             generation, process = self._generation, self.process
             try:
@@ -206,18 +203,15 @@ class CodingRuntime:
                     self._cleanup_failed = True
                     self._record_cleanup(False, False, None)
             except CodingRuntimeError:
-                # Preserve unknown admission and the original process; inspection
-                # failures cannot authorize cancellation or a replacement.
+                # A failed inspection leaves the process and the unknown state as they are.
                 pass
         return self.status()
 
     async def configure_local_serving(self, request) -> None:
-        """Configure one native provider over a trusted host socket, never Host headers.
+        """Point Mimir's Studio-local provider at this server's listening socket.
 
-        ASGI unit/CPU-only compositions without a server tuple do not gain local
-        serving. Production uses the real listening socket (or explicit loopback
-        origin). The ephemeral workflow credential stays host-side and is stored
-        only as a hash by the established Studio credential owner.
+        The origin comes from the socket (or UNSLOTH_MIMIR_STUDIO_URL), never the
+        Host header. Without a server tuple, as in ASGI unit tests, nothing is set up.
         """
         if os.environ.get("UNSLOTH_MIMIR_LOCAL_SERVING") == "0":
             return
@@ -387,7 +381,7 @@ class CodingRuntime:
 
     async def _drain_stderr(self) -> None:
         assert self.process and self.process.stderr
-        # Drain without exposing raw configuration, credentials, or native diagnostics to HTTP.
+        # Discarded: stderr may carry configuration or credentials.
         while await self.process.stderr.read(8192):
             pass
 
@@ -508,8 +502,7 @@ class CodingRuntime:
             )
             self._fail(error)
             if not self._expected_exit:
-                # EOF is not a successful Stop. Reap our exact supervised process,
-                # retaining unconfirmed cleanup and the failure until explicit restart.
+                # Reap the process; the failure stays until an explicit restart.
                 self._shutdown_task = asyncio.create_task(self._finish_process(False))
 
     async def command(self, method: str, params: dict[str, Any] | None = None, *, expected_generation: int | None = None) -> Any:
@@ -753,7 +746,7 @@ class CodingRuntime:
         if self._shutdown_task:
             await asyncio.shield(self._shutdown_task)
         cleanup = await self._finish_process(confirmed)
-        # Retain sanitized native owner identities as terminal/ownership evidence.
+        # Report which conversations the drain closed.
         ids = result.get("conversation_ids") if isinstance(result, dict) else None
         if isinstance(ids, list) and len(ids) <= 32 and all(isinstance(item, str) and len(item) <= 128 for item in ids):
             cleanup["conversation_ids"] = ids
@@ -789,8 +782,7 @@ class CodingRuntime:
                         await asyncio.shield(self._shutdown_task)
                     else:
                         await self._finish_process(False)
-                    # Unexpected loss has no clean Stop claim. A reaped process
-                    # permits explicit replacement, not automatic accepted-work replay.
+                    # After a crash, only an unconfirmed cleanup blocks the replacement.
                     if self._cleanup_failed or (self._cleanup and self._cleanup["forced"]):
                         self._cleanup_failed = True
                         raise CodingRuntimeError("cleanup_failed", self._cleanup["message"])
@@ -819,7 +811,7 @@ class CodingRuntime:
                         await self._mint_local_serving(self._local_origin, self._local_subject,
                                                        self._local_credential_generation)
                 await self.start(maintenance = True)
-                # Establish frontend activation/protocol readiness, not just helper launch.
+                # Launched is not ready: the plugin must answer a ping.
                 try:
                     pong = await self._request("ping", maintenance = True)
                     if pong != {"protocol": 1, "plugin": PLUGIN_ID}:

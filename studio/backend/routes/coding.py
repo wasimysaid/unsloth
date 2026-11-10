@@ -91,7 +91,6 @@ class NativeContentResponse(Response):
 
 
 class ModelConfiguration(BaseModel):
-    """Exact native identity/effort only; credential and provider setup stay external."""
     model_config = ConfigDict(extra = "forbid")
     provider: str | None = Field(default = None, min_length = 1, max_length = 1024)
     model: str | None = Field(default = None, min_length = 1, max_length = 1024)
@@ -197,7 +196,6 @@ class PromptSubmission(BaseModel):
             }
             if not signatures[image.mime_type]:
                 raise ValueError("Image bytes do not match the declared supported MIME type.")
-        # Decode/content/provider validation is authoritative in native Mimir.
         return self
 
 
@@ -214,7 +212,6 @@ class PlanSelection(BaseModel):
 
 
 class GoalChange(BaseModel):
-    """Native admission identity, not a Studio lifecycle or completion claim."""
     model_config = ConfigDict(extra = "forbid")
     revision: str = Field(min_length = 1, max_length = 1024)
     action: Literal["start", "edit", "pause", "resume", "clear"]
@@ -235,8 +232,7 @@ class GoalChange(BaseModel):
 
 class QuestionAnswer(BaseModel):
     model_config = ConfigDict(extra = "forbid")
-    # Native question IDs/labels and user text remain verbatim. The complete
-    # command is transport-bounded; native validates the exact pending question.
+    # Unbounded here: the whole command frame bounds it, and Mimir validates the question.
     question_id: str = Field(min_length = 1)
     selected_options: list[str] = Field(max_length = 4)
     freeform_text: str | None = None
@@ -277,7 +273,6 @@ class AfterEntry(BaseModel):
 
 
 class HistorySelection(BaseModel):
-    """An immutable native view cut, never an independently moving snapshot."""
     model_config = ConfigDict(extra = "forbid")
     cut: JournalCut
     anchor: Literal["latest"] | BeforeEntry | AfterEntry = "latest"
@@ -345,8 +340,7 @@ def _local_serving(request: Request, incarnation: str | None = None):
     token = header[7:] if header.lower().startswith("bearer ") else ""
     if (serving is None or serving.closing or not secrets.compare_digest(token.encode(), serving.key.encode())
             or (incarnation is not None and incarnation != serving.incarnation)):
-        # Established authentication runs first. A valid browser token or another
-        # incarnation's workflow key still has no lifecycle release authority.
+        # A browser token or an earlier process's key must not reach model holds.
         raise HTTPException(403, "This operation requires the current native serving incarnation.")
     return serving
 
@@ -385,11 +379,7 @@ async def release_local_model(body: LocalOperationIdentity, request: Request):
 
 
 def _browse(path: str | None) -> dict:
-    """Directory names only. This is not model browsing and has no coding allowlist.
-
-    This discovery does not grant trust or enable Send: Session Control validates
-    the selected directory natively at catalog/create/open admission.
-    """
+    """Directory names only; choosing a folder here grants it nothing."""
     try:
         target = Path(path).expanduser() if path else Path.home()
         target = target.resolve(strict = True)
@@ -429,8 +419,6 @@ async def runtime_status(request: Request):
 
 @router.post("/runtime/restart")
 async def restart_whole_runtime(body: RuntimeRestart, request: Request):
-    # Explicit all-conversation scope, not plugin hot reload. Native admission
-    # refuses any busy hosted owner; HTTP disconnect never cancels maintenance.
     try:
         return await (await _runtime(request)).restart()
     except CodingRuntimeError as exc:
@@ -450,15 +438,12 @@ async def catalog(request: Request, cwd: str | None = Query(default = None, min_
 
 @router.get("/conversations/{conversation_id}/models")
 async def conversation_models(conversation_id: str, request: Request):
-    # Read the retained controller's inventory; never implicitly open/grant trust.
     result = await _command(request, "models", {"conversation_id": conversation_id})
     return JSONResponse(result, headers = {"Cache-Control": "no-store"})
 
 
 @router.post("/conversations/{conversation_id}/models/refresh")
 async def refresh_models(conversation_id: str, request: Request):
-    # Native refresh owns discovery and selectability. No restart, onboarding,
-    # health probe, provider replacement, prompt replay or Studio inventory.
     result = await _command(request, "models.refresh", {"conversation_id": conversation_id})
     return JSONResponse(result, headers = {"Cache-Control": "no-store"})
 
@@ -487,8 +472,6 @@ async def open_conversation(conversation_id: str, request: Request):
 @router.post("/conversations/{conversation_id}/configuration")
 async def configure_model(conversation_id: str, body: ModelConfiguration, request: Request,
                           generation: Generation):
-    # No Studio scheduler/config store. Mimir orders selection against dequeue and
-    # keeps running work frozen; prompts deliberately carry no model configuration.
     return await _command(request, "configure", {
         "conversation_id": conversation_id,
         "configuration": body.model_dump(exclude_unset = True),
@@ -497,14 +480,11 @@ async def configure_model(conversation_id: str, body: ModelConfiguration, reques
 
 @router.get("/conversations/{conversation_id}/overlap")
 async def project_overlap(conversation_id: str, request: Request):
-    # A read-only native preflight; never implicitly opens or retargets an owner.
     return await _command(request, "overlap", {"conversation_id": conversation_id})
 
 
 @router.get("/conversations/{conversation_id}/skills")
 async def conversation_skills(conversation_id: str, request: Request):
-    # Discover the retained native controller's effective project metadata only.
-    # This does not load skill bodies or implicitly open/grant another owner.
     return await _command(request, "skills", {"conversation_id": conversation_id})
 
 
@@ -525,39 +505,32 @@ async def conversation_files(conversation_id: str, request: Request,
 @router.post("/conversations/{conversation_id}/prompts", status_code = 202)
 async def submit_prompt(conversation_id: str, body: PromptSubmission, request: Request,
                         generation: Generation):
-    # Slash attempts never bypass native command handling, including recovered drafts.
     if body.text.lstrip().startswith("/"):
         raise HTTPException(400, "Run slash commands from the command menu.")
-    # Native deduplication and the opening's exact supervisor incarnation both apply.
     return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump(exclude_unset = True), "overlap_confirmed": body.overlap_confirmed}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/requests/{request_id}/cancel")
 async def cancel_request(conversation_id: str, request_id: str, request: Request,
                          generation: Generation):
-    # Acceptance is not settlement. The ordered native view confirms completion.
     return await _command(request, "cancel", {"conversation_id": conversation_id, "request_id": request_id}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/mode")
 async def select_mode(conversation_id: str, body: ModeSelection, request: Request,
                       generation: Generation):
-    # Configuration selection is not plan acceptance; native execution owns admission.
     return await _command(request, "set_mode", {"conversation_id": conversation_id, **body.model_dump()}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/plan-actions")
 async def decide_plan(conversation_id: str, body: PlanSelection, request: Request,
                       generation: Generation):
-    # Validate both the opening's owner generation and exact native plan revision.
     return await _command(request, "decide_plan", {"conversation_id": conversation_id, **body.model_dump()}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/goal")
 async def change_goal(conversation_id: str, body: GoalChange, request: Request,
                       generation: Generation):
-    # Native owner validates revision and admission atomically; the opening's
-    # generation prevents delivery to a replacement owner. Never infer completion.
     return await _command(request, "change_goal", {"conversation_id": conversation_id,
                                                   **body.model_dump(exclude_unset = True)}, generation = generation)
 
@@ -566,9 +539,6 @@ async def change_goal(conversation_id: str, body: GoalChange, request: Request,
 async def answer_questions(conversation_id: str, request_id: str, user_request_id: str,
                            body: AnswerSubmission, request: Request,
                            generation: Generation):
-    # Native admission validates the current request/question/view before accepting
-    # the waiter. Public answer history and terminal cleanup are separate evidence;
-    # uncertain delivery must be reconciled through the native view, never replayed.
     return await _command(request, "answer", {"conversation_id": conversation_id,
                           "request_id": request_id, "user_request_id": user_request_id,
                           **body.model_dump()}, generation = generation)
@@ -582,13 +552,11 @@ async def discover_commands(conversation_id: str, request: Request):
 @router.post("/conversations/{conversation_id}/commands")
 async def invoke_command(conversation_id: str, body: CommandInvocation, request: Request,
                          generation: Generation):
-    # A command may submit native work too; never dispatch it into a replacement owner.
     return await _command(request, "command", {"conversation_id": conversation_id, **body.model_dump()}, generation = generation)
 
 
 @router.get("/conversations/{conversation_id}/commands/{operation_id}")
 async def inspect_command_receipt(conversation_id: str, operation_id: str, request: Request):
-    # Read an already-delivered operation. This never invokes/replays a command.
     return await _command(request, "command_receipt", {"conversation_id": conversation_id, "operation_id": operation_id})
 
 
@@ -612,8 +580,6 @@ async def read_public_entry(conversation_id: str, body: PublicEntrySelection, re
 async def child_detail(conversation_id: str, request: Request,
                        handle: str = ApiPath(min_length = 1, max_length = 128, pattern = r"^[^\x00]+$"),
                        attempt: int = ApiPath(ge = 1, le = 4294967295)):
-    # SDK inspection never claims the terminal completion owed to Mimir's parent.
-    # A current child's newer attempt is not relabeled as the selected old one.
     return await _command(request, "child_detail", {
         "conversation_id": conversation_id, "handle": handle, "attempt": attempt,
     })
@@ -622,8 +588,6 @@ async def child_detail(conversation_id: str, request: Request,
 @router.get("/conversations/{conversation_id}/events")
 async def conversation_events(conversation_id: str, request: Request,
                               generation: Generation):
-    # A GET never implicitly opens an owner or grants project trust. The plugin
-    # captures its native ordered view; no snapshot-then-subscribe race exists.
     try:
         runtime = await _runtime(request)
         subscription, queue = await runtime.subscribe(conversation_id, expected_generation = generation)
@@ -641,13 +605,11 @@ async def conversation_events(conversation_id: str, request: Request,
             if isinstance(item, CodingRuntimeError):
                 yield "event: disconnected\ndata: " + json.dumps({"message": item.message, "code": item.code, "requires_reopen": item.requires_reopen}) + "\n\n"
                 return
-            # Retained views keep their admitted observation domain even when
-            # the persistent supervisor publishes a replacement process.
-            # Do not rewrite native subscription/position/event or queue items.
+            # Positions are only comparable within the epoch this view was opened in.
             envelope = {**item, "observation_epoch": observation_epoch}
             yield "event: view\ndata: " + json.dumps(envelope, separators = (",", ":")) + "\n\n"
             if item.get("event", {}).get("type") in ("closed", "invalidated"):
                 return
 
-    # Only this view is released on disconnect; native conversation owners survive.
+    # Disconnect releases only this view; the conversation keeps running.
     return NativeViewResponse(events(), runtime, subscription)

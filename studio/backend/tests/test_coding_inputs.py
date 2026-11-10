@@ -21,7 +21,7 @@ from .test_coding import RuntimeDouble
 @pytest.fixture
 def coding_app(monkeypatch, tmp_path):
     monkeypatch.setattr(storage, "DB_PATH", tmp_path / "auth" / "auth.db")
-    storage.create_initial_user("unsloth", "isolated-input-password", "isolated-signing-secret-242-long-enough")
+    storage.create_initial_user("unsloth", "isolated-input-password", "isolated-signing-secret-long-enough")
     app = FastAPI()
     app.include_router(router, prefix = "/api/coding")
     return app, {"Authorization": "Bearer " + create_access_token("unsloth"), "X-Mimir-Runtime-Generation": "1"}

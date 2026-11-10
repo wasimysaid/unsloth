@@ -154,7 +154,7 @@ while True:
 @pytest.mark.asyncio
 async def test_runtime_scope_and_auth_are_explicit(monkeypatch, tmp_path):
     monkeypatch.setattr(storage, "DB_PATH", tmp_path / "auth.db")
-    storage.create_initial_user("unsloth", "isolated-test-password", "isolated-signing-secret-249-long-enough")
+    storage.create_initial_user("unsloth", "isolated-test-password", "isolated-signing-secret-long-enough")
     app = FastAPI()
     app.include_router(router, prefix="/api/coding")
     headers = {"Authorization": "Bearer " + create_access_token("unsloth")}
@@ -394,7 +394,7 @@ async def test_local_limit_cannot_authorize_restart_without_sending_native_guard
 @pytest.mark.asyncio
 async def test_owner_http_calls_are_fenced_before_delivery_even_after_other_tab_reopens(monkeypatch, tmp_path):
     monkeypatch.setattr(storage, "DB_PATH", tmp_path / "auth.db")
-    storage.create_initial_user("unsloth", "isolated-test-password", "isolated-signing-secret-249-owner-fence")
+    storage.create_initial_user("unsloth", "isolated-test-password", "isolated-signing-secret-owner-fence")
     runtime = await child_runtime(tmp_path)
     runtime._generation = 20  # Replacement owner deliberately opened by another tab.
     app = FastAPI()
