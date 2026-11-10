@@ -144,11 +144,13 @@ function StatusNotices({
             )}
         </div>
       )}
-      {completion?.error && (
-        <p role="alert" className={`${alert} break-words`}>
-          {completion.error}
-        </p>
-      )}
+      {/* A refused local model already shows its reason above, with Retry. */}
+      {completion?.error &&
+        !(preparation && ["busy", "failed"].includes(preparation.phase)) && (
+          <p role="alert" className={`${alert} break-words`}>
+            {completion.error}
+          </p>
+        )}
       {state.error && (
         <p role="alert" className={`${alert} break-words`}>
           {state.error}

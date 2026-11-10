@@ -2175,10 +2175,8 @@ export function codingRunLabel(state: CodingRunState): string {
   if (preparation?.phase === "cleanup_pending")
     return "Cleanup pending · local model protection retained";
   if (preparation?.phase === "loading") return "Loading Studio local model…";
-  if (preparation?.phase === "busy")
-    return "Local model busy · explicit retry required";
-  if (preparation?.phase === "failed")
-    return "Local model preparation failed · explicit retry required";
+  if (preparation?.phase === "busy") return "Studio busy · retry when it's free";
+  if (preparation?.phase === "failed") return "Local model didn't load";
   if (state.native?.pending_user_request) return "Waiting for user input";
   if (state.native?.active_request) return "Running";
   if (state.native?.requests.some((request) => request.status === "queued"))

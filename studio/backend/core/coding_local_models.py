@@ -8,7 +8,10 @@ The native execution owner, not the picker or browser, admits request protection
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
+import os
+import re
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -17,6 +20,38 @@ from core.coding_runtime import CodingRuntimeError
 PROVIDER_ID = "studio-local"
 PROVIDER_NAME = "Studio local"
 _CHAT = SimpleNamespace(can_chat = True)
+_NO_REASONING = (False, False, ())
+# An absolute POSIX or Windows path in free text, not the path part of a URL.
+_HOST_PATH = re.compile(r"(?<![\w:/\\])(?:[A-Za-z]:)?[/\\](?:[^\s/\\'\"]+[/\\])*([^\s/\\'\"]*)")
+
+
+def reasoning_controls(path: str | None, model_id: str) -> dict:
+    """The thinking controls Studio's own chat offers for this GGUF, from its chat template."""
+    try:
+        stamp = os.stat(path).st_mtime_ns
+    except (OSError, TypeError, ValueError):
+        thinking, toggle, levels = _NO_REASONING
+    else:
+        thinking, toggle, levels = _template_reasoning(path, stamp, model_id)
+    return {"thinking": thinking, "toggle": toggle, "levels": list(levels)}
+
+
+@functools.lru_cache(maxsize = 256)
+def _template_reasoning(path: str, _stamp: int, model_id: str) -> tuple[bool, bool, tuple[str, ...]]:
+    from core.inference.llama_cpp import detect_reasoning_flags
+    from utils.models.gguf_metadata import read_gguf_chat_template
+
+    flags = detect_reasoning_flags(read_gguf_chat_template(path), model_id, log_level = "debug")
+    if not flags["supports_reasoning"]:
+        return _NO_REASONING
+    if flags["reasoning_always_on"]:
+        return True, False, ()
+    levels = tuple(flags.get("reasoning_effort_levels") or ())
+    style = flags["reasoning_style"]
+    if style == "reasoning_effort":
+        # Same levels Studio's request mapping accepts when the template lists none.
+        return True, False, levels or ("low", "medium", "high")
+    return True, True, levels if style == "enable_thinking_effort" else ()
 
 
 def local_choice(row) -> dict:
@@ -28,41 +63,47 @@ def local_choice(row) -> dict:
     # Loose GGUF file paths already identify an exact quant. Folder/repository
     # choices must keep the explicit variant in their native API-model mapping.
     api_model = f"{load_id}:{variant}" if variant and not load_id.lower().endswith(".gguf") else load_id
-    return {
-        "id": identifier,
-        "name": row.display_name,
-        "api_model": api_model,
-        "reasoning": "unsupported",
-        "default_reasoning": None,
-    }
+    reasoning = getattr(row, "reasoning", None) or reasoning_controls(
+        load_id if load_id.lower().endswith(".gguf") else None, load_id,
+    )
+    return {"id": identifier, "name": row.display_name, "api_model": api_model, "reasoning": reasoning}
 
 
 async def _cached_gguf_rows() -> tuple[list, set[str]]:
     """One row per fully downloaded quant, as Chat's On Device list shows them."""
     from hub.services.models.cache_inventory import list_cached_gguf_response
-    from hub.services.models.gguf_variants import get_gguf_variants_response
+    from hub.services.models.gguf_variants import get_gguf_variants_answer
 
     repos = [repo for repo in (await list_cached_gguf_response())["cached"]
              if (repo.get("capabilities") or {}).get("can_chat")]
     answers = await asyncio.gather(
-        *(get_gguf_variants_response(repo["repo_id"], prefer_local_cache = True, offline = True)
+        *(get_gguf_variants_answer(repo["repo_id"], prefer_local_cache = True, offline = True,
+                                   include_cache_locations = True)
           for repo in repos),
         return_exceptions = True,
     )
-    rows = []
+    rows, files = [], []
     for repo, answer in zip(repos, answers):
         if isinstance(answer, BaseException):
             continue
         repo_id = repo["repo_id"]
-        for variant in answer.variants:
+        sources = answer.variant_context_sources or {}
+        for variant in answer.response.variants:
             if not variant.downloaded or variant.partial:
                 continue
+            # The first file of the quant (shard 1 for splits) carries its chat template.
+            files.append((sources.get(variant.quant.lower()) or (
+                os.path.join(answer.context_source, variant.filename) if answer.context_source else None
+            ), repo_id))
             rows.append(SimpleNamespace(
                 inventory_id = f"{repo.get('inventory_id') or repo_id}:{variant.quant}",
                 id = repo_id, load_id = repo.get("load_id") or repo_id, model_format = "gguf",
                 display_name = f"{repo_id.split('/')[-1]} · {variant.display_label or variant.quant}",
                 format_variant = variant.quant, partial = False, capabilities = _CHAT,
             ))
+    controls = await asyncio.to_thread(lambda: [reasoning_controls(path, model) for path, model in files])
+    for row, reasoning in zip(rows, controls):
+        row.reasoning = reasoning
     return rows, {repo["repo_id"] for repo in repos}
 
 
@@ -92,6 +133,25 @@ async def resolve_local_choice(identifier: str):
         "unavailable", "The selected Studio local model is no longer downloaded or accessible. "
         "Refresh the native catalog, retry, or choose a replacement; no model was substituted.",
     )
+
+
+def _load_error(exc: BaseException) -> CodingRuntimeError:
+    """Say why the load was refused or failed, with host paths and secrets scrubbed."""
+    from fastapi import HTTPException
+
+    if not isinstance(exc, HTTPException):
+        return CodingRuntimeError("failed", "Studio couldn't load the model. Studio's server log has the details.")
+    detail = exc.detail.get("message") if isinstance(exc.detail, dict) else exc.detail
+    if isinstance(detail, str) and detail.strip():
+        from hub.utils.download_registry import scrub_secrets
+
+        # Keep only file names: host paths are not shown to the native runtime.
+        reason = _HOST_PATH.sub(r"\1", scrub_secrets(detail.strip()))[:400]
+    else:
+        reason = "Studio refused the load without a reason."
+    if exc.status_code == 409:
+        return CodingRuntimeError("busy", reason)
+    return CodingRuntimeError("failed", f"Studio couldn't load the model: {reason}")
 
 
 @dataclass
@@ -146,18 +206,8 @@ class CodingLocalServing:
                                 "api_model": choice["api_model"]}
             return operation.result
         except BaseException as exc:
-            # Do not include raw backend exceptions/HTTP detail (which may contain
-            # paths, credentials or URLs) in native/browser diagnostics.
-            from fastapi import HTTPException
-            code = (exc.code if isinstance(exc, CodingRuntimeError) else
-                    "busy" if isinstance(exc, HTTPException) and exc.status_code == 409 else
-                    "unavailable")
             operation.state = "failed"
-            operation.error = CodingRuntimeError(
-                code, "Studio local model preparation is busy. Wait for the existing workload, then retry."
-                if code == "busy" else
-                "Studio local model preparation failed. Check the Studio model runtime and downloaded choice, then explicitly retry. No fallback was used.",
-            )
+            operation.error = exc if isinstance(exc, CodingRuntimeError) else _load_error(exc)
             raise operation.error from None
 
     async def acquire(self, body: dict, request) -> dict:

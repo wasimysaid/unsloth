@@ -12383,25 +12383,32 @@ async def load_model_for_coding(
                 from core.inference.llama_keepwarm import require_coding_model_unprotected
 
                 require_coding_model_unprotected(action = "Loading a coding model")
+                from core.inference.gpu_arbiter import KIND_LABELS
+
                 llama = _llama_cpp_backend
                 backend = _peek_inference_backend()
-                busy = (
+                owner = current_owner()
+                reason = (
                     # A healthy idle primary is replaceable; a starting or failed server is not.
-                    (llama is not None and llama.is_active and not llama.is_loaded)
-                    or (backend is not None and (
-                        backend.active_model_name or getattr(backend, "loading_models", None)
-                    ))
+                    "Another model is still starting in Studio. Retry when it is ready."
+                    if llama is not None and llama.is_active and not llama.is_loaded else
+                    "Studio is loading another model. Retry when it finishes."
                     # The reload confirmation runs inside this load, which is itself in flight.
-                    or (chat_load_active() and not own_load)
-                    or model_slots.busy() or model_slots.holds_vram()
-                    or any(s.generations or s.refs for s in model_slots.resident())
-                    or other_inference_request_count(current_request_counted = False, include_pending = False)
-                    or current_owner() not in (None, CHAT)
+                    if (chat_load_active() and not own_load)
+                    or (backend is not None and getattr(backend, "loading_models", None)) else
+                    "A non-GGUF model is loaded in Studio Chat. Eject it there, then retry."
+                    if backend is not None and backend.active_model_name else
+                    "Studio is answering another request. Retry when it finishes."
+                    if other_inference_request_count(current_request_counted = False, include_pending = False)
+                    or any(s.generations or s.refs for s in model_slots.resident()) else
+                    "Studio is keeping other models loaded side by side. Eject them in Chat, then retry."
+                    if model_slots.busy() or model_slots.holds_vram() else
+                    f"The GPU is in use by a {KIND_LABELS.get(owner, owner)} model. Eject it, then retry."
+                    if owner not in (None, CHAT) else None
                 )
-                if busy:
+                if reason:
                     raise HTTPException(status_code = 409, detail = {
-                        "error": "coding_model_busy",
-                        "message": "Studio is busy with another task. Retry when it finishes; coding never interrupts it.",
+                        "error": "coding_model_busy", "message": reason,
                     })
 
             require_empty_chat()
