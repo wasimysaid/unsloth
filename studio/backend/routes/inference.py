@@ -12351,8 +12351,9 @@ async def load_model_for_coding(
         inference_lifecycle_gate,
         model_load_gate,
         other_inference_request_count,
+        require_coding_model_unprotected,
     )
-    from core.inference.gpu_arbiter import CHAT, GpuOwnerBusyError, current_owner
+    from core.inference.gpu_arbiter import CHAT, KIND_LABELS, GpuOwnerBusyError, current_owner
 
     if account_access.managed_account():
         await asyncio.to_thread(account_access.require_model_access, request.model_path)
@@ -12379,33 +12380,33 @@ async def load_model_for_coding(
                     protection_token, backend, slot = slot, identity = identity
                 )
 
-            def require_empty_chat(*, cancel = False, own_load = False):
-                from core.inference.llama_keepwarm import require_coding_model_unprotected
-
-                require_coding_model_unprotected(action = "Loading a coding model")
-                from core.inference.gpu_arbiter import KIND_LABELS
-
+            def busy_reason(own_load):
                 llama = _llama_cpp_backend
                 backend = _peek_inference_backend()
+                # A healthy idle primary is replaceable; a starting or failed server is not.
+                if llama is not None and llama.is_active and not llama.is_loaded:
+                    return "Another model is still starting in Studio. Retry when it is ready."
+                # The reload confirmation runs inside this load, which is itself in flight.
+                if (chat_load_active() and not own_load) or (
+                    backend is not None and getattr(backend, "loading_models", None)
+                ):
+                    return "Studio is loading another model. Retry when it finishes."
+                if backend is not None and backend.active_model_name:
+                    return "A non-GGUF model is loaded in Studio Chat. Eject it there, then retry."
+                if other_inference_request_count(
+                    current_request_counted = False, include_pending = False
+                ) or any(s.generations or s.refs for s in model_slots.resident()):
+                    return "Studio is answering another request. Retry when it finishes."
+                if model_slots.busy() or model_slots.holds_vram():
+                    return "Studio is keeping other models loaded side by side. Eject them in Chat, then retry."
                 owner = current_owner()
-                reason = (
-                    # A healthy idle primary is replaceable; a starting or failed server is not.
-                    "Another model is still starting in Studio. Retry when it is ready."
-                    if llama is not None and llama.is_active and not llama.is_loaded else
-                    "Studio is loading another model. Retry when it finishes."
-                    # The reload confirmation runs inside this load, which is itself in flight.
-                    if (chat_load_active() and not own_load)
-                    or (backend is not None and getattr(backend, "loading_models", None)) else
-                    "A non-GGUF model is loaded in Studio Chat. Eject it there, then retry."
-                    if backend is not None and backend.active_model_name else
-                    "Studio is answering another request. Retry when it finishes."
-                    if other_inference_request_count(current_request_counted = False, include_pending = False)
-                    or any(s.generations or s.refs for s in model_slots.resident()) else
-                    "Studio is keeping other models loaded side by side. Eject them in Chat, then retry."
-                    if model_slots.busy() or model_slots.holds_vram() else
-                    f"The GPU is in use by a {KIND_LABELS.get(owner, owner)} model. Eject it, then retry."
-                    if owner not in (None, CHAT) else None
-                )
+                if owner not in (None, CHAT):
+                    return f"The GPU is in use by a {KIND_LABELS.get(owner, owner)} model. Eject it, then retry."
+                return None
+
+            def require_empty_chat(own_load = False):
+                require_coding_model_unprotected(action = "Loading a coding model")
+                reason = busy_reason(own_load)
                 if reason:
                     raise HTTPException(status_code = 409, detail = {
                         "error": "coding_model_busy", "message": reason,
@@ -12415,7 +12416,7 @@ async def load_model_for_coding(
             try:
                 await _run_tracked_load_model_impl(
                     request, fastapi_request, current_subject,
-                    on_reload_confirmed = lambda *, cancel: require_empty_chat(cancel = cancel, own_load = True),
+                    on_reload_confirmed = lambda *, cancel: require_empty_chat(own_load = True),
                     allow_gpu_owner_eviction = False,
                 )
             except GpuOwnerBusyError as exc:
