@@ -85,8 +85,9 @@ async def test_catalog_reuses_current_downloaded_inventory_and_exact_identity(mo
     assert await resolve_local_choice(a["id"]) is rows[0]
     rows.pop(0)
     assert (await local_catalog())["models"] == [b]
-    with pytest.raises(CodingRuntimeError, match="no model was substituted"):
+    with pytest.raises(CodingRuntimeError) as missing:
         await resolve_local_choice(a["id"])
+    assert missing.value.code == "unavailable"
 
 
 def test_identity_survives_label_changes_and_never_encodes_credentials():
@@ -140,8 +141,9 @@ async def test_native_admission_reuses_studio_launch_preferences_without_force_o
     assert len(launches) == 1
     with pytest.raises(CodingRuntimeError, match="identity"):
         await serving.acquire({**request, "api_model": "different"}, None)
-    with pytest.raises(CodingRuntimeError, match="identity changed"):
+    with pytest.raises(CodingRuntimeError) as changed:
         await serving.acquire({**request, "operation_id": "forged-op", "api_model": "different"}, None)
+    assert changed.value.code == "conflict"
     assert len(launches) == 1
 
 

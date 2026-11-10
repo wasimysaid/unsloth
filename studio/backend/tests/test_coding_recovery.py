@@ -54,7 +54,7 @@ async def test_uncertain_command_is_not_replayed_and_late_ack_does_not_poison_re
     runtime.process = SimpleNamespace(stdout=stream, stdin=Writer(), returncode=0,
                                       wait=AsyncMock(return_value=0))
     reader = asyncio.create_task(runtime._read_responses())
-    with pytest.raises(CodingRuntimeError, match="not confirmed") as failure:
+    with pytest.raises(CodingRuntimeError) as failure:
         await runtime.command(operation, {"conversation_id": "saved", "submission_key": "original"})
     assert failure.value.code == "uncertain"
     state = await runtime.command("state", {"conversation_id": "saved"})

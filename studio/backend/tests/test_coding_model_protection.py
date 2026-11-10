@@ -81,7 +81,7 @@ def assert_protected(fn):
         fn()
     assert error.value.status_code == 409
     assert error.value.detail["error"] == "coding_model_protected"
-    assert "retry" in error.value.detail["message"].lower()
+    assert "try again" in error.value.detail["message"].lower()
     assert "org/" not in str(error.value.detail)
 
 

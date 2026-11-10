@@ -98,14 +98,14 @@ def _coding_target_matches(hold, backend, slot) -> bool:
     )
 
 
-def _coding_protected_error(action: str):
+def _coding_refusal(message: str):
     from fastapi import HTTPException
 
-    return HTTPException(status_code = 409, detail = {
-        "error": "coding_model_protected",
-        "message": f"{action} would interrupt an active coding request. "
-        "Finish or cancel that request and wait for confirmed cleanup, then retry.",
-    })
+    return HTTPException(status_code = 409, detail = {"error": "coding_model_protected", "message": message})
+
+
+def _coding_protected_error(action: str):
+    return _coding_refusal(f"{action} would interrupt a running Coding request. Stop it in Coding, then try again.")
 
 
 def hold_coding_model(token: str, backend, *, slot = None, identity: tuple) -> CodingModelHold:
@@ -125,13 +125,13 @@ def hold_coding_model(token: str, backend, *, slot = None, identity: tuple) -> C
             raise ValueError("A coding request owner token cannot be retargeted")
         hold = CodingModelHold(backend, slot, identity)
         if any(_coding_target_matches(hold, b, s) for b, s in _coding_mutations):
-            raise _coding_protected_error("Model lifecycle maintenance in progress")
+            raise _coding_refusal("Studio is changing this model right now. Try again in a moment.")
         if identity is None or coding_model_identity(backend) != identity:
-            raise _coding_protected_error("The selected model changed; loading it")
+            raise _coding_refusal("The selected model changed before Coding could use it. Try again.")
         if slot is not None:
             from core.inference import model_slots
             if slot not in model_slots.slots or backend not in (slot.llama, slot.orchestrator):
-                raise _coding_protected_error("The selected model slot changed; loading it")
+                raise _coding_refusal("The selected model changed before Coding could use it. Try again.")
         _coding_holds[token] = hold
         return hold
 

@@ -113,7 +113,7 @@ async def test_answer_total_transport_bound_still_refuses_before_native_stdin(co
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
         response = await client.post(ANSWER_PATH, json={"subscription": "exact-live-view", "answers": [answer]})
     assert response.status_code == 400
-    assert "command is too large" in response.json()["detail"]
+    assert "too large" in response.json()["detail"]
     writer.write.assert_not_called()
     assert not runtime._pending and not runtime._subscriptions
 

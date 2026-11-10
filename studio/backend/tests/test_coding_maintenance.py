@@ -419,7 +419,6 @@ async def test_owner_http_calls_are_fenced_before_delivery_even_after_other_tab_
                     headers={**token, "X-Mimir-Runtime-Generation": "19"}, json=body)
                 assert stale.status_code == 409
                 assert stale.headers["X-Mimir-Requires-Reopen"] == "true"
-                assert "Deliberately reopen" in stale.json()["detail"]
                 missing = await client.request(method, "/api/coding" + path, headers=token, json=body)
                 assert missing.status_code == 422
         assert runtime.process.returncode is None

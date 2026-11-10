@@ -68,6 +68,6 @@ async def test_slash_prompt_bypass_and_invalid_commands_never_reach_native_execu
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
         for text in ("/unknown", "  /terminal-only", "/compress"):
             response = await client.post("/api/coding/conversations/exact-id/prompts", json={"submission_key": "key", "text": text})
-            assert response.status_code == 400 and "no model prompt" in response.json()["detail"]
+            assert response.status_code == 400 and "command menu" in response.json()["detail"]
         for body in ({"name": ""}, {"name": "/compress"}, {"name": "two names"}, {"name": "inspect", "tail": "x" * 16385}, {"name": "inspect", "api_key": "must-not-pass"}):
             assert (await client.post("/api/coding/conversations/exact-id/commands", json={"operation_id": "validation-op", **body})).status_code == 422

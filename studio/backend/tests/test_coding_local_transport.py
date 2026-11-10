@@ -240,8 +240,9 @@ async def test_unsafe_serving_origins_refused_without_minting_key(coding_app, mo
     monkeypatch.setattr(storage, "create_api_key", forbidden_mint)
     request = Request(dict(type="http", app=app, headers=[]))
     request.state.coding_subject = "unsloth"
-    with pytest.raises(CodingRuntimeError, match="trusted loopback"):
+    with pytest.raises(CodingRuntimeError) as refused:
         await runtime.configure_local_serving(request)
+    assert refused.value.code == "invalid"
     assert runtime._local_key_id is None
     assert runtime.local_serving is None
 

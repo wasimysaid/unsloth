@@ -518,7 +518,7 @@ async def conversation_files(conversation_id: str, request: Request,
                              query: str = Query(default = "", max_length = 1024),
                              max_results: int = Query(default = 40, ge = 1, le = 40)):
     if len(query.encode("utf-8")) > 1024 or any(ord(char) < 32 or ord(char) == 127 for char in query):
-        raise HTTPException(422, "File search requires at most 1024 UTF-8 bytes without control characters.")
+        raise HTTPException(422, "File search text is too long or contains invalid characters.")
     return await _command(request, "files", {"conversation_id": conversation_id, "query": query, "max_results": max_results})
 
 
@@ -527,7 +527,7 @@ async def submit_prompt(conversation_id: str, body: PromptSubmission, request: R
                         generation: Generation):
     # Slash attempts never bypass native command handling, including recovered drafts.
     if body.text.lstrip().startswith("/"):
-        raise HTTPException(400, "Slash commands must use native command dispatch; no model prompt was submitted.")
+        raise HTTPException(400, "Run slash commands from the command menu.")
     # Native deduplication and the opening's exact supervisor incarnation both apply.
     return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump(exclude_unset = True), "overlap_confirmed": body.overlap_confirmed}, generation = generation)
 

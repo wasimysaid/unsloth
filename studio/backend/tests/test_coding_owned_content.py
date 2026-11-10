@@ -119,8 +119,9 @@ async def test_invalid_native_chunk_closes_transfer_and_file():
     peer = NativePeer()
     peer.bad_offset = True
     try:
-        with pytest.raises(CodingRuntimeError, match = "inconsistent"):
+        with pytest.raises(CodingRuntimeError) as failure:
             await peer.runtime.public_entry("saved", CUT, "entry", expected_generation = 1)
+        assert failure.value.code == "protocol"
         assert peer.commands[-1][0] == "close_public_entry"
     finally:
         await peer.close()

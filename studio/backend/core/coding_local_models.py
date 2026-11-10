@@ -126,10 +126,7 @@ async def resolve_local_choice(identifier: str):
     for row in await downloaded_rows():
         if local_choice(row)["id"] == identifier:
             return row
-    raise CodingRuntimeError(
-        "unavailable", "The selected Studio local model is no longer downloaded or accessible. "
-        "Refresh the native catalog, retry, or choose a replacement; no model was substituted.",
-    )
+    raise CodingRuntimeError("unavailable", "This model is no longer downloaded. Pick another model.")
 
 
 def _load_error(exc: BaseException) -> CodingRuntimeError:
@@ -179,7 +176,7 @@ class CodingLocalServing:
             row = await resolve_local_choice(body["model_id"])
             choice = local_choice(row)
             if body["api_model"] != choice["api_model"]:
-                raise CodingRuntimeError("conflict", "The downloaded model identity changed. Refresh and retry; nothing was substituted.")
+                raise CodingRuntimeError("conflict", "This model changed on disk. Pick it again from the model list.")
             from models.inference import LoadRequest
             from routes.inference import load_model_for_coding
             from utils.openai_auto_switch_settings import model_override_load_kwargs, resolve_override_for_load

@@ -12422,12 +12422,12 @@ async def load_model_for_coding(
             except GpuOwnerBusyError as exc:
                 raise HTTPException(status_code = 409, detail = {
                     "error": "coding_model_busy",
-                    "message": "The GPU owner changed while loading. Coding did not evict it; retry after that workload finishes.",
+                    "message": "Another workload took the GPU while the model was loading. Try again when it finishes.",
                 }) from exc
             if not await asyncio.to_thread(_loaded_satisfies, requested):
                 raise HTTPException(status_code = 409, detail = {
                     "error": "coding_model_changed",
-                    "message": "The selected coding model is not resident after loading. Refresh the available models and retry.",
+                    "message": "The model didn't stay loaded. Pick it again and retry.",
                 })
             llama = get_llama_cpp_backend()
             backend = llama if llama.is_loaded else _peek_inference_backend()

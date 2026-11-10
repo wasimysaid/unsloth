@@ -437,10 +437,11 @@ async def test_private_framing_rejects_oversized_output_and_settles_pending():
     future = asyncio.get_running_loop().create_future()
     runtime._pending[1] = future
     await runtime._read_responses()
-    with pytest.raises(CodingRuntimeError, match = "disconnected"):
+    with pytest.raises(CodingRuntimeError) as pending:
         await future
-    with pytest.raises(CodingRuntimeError, match = "disconnected"):
+    with pytest.raises(CodingRuntimeError) as restarted:
         await runtime.start()
+    assert pending.value.code == restarted.value.code == "disconnected"
     assert runtime._shutdown_task is not None
     await runtime._shutdown_task
 
@@ -460,8 +461,9 @@ async def test_malformed_error_frame_settles_matching_pending_command(error):
     await runtime._read_responses()
     assert runtime._shutdown_task is not None
     await runtime._shutdown_task
-    with pytest.raises(CodingRuntimeError, match = "disconnected"):
+    with pytest.raises(CodingRuntimeError) as failure:
         await asyncio.wait_for(future, timeout = 0.1)
+    assert failure.value.code == "disconnected"
     assert not runtime._pending
 
 
@@ -751,8 +753,9 @@ async def test_late_view_reply_reconciles_expired_admission(monkeypatch):
     runtime = LateRuntime()
     runtime.process = SimpleNamespace(stdout = stream, stdin = Writer(), returncode = 0,
                                       wait = AsyncMock(return_value = 0))
-    with pytest.raises(CodingRuntimeError, match = "not confirmed"):
+    with pytest.raises(CodingRuntimeError) as failure:
         await runtime.command("view", {"conversation_id": "saved"})
+    assert failure.value.code == "uncertain"
     assert runtime._abandoned_views == {1}
     payload = {"id": 1, "result": {"subscription": "late-view", "event": {"type": "start"}, "position": 1}}
     data = json.dumps(payload).encode()
@@ -902,6 +905,7 @@ async def test_malformed_overlap_refusal_fails_transport_without_orphaning_comma
     await runtime._read_responses()
     assert runtime._shutdown_task is not None
     await runtime._shutdown_task
-    with pytest.raises(CodingRuntimeError, match = "disconnected"):
+    with pytest.raises(CodingRuntimeError) as failure:
         await future
+    assert failure.value.code == "disconnected"
     assert not runtime._pending

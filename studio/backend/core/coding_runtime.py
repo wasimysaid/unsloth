@@ -147,7 +147,7 @@ class CodingRuntime:
             if manifest.get("id") != PLUGIN_ID:
                 raise ValueError("unexpected plugin ID")
         except (OSError, ValueError) as exc:
-            raise CodingRuntimeError("unavailable", "The configured Mimir frontend package is invalid; rebuild the pinned studio.frontend package.") from exc
+            raise CodingRuntimeError("unavailable", "Coding couldn't start because its Mimir plugin package is invalid. Rebuild studio.frontend on the Studio host.") from exc
         installer = await asyncio.create_subprocess_exec(
             self.executable, "plugin", "install", self.package,
             stdin = asyncio.subprocess.DEVNULL, stdout = asyncio.subprocess.DEVNULL,
@@ -165,10 +165,10 @@ class CodingRuntime:
                         installer.kill()
                         await installer.wait()
             if isinstance(exc, TimeoutError):
-                raise CodingRuntimeError("unavailable", "Mimir frontend installation timed out. Check the pinned package on the host.") from exc
+                raise CodingRuntimeError("unavailable", "Coding couldn't start because installing its Mimir plugin timed out. Check the studio.frontend package on the Studio host.") from exc
             raise
         if installed != 0:
-            raise CodingRuntimeError("unavailable", "Mimir could not install the configured studio.frontend package. Rebuild it against the pinned SDK.")
+            raise CodingRuntimeError("unavailable", "Coding couldn't start because Mimir couldn't install its studio.frontend plugin. Rebuild the plugin for this Mimir version.")
 
     def status(self) -> dict[str, Any]:
         # Reading diagnostics never launches a process or opens an execution owner.
@@ -246,22 +246,22 @@ class CodingRuntime:
             valid = False
         if not valid:
             # Match native's numeric-loopback HTTP contract, not browser Host/DNS.
-            raise CodingRuntimeError("invalid", "The Studio local serving origin must be a trusted loopback numeric HTTP origin without credentials or a path.")
+            raise CodingRuntimeError("invalid", "UNSLOTH_MIMIR_STUDIO_URL must be a plain loopback address such as http://127.0.0.1:8888.")
         # Setup, process publication and shutdown share one linearization lock.
         async with self._start_lock:
             if self._maintaining:
-                raise CodingRuntimeError("busy", "Whole-runtime maintenance is in progress. Wait for it to settle.")
+                raise CodingRuntimeError("busy", "Coding is restarting. Try again in a moment.")
             if self._closing:
-                raise CodingRuntimeError("unavailable", "The coding runtime is shutting down.")
+                raise CodingRuntimeError("unavailable", "Studio is shutting down.")
             if self.local_serving is not None:
                 if self._local_origin != origin.rstrip("/"):
-                    raise CodingRuntimeError("conflict", "The live Studio serving endpoint changed. Drain work before an explicit runtime restart.")
+                    raise CodingRuntimeError("conflict", "Studio's address changed. Restart Coding to use it.")
                 return
             if self.process is not None:
-                raise CodingRuntimeError("busy", "Local serving was not configured before native startup. Drain work before an explicit runtime restart.")
+                raise CodingRuntimeError("busy", "Coding started without access to Studio's local models. Restart Coding to use them.")
             subject = getattr(request.state, "coding_subject", None)
             if not subject:
-                raise CodingRuntimeError("denied", "Studio authentication is required before local serving setup.")
+                raise CodingRuntimeError("denied", "Sign in to Studio to use Coding.")
             await self._mint_local_serving(origin.rstrip("/"), subject,
                                            getattr(request.state, "coding_credential_generation", None))
 
@@ -276,7 +276,7 @@ class CodingRuntime:
             try:
                 await asyncio.to_thread(revoke_internal_api_key, self._local_key_id)
             except Exception:
-                raise CodingRuntimeError("unavailable", "The previous native workflow credential has not retired. Restore Studio credential storage and explicitly retry; no replacement was created.") from None
+                raise CodingRuntimeError("unavailable", "Coding couldn't revoke its previous Studio access key. Check Studio's credential storage, then try again.") from None
             self._local_key_id = None
         incarnation = str(uuid.uuid4())
         mint = asyncio.create_task(asyncio.to_thread(
@@ -309,12 +309,12 @@ class CodingRuntime:
                 retirement.result()
             raise
         except CredentialRotated:
-            raise CodingRuntimeError("denied", "The Studio credential changed. Sign in again before starting local serving.") from None
+            raise CodingRuntimeError("denied", "Your Studio sign-in changed. Sign in again, then try again.") from None
         self._local_key_id = record["id"]
         if self._closing:
             with anyio.CancelScope(shield=True):
                 await self._close_local_serving(clean=True)
-            raise CodingRuntimeError("unavailable", "The coding runtime shut down during serving setup.")
+            raise CodingRuntimeError("unavailable", "Studio is shutting down.")
         self._local_origin = origin
         self._local_subject = subject
         self._local_credential_generation = credential_generation
@@ -323,9 +323,9 @@ class CodingRuntime:
     async def start(self, *, maintenance: bool = False) -> None:
         async with self._start_lock:
             if self._maintaining and not maintenance:
-                raise CodingRuntimeError("busy", "Whole-runtime maintenance is in progress. Wait for it to settle.")
+                raise CodingRuntimeError("busy", "Coding is restarting. Try again in a moment.")
             if self._closing:
-                raise CodingRuntimeError("unavailable", "The coding runtime is shutting down.")
+                raise CodingRuntimeError("unavailable", "Studio is shutting down.")
             if self._failure:
                 # Never restart implicitly: a lost response may have opened a saved conversation.
                 raise self._failure
@@ -341,7 +341,7 @@ class CodingRuntime:
                 try:
                     if self.local_serving is not None:
                         if os.name != "posix":
-                            raise CodingRuntimeError("unavailable", "Studio local serving requires the native inherited-pipe bootstrap on a supported Unix host.")
+                            raise CodingRuntimeError("unavailable", "Studio local models in Coding need a Linux or macOS host.")
                         bootstrap = json.dumps({
                             "origin": self._local_origin,
                             "key": self.local_serving.key,
@@ -351,7 +351,7 @@ class CodingRuntime:
                         # Fit an atomic write before spawning; no buffered writer
                         # or credential-bearing environment survives into Mimir.
                         if len(bootstrap) > min(4096, os.fpathconf(write_fd, "PC_PIPE_BUF")):
-                            raise CodingRuntimeError("invalid", "Studio local serving bootstrap exceeds its private pipe limit.")
+                            raise CodingRuntimeError("invalid", "Coding couldn't pass Studio's local model settings to Mimir.")
                         if os.write(write_fd, bootstrap) != len(bootstrap):
                             raise OSError("Incomplete private bootstrap write")
                         os.close(write_fd)
@@ -375,8 +375,8 @@ class CodingRuntime:
             except OSError as exc:
                 raise CodingRuntimeError(
                     "unavailable",
-                    "Mimir could not start. Build the pinned runtime and install studio.frontend; "
-                    "check UNSLOTH_MIMIR_EXECUTABLE on the Studio host.",
+                    "Coding could not start Mimir. Check that Mimir is installed on the Studio host "
+                    "and that UNSLOTH_MIMIR_EXECUTABLE points to it.",
                 ) from exc
             if self._generation:
                 self.observation_epoch = uuid.uuid4().hex
@@ -424,7 +424,7 @@ class CodingRuntime:
         while not queue.empty():
             queue.get_nowait()
         queue.put_nowait(CodingRuntimeError(
-            "disconnected", "The native view exceeded the delivery buffer. Reconnect for a fresh native view.",
+            "disconnected", "Live updates for this conversation fell behind. Reconnect to catch up.",
         ))
         # Retain the failure, not a partial suffix masquerading as complete.
         self._overflowed.add(subscription)
@@ -501,12 +501,10 @@ class CodingRuntime:
                             self._bound_views(result["subscription"])
                     future.set_result(result)
                 else:
-                    future.set_exception(CodingRuntimeError("protocol", "Invalid Mimir response."))
+                    future.set_exception(CodingRuntimeError("protocol", "Coding sent an invalid response."))
         except (asyncio.IncompleteReadError, OSError, ValueError, KeyError, TypeError):
             error = CodingRuntimeError(
-                "disconnected", "The coding runtime disconnected. Work may be interrupted; no operation was replayed. "
-                "Use Restart whole Mimir runtime, then deliberately reopen saved history and explicitly continue if needed.",
-                requires_reopen = True,
+                "disconnected", "Coding stopped unexpectedly. Restart Coding, then reopen your conversation.", requires_reopen = True,
             )
             self._fail(error)
             if not self._expected_exit:
@@ -516,7 +514,7 @@ class CodingRuntime:
 
     async def command(self, method: str, params: dict[str, Any] | None = None, *, expected_generation: int | None = None) -> Any:
         if expected_generation is not None and expected_generation != self._generation:
-            raise CodingRuntimeError("runtime_changed", "This conversation belongs to an earlier runtime incarnation. Deliberately reopen saved history; nothing was delivered or replayed.", requires_reopen = True)
+            raise CodingRuntimeError("runtime_changed", "Coding was restarted. Reopen this conversation to continue.", requires_reopen = True)
         await self.start()
         return await self._request(method, params, expected_generation = expected_generation)
 
@@ -525,13 +523,13 @@ class CodingRuntime:
         generation = self._generation
         process = self.process
         if method != "close_public_entry" and len(self._pending) + len(self._abandoned_views) >= 128:
-            raise CodingRuntimeError("limit", "Too many pending native operations. Wait for their results before retrying.")
+            raise CodingRuntimeError("limit", "Coding is busy. Try again in a moment.")
         self._sequence += 1
         identifier = self._sequence
         data = json.dumps({"id": identifier, "method": method, "params": params or {}},
                           separators = (",", ":"), allow_nan = False).encode()
         if len(data) > MAX_FRAME:
-            raise CodingRuntimeError("invalid", "The coding command is too large.")
+            raise CodingRuntimeError("invalid", "This request is too large for Coding.")
         future = asyncio.get_running_loop().create_future()
         self._pending[identifier] = future
         if method == "view":
@@ -541,15 +539,15 @@ class CodingRuntime:
         try:
             async with self._write_lock:
                 if (self._maintaining or self._closing) and not maintenance:
-                    raise CodingRuntimeError("busy", "Whole-runtime maintenance is in progress. Nothing was submitted; reopen after it settles.")
+                    raise CodingRuntimeError("busy", "Coding is restarting. Try again in a moment.")
                 if self._failure:
                     raise self._failure
                 if not maintenance and (self._restart_prepared or (self._restart_uncertain and method in ("create", "open", "prompt"))):
-                    raise CodingRuntimeError("busy", "Native restart admission must be reconciled before new work. Inspect runtime status; nothing was submitted.")
+                    raise CodingRuntimeError("busy", "Coding is finishing a restart. Try again in a moment.")
                 if expected_generation is not None and expected_generation != self._generation:
-                    raise CodingRuntimeError("runtime_changed", "The opened runtime incarnation changed. Deliberately reopen saved history before this action.", requires_reopen = True)
+                    raise CodingRuntimeError("runtime_changed", "Coding was restarted. Reopen this conversation to continue.", requires_reopen = True)
                 if self.process is not process or self._generation != generation:
-                    raise CodingRuntimeError("disconnected", "The runtime incarnation changed before delivery. Nothing was replayed; deliberately reopen and reconcile first.")
+                    raise CodingRuntimeError("disconnected", "Coding was restarted before this was sent. Reopen this conversation, then try again.")
                 process.stdin.write(struct.pack(">I", len(data)) + data)
                 written = True
                 await process.stdin.drain()
@@ -562,12 +560,10 @@ class CodingRuntime:
             return result
         except TimeoutError as exc:
             raise CodingRuntimeError(
-                "uncertain", "Mimir has not confirmed this operation. It was not retried; "
-                "reconnect the native view to reconcile its state. Prompt retries must reuse "
-                "the original submission identity; do not blindly retry other commands.",
+                "uncertain", "Coding didn't respond in time. Check the conversation before trying again.",
             ) from exc
         except (BrokenPipeError, ConnectionResetError) as exc:
-            raise CodingRuntimeError("disconnected", "The coding runtime disconnected; nothing was replayed.") from exc
+            raise CodingRuntimeError("disconnected", "Coding stopped unexpectedly. Restart Coding, then reopen your conversation.") from exc
         finally:
             self._pending.pop(identifier, None)
             self._opening_views.discard(identifier)
@@ -596,7 +592,7 @@ class CodingRuntime:
         try:
             opened = await self.command("open_public_entry", identity, expected_generation = expected_generation)
             if opened != identity:
-                raise CodingRuntimeError("protocol", "Native entry transfer identity changed.")
+                raise CodingRuntimeError("protocol", "Coding couldn't read this message. Try again.")
             offset = 0
             while True:
                 chunk = await self.command("read_public_entry", {**selection, "max_bytes": 65536},
@@ -605,7 +601,7 @@ class CodingRuntime:
                         or type(chunk.get("offset")) is not int or chunk["offset"] != offset
                         or not isinstance(chunk.get("data"), str) or type(chunk.get("done")) is not bool
                         or (not chunk["data"] and not chunk["done"])):
-                    raise CodingRuntimeError("protocol", "Native entry transfer was inconsistent.")
+                    raise CodingRuntimeError("protocol", "Coding couldn't read this message completely. Try again.")
                 data = chunk["data"].encode("utf-8")
                 await anyio.to_thread.run_sync(content.write, data)
                 offset += len(data)
@@ -724,8 +720,9 @@ class CodingRuntime:
         self._cleanup = {
             "confirmed": confirmed, "native_drain_confirmed": native_confirmed,
             "exit_code": exit_code, "forced": forced,
-            "message": "Native session drain and process cleanup confirmed." if confirmed else
-                "Native drain/cleanup was not confirmed. Process exit is not proof that tools, children, MCP work or local model protections settled; inspect host diagnostics before continuing interrupted work.",
+            "message": "Coding stopped cleanly." if confirmed else
+                "Coding didn't confirm that it stopped cleanly. Tools, subagents or local models it started may "
+                "still be running; check the Studio host before continuing.",
         }
         if not confirmed:
             log.error("Mimir cleanup was not confirmed (exit=%s, forced=%s)", exit_code, forced)
@@ -751,7 +748,7 @@ class CodingRuntime:
             log.error("Mimir native drain was not confirmed (%s)", exc.code)
         if method == "prepare_restart" and not confirmed:
             self._restart_uncertain = True
-            raise CodingRuntimeError("uncertain", "Native restart admission was not confirmed. The original process was preserved. Inspect runtime status before another action.")
+            raise CodingRuntimeError("uncertain", "Coding didn't confirm the restart and is still running. Check its status before trying again.")
         self._expected_exit = True
         if self._shutdown_task:
             await asyncio.shield(self._shutdown_task)
@@ -766,7 +763,7 @@ class CodingRuntime:
         # Retain the whole operation if the browser disconnects. HTTP lifetime
         # neither cancels accepted maintenance nor causes a second process launch.
         if self._restart_task and not self._restart_task.done():
-            raise CodingRuntimeError("busy", "Whole-runtime restart is already in progress. Refresh runtime status; do not replay it.")
+            raise CodingRuntimeError("busy", "Coding is already restarting.")
         self._restart_task = asyncio.create_task(self._restart())
         # Retain and observe errors even when its HTTP caller disappears.
         self._restart_task.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
@@ -776,11 +773,11 @@ class CodingRuntime:
     async def _restart(self) -> dict[str, Any]:
         async with self._maintenance_lock:
             if self._closing:
-                raise CodingRuntimeError("unavailable", "The Studio backend is shutting down.")
+                raise CodingRuntimeError("unavailable", "Studio is shutting down.")
             if self._cleanup_failed:
-                raise CodingRuntimeError("cleanup_failed", "Previous runtime cleanup was incomplete. Inspect host diagnostics before starting another process.")
+                raise CodingRuntimeError("cleanup_failed", "Coding didn't finish cleaning up after it last stopped. Check the Studio host before restarting it.")
             if self._restart_uncertain and not self._failure:
-                raise CodingRuntimeError("uncertain", "Restart admission is still unknown. Refresh runtime status to inspect it; the original process was preserved.")
+                raise CodingRuntimeError("uncertain", "Coding hasn't confirmed an earlier restart yet. Refresh its status first.")
             async with self._write_lock:
                 self._maintaining = True
             try:
@@ -826,9 +823,9 @@ class CodingRuntime:
                 try:
                     pong = await self._request("ping", maintenance = True)
                     if pong != {"protocol": 1, "plugin": PLUGIN_ID}:
-                        raise CodingRuntimeError("disconnected", "The replacement Mimir frontend did not confirm protocol readiness.")
+                        raise CodingRuntimeError("disconnected", "Coding didn't come back after restarting. Restart Coding again.")
                 except CodingRuntimeError:
-                    self._fail(CodingRuntimeError("disconnected", "The replacement Mimir frontend did not confirm protocol readiness. No owner was reopened or work replayed."))
+                    self._fail(CodingRuntimeError("disconnected", "Coding didn't come back after restarting. Restart Coding again."))
                     self._expected_exit = True
                     if self._shutdown_task:
                         await asyncio.shield(self._shutdown_task)
