@@ -8,6 +8,7 @@ ownership, persistence and framing are verified by the coding integration tests.
 """
 
 import asyncio
+import io
 import json
 import uuid
 
@@ -67,6 +68,17 @@ class NativeCodingBoundary:
                  "revision": "matrix-revision", "json": "{}"}
         return draft if method == "mcp_edit" else {"draft": draft, "inventory": {"documents": []}}
 
+    async def public_entry(self, conversation_id, *, cut, entry_id, expected_generation):
+        assert conversation_id == CONVERSATION_ID
+        assert expected_generation == 1
+        assert (cut, entry_id) == ({"journal": "root", "leaf": None}, "matrix-entry")
+        self.subjects.append(current_account().username)
+        self.operations.append("public_entry")
+        return io.BytesIO(json.dumps({"title": SENTINEL}, ensure_ascii = False).encode("utf-8"))
+
+    def release_content(self, content):
+        content.close()
+
     async def subscribe(self, conversation_id, *, expected_generation):
         assert expected_generation == 1
         assert conversation_id == CONVERSATION_ID
@@ -107,6 +119,10 @@ FACTORIES = {
         "coding-conversation", {"edit_id": "matrix-edit"},
         owner = (200,), wrong = (200,), reason = _SHARED_HISTORY_REASON,
     ),
+    "routes.coding:POST:/conversations/{conversation_id}/public-entry": Factory(
+        "coding-conversation", {"cut": {"journal": "root", "leaf": None}, "entry_id": "matrix-entry"},
+        fragment = SENTINEL, owner = (200,), wrong = (200,), reason = _SHARED_HISTORY_REASON,
+    ),
 }
 
 # The route table stays explicit: adding a new coding endpoint must still fail
@@ -118,9 +134,10 @@ NATIVE_OPERATIONS = {
     "routes.coding:POST:/conversations/{conversation_id}/mcp/edit": "mcp_edit",
     "routes.coding:POST:/conversations/{conversation_id}/mcp/save": "mcp_save",
     "routes.coding:POST:/conversations/{conversation_id}/mcp/release": "mcp_release_edit",
+    "routes.coding:POST:/conversations/{conversation_id}/public-entry": "public_entry",
 }
 GENERATION_METHODS = {
-    "prompt", "cancel", "answer", "set_mode", "decide_plan", "change_goal", "command", "read_entries",
+    "configure", "prompt", "cancel", "answer", "set_mode", "decide_plan", "change_goal", "command", "read_entries",
 }
 
 for method, suffix, operation, body, params, success in (
@@ -129,10 +146,12 @@ for method, suffix, operation, body, params, success in (
     ("GET", "commands/{operation_id}", "command_receipt", None, {"operation_id": "matrix-operation"}, 200),
     ("GET", "diagnostics/{kind}", "diagnostics", None, {"kind": "context"}, 200),
     ("GET", "extensions", "extensions.inspect", None, {}, 200),
+    ("GET", "files", "files", None, {}, 200),
     ("GET", "mcp/operations/{operation_id}", "mcp_inspect_operation", None, {"operation_id": "matrix-operation"}, 200),
     ("GET", "models", "models", None, {}, 200),
     ("GET", "overlap", "overlap", None, {}, 200),
     ("GET", "skills", "skills", None, {}, 200),
+    ("GET", "subagents", "subagents", None, {}, 200),
     ("POST", "commands", "command", {"operation_id": "matrix-operation", "name": "compress", "tail": ""}, {}, 200),
     ("POST", "configuration", "configure", {"provider": "matrix-provider", "model": "matrix-model"}, {}, 200),
     ("POST", "entries", "read_entries", {"cut": {"journal": "root", "leaf": None}}, {}, 200),

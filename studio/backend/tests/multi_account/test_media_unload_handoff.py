@@ -30,12 +30,8 @@ from utils.account_context import bind_account, current_account_id, reset_accoun
 from ..test_diffusion_backend import _FakePipeline
 from ..test_diffusion_backend import fake_runtime as _fake_runtime
 
-@pytest.fixture
-def fake_runtime(_fake_runtime, monkeypatch):
-    from utils import hardware
-
-    # Match the CPU-only pipeline fixture instead of probing the shared host's GPUs.
-    monkeypatch.setattr(hardware, "get_device", lambda: hardware.DeviceType.CPU)
+# Re-exported by name: pytest resolves fixtures by name, and verify_import_hoist.py would flag it.
+fake_runtime = _fake_runtime
 
 
 def client_for(account):
