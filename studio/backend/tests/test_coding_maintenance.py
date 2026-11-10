@@ -16,6 +16,8 @@ from auth.authentication import create_access_token
 from core.coding_runtime import CodingRuntime, CodingRuntimeError
 from routes.coding import router
 
+from .test_coding import RuntimeDouble
+
 
 async def child_runtime(tmp_path, *, reject=False, confirm=True, exit_code=0, lose_guard=False, admitted=False, runtime=None):
     # Actual owned subprocess and real framed transport; the native admission is
@@ -157,7 +159,7 @@ async def test_runtime_scope_and_auth_are_explicit(monkeypatch, tmp_path):
     app.include_router(router, prefix="/api/coding")
     headers = {"Authorization": "Bearer " + create_access_token("unsloth")}
     calls = []
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def inspect_status(self):
             return {"state": "not_started", "generation": 0, "cleanup": None}
         async def restart(self):

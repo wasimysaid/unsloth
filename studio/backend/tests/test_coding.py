@@ -19,6 +19,12 @@ from core.coding_runtime import CodingRuntime, CodingRuntimeError, MAX_FRAME, ru
 from routes.coding import router
 
 
+class RuntimeDouble:
+    """Route-level native double; only the real runtime configures local serving."""
+    async def configure_local_serving(self, request):
+        pass
+
+
 @pytest.fixture
 def coding_app(monkeypatch, tmp_path):
     monkeypatch.setattr(storage, "DB_PATH", tmp_path / "auth" / "auth.db")
@@ -107,7 +113,7 @@ async def test_browse_symlink_loop_is_an_actionable_invalid_directory(coding_app
 async def test_idle_cleanup_failure_is_not_reported_as_successful_reopen(coding_app):
     app, headers = coding_app
     message = "Idle cleanup failed. Resources may still be owned; inspect native diagnostics before retrying."
-    class FailedCleanupRuntime:
+    class FailedCleanupRuntime(RuntimeDouble):
         async def command(self, method, params):
             assert method == "open"
             assert params == {"conversation_id": "saved-id"}
@@ -122,7 +128,7 @@ async def test_idle_cleanup_failure_is_not_reported_as_successful_reopen(coding_
 @pytest.mark.asyncio
 async def test_open_never_accepts_a_replacement_working_directory(coding_app):
     app, headers = coding_app
-    class RecordingRuntime:
+    class RecordingRuntime(RuntimeDouble):
         async def command(self, method, params, *, expected_generation=None):
             assert method == "open"
             assert params == {"conversation_id": "saved-id"}
@@ -140,7 +146,7 @@ async def test_open_never_accepts_a_replacement_working_directory(coding_app):
 async def test_create_carries_the_first_selection_and_catalog_needs_no_folder(coding_app):
     app, headers = coding_app
     calls = []
-    class RecordingRuntime:
+    class RecordingRuntime(RuntimeDouble):
         async def command(self, method, params, *, expected_generation=None):
             calls.append((method, params))
             if method == "create":
@@ -264,7 +270,7 @@ async def test_invalidated_view_ends_sse_and_releases_only_that_subscription(cod
 @pytest.mark.asyncio
 async def test_stream_id_does_not_implicitly_open_or_grant_trust(coding_app):
     app, headers = coding_app
-    class RecordingRuntime:
+    class RecordingRuntime(RuntimeDouble):
         async def subscribe(self, conversation_id, *, expected_generation=None):
             assert conversation_id == "not-open"
             raise CodingRuntimeError("not_found", "Deliberately reopen this conversation first.")
@@ -278,7 +284,7 @@ async def test_stream_id_does_not_implicitly_open_or_grant_trust(coding_app):
 async def test_run_stop_and_history_preserve_exact_native_identities(coding_app):
     app, headers = coding_app
     calls = []
-    class RecordingRuntime:
+    class RecordingRuntime(RuntimeDouble):
         async def command(self, method, params, *, expected_generation=None):
             calls.append((method, params))
             if method == "prompt":
@@ -311,7 +317,7 @@ async def test_run_stop_and_history_preserve_exact_native_identities(coding_app)
 async def test_mode_and_plan_actions_keep_native_revision_and_admission(coding_app):
     app, headers = coding_app
     calls = []
-    class RecordingRuntime:
+    class RecordingRuntime(RuntimeDouble):
         async def command(self, method, params, *, expected_generation=None):
             assert expected_generation == 1
             calls.append((method, params))
@@ -337,7 +343,7 @@ async def test_mode_and_plan_actions_keep_native_revision_and_admission(coding_a
 async def test_goal_commands_preserve_native_admission_identity_and_refusals(coding_app):
     app, headers = coding_app
     calls = []
-    class RecordingRuntime:
+    class RecordingRuntime(RuntimeDouble):
         async def command(self, method, params, *, expected_generation=None):
             assert expected_generation == 1
             calls.append((method, params))
@@ -383,7 +389,7 @@ async def test_child_inspection_forwards_exact_attempt_and_native_cut_without_co
     app, headers = coding_app
     calls = []
     outcome = {"handle": "agent-exact", "attempt": 1, "status": "completed", "result": "earlier result", "error": None}
-    class RecordingRuntime:
+    class RecordingRuntime(RuntimeDouble):
         async def command(self, method, params, *, expected_generation=None):
             assert expected_generation == (1 if method == "read_entries" else None)
             calls.append((method, params))
@@ -704,7 +710,7 @@ async def test_disconnect_before_response_body_starts_closes_native_view():
     from routes.coding import NativeViewResponse
     closed = []
     started = False
-    class ViewRuntime:
+    class ViewRuntime(RuntimeDouble):
         async def unsubscribe(self, subscription):
             closed.append(subscription)
     async def body():
@@ -788,7 +794,7 @@ async def test_fatal_framing_closes_stdin_and_reaps_actual_child(tmp_path):
 async def test_model_configuration_is_native_and_never_part_of_queued_prompt(coding_app):
     app, headers = coding_app
     calls = []
-    class RecordingRuntime:
+    class RecordingRuntime(RuntimeDouble):
         async def command(self, method, params, *, expected_generation=None):
             assert expected_generation == 1
             calls.append((method, params))
@@ -827,7 +833,7 @@ async def test_overlap_preflight_and_refusal_carry_canonical_identity_without_op
     app, headers = coding_app
     overlap = {"cwd": "/canonical/project", "conversations": [{"id": "other-native"}]}
     calls = []
-    class RecordingRuntime:
+    class RecordingRuntime(RuntimeDouble):
         async def command(self, method, params, *, expected_generation=None):
             assert expected_generation == (1 if method == "prompt" else None)
             calls.append((method, params))

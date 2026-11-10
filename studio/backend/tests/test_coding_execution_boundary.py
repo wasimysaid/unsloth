@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from core.coding_runtime import CodingRuntimeError
 from routes import inference
 
-from .test_coding import coding_app
+from .test_coding import RuntimeDouble, coding_app
 
 
 @pytest.mark.asyncio
@@ -25,7 +25,7 @@ async def test_coding_refusal_cannot_fallback_to_general_chat_and_chat_does_not_
 
     monkeypatch.setattr(inference, "produce_openai_chat_completions", general)
 
-    class Native:
+    class Native(RuntimeDouble):
         async def command(self, method, params, *, expected_generation):
             assert method == "prompt" and expected_generation == 1
             assert params["conversation_id"] == "native-conversation"

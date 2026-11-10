@@ -9,14 +9,14 @@ import binascii
 import json
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Path as ApiPath, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from auth.authentication import get_current_credential
-from core.coding_runtime import CodingRuntime, CodingRuntimeError, runtime_for
+from core.coding_runtime import CodingRuntimeError, runtime_for
 
 
 async def _coding_credential(request: Request, credential = Depends(get_current_credential)):
@@ -24,6 +24,7 @@ async def _coding_credential(request: Request, credential = Depends(get_current_
 
 
 router = APIRouter(dependencies = [Depends(_coding_credential)])
+Generation = Annotated[int, Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)]
 
 
 class NativeViewResponse(StreamingResponse):
@@ -89,6 +90,14 @@ class NativeContentResponse(Response):
                 self.runtime.release_content(content)
 
 
+class ModelConfiguration(BaseModel):
+    """Exact native identity/effort only; credential and provider setup stay external."""
+    model_config = ConfigDict(extra = "forbid")
+    provider: str | None = Field(default = None, min_length = 1, max_length = 1024)
+    model: str | None = Field(default = None, min_length = 1, max_length = 1024)
+    reasoning: str | None = Field(default = None, min_length = 1, max_length = 1024)
+
+
 class ProjectSelection(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     cwd: str = Field(min_length = 1, max_length = 32768)
@@ -151,24 +160,21 @@ class PromptSubmission(BaseModel):
         encoded = self.text.encode("utf-8")
         if len(encoded) > 65536:
             raise ValueError("Coding prompt text must be at most 65536 UTF-8 bytes.")
-        for mentions in (self.skill_mentions, self.subagent_mentions):
+        for mentions in (self.skill_mentions, self.subagent_mentions, self.file_mentions):
             previous_end = 0
             for mention in mentions:
+                if isinstance(mention, FileMention):
+                    if any(ord(char) < 32 or ord(char) == 127 for char in mention.path) or len(mention.path.encode("utf-8")) > 32768:
+                        raise ValueError("File references require a bounded path without control characters.")
+                    path = mention.path if mention.kind == "file" else mention.path.rstrip("/") + "/"
+                    expected = (("@" + path).encode("utf-8"), ('@"' + path + '"').encode("utf-8"))
+                else:
+                    expected = (("@" + mention.name).encode("utf-8"),)
                 if mention.start < previous_end or mention.end <= mention.start or mention.end > len(encoded):
                     raise ValueError("Mention ranges must be ordered, non-overlapping UTF-8 byte ranges in the exact text.")
-                if encoded[mention.start:mention.end] != ("@" + mention.name).encode("utf-8"):
-                    raise ValueError("A mention range must match its exact qualified @name.")
+                if encoded[mention.start:mention.end] not in expected:
+                    raise ValueError("A mention range must match its exact @name or @path.")
                 previous_end = mention.end
-        previous_end = 0
-        for mention in self.file_mentions:
-            if any(ord(char) < 32 or ord(char) == 127 for char in mention.path) or len(mention.path.encode("utf-8")) > 32768:
-                raise ValueError("File references require a bounded path without control characters.")
-            if mention.start < previous_end or mention.end <= mention.start or mention.end > len(encoded):
-                raise ValueError("File ranges must be ordered, non-overlapping UTF-8 byte ranges in the exact text.")
-            path = mention.path if mention.kind == "file" else mention.path.rstrip("/") + "/"
-            if encoded[mention.start:mention.end] not in (("@" + path).encode("utf-8"), ('@"' + path + '"').encode("utf-8")):
-                raise ValueError("A file range must match its exact selected @path.")
-            previous_end = mention.end
         mentions = sorted([*self.skill_mentions, *self.subagent_mentions, *self.file_mentions], key = lambda mention: mention.start)
         if len(mentions) > 64:
             raise ValueError("A coding prompt accepts at most 64 selected mentions.")
@@ -249,14 +255,6 @@ class CommandInvocation(BaseModel):
     tail: str = Field(default = "", max_length = 16384)
 
 
-class ModelConfiguration(BaseModel):
-    """Exact native identity/effort only; credential and provider setup stay external."""
-    model_config = ConfigDict(extra = "forbid")
-    provider: str | None = Field(default = None, min_length = 1, max_length = 1024)
-    model: str | None = Field(default = None, min_length = 1, max_length = 1024)
-    reasoning: str | None = Field(default = None, min_length = 1, max_length = 1024)
-
-
 class ChildJournal(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     child: str = Field(min_length = 1, max_length = 128, pattern = r"^[^\x00]+$")
@@ -309,11 +307,15 @@ def _http_error(exc: CodingRuntimeError) -> HTTPException:
     return HTTPException(status_code = status, detail = exc.message, headers = headers)
 
 
+async def _runtime(request: Request):
+    runtime = runtime_for(request.app)
+    await runtime.configure_local_serving(request)
+    return runtime
+
+
 async def _command(request: Request, method: str, params: dict | None = None, *, generation: int | None = None):
     try:
-        runtime = runtime_for(request.app)
-        if isinstance(runtime, CodingRuntime):
-            await runtime.configure_local_serving(request)
+        runtime = await _runtime(request)
         if generation is None:
             return await runtime.command(method, params)
         return await runtime.command(method, params, expected_generation = generation)
@@ -430,10 +432,7 @@ async def restart_whole_runtime(body: RuntimeRestart, request: Request):
     # Explicit all-conversation scope, not plugin hot reload. Native admission
     # refuses any busy hosted owner; HTTP disconnect never cancels maintenance.
     try:
-        runtime = runtime_for(request.app)
-        if isinstance(runtime, CodingRuntime):
-            await runtime.configure_local_serving(request)
-        return await runtime.restart()
+        return await (await _runtime(request)).restart()
     except CodingRuntimeError as exc:
         raise _http_error(exc) from exc
 
@@ -487,7 +486,7 @@ async def open_conversation(conversation_id: str, request: Request):
 
 @router.post("/conversations/{conversation_id}/configuration")
 async def configure_model(conversation_id: str, body: ModelConfiguration, request: Request,
-                          generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
+                          generation: Generation):
     # No Studio scheduler/config store. Mimir orders selection against dequeue and
     # keeps running work frozen; prompts deliberately carry no model configuration.
     return await _command(request, "configure", {
@@ -525,7 +524,7 @@ async def conversation_files(conversation_id: str, request: Request,
 
 @router.post("/conversations/{conversation_id}/prompts", status_code = 202)
 async def submit_prompt(conversation_id: str, body: PromptSubmission, request: Request,
-                        generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
+                        generation: Generation):
     # Slash attempts never bypass native command handling, including recovered drafts.
     if body.text.lstrip().startswith("/"):
         raise HTTPException(400, "Slash commands must use native command dispatch; no model prompt was submitted.")
@@ -535,28 +534,28 @@ async def submit_prompt(conversation_id: str, body: PromptSubmission, request: R
 
 @router.post("/conversations/{conversation_id}/requests/{request_id}/cancel")
 async def cancel_request(conversation_id: str, request_id: str, request: Request,
-                         generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
+                         generation: Generation):
     # Acceptance is not settlement. The ordered native view confirms completion.
     return await _command(request, "cancel", {"conversation_id": conversation_id, "request_id": request_id}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/mode")
 async def select_mode(conversation_id: str, body: ModeSelection, request: Request,
-                      generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
+                      generation: Generation):
     # Configuration selection is not plan acceptance; native execution owns admission.
     return await _command(request, "set_mode", {"conversation_id": conversation_id, **body.model_dump()}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/plan-actions")
 async def decide_plan(conversation_id: str, body: PlanSelection, request: Request,
-                      generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
+                      generation: Generation):
     # Validate both the opening's owner generation and exact native plan revision.
     return await _command(request, "decide_plan", {"conversation_id": conversation_id, **body.model_dump()}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/goal")
 async def change_goal(conversation_id: str, body: GoalChange, request: Request,
-                      generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
+                      generation: Generation):
     # Native owner validates revision and admission atomically; the opening's
     # generation prevents delivery to a replacement owner. Never infer completion.
     return await _command(request, "change_goal", {"conversation_id": conversation_id,
@@ -566,7 +565,7 @@ async def change_goal(conversation_id: str, body: GoalChange, request: Request,
 @router.post("/conversations/{conversation_id}/requests/{request_id}/questions/{user_request_id}/answers")
 async def answer_questions(conversation_id: str, request_id: str, user_request_id: str,
                            body: AnswerSubmission, request: Request,
-                           generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
+                           generation: Generation):
     # Native admission validates the current request/question/view before accepting
     # the waiter. Public answer history and terminal cleanup are separate evidence;
     # uncertain delivery must be reconciled through the native view, never replayed.
@@ -582,7 +581,7 @@ async def discover_commands(conversation_id: str, request: Request):
 
 @router.post("/conversations/{conversation_id}/commands")
 async def invoke_command(conversation_id: str, body: CommandInvocation, request: Request,
-                         generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
+                         generation: Generation):
     # A command may submit native work too; never dispatch it into a replacement owner.
     return await _command(request, "command", {"conversation_id": conversation_id, **body.model_dump()}, generation = generation)
 
@@ -595,16 +594,17 @@ async def inspect_command_receipt(conversation_id: str, operation_id: str, reque
 
 @router.post("/conversations/{conversation_id}/entries")
 async def read_entries(conversation_id: str, body: HistorySelection, request: Request,
-                       generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
+                       generation: Generation):
     return await _command(request, "read_entries", {"conversation_id": conversation_id, **body.model_dump()}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/public-entry")
 async def read_public_entry(conversation_id: str, body: PublicEntrySelection, request: Request,
-                            generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
-    runtime = runtime_for(request.app)
-    if isinstance(runtime, CodingRuntime):
-        await runtime.configure_local_serving(request)
+                            generation: Generation):
+    try:
+        runtime = await _runtime(request)
+    except CodingRuntimeError as exc:
+        raise _http_error(exc) from exc
     return NativeContentResponse(runtime, conversation_id, body.model_dump(), generation)
 
 
@@ -621,13 +621,11 @@ async def child_detail(conversation_id: str, request: Request,
 
 @router.get("/conversations/{conversation_id}/events")
 async def conversation_events(conversation_id: str, request: Request,
-                              generation: int = Header(alias = "X-Mimir-Runtime-Generation", ge = 1, le = 9007199254740991)):
+                              generation: Generation):
     # A GET never implicitly opens an owner or grants project trust. The plugin
     # captures its native ordered view; no snapshot-then-subscribe race exists.
-    runtime = runtime_for(request.app)
     try:
-        if isinstance(runtime, CodingRuntime):
-            await runtime.configure_local_serving(request)
+        runtime = await _runtime(request)
         subscription, queue = await runtime.subscribe(conversation_id, expected_generation = generation)
         observation_epoch = runtime.observation_epoch
     except CodingRuntimeError as exc:

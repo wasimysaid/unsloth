@@ -44,6 +44,9 @@ class NativeCodingBoundary:
         self.operations = []
         self.released = []
 
+    async def configure_local_serving(self, request):
+        pass
+
     async def command(self, method, params, *, expected_generation=None):
         assert params["conversation_id"] == CONVERSATION_ID
         assert expected_generation == (1 if method in GENERATION_METHODS else None)

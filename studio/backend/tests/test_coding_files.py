@@ -5,6 +5,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from .test_coding import RuntimeDouble
 from .test_coding_inputs import coding_app
 
 
@@ -13,7 +14,7 @@ async def test_file_catalog_is_native_authenticated_scoped_and_bounded(coding_ap
     app, headers = coding_app
     calls = []
     catalog = {"files": [{"path": "src/naïve file.ts", "kind": "file"}, {"path": "src/lib", "kind": "directory"}], "truncated": False}
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, method, params):
             calls.append((method, params))
             return catalog
@@ -32,7 +33,7 @@ async def test_file_catalog_is_native_authenticated_scoped_and_bounded(coding_ap
 @pytest.mark.parametrize("query", [{"max_results": 0}, {"max_results": 41}, {"query": "x" * 1025}, {"query": "😀" * 300}, {"query": "src\x00/private"}])
 async def test_invalid_file_catalog_query_never_reaches_native(coding_app, query):
     app, headers = coding_app
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, *_args, **_kwargs):
             pytest.fail("Invalid catalog query reached native")
     app.state.coding_runtime = Runtime()
@@ -45,7 +46,7 @@ async def test_invalid_file_catalog_query_never_reaches_native(coding_app, query
 async def test_selected_file_paths_ranges_and_generation_cross_unchanged(coding_app):
     app, headers = coding_app
     calls = []
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, method, params, *, expected_generation=None):
             calls.append((method, params, expected_generation))
             return {"request_id": "native-reference", "submission_key": params["submission_key"]}
@@ -76,7 +77,7 @@ async def test_selected_file_paths_ranges_and_generation_cross_unchanged(coding_
 ])
 async def test_invalid_selected_files_never_reach_native(coding_app, mentions):
     app, headers = coding_app
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, *_args, **_kwargs):
             pytest.fail("Invalid file reference reached native")
     app.state.coding_runtime = Runtime()
@@ -88,7 +89,7 @@ async def test_invalid_selected_files_never_reach_native(coding_app, mentions):
 @pytest.mark.asyncio
 async def test_file_and_skill_ranges_cannot_overlap(coding_app):
     app, headers = coding_app
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, *_args, **_kwargs):
             pytest.fail("Overlapping input reached native")
     app.state.coding_runtime = Runtime()
@@ -101,7 +102,7 @@ async def test_file_and_skill_ranges_cannot_overlap(coding_app):
 @pytest.mark.asyncio
 async def test_file_mentions_share_the_combined_selection_budget(coding_app):
     app, headers = coding_app
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, *_args, **_kwargs):
             pytest.fail("Over-budget input reached native")
     app.state.coding_runtime = Runtime()

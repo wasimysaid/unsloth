@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from core.coding_runtime import CodingRuntimeError
-from .test_coding import coding_app
+from .test_coding import RuntimeDouble, coding_app
 
 
 @pytest.mark.asyncio
@@ -17,7 +17,7 @@ async def test_model_inventory_and_refresh_keep_native_identity_and_never_reopen
         {"id": "local/alias", "api_model": "wire-id", "name": "Label",
          "reasoning": "unsupported", "default_reasoning": None}]}]
 
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, method, params):
             calls.append((method, params))
             assert method in ("models", "models.refresh")
@@ -40,7 +40,7 @@ async def test_refresh_failure_is_explicit_and_not_replayed(coding_app, code, st
     app, headers = coding_app
     calls = []
 
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, method, params):
             calls.append((method, params))
             raise CodingRuntimeError(code, "Refresh failed; selection and history retained.")

@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from core.coding_runtime import CodingRuntimeError
-from .test_coding import coding_app
+from .test_coding import RuntimeDouble, coding_app
 
 
 ANSWER_PATH = "/api/coding/conversations/exact-conversation/requests/exact-request/questions/exact-user-request/answers"
@@ -24,7 +24,7 @@ async def test_answer_preserves_exact_identities_payload_and_native_ack(coding_a
     ack = {"conversation_id": "exact-conversation", "request_id": "exact-request",
            "user_request_id": "exact-user-request", "subscription": "exact-live-view", "accepted": True}
 
-    class RecordingRuntime:
+    class RecordingRuntime(RuntimeDouble):
         async def command(self, method, params, *, expected_generation=None):
             assert expected_generation == 1
             calls.append((method, params))
@@ -57,7 +57,7 @@ async def test_long_native_answer_fields_forward_verbatim(coding_app, question_l
     ack = {"conversation_id": "exact-conversation", "request_id": "exact-request",
            "user_request_id": "exact-user-request", "subscription": "exact-live-view", "accepted": True}
 
-    class RecordingRuntime:
+    class RecordingRuntime(RuntimeDouble):
         async def command(self, method, params, *, expected_generation=None):
             calls.append((method, params, expected_generation))
             return ack
@@ -126,7 +126,7 @@ async def test_native_invalid_stale_or_uncertain_answer_is_not_retried(coding_ap
     app, headers = coding_app
     calls = []
 
-    class RejectingRuntime:
+    class RejectingRuntime(RuntimeDouble):
         async def command(self, method, params, *, expected_generation=None):
             assert expected_generation == 1
             calls.append((method, params))

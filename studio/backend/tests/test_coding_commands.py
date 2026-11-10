@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from core.coding_runtime import CodingRuntimeError
-from .test_coding import coding_app  # Reuse the isolated authenticated app fixture.
+from .test_coding import RuntimeDouble, coding_app  # Reuse the isolated authenticated app fixture.
 
 
 @pytest.mark.asyncio
@@ -14,7 +14,7 @@ async def test_commands_preserve_native_shapes(coding_app):
     app, headers = coding_app
     calls = []
 
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, method, params, *, expected_generation=None):
             assert expected_generation == (1 if method == "command" else None)
             calls.append((method, params))
@@ -41,7 +41,7 @@ async def test_unsupported_native_command_is_a_client_refusal_not_a_gateway_fail
     app, headers = coding_app
     calls = []
 
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, method, params, *, expected_generation=None):
             assert method == "command" and expected_generation == 1
             calls.append(params)
@@ -60,7 +60,7 @@ async def test_unsupported_native_command_is_a_client_refusal_not_a_gateway_fail
 async def test_slash_prompt_bypass_and_invalid_commands_never_reach_native_execution(coding_app):
     app, headers = coding_app
 
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, *_):
             raise AssertionError("Invalid browser data must not reach the native owner")
 

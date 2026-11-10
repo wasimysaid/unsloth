@@ -15,6 +15,7 @@ from auth import storage
 from auth.authentication import create_access_token
 from core.coding_runtime import CodingRuntimeError
 from routes.coding import router
+from .test_coding import RuntimeDouble
 
 
 @pytest.fixture
@@ -32,7 +33,7 @@ PNG = base64.b64encode(bytes.fromhex("89504e470d0a1a0a") + b"transport fixture")
 async def test_effective_skill_discovery_is_authenticated_and_exact_conversation_scoped(coding_app):
     app, headers = coding_app
     calls = []
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, method, params):
             calls.append((method, params))
             return {"skills": [
@@ -55,7 +56,7 @@ async def test_effective_skill_discovery_is_authenticated_and_exact_conversation
 async def test_rich_input_crosses_transport_without_rewriting_exact_key_ranges_or_bytes(coding_app, overlap_confirmed):
     app, headers = coding_app
     calls = []
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, method, params, *, expected_generation=None):
             assert expected_generation == 1
             calls.append((method, params))
@@ -89,7 +90,7 @@ async def test_rich_input_crosses_transport_without_rewriting_exact_key_ranges_o
 ])
 async def test_invalid_inputs_rejected_before_native_transport(coding_app, extra):
     app, headers = coding_app
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, *_):
             pytest.fail("Rejected input must not reach native transport")
     app.state.coding_runtime = Runtime()
@@ -102,7 +103,7 @@ async def test_invalid_inputs_rejected_before_native_transport(coding_app, extra
 @pytest.mark.asyncio
 async def test_native_supported_input_failure_is_explicit_not_silent_drop(coding_app):
     app, headers = coding_app
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, method, params, *, expected_generation=None):
             assert expected_generation == 1
             assert method == "prompt" and params["images"][0]["data"] == PNG
@@ -126,7 +127,7 @@ def large_valid_png():
 async def test_large_image_and_typed_subagent_reach_exact_generation(coding_app):
     app, headers = coding_app
     calls = []
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, method, params, *, expected_generation=None):
             calls.append((method, params, expected_generation))
             return {"request_id": "accepted-native", "submission_key": params["submission_key"]}
@@ -145,7 +146,7 @@ async def test_subagent_catalog_is_authenticated_and_scoped(coding_app):
     app, headers = coding_app
     calls = []
     catalog = {"subagents": [{"name": "explore", "description": "Read project files", "plan_eligible": True}]}
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, method, params):
             calls.append((method, params))
             return catalog
@@ -170,7 +171,7 @@ async def test_subagent_catalog_is_authenticated_and_scoped(coding_app):
 ])
 async def test_invalid_subagent_mentions_never_reach_native(coding_app, mentions):
     app, headers = coding_app
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, *_args, **_kwargs):
             pytest.fail("Invalid mention reached native")
     app.state.coding_runtime = Runtime()
@@ -182,7 +183,7 @@ async def test_invalid_subagent_mentions_never_reach_native(coding_app, mentions
 @pytest.mark.asyncio
 async def test_skill_and_subagent_cannot_claim_same_text_range(coding_app):
     app, headers = coding_app
-    class Runtime:
+    class Runtime(RuntimeDouble):
         async def command(self, *_args, **_kwargs):
             pytest.fail("Overlapping mention reached native")
     app.state.coding_runtime = Runtime()
