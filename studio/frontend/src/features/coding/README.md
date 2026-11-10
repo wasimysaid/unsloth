@@ -436,13 +436,6 @@ content remains explicitly labelled; section navigation cannot recover content
 that the native public profile did not supply. Expanding a report is a reading
 request, not a request to follow its growth. See #253 below.
 
-## Mimir Settings (removed)
-
-The in-page MCP editor and the Studio Settings → Mimir tab were removed from the
-browser, together with their client code. The backend `/mcp/*`, `/extensions`,
-`/plugins/reload` and `/diagnostics` routes remain and are covered by backend
-tests, but nothing in the browser calls them.
-
 ## Next-request model picker (#244)
 
 The composer bottom-right trigger (model name, muted effort) opens a compact

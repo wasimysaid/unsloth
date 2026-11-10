@@ -19,12 +19,12 @@ def run_command_scenarios(page, context, base, provider, first, report, scenario
     endpoint = base + f"/api/coding/conversations/{conversation}"
     composer = page.get_by_label("Coding prompt", exact=True)
     transcript = page.get_by_test_id("coding-transcript")
-    outcomes = report.setdefault("commands", {"outcomes": [], "diagnostics": [], "requests": []})
+    outcomes = report.setdefault("commands", {"outcomes": [], "requests": []})
 
-    for method, suffix, body in (("GET", "/commands", None), ("POST", "/commands", {"operation_id": "auth-op", "name": "compress"}), ("GET", "/commands/auth-op", None), *[("GET", f"/diagnostics/{kind}", None) for kind in ("context", "tokens", "retry", "execution")]):
+    for method, suffix, body in (("GET", "/commands", None), ("POST", "/commands", {"operation_id": "auth-op", "name": "compress"}), ("GET", "/commands/auth-op", None)):
         response = context.request.fetch(endpoint + suffix, method=method, data=body)
         assert response.status in (401, 403)
-    scenario("A6-commands-diagnostics-auth", "Every new command/diagnostic surface rejects unauthenticated conversation-ID access")
+    scenario("A6-commands-auth", "Every command route rejects unauthenticated conversation-ID access")
 
     native_catalog = context.request.get(endpoint + "/commands", headers=headers)
     assert native_catalog.ok
@@ -194,16 +194,7 @@ def run_command_scenarios(page, context, base, provider, first, report, scenario
     expect(transcript).to_contain_text("Public ticket 243 reply retained after compression.")
     scenario("A2-native-busy-admission", "Compression sent through the authenticated coding API (the composer cannot run commands while Running) was rejected natively while a real HTTP-provider request was running; accepted request settled normally")
 
-    # Diagnostics have no browser surface; read them through the authenticated route.
     public_history = transcript.inner_text()
-    for kind in ("context", "tokens", "retry", "execution"):
-        response = context.request.get(endpoint + f"/diagnostics/{kind}", headers=headers)
-        assert response.ok, response.text()
-        data = response.json()
-        assert data["kind"] == kind and data["conversation_id"] == conversation
-        assert len(json.dumps(data).encode()) <= 65536
-        assert all(key not in json.dumps(data).lower() for key in ("authorization", "api_key", "api-key", "bearer "))
-        outcomes["diagnostics"].append(data)
     # The composer's context ring is the only rendered usage surface; it exists
     # exactly when native usage reports a context window.
     ring = page.get_by_test_id("coding-context-usage")
@@ -219,7 +210,7 @@ def run_command_scenarios(page, context, base, provider, first, report, scenario
         expect(ring).to_have_count(0)
     assert transcript.inner_text() == public_history
     provider.assert_no_request()
-    scenario("A2-bounded-private-diagnostics", "Authenticated context/token/retry/execution routes returned bounded native data with no credentials; the context ring reflected native usage and the public transcript stayed unchanged")
+    scenario("A2-context-usage", "The context ring reflected native usage and the public transcript stayed unchanged")
 
     compression = page.get_by_test_id("coding-compression-status")
     with page.expect_response(lambda response: response.url == endpoint + "/commands" and response.request.method == "POST", timeout=90000) as compressing:
