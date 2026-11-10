@@ -673,8 +673,7 @@ Run the CPU-only rendered driver with `--workload reading`; it records desktop
 1440×1000 and narrow 390×844 row geometry, scrollTop and focus assertions. Real
 native tool/streaming work uses a deterministic HTTP provider; 1664-row long-history
 fixtures and delayed/disconnected browser transports are separately labelled.
-Neither is live-model acceptance or human implemented-UI review. Evidence and the
-cross-feature acceptance boundary are recorded in `studio/docs/coding-reading-253-evidence.md`.
+Neither is live-model acceptance or human implemented-UI review.
 
 ## Verification
 
