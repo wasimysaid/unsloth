@@ -59,10 +59,8 @@ _LEAF_TYPES = (
 class FSDP2Config:
     param_dtype: Optional[torch.dtype] = None  # None = model compute dtype (bf16; fp16 on T4)
     reduce_dtype: torch.dtype = torch.float32
-    # None = auto: when the whole model fits on one GPU (fsdp2_perf.plan_fsdp2_layout), frozen weights stay
-    # replicated (never gathered), only trainable ones are sharded, kept gathered from forward to backward
-    # (False) with next-block prefetch, and a small trainable set (LoRA) is one root unit; otherwise every
-    # block reshards after forward (True). An explicit bool / int is used as is. Last block always False.
+    # None = auto: fit-on-one-GPU models keep frozen weights replicated; otherwise reshard every
+    # block but the last.
     reshard_after_forward: Optional[Union[bool, int]] = None
     cpu_offload: bool = False  # CPUOffloadPolicy
     mesh: Optional[object] = None  # DeviceMesh; None = 1-D over WORLD_SIZE
@@ -830,9 +828,8 @@ def _resolve_param_dtype(model, config):
     if compute == torch.float16 and any(
         p.requires_grad and p.dtype == torch.float32 for p in model.parameters()
     ):
-        # float16 gathers of float32 masters move the embedding / norm / lm_head backward into
-        # float16, where scaled gradients overflow and the GradScaler skips steps one GPU takes;
-        # gather the masters as they are and let autocast cast like one GPU does.
+        # Gather fp32 masters as they are: a float16 gather overflows scaled grads and GradScaler
+        # skips steps.
         return None
     return compute
 
@@ -1010,9 +1007,20 @@ def _skip_free_unsharded_param():
     return None
 
 
+def _block_never_graphed(module):
+    """MoE blocks never record graphs; keeping their gathered weights would hold every expert unsharded."""
+    block_compile = sys.modules.get(f"{__package__}._block_compile") if __package__ else None
+    unsafe_moe = getattr(block_compile, "_graphs_unsafe_moe", None)
+    if not callable(unsafe_moe):
+        return False
+    try:
+        return bool(unsafe_moe(module))
+    except Exception:
+        return False
+
+
 def _compiled_block_modules(model, roots = None):
-    """ids of every module inside a decoder block _block_compile wrapped (and did not turn off);
-    `roots` (a dict) collects id -> block module."""
+    """ids of modules inside graph-capable blocks _block_compile wrapped; `roots` collects id -> block."""
     inside = set()
     for module in model.modules():
         if id(module) in inside or not getattr(
@@ -1020,6 +1028,8 @@ def _compiled_block_modules(model, roots = None):
         ):
             continue
         if module.__dict__.get("_unsloth_block_mode", 1) == 0:
+            continue
+        if _block_never_graphed(module):
             continue
         for m in module.modules():
             inside.add(id(m))
@@ -1043,6 +1053,58 @@ def _gib(nbytes):
     return f"{nbytes / 2**30:.2f} GiB" if nbytes >= 2**30 / 10 else f"{nbytes / 2**20:.1f} MiB"
 
 
+def _hold_unsharded(fsdp_param, hold):
+    if hold:
+        fsdp_param.free_unsharded_param = _skip_free_unsharded_param
+    else:
+        fsdp_param.__dict__.pop("free_unsharded_param", None)
+    fsdp_param._unsloth_keep_unsharded = hold
+
+
+class _BlockWeightKeep:
+    """Which compiled blocks keep gathered weights. Flex-only blocks (every call took a BlockMask) run
+    ungraphed, so they hold nothing and leave the budget; one non-BlockMask call regraphs them."""
+
+    def __init__(self, blocks, budget):
+        self.blocks = blocks  # [(block, [fsdp_param], nbytes)]
+        self.budget = budget
+        self.kept = None
+        self.noted = False
+
+    def apply(self):
+        flex = [b.__dict__.get("_unsloth_block_flex_only") is True for b, _, _ in self.blocks]
+        nbytes = sum(n for (_, _, n), f in zip(self.blocks, flex) if not f)
+        keep = nbytes <= self.budget
+        for (block, params, _), f in zip(self.blocks, flex):
+            for fsdp_param in params:
+                _hold_unsharded(fsdp_param, keep and not f)
+            if not f:
+                block.__dict__["_unsloth_block_graphs_off"] = not keep
+        self.kept = keep
+        return keep, nbytes, sum(flex)
+
+    def observe(self, block):
+        was = self.kept
+        keep, nbytes, flex = self.apply()
+        if flex and not self.noted:
+            self.noted = True
+            # First flex block, before the others ran: no count.
+            _print_rank0(
+                "Unsloth: native FSDP2 frees the gathered weights of flex attention blocks "
+                "again: they run without block CUDA graphs."
+            )
+        if keep != was:
+            _print_rank0(
+                f"Unsloth: UNSLOTH_BLOCK_CUDAGRAPHS=1 under native FSDP2 now "
+                + (
+                    f"keeps {_gib(nbytes)} per rank of gathered block weights (graphed blocks only)."
+                    if keep
+                    else f"would keep {_gib(nbytes)} per rank (budget {_gib(self.budget)}); "
+                    "blocks run without CUDA graphs."
+                )
+            )
+
+
 def _keep_unsharded_for_block_cudagraphs(model):
     """FSDP2 frees gathered params at reshard, moving their addresses so block CUDA graphs re-record every
     step (2 x T4 Qwen3 LoRA: 6 records, 0 replays). Keep the storage; the next all-gather refills it in place.
@@ -1055,7 +1117,7 @@ def _keep_unsharded_for_block_cudagraphs(model):
     if not blocks:
         return 0
     FSDPModule = _fsdp_module_class()
-    candidates, nbytes = [], 0
+    per_block = {}
     for module in model.modules():
         if not isinstance(module, FSDPModule):
             continue
@@ -1072,7 +1134,9 @@ def _keep_unsharded_for_block_cudagraphs(model):
                 continue
             if not callable(getattr(type(fsdp_param), "free_unsharded_param", None)):
                 return 0  # a torch without this FSDP2 internal: graphs re-record as before
-            candidates.append((fsdp_param, roots[owner]))
+            block = roots[owner]
+            entry = per_block.setdefault(id(block), [block, [], 0])
+            entry[1].append(fsdp_param)
             try:
                 # param_dtype / orig_dtype are set at FSDP2's lazy init (first forward), after this.
                 dtype = (
@@ -1080,31 +1144,31 @@ def _keep_unsharded_for_block_cudagraphs(model):
                     or getattr(getattr(group, "mp_policy", None), "param_dtype", None)
                     or fsdp_param.sharded_param.dtype
                 )
-                nbytes += fsdp_param._orig_size.numel() * dtype.itemsize
+                entry[2] += fsdp_param._orig_size.numel() * dtype.itemsize
             except Exception:
                 pass
-    if not candidates:
+    if not per_block:
         return 0
-    budget = _block_cudagraphs_keep_budget()
-    if nbytes > budget:
-        layers = {id(block): block for _, block in candidates}
-        for block in layers.values():
-            block.__dict__["_unsloth_block_graphs_off"] = True
+    keeper = _BlockWeightKeep(
+        [tuple(e) for e in per_block.values()], _block_cudagraphs_keep_budget()
+    )
+    keep, nbytes, _ = keeper.apply()
+    for block, _, _ in keeper.blocks:
+        block.__dict__["_unsloth_block_flex_observer"] = keeper.observe
+    count = sum(len(params) for _, params, _ in keeper.blocks)
+    if not keep:
         _print_rank0(
             f"Unsloth: UNSLOTH_BLOCK_CUDAGRAPHS=1 under native FSDP2 would keep {_gib(nbytes)} "
-            f"per rank of gathered block weights allocated (budget {_gib(budget)}, "
-            f"UNSLOTH_BLOCK_CUDAGRAPHS_FSDP2_KEEP_GB); {len(layers)} blocks run without CUDA graphs."
+            f"per rank of gathered block weights allocated (budget {_gib(keeper.budget)}, "
+            f"UNSLOTH_BLOCK_CUDAGRAPHS_FSDP2_KEEP_GB); {len(keeper.blocks)} blocks run without CUDA graphs."
         )
         return 0
-    for fsdp_param, _ in candidates:
-        fsdp_param.free_unsharded_param = _skip_free_unsharded_param
-        fsdp_param._unsloth_keep_unsharded = True
     _print_rank0(
         f"Unsloth: UNSLOTH_BLOCK_CUDAGRAPHS=1 under native FSDP2 keeps the gathered weights of "
-        f"{len(candidates)} parameters allocated ({_gib(nbytes)} per rank) so the block CUDA graphs "
+        f"{count} parameters allocated ({_gib(nbytes)} per rank) so the block CUDA graphs "
         "replay instead of re-recording every step."
     )
-    return len(candidates)
+    return count
 
 
 def _post_shard(
@@ -1683,9 +1747,8 @@ def shard_model(model, config: Optional[FSDP2Config] = None):
         and param_dtype in (torch.bfloat16, torch.float16)
         and _all_trainable_float32(model)
     ):
-        # Fit layout: FSDP2 manages only trainable parameters. One GPU keeps float32 masters (LoRA) and
-        # lets autocast cast them at each op; a 16-bit gather casts them first, which moved Gemma4's step-0
-        # grad norm 0.2% off 1 GPU (A/A 0.01%). Gather them as they are; the 4-bit storage stays 16-bit.
+        # Fit layout: only trainable params are sharded; gather float32 LoRA masters as they are (a
+        # 16-bit gather moves grad norms off one GPU); the 4-bit storage stays 16-bit.
         gather_dtype = None
         mp_policy = MixedPrecisionPolicy(param_dtype = None, reduce_dtype = config.reduce_dtype)
     if not units and not layout.root_only:
@@ -2310,8 +2373,7 @@ def _install_accelerate_hooks():
             _refuse_bnb_optimizer_instance(optimizer)
         if native and _mixed_param_groups(optimizer):
             if getattr(_inner_optimizer(optimizer), "state", None):
-                # The split carries no per-parameter state over; a mixed group stepping a foreach /
-                # fused kernel over DTensor and plain tensors fails.
+                # Split drops per-parameter state; a mixed group breaks foreach / fused steps.
                 raise RuntimeError(_MIXED_GROUPS_REFUSAL)
         if native and _split_mixed_param_groups(getattr(optimizer, "optimizer", optimizer)):
             _print_rank0(
@@ -2624,8 +2686,7 @@ def native_load_optimizer_sharded(model, optimizer, directory):
     # The target layout: this rank's shards (empty optimizer state is initialised first).
     state = get_optimizer_state_dict(root, optimizer, options = options)
     unstepped = _match_saved_optimizer_keys(state, directory, root)
-    # Hyperparameter keys the checkpoint lacks (another optimizer class, or an older torch) keep this
-    # optimizer's values; dcp.load would refuse them as missing.
+    # Missing hyperparameter keys keep this optimizer's values; dcp.load would refuse them.
     unsaved = _drop_unsaved_group_keys(state, directory)
     dcp.load(state, checkpoint_id = os.fspath(directory), process_group = group)
     for index, key, value in unsaved:
@@ -2865,8 +2926,7 @@ def _native_load_hf_sharded(root, checkpoint):
     try:
         dcp.load(state, storage_reader = reader, process_group = group)
     except (Exception, CheckpointException) as exc:
-        # A read error reaches every rank as a CheckpointException (a BaseException, so `except
-        # Exception` alone would let it abort the resume).
+        # CheckpointException is a BaseException, so `except Exception` alone would miss it.
         error = exc
     # The fallback is voted on too: the full load rewrites every tensor this one may have touched.
     if not _all_ranks_agree(error is None, group):
@@ -3147,9 +3207,8 @@ def _install_trainer_hooks():
             return original_save_model(self, output_dir, _internal_call = _internal_call)
         if output_dir is None:
             output_dir = self.args.output_dir
-        # Collective gather on every rank (the Trainer would only call _save on rank 0). The sharded
-        # root, not a torch.compile (`_orig_mod`) / DDP-style (`.module`) wrapper around it: a
-        # compiled PeftModel is still an adapter checkpoint, and its state dict keys carry no prefix.
+        # Gather on every rank from the sharded root, not a compile or DDP wrapper, so keys carry no
+        # prefix.
         root = _native_root(model)
         if _is_peft(root):
             # The adapter save also writes frozen tensors (resized embeddings, inactive adapters,
@@ -3212,8 +3271,7 @@ def _install_trainer_hooks():
         if is_native_fsdp2(getattr(self, "model", None)):
             # Before the LR scheduler records one base LR per group.
             _split_mixed_param_groups(getattr(optimizer, "optimizer", optimizer))
-            # Localized, or refused here (a bitsandbytes optimizer that cannot step local shards
-            # would otherwise fail inside the first step).
+            # A bnb optimizer that cannot step local shards is refused here, not in step one.
             _refuse_bnb_optimizer_instance(optimizer)
         return optimizer
 
@@ -3301,9 +3359,8 @@ def _install_trainer_hooks():
         ]
         group, usable = _dcp_group(_native_root(model))
         if usable:
-            # What each rank sees on (possibly node-local) storage is voted on, so all ranks read
-            # the same format or skip together: [all see dcp, all see .pt, all see the scheduler,
-            # none sees an optimizer, none sees the scheduler].
+            # Each rank's view of node-local storage is voted on, so all ranks read one format or
+            # skip together.
             sharded, full, scheduler, none_saved, no_scheduler = _all_ranks_agree(
                 local + [not (local[0] or local[1]), not local[2]], group
             )
@@ -3425,25 +3482,28 @@ def _has_cpu_tensors(optimizer, grads = False):
 
 def _local_grads_if_mixed(optimizer):
     """Swap DTensor grads for their local shards when DTensor and plain grads mix: one foreach unscale
-    takes one tensor kind ("got mixed torch.Tensor and DTensor"). Elementwise, so the shard result is the same."""
+    takes one tensor kind ("got mixed torch.Tensor and DTensor"), or when a DTensor grad is on the CPU
+    (CPUOffloadPolicy): DTensor's found_inf reduce would need a CPU collective a NCCL-only group lacks.
+    Elementwise, so the shard result is the same; ShardedGradScaler.unscale_ agrees found_inf over ranks."""
     try:
         from torch.distributed.tensor import DTensor
     except ImportError:
         return optimizer
-    groups, dtensor, plain = [], False, False
+    groups, dtensor, plain, cpu_dtensor = [], False, False, False
     for group in optimizer.param_groups:
         params = []
         for p in group["params"]:
             grad = p.grad
             if isinstance(grad, DTensor):
                 dtensor = True
+                cpu_dtensor = cpu_dtensor or grad.device.type == "cpu"
                 p = types.SimpleNamespace(grad = grad._local_tensor)
             elif grad is not None:
                 plain = True
             # Plain grads keep their parameter: upstream reassigns a coalesced float16 sparse grad to it.
             params.append(p)
         groups.append({"params": params})
-    if not (dtensor and plain):
+    if not ((dtensor and plain) or cpu_dtensor):
         return optimizer
     return types.SimpleNamespace(param_groups = groups)
 
@@ -3855,7 +3915,14 @@ def _refuse_bnb_optimizer_instance(optimizer):
     """A prebuilt optimizer passed as Trainer(optimizers = (opt, ...)) or to accelerator.prepare:
     _swap_bnb_optimizer only edits args.optim, so a bitsandbytes instance would be kept and step
     DTensor shards it cannot handle. Torch optimizers pass."""
-    if optimizer is None or _localize_bnb_optimizer(optimizer):
+    if optimizer is None:
+        return
+    from ..parallel_capabilities import refuse_shard_unaware_optimizer
+
+    refuse_shard_unaware_optimizer(
+        _inner_optimizer(optimizer), "fsdp2"
+    )  # Muon would orthogonalize shards
+    if _localize_bnb_optimizer(optimizer):
         return
     inner = _inner_optimizer(optimizer)
     if "galore" in type(inner).__name__.lower():
@@ -4118,7 +4185,7 @@ def _refuse_save_on_each_node(training_args):
 
 
 def _env_tensor_parallel_dp_mesh(model):
-    if not os.environ.get("UNSLOTH_TP_SIZE"):
+    if not os.environ.get("UNSLOTH_TP_SIZE") and not os.environ.get("UNSLOTH_PP_SIZE"):
         return None
     from .tp_env import fsdp2_dp_mesh
     return fsdp2_dp_mesh(model)
@@ -4167,10 +4234,8 @@ def native_fsdp2_trainer_setup(
         )
         _refuse_bnb_optimizer_instance(optimizer)
         if is_native_fsdp2(model) and optimizer is not None and _mixed_param_groups(optimizer):
-            # The Trainer would split the groups after a scheduler recorded one base LR (and lambda)
-            # per group (the new groups keep their initial LR; a resumed scheduler state no longer
-            # matches), and a split cannot carry loaded per-parameter state, so it is skipped and the
-            # mixed group reaches a foreach / fused kernel. Only a fresh optimizer alone is split.
+            # Split only a fresh optimizer: a late split breaks the scheduler's base LRs or loaded
+            # state.
             if scheduler is not None or getattr(_inner_optimizer(optimizer), "state", None):
                 raise RuntimeError(_MIXED_GROUPS_REFUSAL)
         if is_native_fsdp2(model):

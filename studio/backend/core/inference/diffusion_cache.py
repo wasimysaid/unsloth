@@ -20,8 +20,7 @@ TC_MODES = (TC_FBCACHE, TC_STATIC)
 DEFAULT_FBCACHE_THRESHOLD = 0.08
 QUANT_FBCACHE_THRESHOLD = 0.12
 
-# Auto step-count bar: FBCache's win scales with step count, so auto engages only at 20+ steps ("dev" schedules
-# qualify, distilled turbo never does).
+# Auto engages FBCache only at 20+ steps, where its win scales; dev schedules qualify, turbo never.
 FBCACHE_MIN_STEPS = 20
 
 # == diffusion_speed.SPEED_MAX, spelled out to keep this module import-free.
@@ -31,7 +30,6 @@ AUTO_STEP_CACHE_TIER = "max"
 _REDUCTION_FILTER_OPTION = "test_configs.force_filter_reduction_configs"
 
 
-_TIER_DEFAULT = "default"
 _TIER_MAX = "max"
 
 

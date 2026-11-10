@@ -209,9 +209,8 @@ def save_source_clip(
     reference_text: Optional[str],
     created: Optional[list[str]] = None,
 ) -> Optional[dict[str, Any]]:
-    """Keep an uploaded recording in history beside its edit, so A/B outlives the upload. Reuses a
-    source clip of the same audio; None for a history clip or an upload with no record. The id of
-    a clip it had to save is appended to ``created``."""
+    """Keeps an upload in history beside its edit, so A/B outlives it; reuses a same-audio source
+    clip; None for a history clip; saved ids appended to created."""
     import wave
 
     from core.inference import audio_gallery, audio_inputs
@@ -234,9 +233,9 @@ def save_source_clip(
             and meta.get("role") == "source"
             and meta.get("workflow") == "edit"
             and meta.get("source_sha256") == sha
-            and audio_gallery.owned_audio_path(path.stem) is not None
+            and audio_gallery.owned_audio_path(path.stem, directory) is not None
         ):
-            return audio_gallery._record(path.stem, meta)
+            return audio_gallery._record(path.stem, meta, directory = directory)
     with wave.open(str(prepared_path)) as w:
         sample_rate, duration_s = w.getframerate(), round(w.getnframes() / w.getframerate(), 3)
     meta: dict[str, Any] = {

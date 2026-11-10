@@ -42,7 +42,7 @@ import { openLink } from "@/lib/open-link";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   type HuggingFaceCacheSettings,
   loadHuggingFaceCacheSettings,
@@ -69,11 +69,25 @@ import {
   type StorageSegment,
   StorageOverview,
 } from "../components/storage-overview";
+import {
+  MONITOR_REFRESH_OPTIONS_MS,
+  monitorRefreshMs,
+} from "@/components/monitor-refresh";
 import { useMonitorOverlayStore } from "../stores/monitor-overlay-store";
+import { MemoryShareBar } from "@/components/monitor-memory";
+import { inferenceGpuDisjoint, poolSplit } from "@/components/monitor-share";
+import { useLoadedModels } from "@/features/loaded-models/use-loaded-models";
+import { holdsModelsInVram, vramCards } from "@/components/monitor-cards";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useSettingsPanelPrefsStore } from "../stores/settings-panel-prefs-store";
 import { ArrowUpRight01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { LayersIcon } from "lucide-react";
 
 const POLL_MS = 3000;
 
@@ -102,24 +116,10 @@ function usagePillClass(percent: number | null): string {
   return "bg-control-accent/10 text-control-accent";
 }
 
-function usageValueClass(percent: number | null): string {
-  if (!isFiniteNumber(percent)) return "text-muted-foreground/70";
-  if (percent >= 90) return "text-[#df4530] dark:text-[#ef5b40]";
-  if (percent >= 70) return "text-amber-600 dark:text-amber-400";
-  return "text-foreground";
-}
-
 function formatGb(value: number | null | undefined): string {
   const safe = isFiniteNumber(value) ? Math.max(0, value) : 0;
   const digits = safe >= 10 ? 1 : 2;
   return `${safe.toFixed(digits)} GB`;
-}
-
-function formatDiskSize(diskGb: number | null | undefined): string {
-  if (isFiniteNumber(diskGb) && diskGb >= 1000) {
-    return `${(diskGb / 1000).toFixed(2)} TB`;
-  }
-  return formatGb(diskGb);
 }
 
 // RAM/VRAM are binary (GiB, like nvidia-smi); disk is decimal GB.
@@ -163,52 +163,59 @@ function MetricTile({
   percent,
   showUsage = true,
   extraDetail,
+  children,
 }: {
   label: string;
   value: string;
-  detail: string;
+  detail?: string;
   // null = unknown (e.g. Windows ROCm perf counter); show a dash, not 0%.
   percent: number | null;
   showUsage?: boolean;
   extraDetail?: string;
+  children?: ReactNode;
 }) {
   const percentKnown = isFiniteNumber(percent);
   const safePercent = clampPercent(percent);
   return (
-    <div className="flex min-w-0 flex-col gap-3 rounded-xl border border-border/60 bg-card px-5 py-4 dark:border-transparent">
-      <div className="flex min-w-0 flex-wrap items-start justify-between gap-x-4 gap-y-1">
-        <div className="flex shrink-0 flex-col gap-0.5">
+    <div className="flex min-w-0 flex-col gap-3 rounded-xl border border-border/60 bg-card px-6 pt-5 pb-6 dark:border-transparent">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <div className="flex min-w-0 items-center justify-between gap-3">
           <span className="text-ui-12 text-muted-foreground">{label}</span>
-          {showUsage ? (
+          {showUsage && percentKnown ? (
             <span
               className={cn(
-                "font-heading text-ui-21 font-semibold leading-tight tracking-[-0.02em] tabular-nums",
-                usageValueClass(percentKnown ? safePercent : null),
+                "-my-1 shrink-0 rounded-full px-2 py-1 font-mono text-ui-12 leading-none tabular-nums",
+                usagePillClass(safePercent),
               )}
             >
-              {percentKnown ? formatPercent(safePercent) : "--"}
+              {formatPercent(safePercent)}
             </span>
           ) : null}
         </div>
-        <div className="ml-auto flex min-w-0 flex-col items-end gap-0.5 text-right">
-          <span
-            title={value}
-            className="max-w-full truncate text-ui-12 tabular-nums text-foreground"
-          >
-            {value}
-          </span>
+        <span
+          title={value}
+          className={cn(
+            "truncate font-mono text-ui-14 font-medium leading-tight tabular-nums",
+            showUsage && !percentKnown
+              ? "text-muted-foreground/70"
+              : "text-foreground",
+          )}
+        >
+          {value}
+        </span>
+        {detail ? (
           <span
             title={detail}
-            className="max-w-full truncate text-ui-11 text-muted-foreground"
+            className="truncate text-ui-11 text-muted-foreground"
           >
             {detail}
           </span>
-          {extraDetail ? (
-            <span className="whitespace-pre-line text-ui-11 text-muted-foreground">
-              {extraDetail}
-            </span>
-          ) : null}
-        </div>
+        ) : null}
+        {extraDetail ? (
+          <span className="whitespace-pre-line text-ui-11 text-muted-foreground">
+            {extraDetail}
+          </span>
+        ) : null}
       </div>
       {showUsage && (
         <Progress
@@ -218,6 +225,7 @@ function MetricTile({
           indicatorClassName={usageIndicatorClass(safePercent)}
         />
       )}
+      {children ? <div className="mt-auto">{children}</div> : null}
     </div>
   );
 }
@@ -305,7 +313,18 @@ export function ResourcesTab() {
     setShowDetails,
     detailMetrics: storedDetailMetrics,
     setDetailMetric,
+    refreshMs,
+    setRefreshMs,
+    showUnslothShare,
+    setShowUnslothShare,
+    showModelBreakdown,
+    setShowModelBreakdown,
   } = useMonitorOverlayStore();
+  const wantsModels = showUnslothShare || showModelBreakdown;
+  const { polledEntries: loadedModels } = useLoadedModels(
+    wantsModels,
+    wantsModels,
+  );
   const detailMetrics = selectedDetailMetrics(storedDetailMetrics);
   // always fetch once: the switch is persisted now, so gating the hook on it
   // would leave a session that opens with it off reading zeros forever.
@@ -564,21 +583,25 @@ export function ResourcesTab() {
       !(metrics.modelsDisk && entry.key === "hf_hub") &&
       onSystemDisk(entry.paths),
   );
+  const diskBytes = (entry: (typeof cache.entries)[number]) =>
+    entry.systemDiskBytes ??
+    (systemEntries.includes(entry) ? entry.sizeBytes : 0);
   const modelsDiskGb =
-    (systemEntries.find((entry) => entry.key === "hf_hub")?.sizeBytes ?? 0) /
-    1e9;
+    cache.entries
+      .filter((entry) => entry.key === "hf_hub")
+      .reduce((sum, entry) => sum + diskBytes(entry), 0) / 1e9;
   const cachesDiskGb =
-    systemEntries
+    cache.entries
       .filter((entry) => entry.key !== "hf_hub")
-      .reduce((sum, entry) => sum + entry.sizeBytes, 0) / 1e9;
+      .reduce((sum, entry) => sum + diskBytes(entry), 0) / 1e9;
   const otherDiskGb = Math.max(
     0,
     metrics.diskUsed - modelsDiskGb - cachesDiskGb,
   );
   const cacheValue = (diskGb: number) =>
-    cache.inventory ? formatDiskSize(diskGb) : t("common.loading");
+    cache.inventory ? formatGb(diskGb) : t("common.loading");
   const storageSegments: StorageSegment[] = [
-    ...(metrics.modelsDisk
+    ...(metrics.modelsDisk && modelsDiskGb === 0
       ? []
       : [
           {
@@ -600,14 +623,14 @@ export function ResourcesTab() {
       key: "other",
       label: t("settings.resources.storage.segmentOther"),
       bytes: otherDiskGb,
-      value: formatDiskSize(otherDiskGb),
+      value: formatGb(otherDiskGb),
       color: STORAGE_COLORS.other,
     },
     {
       key: "free",
       label: t("settings.resources.storage.segmentFree"),
       bytes: metrics.diskFree,
-      value: formatDiskSize(metrics.diskFree),
+      value: formatGb(metrics.diskFree),
       color: STORAGE_COLORS.free,
     },
   ];
@@ -619,6 +642,31 @@ export function ResourcesTab() {
           shared: formatGiB(metrics.vramShared),
         })
       : formatGiB(unifiedPool ? metrics.vramShared : metrics.vramTotal);
+  const vram = vramCards(memoryDisplay.usageDevices, memoryDisplay.usageGpu);
+  const discreteVram =
+    hasGpu &&
+    !unifiedPool &&
+    !memoryDisplay.sharedOnly &&
+    holdsModelsInVram(vram.cards);
+  const processMb =
+    systemInfo.memory?.process_tree_used_mb ?? systemInfo.memory?.process_used_mb;
+  const split = poolSplit({
+    entries: loadedModels,
+    showShare: showUnslothShare,
+    showBreakdown: showModelBreakdown,
+    modelsInVram: discreteVram,
+    inferenceGpuElsewhere: inferenceGpuDisjoint(
+      systemInfo.gpu?.backend,
+      separateInferenceGpu?.backend,
+    ),
+    processGb: !hostUnread && processMb !== undefined ? processMb / 1024 : null,
+    ramUsedGb: metrics.ramUsed,
+    ramTotalGb: metrics.ramTotal,
+    vramUsedGb: vram.usedGb,
+    vramTotalGb: vram.totalGb,
+  });
+  const ramSegments = split.ram;
+  const vramSegments = split.vram;
   // The placeholder's cpu backend and empty package list are not facts about the host either.
   const hostReading = (value: string) => (hostUnread ? unknownLabel : value);
   // systemInfo.gpu, not displayedGpu: a Vulkan llama.cpp makes displayedGpu use the inference
@@ -661,26 +709,15 @@ export function ResourcesTab() {
         </div>
         {/* Top edge on the h1's cap top (text-xl at leading 1.4; Hellix: 0.322em). */}
         <div className="mt-[calc(var(--text-xl)*0.322)] flex min-w-0 flex-wrap items-center gap-2">
-          <Button
-            variant={isOpen ? "secondary" : "outline"}
-            size="sm"
-            className="gap-1.5 h-8 text-xs rounded-full px-3"
-            onClick={() => setIsOpen(!isOpen)}
-          >
-            <LayersIcon className="size-3.5" />
-            {isOpen
-              ? t("settings.resources.disableOverlay")
-              : t("settings.resources.floatingWindow")}
-          </Button>
-
-          <div className="flex h-8 shrink-0 items-center gap-2 rounded-full border border-border/60 px-2.5 text-xs font-medium text-foreground">
+          <label className="flex h-9 shrink-0 items-center gap-2 rounded-full border border-border/60 px-3.5 text-xs font-medium text-foreground">
             <span>{t("settings.resources.liveUpdates")}</span>
             <Switch
+              className="scale-[0.88]"
               aria-label={t("settings.resources.liveUpdates")}
               checked={liveUpdates}
               onCheckedChange={setLiveUpdates}
             />
-          </div>
+          </label>
         </div>
       </header>
 
@@ -715,13 +752,13 @@ export function ResourcesTab() {
           <MetricTile
             label={t("settings.resources.liveMonitor.disk")}
             value={hostReading(
-              `${formatDiskSize(metrics.diskUsed)} / ${formatDiskSize(metrics.diskTotal)}`,
+              `${formatGb(metrics.diskUsed)} / ${formatGb(metrics.diskTotal)}`,
             )}
             detail={
               hostUnread
                 ? hostUnreadDetail
                 : t("settings.resources.liveMonitor.free", {
-                    value: formatDiskSize(metrics.diskFree),
+                    value: formatGb(metrics.diskFree),
                   })
             }
             percent={hostUnread ? null : metrics.diskPercent}
@@ -730,13 +767,13 @@ export function ResourcesTab() {
             <MetricTile
               label={t("settings.resources.liveMonitor.modelsDisk")}
               value={hostReading(
-                `${formatDiskSize(metrics.modelsDiskUsed)} / ${formatDiskSize(metrics.modelsDisk.total_gb)}`,
+                `${formatGb(metrics.modelsDiskUsed)} / ${formatGb(metrics.modelsDisk.total_gb)}`,
               )}
               detail={
                 hostUnread
                   ? hostUnreadDetail
                   : t("settings.resources.liveMonitor.free", {
-                      value: formatDiskSize(metrics.modelsDisk.free_gb),
+                      value: formatGb(metrics.modelsDisk.free_gb),
                     })
               }
               percent={hostUnread ? null : metrics.modelsDiskPercent}
@@ -744,7 +781,7 @@ export function ResourcesTab() {
           )}
           <MetricTile
             label={t(
-              memoryDisplay.sharedOnly
+              memoryDisplay.sharedOnly || unifiedPool
                 ? "settings.resources.gpu.memory"
                 : "settings.resources.liveMonitor.vram",
             )}
@@ -797,40 +834,63 @@ export function ResourcesTab() {
             percent={metrics.vramUsageKnown ? metrics.vramPercent : null}
           />
         </div>
-        <SettingsRow
-          label={t("settings.resources.liveMonitor.detailedView")}
-          description={t(
-            "settings.resources.liveMonitor.detailedViewDescription",
-          )}
-        >
-          <Switch
-            aria-label={t("settings.resources.liveMonitor.detailedView")}
-            checked={showDetails}
-            onCheckedChange={setShowDetails}
-          />
-        </SettingsRow>
-        {showDetails && (
-          <div className="flex flex-wrap gap-x-5 gap-y-2 pb-3">
-            {MONITOR_DETAIL_METRICS.map((metric) => {
-              const label = t(`settings.resources.liveMonitor.${metric}`);
-              return (
-                <label
-                  key={metric}
-                  className="flex cursor-pointer items-center gap-2 text-xs font-medium text-foreground"
-                >
-                  <Checkbox
-                    checked={detailMetrics.has(metric)}
-                    onCheckedChange={(checked) =>
-                      setDetailMetric(metric, checked === true)
-                    }
-                    aria-label={label}
-                  />
-                  {label}
-                </label>
-              );
-            })}
+        {(ramSegments || vramSegments) && (
+          <div
+            className="grid gap-3 pb-3 sm:grid-cols-2 sm:[&>:last-child:nth-child(odd)]:col-span-2"
+            data-testid="settings-unsloth-share"
+          >
+            {ramSegments && (
+              <MetricTile
+                label={t(
+                  unifiedPool
+                    ? "settings.resources.liveMonitor.memory"
+                    : "settings.resources.liveMonitor.ram",
+                )}
+                value={`${formatGiB(metrics.ramUsed)} / ${formatGiB(metrics.ramTotal)}`}
+                percent={null}
+                showUsage={false}
+              >
+                <MemoryShareBar
+                  segments={ramSegments}
+                  noModels={!discreteVram && split.noModels}
+                />
+              </MetricTile>
+            )}
+            {vramSegments && (
+              <MetricTile
+                label={t("settings.resources.liveMonitor.vram")}
+                value={`${formatGiB(vram.usedGb)} / ${formatGiB(vram.totalGb)}`}
+                percent={null}
+                showUsage={false}
+              >
+                <MemoryShareBar
+                  segments={vramSegments}
+                  noModels={split.noModels}
+                />
+              </MetricTile>
+            )}
           </div>
         )}
+        <SettingsRow
+          label={t("settings.resources.liveMonitor.unslothShare")}
+          description={t("settings.resources.liveMonitor.unslothShareDescription")}
+        >
+          <Switch
+            aria-label={t("settings.resources.liveMonitor.unslothShare")}
+            checked={showUnslothShare}
+            onCheckedChange={setShowUnslothShare}
+          />
+        </SettingsRow>
+        <SettingsRow
+          label={t("settings.resources.liveMonitor.modelBreakdown")}
+          description={t("settings.resources.liveMonitor.modelBreakdownDescription")}
+        >
+          <Switch
+            aria-label={t("settings.resources.liveMonitor.modelBreakdown")}
+            checked={showModelBreakdown}
+            onCheckedChange={setShowModelBreakdown}
+          />
+        </SettingsRow>
       </SettingsSection>
 
       <SettingsSection title={t("settings.resources.gpu.title")}>
@@ -1154,6 +1214,78 @@ export function ResourcesTab() {
         )}
       </SettingsSection>
 
+      <SettingsSection title={t("settings.resources.floatingWindow")}>
+        <SettingsRow
+          label={t("settings.resources.showFloatingWindow")}
+          description={t("settings.resources.showFloatingWindowDescription")}
+        >
+          <Switch
+            aria-label={t("settings.resources.showFloatingWindow")}
+            checked={isOpen}
+            onCheckedChange={setIsOpen}
+          />
+        </SettingsRow>
+        <SettingsRow
+          label={t("settings.resources.liveMonitor.refreshRate")}
+          description={t("settings.resources.liveMonitor.refreshRateDescription")}
+        >
+          <Select
+            value={String(monitorRefreshMs(refreshMs))}
+            onValueChange={(value) => setRefreshMs(Number(value))}
+          >
+            <SelectTrigger
+              className="w-28"
+              aria-label={t("settings.resources.liveMonitor.refreshRate")}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {MONITOR_REFRESH_OPTIONS_MS.map((ms) => (
+                <SelectItem key={ms} value={String(ms)}>
+                  {t("settings.resources.liveMonitor.refreshEvery", {
+                    seconds: ms / 1000,
+                  })}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </SettingsRow>
+        <SettingsRow
+          label={t("settings.resources.liveMonitor.detailedView")}
+          description={t(
+            "settings.resources.liveMonitor.detailedViewDescription",
+          )}
+        >
+          <Switch
+            aria-label={t("settings.resources.liveMonitor.detailedView")}
+            checked={showDetails}
+            onCheckedChange={setShowDetails}
+          />
+        </SettingsRow>
+        {showDetails && (
+          <div className="flex flex-wrap gap-x-5 gap-y-2 pb-3">
+            {MONITOR_DETAIL_METRICS.map((metric) => {
+              const label = t(`settings.resources.liveMonitor.${metric}`);
+              return (
+                <label
+                  key={metric}
+                  className="flex cursor-pointer items-center gap-2 text-xs font-medium text-foreground"
+                >
+                  <Checkbox
+                    checked={detailMetrics.has(metric)}
+                    onCheckedChange={(checked) =>
+                      setDetailMetric(metric, checked === true)
+                    }
+                    aria-label={label}
+                  />
+                  {label}
+                </label>
+              );
+            })}
+          </div>
+        )}
+      </SettingsSection>
+
       <ModelMemorySection ref={modelMemoryRef} />
 
       <LlamaBackendSection />
@@ -1167,8 +1299,8 @@ export function ResourcesTab() {
         <StorageOverview
           label={t("settings.resources.storage.systemDisk")}
           heading={t("settings.resources.storage.systemUsed", {
-            used: formatDiskSize(metrics.diskUsed),
-            total: formatDiskSize(metrics.diskTotal),
+            used: formatGb(metrics.diskUsed),
+            total: formatGb(metrics.diskTotal),
           })}
           action={
             <Button
@@ -1212,7 +1344,7 @@ export function ResourcesTab() {
           >
             {hfCache?.isCustom ? (
               <Button
-                variant="ghost"
+                variant="outline"
                 size="sm"
                 disabled={cacheSaving}
                 onClick={() => void saveCacheFolder(null)}

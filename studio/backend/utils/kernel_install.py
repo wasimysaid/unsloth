@@ -153,10 +153,9 @@ def _cuda_source_build_timeout() -> int:
     return value if value > 0 else 7200
 
 
-# Overall deadline for a CUDA source build. Far looser than HIP's: before the shared deadline a
-# CUDA build had none, and a slow one (causal-conv1d on aarch64 can compile for over an hour) must
-# not be aborted; this only stops a build that is truly stuck. Read once at import, so the lock
-# wait below covers it.
+# Overall deadline for a CUDA source build, far looser than HIP's; a slow one (causal-conv1d on
+# aarch64 can compile for over an hour) must not be aborted, and it is read at import so the lock
+# wait covers it.
 SOURCE_BUILD_TIMEOUT_CUDA = _cuda_source_build_timeout()
 # The real runner, captured at import: a caller handing in anything else (a test double, or
 # subprocess.run patched over) gets exactly that called.
@@ -214,8 +213,7 @@ def _kill_process_tree(process: subprocess.Popen) -> None:
         pass
 
 
-# Long enough for one source build (the longer of the HIP and CUDA deadlines) under another
-# process's lock, then give up rather than block.
+# Waits out the longer source build deadline for another process's lock, then gives up.
 KERNEL_LOCK_WAIT = max(SOURCE_BUILD_TIMEOUT, SOURCE_BUILD_TIMEOUT_CUDA) + 600
 _LOCK_CONTENDED = frozenset(
     code
@@ -391,6 +389,28 @@ KERNELS = {
     "causal_conv1d": ("causal-conv1d", "import torch, causal_conv1d_cuda"),
     "mamba_ssm": ("mamba-ssm", "import torch, selective_scan_cuda"),
 }
+_CHECKED_MODULE = {
+    "xformers": "xformers",
+    "flash_attn": "flash_attn_2_cuda",
+    "causal_conv1d": "causal_conv1d_cuda",
+    "mamba_ssm": "selective_scan_cuda",
+}
+
+
+def _load_check(name: str) -> str:
+    """KERNELS[name]'s check, exiting 1 before the ~2 s torch import when no path finds its module
+    (torch adds no path or finder). A raising find_spec leaves it to the check."""
+    return (
+        "import importlib.util, sys\n"
+        "try:\n"
+        f"    absent = importlib.util.find_spec({_CHECKED_MODULE[name]!r}) is None\n"
+        "except Exception:\n"
+        "    absent = False\n"
+        "if absent:\n"
+        "    sys.exit(1)\n"
+        f"{KERNELS[name][1]}"
+    )
+
 
 _PINNED = {"causal_conv1d": CAUSAL_CONV1D, "mamba_ssm": MAMBA_SSM}
 _WITHOUT_GPU_ENV = "UNSLOTH_INSTALL_KERNELS_WITHOUT_GPU"
@@ -467,9 +487,8 @@ def _gpu_capability(run: Callable[..., subprocess.CompletedProcess]) -> tuple[in
 def gpu_below_flash_attn_floor(
     run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> bool:
-    """Whether the best visible CUDA GPU is below sm80, where Unsloth leaves FlashAttention 2 off
-    (a T4 is sm75), so a flash-attn download would go unused. No visible GPU answers False: an
-    image build installs ahead of the GPU it will run on."""
+    """Whether the best visible CUDA GPU is below sm80, where FlashAttention 2 is left off (a T4 is
+    sm75); no visible GPU answers False, as an image build installs before its GPU exists."""
     capability = _gpu_capability(run)
     # ROCm reports a gfx version, not an sm, as its capability: the floor is NVIDIA's.
     return capability is not None and capability < (8, 0) and not _torch_is_hip(run)
@@ -551,7 +570,7 @@ def _uninstall(distribution: str, run: Callable[..., subprocess.CompletedProcess
 
 def install_kernel(
     name: str,
-    env: dict[str, str] | None,
+    env: dict[str, str] | None | Callable[[], dict[str, str] | None],
     *,
     dry_run: bool = False,
     run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
@@ -561,7 +580,8 @@ def install_kernel(
 ) -> int:
     # install_without_gpu: no visible GPU yet (an image build for the GPU it will run on) still
     # installs. Each kernel left uninstalled for this machine is appended to *skipped*.
-    distribution, check = KERNELS[name]
+    distribution = KERNELS[name][0]
+    check = _load_check(name)
 
     def skip(message: str) -> int:
         print(message)
@@ -580,6 +600,9 @@ def install_kernel(
             f"Unsloth: not installing {name} while offline "
             "(UV_OFFLINE / HF_HUB_OFFLINE / TRANSFORMERS_OFFLINE)."
         )
+    # A callable env is probed only here, so a kernel that already loads costs no torch probe.
+    if callable(env):
+        env = env()
     url = resolve_wheel_url(name, env)
     if name in _GPU_GATED and url is not None:
         capability = _gpu_capability(run)
@@ -610,8 +633,7 @@ def install_kernel(
     if dry_run:
         print(shown)
         return 0
-    # The lock Studio's workers take for the same kernel: never install or remove it under a
-    # running load's precheck / verify.
+    # Studio workers hold this lock: never install or remove the kernel under a running load.
     with kernel_install_lock(
         name, on_wait = lambda: print(f"Unsloth: waiting for another process installing {name}...")
     ) as held:
@@ -686,7 +708,13 @@ def main(argv: list[str] | None = None) -> int:
         "yes",
         "on",
     )
-    env = probe_torch_wheel_env(timeout = 120, include_windows = True)
+    probed: list[dict[str, str] | None] = []
+
+    def env() -> dict[str, str] | None:
+        if not probed:
+            probed.append(probe_torch_wheel_env(timeout = 120, include_windows = True))
+        return probed[0]
+
     status = 0
     skipped: list[str] = []
     for name in [name for name in KERNELS if not args.kernels or name in args.kernels]:

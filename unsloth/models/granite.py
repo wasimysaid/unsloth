@@ -11,17 +11,21 @@
 
 from .llama import *
 import os
+from .._gc_passes import collect_garbage
 from ._utils import __version__
 from ._utils import move_to_device, per_layer_device, refresh_moved_layer_devices
 from unsloth_zoo.utils import _get_dtype, Version
 from unsloth_zoo.hf_utils import dtype_from_config
 from ..utils.packing import get_packed_info_from_kwargs
+from ..context_parallel import get_cp_manager
 from ..utils.attention_dispatch import (
     AttentionConfig,
     AttentionContext,
+    context_parallel_attention,
     run_attention,
     select_attention_backend,
     resolve_prefix_seg_info,
+    applies_prefix_seg_info,
     SDPA,
 )
 from .llama import (
@@ -80,6 +84,8 @@ except:
     GraniteFlashAttention2 = GraniteAttention
 
 
+@applies_prefix_seg_info
+@context_parallel_attention
 def GraniteAttention_fast_forward(
     self,
     hidden_states: torch.Tensor,
@@ -144,7 +150,10 @@ def GraniteAttention_fast_forward(
         SDPA if attention_mask is not None else select_attention_backend(use_varlen, dropout_p)
     )
 
-    window = (kv_seq_len, kv_seq_len)
+    # Ulysses attends over the gathered sequence, cp size times this shard: a shard-sized window would cut it.
+    cp_manager = get_cp_manager()
+    window_len = kv_seq_len * cp_manager.size if cp_manager is not None else kv_seq_len
+    window = (window_len, window_len)
     softmax_scale = getattr(self, "scaling", None)
     attention_config = AttentionConfig(
         backend = backend,
@@ -609,9 +618,5 @@ class FastGraniteModel(FastLlamaModel):
                     module.short_cos_cached = module.short_cos_cached.to(correct_dtype)
                     module.short_sin_cached = module.short_sin_cached.to(correct_dtype)
 
-        import gc
-
-        for _ in range(3):
-            gc.collect()
-            clean_gpu_cache()
+        collect_garbage(after = clean_gpu_cache)
         return model, tokenizer

@@ -9,6 +9,7 @@ import functools
 import inspect
 import os
 import sys
+import time
 import types
 import weakref
 
@@ -23,8 +24,20 @@ _COMPILE_OPTIONS = {
     "shape_padding": True,
     "triton.cudagraphs": False,
 }
-# Opt-in per-block CUDA graphs; only pays off for static shapes.
-if os.environ.get("UNSLOTH_BLOCK_CUDAGRAPHS", "0") == "1":
+
+
+def _cudagraph_mode():
+    """UNSLOTH_BLOCK_CUDAGRAPHS: "1" always on, unset or "auto" decided per run (see _auto_observe),
+    anything else off (before auto, every value but "1" meant off)."""
+    value = os.environ.get("UNSLOTH_BLOCK_CUDAGRAPHS", "auto").strip().lower()
+    if value == "1":
+        return "on"
+    return "auto" if value in ("", "auto") else "off"
+
+
+# Per-block CUDA graphs only pay off for static shapes on a launch-bound step.
+_CUDAGRAPH_MODE = _cudagraph_mode()
+if _CUDAGRAPH_MODE == "on":
     _COMPILE_OPTIONS["triton.cudagraphs"] = True
 # Shape cap: variable lengths recorded a graph set per length (3.5x slower, pool grew every step).
 # Two shapes = one fixed length plus a short last batch. Past the cap graphs go off for every block
@@ -35,11 +48,35 @@ except ValueError:
     _CUDAGRAPH_MAX_SHAPES = 2
 
 
-# Process wide: every block class shares one cudagraph tree (one pool per device).
-# off: why graphs went off (None = on); release: None, "done" or "kept"; ours: compile ids of the
-# tree functions block calls created; managers: CUDA index -> the tree manager block graphs ran on.
+# Process-wide cudagraph state (one tree, one pool per device): off = why graphs went off, None =
+# on; release = None, done or kept; ours = compile ids of tree functions block calls made; built =
+# compile ids the graphs-on backend compiled; managers = CUDA index to tree manager
 def _new_cudagraph_state():
-    return {"off": None, "release": None, "ours": set(), "managers": {}, "notes": set()}
+    return {
+        "off": None,
+        "release": None,
+        "ours": set(),
+        "built": set(),
+        "managers": {},
+        "notes": set(),
+        "auto": _new_auto_state(),
+    }
+
+
+# Auto mode: phase "probe" (graphs off, watching), "on" or "off" (final). first: the layer whose
+# call starts a forward pass; passes: forward passes seen, all with batch shape `shape` on `device`.
+def _new_auto_state():
+    return {
+        "phase": "probe",
+        "first": None,
+        "shape": None,
+        "device": None,
+        "passes": 0,
+        "host": [],
+        "gpu": [],
+        "decision": None,
+        "why": None,
+    }
 
 
 _CUDAGRAPH_STATE = _new_cudagraph_state()
@@ -53,6 +90,12 @@ _SHAPES_NOTE = (
     "Unsloth: block CUDA graphs turned off: more than {} distinct batch shapes (variable padded "
     "lengths). Pad every batch to one length (padding='max_length') to keep them, or raise "
     "UNSLOTH_BLOCK_CUDAGRAPHS_MAX_SHAPES."
+)
+
+
+_PACKED_STOCK_NOTE = (
+    "Unsloth: packed / padding-free rows run each transformer block uncompiled; only unpacked "
+    "batches use the compiled blocks."
 )
 
 
@@ -87,9 +130,29 @@ def _tree_manager(device):
         return None
 
 
+def _block_backend(options):
+    """Inductor noting each compile id it builds, so foreign regions behind a graph break are not
+    counted as ours. None if unsupported (then the pool is kept)."""
+    try:
+        from torch._guards import CompileContext
+        class _BlockInductor(torch._TorchCompileInductorWrapper):
+            def __call__(
+                self,
+                *args,
+                options = None,
+                **kwargs,
+            ):
+                # options were already applied by the constructor.
+                _CUDAGRAPH_STATE["built"].add(CompileContext.current_compile_id())
+                return super().__call__(*args, **kwargs)
+
+        return _BlockInductor(None, options, None)
+    except Exception:
+        return None
+
+
 def _graphed_call(compiled, device, *args, **kwargs):
-    """Call the graphs-on region; note the compile ids of tree functions it created (forward here,
-    the backward of the same compile later), so the release can tell its pool is only ours."""
+    """Records the compile ids of tree functions this block built, so release knows the pool is ours."""
     managers = _CUDAGRAPH_STATE["managers"]
     manager = managers.get(device)
     if manager is None:
@@ -105,8 +168,9 @@ def _graphed_call(compiled, device, *args, **kwargs):
             return out
         managers[device] = manager
     if len(manager.ids_to_funcs) > before:
-        ids = list(manager.ids_to_funcs)[before:]
-        _CUDAGRAPH_STATE["ours"].update(manager.id_to_compile_id.get(i) for i in ids)
+        built = _CUDAGRAPH_STATE["built"]
+        cids = (manager.id_to_compile_id.get(i) for i in list(manager.ids_to_funcs)[before:])
+        _CUDAGRAPH_STATE["ours"].update(cid for cid in cids if cid is not None and cid in built)
     return out
 
 
@@ -226,9 +290,7 @@ def _watch_hidden_states(model):
 
 
 def _pool_outputs_stay_valid(layer, hidden_states):
-    """A grad-mode call outside backward leaves a forward pending, so cudagraph trees start no new
-    generation (can_start_new_generation) and its outputs need no copy out of the pool. Checkpointed
-    calls (no-grad forward, recompute in backward, and the trial standing in for it) may start one."""
+    """Grad-mode calls outside backward leave a forward pending, so their outputs stay valid in the pool."""
     return (
         not _IN_TRIAL[0]
         and not _HIDDEN_STATES_EXPOSED[0]
@@ -280,8 +342,7 @@ def _input_grad_must_leave_pool(hidden_states):
 _ADDITIVE_BACKWARD = ("AddmmBackward", "BaddbmmBackward")
 
 
-# Backward nodes that write their input gradient to new storage (a view, add, clone or cat passes
-# on the incoming gradient or a narrowed view of it).
+# Backward ops that allocate fresh storage for the input gradient (not a view, add or cat).
 _ALLOCATING_BACKWARD = (
     "MmBackward",
     "AddmmBackward",
@@ -351,7 +412,7 @@ def _in_nonreentrant_checkpoint():
     return bool(hooks) and getattr(hooks[0], "__module__", None) == "torch.utils.checkpoint"
 
 
-def _graphs_unsafe_moe(layer):
+def _graphs_unsafe_moe(layer, note = True):
     """MoE routing / grouped GEMMs read token counts the capture cannot hold (Qwen3-MoE: host copy
     during capture, routing outputs overwritten by the next replay)."""
     moe = layer.__dict__.get("_unsloth_block_graphs_moe")
@@ -364,25 +425,231 @@ def _graphs_unsafe_moe(layer):
             for m in layer.modules()
         )
         layer.__dict__["_unsloth_block_graphs_moe"] = moe
-        if moe:
-            _rank0_note(
-                "moe",
-                "Unsloth: block CUDA graphs skip MoE layers; they run compiled without graphs.",
-            )
+    if moe and note:
+        _rank0_note(
+            "moe",
+            "Unsloth: block CUDA graphs skip MoE layers; they run compiled without graphs.",
+        )
     return moe
 
 
-def _flex_block_mask_call(args, kwargs):
+def _flex_block_mask_call(
+    args,
+    kwargs,
+    note = True,
+):
     """BlockMask index tensors are static graph inputs rebuilt every step, so the graph re-records
     each call (StaticInputIdxMismatch is outside the re-record limit); Gemma3 was slower with graphs."""
     for value in (*args, *kwargs.values()):
         if type(value).__name__ == "BlockMask":
-            _rank0_note(
-                "flex",
-                "Unsloth: block CUDA graphs skip flex attention blocks; they run compiled without graphs.",
-            )
+            if note:
+                _rank0_note(
+                    "flex",
+                    "Unsloth: block CUDA graphs skip flex attention blocks; they run compiled without graphs.",
+                )
             return True
     return False
+
+
+# Auto: graphs start when launch time exceeds GPU time by _AUTO_RATIO and all calls had one shape.
+_AUTO_WARMUP_PASSES = 2
+_AUTO_MEASURE_CALLS = 4
+_AUTO_SLEEP_CYCLES = 20_000_000  # ~10-15 ms: the block's launches queue behind it
+try:
+    _AUTO_RATIO = float(os.environ.get("UNSLOTH_BLOCK_CUDAGRAPHS_AUTO_RATIO", "1.2"))
+except ValueError:
+    _AUTO_RATIO = 1.2
+# 2.13+: the graphed region gets its own recompile bucket (isolate_recompiles) instead of sharing
+# the stock region's cache limit. Before 2.11 FastLanguageModel LoRA blocks are not compiled at all.
+_AUTO_MIN_TORCH = "2.13"
+# The graph pool adds 0.5-0.8 GB reserved (Qwen3-0.6B LoRA): keep graphs off without this much free.
+_AUTO_FREE_GB = 2.0
+_AUTO_FREE_FRACTION = 0.10
+
+
+def _auto_note(message):
+    if os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1":
+        _rank0_note("auto", message)
+
+
+def _auto_off(auto, why):
+    auto["phase"] = "off"
+    auto["why"] = why
+    auto["first"] = None
+    _auto_note(f"Unsloth: block CUDA graphs stay off ({why}).")
+
+
+def _auto_platform_reason():
+    """Why auto mode can never turn graphs on in this process (None: it may)."""
+    if getattr(torch.version, "hip", None):
+        return "ROCm"
+    from packaging.version import Version
+
+    if Version(torch.__version__.split("+")[0]) < Version(_AUTO_MIN_TORCH):
+        return f"torch < {_AUTO_MIN_TORCH}"
+    return None
+
+
+def _auto_static_reason(layer, hidden_states):
+    """Why auto mode never turns graphs on for this run (None: it may)."""
+    if not hidden_states.is_cuda:
+        return "not a CUDA tensor"
+    why = _auto_platform_reason()
+    if why is not None:
+        return why
+    try:
+        import torch.distributed as dist
+        if dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1:
+            return "distributed"
+    except Exception:
+        return "distributed"
+    total = trainable = 0
+    for p in layer.parameters():
+        total += p.numel()
+        if p.requires_grad:
+            trainable += p.numel()
+    if total and trainable * 2 > total:
+        # Measured only for LoRA / QLoRA: full finetuning copies every block weight grad per step.
+        return "full finetuning"
+    return None
+
+
+def _auto_call_reason(layer, hidden_states, args, kwargs):
+    """Why this probed call rules graphs out (None: it does not)."""
+    if _packed_kwargs(kwargs):
+        return "packed / padding-free rows"
+    if _in_nonreentrant_checkpoint():
+        return "non-reentrant checkpointing"
+    if _graphs_unsafe_moe(layer, note = False):
+        return "MoE layer"
+    if _flex_block_mask_call(args, kwargs, note = False):
+        return "flex attention"
+    return None
+
+
+def _auto_block_device(hidden_states):
+    return hidden_states.device
+
+
+def _auto_observe(layer, hidden_states, args, kwargs):
+    """Auto mode, per block call while undecided: "graphs", "plain", or "measure" (plain, timed)."""
+    auto = _CUDAGRAPH_STATE["auto"]
+    if auto["phase"] == "off":
+        return "plain"
+    if auto["phase"] == "on":
+        return "graphs"
+    outside = _IN_TRIAL[0] or torch._C._current_graph_task_id() != -1
+    if auto["first"] is None:
+        if outside:
+            return "plain"  # the trial / a recompute before any forward pass was seen
+        why = _auto_static_reason(layer, hidden_states)
+        if why is not None:
+            _auto_off(auto, why)
+            return "plain"
+        auto["first"] = weakref.ref(layer)
+        auto["shape"] = tuple(hidden_states.shape)
+        auto["device"] = _auto_block_device(hidden_states)
+    why = _auto_call_reason(layer, hidden_states, args, kwargs)
+    if why is None and tuple(hidden_states.shape) != auto["shape"]:
+        why = "batch shape changed"
+    if why is None and _auto_block_device(hidden_states) != auto["device"]:
+        # A device_map split: timing and free memory are only read on one device.
+        why = "blocks on several devices"
+    if why is not None:
+        _auto_off(auto, why)
+        return "plain"
+    if outside:
+        return "plain"
+    if auto["first"]() is layer:  # a new forward pass
+        if auto["decision"] == "on":
+            auto["phase"] = "on"
+            auto["first"] = None
+            return "graphs"
+        auto["passes"] += 1
+    if auto["passes"] > _AUTO_WARMUP_PASSES and len(auto["host"]) < _AUTO_MEASURE_CALLS:
+        return "measure"
+    return "plain"
+
+
+def _auto_decide(auto, device):
+    host, gpu = sum(auto["host"]), sum(auto["gpu"])
+    ratio = host / max(gpu, 1e-9)
+    detail = f"block launch {host * 1e3 / len(auto['host']):.2f} ms vs GPU {gpu * 1e3 / len(auto['gpu']):.2f} ms"
+    auto["ratio"] = ratio
+    if ratio < _AUTO_RATIO:
+        _auto_off(auto, f"GPU-bound: {detail}")
+        return
+    try:
+        free, total = torch.cuda.mem_get_info(device)
+    except Exception:
+        _auto_off(auto, "free memory unknown")
+        return
+    need = max(_AUTO_FREE_GB * 2**30, _AUTO_FREE_FRACTION * total)
+    if free < need:
+        _auto_off(auto, f"{free / 2**30:.1f} GiB free")
+        return
+    auto["decision"] = "on"
+    _rank0_note(
+        "auto",
+        f"Unsloth: block CUDA graphs on (one batch shape, {detail}). "
+        "UNSLOTH_BLOCK_CUDAGRAPHS=0 keeps them off.",
+    )
+
+
+def _auto_time(call, device):
+    """Sleep and events run on the block device (cuda:1 or a device_map shard need not be current);
+    the sleep lets launches queue behind it; host and GPU are None when timing is unavailable"""
+    try:
+        guard = torch.cuda.device(device)
+    except Exception:
+        return call(), None, None
+    with guard:
+        try:
+            torch.cuda.synchronize(device)
+            start = torch.cuda.Event(enable_timing = True)
+            end = torch.cuda.Event(enable_timing = True)
+            torch.cuda._sleep(_AUTO_SLEEP_CYCLES)
+            start.record()
+        except Exception:
+            return call(), None, None
+        t0 = time.perf_counter()
+        out = call()
+        host = time.perf_counter() - t0
+        try:
+            end.record()
+            end.synchronize()
+            return out, host, start.elapsed_time(end) / 1e3
+        except Exception:
+            return out, None, None
+
+
+def _auto_measure(call, hidden_states):
+    auto = _CUDAGRAPH_STATE["auto"]
+    out, host, gpu = _auto_time(call, hidden_states.device)
+    if auto["phase"] != "probe" or auto["decision"] is not None:
+        return out
+    if host is None or gpu is None:
+        _auto_off(auto, "timing unavailable")
+        return out
+    auto["host"].append(host)
+    auto["gpu"].append(gpu)
+    if len(auto["host"]) >= _AUTO_MEASURE_CALLS:
+        _auto_decide(auto, hidden_states.device)
+    return out
+
+
+def _note_block_mask_call(layer, args, kwargs):
+    """_flex_block_mask_call, also recording `_unsloth_block_flex_only`; the observer runs on each change."""
+    flex = _flex_block_mask_call(args, kwargs)
+    seen = layer.__dict__.get("_unsloth_block_flex_only")
+    if seen is False or seen is flex:
+        return flex
+    # None -> True on a first BlockMask call; True -> False (sticky) on a call without one.
+    layer.__dict__["_unsloth_block_flex_only"] = flex
+    observer = layer.__dict__.get("_unsloth_block_flex_observer")
+    if observer is not None and (flex or seen is True):
+        observer(layer)
+    return flex
 
 
 def _ddp_optimizer_mode():
@@ -403,11 +670,9 @@ except Exception:
 
 
 def _no_ddp_graph_split():
-    """Inside DDP.forward dynamo hands a block's graph to DDPOptimizer, which splits it at gradient
-    bucket boundaries. A checkpoint recompute runs from backward, outside DDP.forward, so a block
-    graph compiled there is not split and saves a different number of tensors than the forward
-    (CheckpointError under DDP's non-reentrant checkpointing, DeepSeek-OCR). Each block is its own
-    region already, so its gradients still reach DDP's buckets block by block."""
+    """Stop DDPOptimizer splitting block graphs so checkpoint recomputes save the same tensors as
+    the forward (CheckpointError under DDP non-reentrant checkpointing); gradients still reach
+    DDP buckets block by block"""
     try:
         if _DDP is None or _DDP._get_active_ddp_module() is None or not _ddp_optimizer_mode():
             return contextlib.nullcontext()
@@ -482,11 +747,9 @@ def _writes_globals(code):
 
 
 def _rebind_globals(fn):
-    """dynamo resolves a function's globals through sys.modules[__globals__["__name__"]]; Unsloth's
-    generated modules exec code into a dict that module does not own (Gemma-4: `module
-    'transformers...modeling_gemma4' has no attribute 'Gemma4RMSNorm_forward'`). Rebuild such a
-    function on a registered module holding a copy of that dict. A copy cannot follow later
-    writes, so functions that assign globals are left alone."""
+    """Dynamo resolves globals via sys.modules; exec-generated code is rebuilt on a registered
+    module holding a copy of its dict; functions that assign globals are left alone since a copy
+    cannot follow later writes"""
     g = getattr(fn, "__globals__", None)
     if g is None or _writes_globals(fn.__code__):
         return fn
@@ -511,10 +774,9 @@ def _rebind_globals(fn):
 
 
 def _inline_compiled(fn):
-    """A method that is itself torch.compile'd (zoo's patch_function): inside a block, call the
-    original so dynamo inlines it. Inlining through the compiled wrapper guards on the wrapper's
-    closure as if it were the original's (torch 2.13 / 2.14, Gemma-4 fp16 MLP: `Unexpected type
-    CatchErrorsWrapper`). Outside a block the compiled wrapper runs as before."""
+    """Inside a block, call the original of a compiled method so dynamo inlines it: inlining the
+    wrapper guards on its closure and hits Unexpected type CatchErrorsWrapper on torch 2.13 and
+    2.14 (Gemma-4 fp16 MLP); outside a block the wrapper runs as before"""
     original = getattr(fn, "_torchdynamo_orig_callable", None)
     if (
         not isinstance(original, types.FunctionType)
@@ -645,16 +907,12 @@ def _gdn_chunk_adapter(original):
 
 
 def _route_fla_kernel():
-    """Point modeling code's references to fla's chunk_gated_delta_rule at the adapter. Callers
-    reach it through module globals, transformers' hub-kernel wrapper (a closure over it) and
-    Unsloth's compiled-module copies, so callers are found from the function object (gc
-    referrers), not by name. Closures are left alone: only namespace entries are swapped."""
+    """Repoint namespace refs to fla chunk_gated_delta_rule at the adapter; callers are found by gc
+    referrers, not by name (they reach it via globals, closures and compiled copies); closures
+    are left alone"""
     import gc
 
-    # gc.get_referrers skips the permanent generation, and Trainer.train() freezes the setup-time
-    # heap (_gc_train_scope) before the first GatedDeltaNet forward gets here: the walk found no
-    # caller and the op never engaged. Thaw for the walk; refreezing also freezes what train()
-    # allocated so far, which train()'s exit unfreezes with the rest.
+    # gc.get_referrers skips frozen objects, so thaw before the walk or the op never engages.
     frozen = gc.get_freeze_count() > 0
     if frozen:
         gc.unfreeze()
@@ -866,6 +1124,46 @@ def _prepare_gdn(layer, hidden_states):
         _GDN_OP[0] = False
 
 
+# PEFT's ParamWrapper (target_parameters on a non-expert weight, e.g. a MoE router) registers a torch
+# parametrization on every forward and removes it after, and torch builds a new Parametrized<Class>
+# subclass per registration. Dynamo guards a module's type id, so each call recompiles the module's
+# forward whenever the fresh class lands at an address it has not seen (how many do depends on the
+# allocator: a different code path shifted the count). One class per module instance keeps the id.
+_PARAMETRIZED_CLASSES = weakref.WeakKeyDictionary()
+
+
+def _stable_parametrized_classes():
+    try:
+        from torch.nn.utils import parametrize
+    except Exception:
+        return
+    original = getattr(parametrize, "_inject_new_class", None)
+    if original is None or getattr(original, "_unsloth_stable", False):
+        return
+
+    # Eager: the class swap is the graph break PEFT's registration already takes, and Dynamo must
+    # not fold the cache lookup into a graph.
+    @torch.compiler.disable
+    @functools.wraps(original)
+    def _inject_new_class(module):
+        cls = module.__class__
+        try:
+            cached = _PARAMETRIZED_CLASSES.get(module)
+        except TypeError:  # not weak-referenceable / hashable
+            return original(module)
+        if cached is not None and cached.__bases__ == (cls,):
+            module.__class__ = cached
+            return
+        original(module)
+        try:
+            _PARAMETRIZED_CLASSES[module] = module.__class__
+        except TypeError:
+            pass
+
+    _inject_new_class._unsloth_stable = True
+    parametrize._inject_new_class = _inject_new_class
+
+
 # zoo's Gemma-4 sliding router scans the mask (data dependent) and declines while compiling, so
 # the block runs the scan eagerly and a router wrapper reads the verdict stored on the mask.
 _BAND_MODULE = "unsloth_zoo.temporary_patches.gemma4_banded_attention"
@@ -873,11 +1171,9 @@ _BAND_CHECK = [None]
 
 
 def _gemma4_router_hook():
-    """Inside a block, a sliding layer whose mask is a plain causal band no longer than the
-    window runs is_causal SDPA, as the stock router does; longer bands run masked SDPA. The
-    router itself is not traced: its engagement counters drive a log-once branch dynamo guards
-    on, and its banded kernel traced in a checkpointed block recomputes different saved tensors
-    than its forward (CheckpointError)."""
+    """Sliding layers: a plain causal band within the window runs is_causal SDPA, longer bands run
+    masked SDPA. Router stays untraced: its counters drive a branch dynamo guards on; traced
+    banded kernel breaks checkpoints"""
     try:
         from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
     except Exception:
@@ -1106,6 +1402,22 @@ def _has_cache(args, kwargs):
     return any(isinstance(arg, Cache) for arg in args)
 
 
+def _shared_kv_scratch(layer, kwargs):
+    """KV-storing layers get an empty `shared_kv_states` (copied back): dynamo guards on it being empty and a recompute sees it filled."""
+    shared = kwargs.get("shared_kv_states")
+    if shared is None or not hasattr(shared, "update"):
+        return kwargs, None
+    attn = getattr(layer, "self_attn", None)
+    # Readers keep the real dict.
+    if attn is None or getattr(attn, "is_kv_shared_layer", False):
+        return kwargs, None
+    try:
+        scratch = type(shared)()
+    except Exception:
+        return kwargs, None
+    return {**kwargs, "shared_kv_states": scratch}, (shared, scratch)
+
+
 def _layer_kind(layer):
     attn = (
         getattr(layer, "self_attn", None)
@@ -1127,8 +1439,10 @@ def _wrap(
     cls,
     compile_options,
     kinds = 1,
+    *,
+    install = True,
 ):
-    original = cls.forward
+    original = getattr(cls.forward, "_unsloth_block_original", cls.forward)
     # Host-read packed lengths / PrefixGrouper segments stay stock.
     unsloth_forward = getattr(original, "__module__", "").startswith("unsloth.models.")
     try:
@@ -1141,8 +1455,11 @@ def _wrap(
     isolate = {}
     if _ISOLATE_RECOMPILES:
         isolate = dict(isolate_recompiles = True, recompile_limit = _region_recompile_limit(kinds))
+    graphs = bool(compile_options.get("triton.cudagraphs"))
+    backend = _block_backend(compile_options) if graphs else None
+    owned = {} if backend is None else {"backend": backend}
     compiled = torch.compile(
-        original, fullgraph = False, dynamic = None, options = compile_options, **isolate
+        original, fullgraph = False, dynamic = None, options = compile_options, **owned, **isolate
     )
     try:
         from unsloth_zoo.temporary_patches.utils import UNSLOTH_DECODE_COMPILE as inline_flag
@@ -1152,13 +1469,18 @@ def _wrap(
         from unsloth_zoo.temporary_patches.misc import output_capture_scratch as capture_scratch
     except Exception:
         capture_scratch = contextlib.nullcontext
+    try:
+        scratch_takes_owner = "owner" in inspect.signature(capture_scratch).parameters
+    except (TypeError, ValueError):
+        scratch_takes_owner = False
     # First call per grad mode compiles with errors raised: on failure retry with flex outside,
     # then the stock forward. The mode is per layer (a checkpoint recompute must not switch graph);
     # a failure is also the starting mode for later layers of the same kind.
     state = {"reported": set(), "start": {}}
     # Under Unsloth checkpointing each block call is a new cudagraph generation: the next replay
     # overwrites this block's outputs and gradients, so they are cloned out of the pool.
-    graphs = bool(compile_options.get("triton.cudagraphs"))
+    # Auto: `compiled` stays the graphs-off region; the graphed one is compiled once graphs turn on.
+    auto = not graphs and _CUDAGRAPH_MODE == "auto"
     if graphs:
         plain = torch.compile(
             original,
@@ -1167,9 +1489,35 @@ def _wrap(
             options = {**compile_options, "triton.cudagraphs": False},
             **isolate,
         )
+    else:
+        plain = compiled
+    graphed_box = [compiled if graphs else None]
+
+    def graphed():
+        if graphed_box[0] is None:
+            options = {**compile_options, "triton.cudagraphs": True}
+            backend = _block_backend(options)
+            owned = {} if backend is None else {"backend": backend}
+            graphed_box[0] = torch.compile(
+                original,
+                fullgraph = False,
+                dynamic = None,
+                options = options,
+                **owned,
+                **isolate,
+            )
+        return graphed_box[0]
+
     graph_shapes = set()
 
     def run(self, hidden_states, args, kwargs, mode):
+        kwargs, shared = _shared_kv_scratch(self, kwargs)
+        out = _run(self, hidden_states, args, kwargs, mode)
+        if shared is not None:
+            shared[0].update(shared[1])
+        return out
+
+    def _run(self, hidden_states, args, kwargs, mode):
         previous = inline_flag[0]
         inline_flag[0] = True
         _IN_BLOCK[0] = mode
@@ -1188,8 +1536,17 @@ def _wrap(
                 if varlen is not None:
                     kwargs = {**kwargs, packed_module.BLOCK_VARLEN_KWARG: varlen}
             # Capture hooks (router_logits) append to empty scratch lists: no guard on the layer index.
-            with capture_scratch(), _no_ddp_graph_split():
-                if graphs and _CUDAGRAPH_STATE["off"] is None:
+            scratch = capture_scratch(owner = self) if scratch_takes_owner else capture_scratch()
+            with scratch, _no_ddp_graph_split():
+                use_graphs = graphs
+                if auto and _CUDAGRAPH_STATE["auto"]["phase"] != "off":
+                    verdict = _auto_observe(self, hidden_states, args, kwargs)
+                    if verdict == "measure":
+                        return _auto_measure(
+                            lambda: compiled(self, hidden_states, *args, **kwargs), hidden_states
+                        )
+                    use_graphs = verdict == "graphs"
+                if use_graphs and _CUDAGRAPH_STATE["off"] is None:
                     shape = tuple(hidden_states.shape)
                     if _packed_kwargs(kwargs):
                         _graphs_off("packed", _PACKED_NOTE)
@@ -1198,17 +1555,19 @@ def _wrap(
                             _graphs_off("shapes", _SHAPES_NOTE.format(_CUDAGRAPH_MAX_SHAPES))
                         else:
                             graph_shapes.add(shape)
-                if graphs and (
+                # Before the graphs_off read: the observer may set or clear it for this block.
+                flex = use_graphs and _note_block_mask_call(self, args, kwargs)
+                if use_graphs and (
                     _CUDAGRAPH_STATE["off"] is not None
                     or self.__dict__.get("_unsloth_block_graphs_off", False)
                     or _in_nonreentrant_checkpoint()
                     or _graphs_unsafe_moe(self)
-                    or _flex_block_mask_call(args, kwargs)
+                    or flex
                 ):
                     if _CUDAGRAPH_STATE["off"] is not None and _CUDAGRAPH_STATE["release"] is None:
                         _release_graph_pool()
                     return plain(self, hidden_states, *args, **kwargs)
-                if graphs:
+                if use_graphs:
                     _param_grads_out_of_pool(self)
                     device = hidden_states.device.index
                     if _pool_outputs_stay_valid(self, hidden_states):
@@ -1216,11 +1575,13 @@ def _wrap(
                             # A leaf's .grad outlives the generation (trainable inputs_embeds); a
                             # checkpoint's backward recomputes (a new generation) before reading it.
                             hidden_states = _CloneGrad.apply(hidden_states)
-                        return _graphed_call(compiled, device, self, hidden_states, *args, **kwargs)
+                        return _graphed_call(
+                            graphed(), device, self, hidden_states, *args, **kwargs
+                        )
                     if hidden_states.requires_grad and torch.is_grad_enabled():
                         hidden_states = _CloneGrad.apply(hidden_states)
                     return _clone_outputs(
-                        _graphed_call(compiled, device, self, hidden_states, *args, **kwargs)
+                        _graphed_call(graphed(), device, self, hidden_states, *args, **kwargs)
                     )
                 return compiled(self, hidden_states, *args, **kwargs)
         finally:
@@ -1259,13 +1620,23 @@ def _wrap(
             # PrefixGrouper's int segment table would recompile at every new GRPO length.
             or (unsloth_forward and kwargs.get("prefix_seg_info") is not None)
         ):
+            phase = _CUDAGRAPH_STATE["auto"]["phase"] if auto else None
             if (
-                graphs
+                (graphs or phase == "on")
                 and self.training
                 and _CUDAGRAPH_STATE["off"] is None
                 and _packed_kwargs(kwargs)
             ):
                 _graphs_off("packed", _PACKED_NOTE)
+            elif phase == "probe" and self.training and _packed_kwargs(kwargs):
+                _auto_off(_CUDAGRAPH_STATE["auto"], "packed / padding-free rows")
+            if (
+                unsloth_forward
+                and self.training
+                and not tracing
+                and kwargs.get("packed_seq_lengths") is not None
+            ):
+                _rank0_note("packed_stock", _PACKED_STOCK_NOTE)
             return original(self, hidden_states, *args, **kwargs)
         if tracing:
             # Inside a user's torch.compile the enclosing graph owns the layer: no dynamic marking
@@ -1338,7 +1709,9 @@ def _wrap(
     forward._unsloth_block_original = original
     forward._unsloth_block_state = state
     setattr(forward, _MARK, True)
-    cls.forward = forward
+    if install:
+        cls.forward = forward
+    return forward
 
 
 _TOWER_SEGMENTS = (
@@ -1541,6 +1914,47 @@ def _raise_cache_limit(kinds):
         setattr(config, name, need)
 
 
+def _install_router_capture_hooks(model):
+    """Install transformers' output capture hooks before any block compiles, for models that record
+    router_logits.
+
+    transformers installs them on the first forward that asks for an output (output_router_logits),
+    and Dynamo does not guard on module hooks (skip_nnmodule_hook_guards). A block compiled during an
+    earlier forward without them kept running without the router hook: no router logits, and the
+    aux loss raised IndexError. Installed up front, the hook body runs on every call and returns
+    early unless the collector asks for its key (a guarded dict lookup). Needs the zoo collector
+    mirror: the stock ContextVar.get graph-breaks every compiled block."""
+    try:
+        from transformers.utils import output_capturing
+    except Exception:
+        return 0
+    registry = getattr(output_capturing, "_CAN_RECORD_REGISTRY", None)
+    install = getattr(output_capturing, "maybe_install_capturing_hooks", None)
+    collector = getattr(output_capturing, "CompileableContextVar", None)
+    if (
+        not isinstance(registry, dict)
+        or install is None
+        or not getattr(collector, "_unsloth_eager_mirror", False)
+    ):
+        return 0
+    installed = 0
+    # Outermost first, as transformers would: an install recurses into nested models and flags them. Its
+    # recursion does not check that flag, so a module with an already hooked descendant (an earlier eager
+    # capturing forward) is skipped: installing it would hook that descendant twice (duplicated outputs).
+    for module in model.modules():
+        flags = registry.get(str(type(module))) or {}
+        if "router_logits" not in flags or any(
+            getattr(m, "_output_capturing_hooks_installed", False) for m in module.modules()
+        ):
+            continue
+        try:
+            install(module)
+            installed += 1
+        except Exception:
+            pass
+    return installed
+
+
 def patch_block_compile(model):
     """Compile every decoder-layer class of `model` as one region. Returns the classes wrapped."""
     # getattr: PeftModel delegates. The env fills only unstamped layers, so a re-patch keeps the stamp.
@@ -1581,11 +1995,13 @@ def patch_block_compile(model):
             layer.__dict__["_unsloth_block_moe_may_move"] = True
     if not classes:
         return []
+    _install_router_capture_hooks(model)
     inner = {type(m) for layer in compiled_layers for m in layer.modules()}
     for cls in inner:
         _rebind_class(cls)
     _flex_split_hook()
     _gemma4_router_hook()
+    _stable_parametrized_classes()
     if any(type(m).__name__ == "Linear4bit" for m in model.modules()):
         _nf4_in_blocks()
     kinds = {}
@@ -1605,8 +2021,32 @@ def patch_block_compile(model):
             continue
         _wrap(cls, _COMPILE_OPTIONS, len(kinds.get(cls, ())) or 1)
         wrapped.append(cls.__name__)
-    if _COMPILE_OPTIONS.get("triton.cudagraphs"):
+    for layer in compiled_layers:
+        if not any(m.__dict__.get("_unsloth_fp8_lora") is not None for m in layer.modules()):
+            continue
+        default = type(layer).forward
+        precise = getattr(default, "_unsloth_fp8_block_forward", None)
+        if precise is None:
+            # FP8 dgrad amplifies elided BF16 rounding; other instances of this class keep their options.
+            precise = _wrap(
+                type(layer),
+                {**_COMPILE_OPTIONS, "emulate_precision_casts": True},
+                len(kinds.get(type(layer), ())) or 1,
+                install = False,
+            )
+            default._unsloth_fp8_block_forward = precise
+        if getattr(layer.forward, "__func__", None) is not precise:
+            layer.forward = types.MethodType(precise, layer)
+            layer.__dict__.pop("_unsloth_block_checked", None)
+    if _COMPILE_OPTIONS.get("triton.cudagraphs") or (
+        _CUDAGRAPH_MODE == "auto" and _auto_platform_reason() is None
+    ):
         _watch_hidden_states(model)
+    model.__dict__["_unsloth_block_compile_installed"] = True
+    if _CUDAGRAPH_MODE == "auto":
+        # A new model decides again: a launch-bound model loaded first must not turn graphs on for
+        # a GPU-bound one. Graphs that went off for shape churn stay off.
+        _CUDAGRAPH_STATE["auto"] = _new_auto_state()
     if wrapped:
         print(f"Unsloth: compiling each transformer block as one region ({', '.join(wrapped)}).")
     return wrapped
