@@ -529,22 +529,25 @@ class CodingRuntime:
             self._opening_views.add(identifier)
         delivered = False
         written = False
+        drained = False
         try:
-            async with self._write_lock:
-                if (self._maintaining or self._closing) and not maintenance:
-                    raise CodingRuntimeError("busy", "Coding is restarting. Try again in a moment.")
-                if self._failure:
-                    raise self._failure
-                if not maintenance and (self._restart_prepared or (self._restart_uncertain and method in ("create", "open", "prompt"))):
-                    raise CodingRuntimeError("busy", "Coding is finishing a restart. Try again in a moment.")
-                if expected_generation is not None and expected_generation != self._generation:
-                    raise CodingRuntimeError("runtime_changed", "Coding was restarted. Reopen this conversation to continue.", requires_reopen = True)
-                if self.process is not process or self._generation != generation:
-                    raise CodingRuntimeError("disconnected", "Coding was restarted before this was sent. Reopen this conversation, then try again.")
-                process.stdin.write(struct.pack(">I", len(data)) + data)
-                written = True
-                await process.stdin.drain()
-            result = await asyncio.wait_for(asyncio.shield(future), timeout = COMMAND_TIMEOUT)
+            async with asyncio.timeout(COMMAND_TIMEOUT):
+                async with self._write_lock:
+                    if (self._maintaining or self._closing) and not maintenance:
+                        raise CodingRuntimeError("busy", "Coding is restarting. Try again in a moment.")
+                    if self._failure:
+                        raise self._failure
+                    if not maintenance and (self._restart_prepared or (self._restart_uncertain and method in ("create", "open", "prompt"))):
+                        raise CodingRuntimeError("busy", "Coding is finishing a restart. Try again in a moment.")
+                    if expected_generation is not None and expected_generation != self._generation:
+                        raise CodingRuntimeError("runtime_changed", "Coding was restarted. Reopen this conversation to continue.", requires_reopen = True)
+                    if self.process is not process or self._generation != generation:
+                        raise CodingRuntimeError("disconnected", "Coding was restarted before this was sent. Reopen this conversation, then try again.")
+                    process.stdin.write(struct.pack(">I", len(data)) + data)
+                    written = True
+                    await process.stdin.drain()
+                drained = True
+                result = await asyncio.shield(future)
             delivered = True
             if method in ("create", "open") and isinstance(result, dict) and isinstance(result.get("info"), dict):
                 # Pin the HTTP owner to the incarnation that accepted it, not a
@@ -552,9 +555,20 @@ class CodingRuntime:
                 result = {**result, "info": {**result["info"], "runtime_generation": generation}}
             return result
         except TimeoutError as exc:
-            raise CodingRuntimeError(
+            if self._failure:
+                raise self._failure from exc
+            if not written:
+                raise CodingRuntimeError("busy", "Coding is busy sending another request. Nothing was sent; try again.") from exc
+            error = CodingRuntimeError(
                 "uncertain", "Coding didn't respond in time. Check the conversation before trying again.",
-            ) from exc
+                requires_reopen = not drained,
+            )
+            if not drained:
+                self._fail(error)
+                self._expected_exit = True
+                if self._shutdown_task is None:
+                    self._shutdown_task = asyncio.create_task(self._finish_process(False))
+            raise error from exc
         except (BrokenPipeError, ConnectionResetError) as exc:
             raise CodingRuntimeError("disconnected", "Coding stopped unexpectedly. Restart Coding, then reopen your conversation.") from exc
         finally:

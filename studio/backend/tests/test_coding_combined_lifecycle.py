@@ -40,6 +40,7 @@ async def test_authenticated_acquisition_survives_idle_and_only_confirmed_drain_
     await runtime.configure_local_serving(setup_request(app))
     serving = runtime.local_serving
     row = SimpleNamespace(
+        capabilities = SimpleNamespace(can_chat = True, supports_vision = False),
         id = "org/A", inventory_id = "org/A:Q4_K_M", load_id = "org/A",
         display_name = "A", format_variant = "Q4_K_M", model_format = "gguf",
     )

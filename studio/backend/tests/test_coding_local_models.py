@@ -11,7 +11,7 @@ from core.coding_runtime import CodingRuntimeError
 def row(identity = "semantic-a", **changes):
     values = dict(inventory_id = identity, id = "wire-a", load_id = "/models/a.gguf", source = "custom",
                   display_name = "Same label", partial = False, model_format = "gguf", format_variant = None,
-                  capabilities = SimpleNamespace(can_chat = True))
+                  capabilities = SimpleNamespace(can_chat = True, supports_vision = False))
     values.update(changes)
     return SimpleNamespace(**values)
 
@@ -52,7 +52,7 @@ async def test_catalog_lists_each_downloaded_quant_like_on_device(monkeypatch):
         values.update(changes)
         return SimpleNamespace(**values)
 
-    cached_gguf(monkeypatch, [repo("org/Split-27B-GGUF"), repo("org/Speech-GGUF", capabilities = {"can_chat": False})], {
+    cached_gguf(monkeypatch, [repo("org/Split-27B-GGUF", capabilities = {"can_chat": True, "supports_vision": True}), repo("org/Speech-GGUF", capabilities = {"can_chat": False})], {
         "org/Split-27B-GGUF": [quant("BF16"), quant("UD-Q4_K_XL", partial = True), quant("Q8_0", downloaded = False)],
     })
     # The inventory's own row for a cached GGUF repo has no exact quant and may call a
@@ -62,6 +62,7 @@ async def test_catalog_lists_each_downloaded_quant_like_on_device(monkeypatch):
                             row("custom", id = "/models/custom.gguf", load_id = "/models/custom.gguf")])
     models = (await local_catalog())["models"]
     assert [model["name"] for model in models] == ["Split-27B-GGUF · BF16", "Same label"]
+    assert models[0]["supports_vision"] is True
     assert models[0]["api_model"] == "org/Split-27B-GGUF:BF16"
     selected = await resolve_local_choice(models[0]["id"])
     assert (selected.load_id, selected.format_variant) == ("org/Split-27B-GGUF", "BF16")
@@ -92,7 +93,7 @@ async def test_catalog_reuses_current_downloaded_inventory_and_exact_identity(mo
 def test_identity_survives_label_changes_and_never_encodes_credentials():
     choice = local_choice(row())
     assert choice["id"] == local_choice(row(display_name = "renamed"))["id"]
-    assert set(choice) == {"id", "name", "api_model", "reasoning"}
+    assert set(choice) == {"id", "name", "api_model", "reasoning", "supports_vision"}
     assert choice["reasoning"] == {"thinking": False, "toggle": False, "levels": []}
 
 
@@ -176,3 +177,9 @@ def test_load_errors_say_why_without_host_paths():
     assert "/home/someone" not in failed.message
     unknown = _load_error(RuntimeError("secret token sk-abc at /home/someone"))
     assert unknown.code == "failed" and "sk-abc" not in unknown.message and "/home" not in unknown.message
+
+
+@pytest.mark.parametrize("vision", [False, True])
+def test_catalog_preserves_inventory_image_capability(vision):
+    choice = local_choice(row(capabilities = SimpleNamespace(can_chat = True, supports_vision = vision)))
+    assert choice["supports_vision"] is vision

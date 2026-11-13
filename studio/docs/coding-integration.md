@@ -971,3 +971,20 @@ be tested at the exact delivered source in #240; do not bypass guards or claim
 support solely from the enum. #235 must await exact cancellation settlement;
 #237 addresses pending questions by exact native and live-view identity; #242 must
 use native image/skill admission. Remaining capabilities are not wired here.
+
+## Prompt responsiveness and local vision
+
+The local-model catalog includes a required `supports_vision` boolean, taken from
+Studio's inventory for both cached GGUF variants and custom local models. Mimir
+uses it to admit image inputs; it must not infer vision from a model name. Deploy
+both sides of this catalog change together.
+
+The bridge's command deadline includes waiting for its write lock, writing the
+frame and awaiting the reply. A timeout before writing reports that nothing was
+sent. A stalled drain after writing reports uncertain delivery, invalidates the
+transport and retains process cleanup; it never automatically replays a prompt.
+
+The browser shows an acknowledged message separately while it waits for the
+native user row, including a loading notice when a local model is being loaded.
+Native rows and terminal request state retire that notice. Acceptance does not
+claim that model execution or cancellation cleanup has completed.

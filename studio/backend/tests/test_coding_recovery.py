@@ -412,3 +412,51 @@ async def test_replacement_credential_remains_bound_to_authenticated_generation(
         assert [json.loads(line)["method"] for line in (tmp_path / "replacement-commands.jsonl").read_text().splitlines()] == ["ping"]
     finally:
         await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_stalled_write_settles_prompt_and_stop_and_reaps_transport(monkeypatch):
+    import core.coding_runtime as module
+    monkeypatch.setattr(module, "COMMAND_TIMEOUT", 0.02)
+    draining = asyncio.Event()
+    written = []
+
+    class Writer:
+        def write(self, data):
+            written.append(json.loads(data[4:])["method"])
+
+        async def drain(self):
+            draining.set()
+            await asyncio.Future()
+
+        def close(self):
+            pass
+
+    runtime = CodingRuntime()
+    runtime.process = SimpleNamespace(stdin = Writer(), returncode = 0, wait = AsyncMock(return_value = 0))
+    prompt = asyncio.create_task(runtime._request("prompt", {"text": "work"}))
+    await draining.wait()
+    stop = asyncio.create_task(runtime._request("cancel", {"request_id": "active"}))
+    results = await asyncio.wait_for(asyncio.gather(prompt, stop, return_exceptions = True), 1)
+    assert all(isinstance(result, CodingRuntimeError) for result in results)
+    assert results[0].code == "uncertain"
+    assert all(result.requires_reopen for result in results)
+    assert written == ["prompt"], "Stop must not write to a failed transport"
+    await runtime._shutdown_task
+    runtime.process.wait.assert_awaited_once()
+    assert not runtime._pending
+    assert runtime.status()["cleanup"]["confirmed"] is False
+
+
+@pytest.mark.asyncio
+async def test_command_deadline_includes_waiting_for_writer(monkeypatch):
+    import core.coding_runtime as module
+    monkeypatch.setattr(module, "COMMAND_TIMEOUT", 0.01)
+    runtime = CodingRuntime()
+    runtime.process = SimpleNamespace(stdin = SimpleNamespace(write = lambda _: pytest.fail("unexpected write")))
+    async with runtime._write_lock:
+        with pytest.raises(CodingRuntimeError) as failure:
+            await asyncio.wait_for(runtime._request("prompt"), 1)
+    assert failure.value.code == "busy"
+    assert runtime._failure is None
+    assert not runtime._pending

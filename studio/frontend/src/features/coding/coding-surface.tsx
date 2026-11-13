@@ -122,6 +122,29 @@ function StatusNotices({
           another model.
         </output>
       )}
+      {state.acceptedSubmission && (
+        <div
+          data-testid="coding-accepted-input"
+          className={`${notice} space-y-2`}
+        >
+          <p className="whitespace-pre-wrap break-words">
+            {state.acceptedSubmission.input.text}
+          </p>
+          <p role="status" className="text-muted-foreground">
+            {preparation?.phase === "loading"
+              ? "Message accepted · loading model…"
+              : "Message accepted · preparing…"}
+          </p>
+        </div>
+      )}
+      {preparation?.phase === "loading" && !state.acceptedSubmission && (
+        <output
+          data-testid="coding-local-loading"
+          className={`${notice} block`}
+        >
+          Loading model…
+        </output>
+      )}
       {preparation && preparation.phase !== "loading" && (
         <div
           data-testid="coding-local-preparation"

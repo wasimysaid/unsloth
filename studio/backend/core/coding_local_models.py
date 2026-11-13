@@ -18,7 +18,6 @@ from core.coding_runtime import CodingRuntimeError
 
 PROVIDER_ID = "studio-local"
 PROVIDER_NAME = "Studio local"
-_CHAT = SimpleNamespace(can_chat = True)
 _NO_REASONING = (False, False, ())
 
 
@@ -63,7 +62,7 @@ def local_choice(row) -> dict:
     reasoning = getattr(row, "reasoning", None) or reasoning_controls(
         load_id if load_id.lower().endswith(".gguf") else None, load_id,
     )
-    return {"id": identifier, "name": row.display_name, "api_model": api_model, "reasoning": reasoning}
+    return {"id": identifier, "name": row.display_name, "api_model": api_model, "reasoning": reasoning, "supports_vision": row.capabilities.supports_vision}
 
 
 async def _cached_gguf_rows() -> tuple[list, set[str]]:
@@ -96,7 +95,7 @@ async def _cached_gguf_rows() -> tuple[list, set[str]]:
                 inventory_id = f"{repo.get('inventory_id') or repo_id}:{variant.quant}",
                 id = repo_id, load_id = repo.get("load_id") or repo_id, model_format = "gguf",
                 display_name = f"{repo_id.split('/')[-1]} · {variant.display_label or variant.quant}",
-                format_variant = variant.quant, partial = False, capabilities = _CHAT,
+                format_variant = variant.quant, partial = False, capabilities = SimpleNamespace(can_chat = True, supports_vision = repo["capabilities"].get("supports_vision", False)),
             ))
     controls = await asyncio.to_thread(lambda: [reasoning_controls(path, model) for path, model in files])
     for row, reasoning in zip(rows, controls):

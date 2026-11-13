@@ -92,6 +92,7 @@ export interface CodingRunState {
   uncertainSubmission: PendingSubmission | null;
   rejectedSubmission?: CodingInput | null;
   acceptedSubmissionKey?: string;
+  acceptedSubmission?: { requestId: string; input: PendingSubmission } | null;
   storageError: string | null;
   unsentDraft: string | null;
   deliveryRecovered: boolean;
@@ -366,6 +367,36 @@ export function createCodingRun(
         storageError: `Submission storage unavailable. Sending is disabled. ${errorText(reason)}`,
       });
     }
+  };
+  const acceptSubmission = (key: string, requestId: string) => {
+    const input = state.uncertainSubmission;
+    update({
+      acceptedSubmissionKey: key,
+      error: null,
+      ...(input?.key === key
+        ? { acceptedSubmission: { requestId, input } }
+        : {}),
+    });
+    clearPending(key, true);
+    settleAcceptedSubmission();
+  };
+  const settleAcceptedSubmission = () => {
+    const accepted = state.acceptedSubmission;
+    if (!accepted) return;
+    const request = state.native?.requests.find(
+      (item) => item.id === accepted.requestId,
+    );
+    if (
+      state.rows.some(
+        (row) => row.kind === "user" && row.request_id === accepted.requestId,
+      ) ||
+      state.completion?.request_id === accepted.requestId ||
+      (request &&
+        ["completed", "cancelled", "failed", "interrupted"].includes(
+          request.status,
+        ))
+    )
+      update({ acceptedSubmission: null });
   };
   const reconcileAction = () => {
     const request = state.reconcilingAction;
@@ -910,9 +941,9 @@ export function createCodingRun(
         (request) => request.submission_key === state.uncertainSubmission?.key,
       );
     if (accepted && state.connection === "connected") {
-      update({ acceptedSubmissionKey: accepted.submission_key!, error: null });
-      clearPending(accepted.submission_key!, true);
+      acceptSubmission(accepted.submission_key!, accepted.id);
     }
+    settleAcceptedSubmission();
     if (
       (event.type === "start" ||
         event.type === "reset" ||
@@ -1142,8 +1173,7 @@ export function createCodingRun(
         throw new Error(
           "The native acceptance identity could not be confirmed.",
         );
-      update({ acceptedSubmissionKey: key });
-      clearPending(key, true);
+      acceptSubmission(key, result.request_id);
       // No optimistic transcript or running state: both come from the view.
       return true;
     } catch (reason) {
@@ -2175,7 +2205,8 @@ export function codingRunLabel(state: CodingRunState): string {
   if (preparation?.phase === "cleanup_pending")
     return "Cleanup pending · local model protection retained";
   if (preparation?.phase === "loading") return "Loading Studio local model…";
-  if (preparation?.phase === "busy") return "Studio busy · retry when it's free";
+  if (preparation?.phase === "busy")
+    return "Studio busy · retry when it's free";
   if (preparation?.phase === "failed") return "Local model didn't load";
   if (state.native?.pending_user_request) return "Waiting for user input";
   if (state.native?.active_request) return "Running";

@@ -3323,3 +3323,29 @@ test("a saved result keeps its saved call's command argument", async () => {
   assert.equal(rows[0].tool?.argument, "cargo test -p mimir");
   h.run.detach();
 });
+
+test("accepted input remains visible while loading without inventing a transcript row", async () => {
+  const h = harness();
+  await h.start();
+  await h.run.send("Please inspect the project");
+  assert.equal(
+    h.run.getSnapshot().acceptedSubmission?.input.text,
+    "Please inspect the project",
+  );
+  assert.equal(h.run.getSnapshot().acceptedSubmission?.requestId, "request");
+  assert.equal(h.run.getSnapshot().rows.length, 0);
+  await h.event({
+    type: "activity",
+    rows: [
+      {
+        id: "native-user",
+        kind: "user",
+        text: "Please inspect the project",
+        request_id: "request",
+      },
+    ],
+  });
+  assert.equal(h.run.getSnapshot().acceptedSubmission, null);
+  assert.equal(h.run.getSnapshot().rows.length, 1);
+  h.run.detach();
+});
