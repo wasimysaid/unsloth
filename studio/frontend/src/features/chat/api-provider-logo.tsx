@@ -4,7 +4,7 @@
 import { cn } from "@/lib/utils";
 import { DashboardSquare01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { isCustomProviderType } from "./external-providers";
 import { providerLogoPath } from "./provider-logo-path";
 
@@ -47,10 +47,41 @@ const DARK_INVERT_LOGOS = new Set(["openai", "openai_codex", "ollama", "liquid",
 // Pale brand marks get a hairline edge on light surfaces instead of inverting.
 const LIGHT_OUTLINE_LOGOS = new Set(["openrouter"]);
 
-/**
- * A letter in its circle, painted on a canvas and placed by its measured ink: HTML and SVG text
- * centre the glyph's advance and snap it to device pixels, which left letters a pixel off.
- */
+type LetterPaint = { letter: string; color: string };
+const pendingLetters = new Map<HTMLCanvasElement, LetterPaint>();
+
+function paintLetters() {
+  const measured = [...pendingLetters].flatMap(([canvas, paint]) => {
+    if (!canvas.isConnected) return [];
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return [];
+    const size = canvas.offsetWidth;
+    if (size <= 0) return [];
+    const dpr = (window.devicePixelRatio || 1) * (canvas.getBoundingClientRect().width / size || 1);
+    const fontFamily = getComputedStyle(canvas).fontFamily;
+    return [{ canvas, ctx, size, dpr, fontFamily, ...paint }];
+  });
+  pendingLetters.clear();
+  for (const { canvas, ctx, size, dpr, fontFamily, letter, color } of measured) {
+    canvas.width = Math.round(size * dpr);
+    canvas.height = Math.round(size * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, size, size);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.font = `600 ${size * 0.54}px ${fontFamily}`;
+    const m = ctx.measureText(letter);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(
+      letter,
+      size / 2 - (m.actualBoundingBoxRight - m.actualBoundingBoxLeft) / 2,
+      size / 2 + (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2,
+    );
+  }
+}
+
 function LetterTile({
   letter,
   name,
@@ -61,29 +92,11 @@ function LetterTile({
   const color = letterTileColor(name);
   useLayoutEffect(() => {
     const canvas = ref.current;
-    const ctx = canvas?.getContext("2d");
-    if (!(canvas && ctx)) {
-      return;
-    }
-    // Layout size; a CSS scale on an ancestor only raises the backing resolution.
-    const size = canvas.offsetWidth;
-    const dpr = (window.devicePixelRatio || 1) * (canvas.getBoundingClientRect().width / size || 1);
-    canvas.width = Math.round(size * dpr);
-    canvas.height = Math.round(size * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, size, size);
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.font = `600 ${size * 0.54}px ${getComputedStyle(canvas).fontFamily}`;
-    const m = ctx.measureText(letter);
-    ctx.fillStyle = "#fff";
-    ctx.fillText(
-      letter,
-      size / 2 - (m.actualBoundingBoxRight - m.actualBoundingBoxLeft) / 2,
-      size / 2 + (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2,
-    );
+    if (!canvas) return;
+    const scheduled = pendingLetters.size > 0;
+    pendingLetters.set(canvas, { letter, color });
+    if (!scheduled) queueMicrotask(paintLetters);
+    return () => { pendingLetters.delete(canvas); };
   }, [letter, color]);
   return (
     <canvas

@@ -13,18 +13,33 @@ import {
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-function mount() {
+function mount(inventoryVersion = 0) {
   const states: unknown[] = [];
   let cursor = 0;
   let effect: (() => void | (() => void)) | undefined;
   let mounted = false;
+  let inventoryChanged: (() => void) | undefined;
   const { CodingModelSelector } = loadWithStubs<typeof Selector>(
     new URL(
       "../src/features/coding/coding-model-selector.tsx",
       import.meta.url,
     ),
     {
+      "@/features/hub/stores/inventory-events": {
+        getInventoryVersion: () => inventoryVersion,
+        subscribeInventory(callback: () => void) {
+          inventoryChanged = callback;
+          return () => {
+            inventoryChanged = undefined;
+          };
+        },
+      },
       react: {
+        useRef(initial: unknown) {
+          const index = cursor++;
+          if (states.length <= index) states.push({ current: initial });
+          return states[index];
+        },
         useState(initial: unknown) {
           const index = cursor++;
           if (states.length <= index) states.push(initial);
@@ -63,6 +78,9 @@ function mount() {
         source: children[0].props.value as ComposerModelPickerSource,
         notice: children.at(-1),
       };
+    },
+    inventoryChanged() {
+      inventoryChanged?.();
     },
     start() {
       mounted = true;
@@ -162,4 +180,103 @@ test("a late catalog response after disposal cannot populate the next folder", a
   ]);
   await tick();
   assert.deepEqual(view.render(props).source.runtimeCatalog?.models, []);
+});
+
+test("inventory changes coalesce behind reads and keep the prior choices usable", async () => {
+  const view = mount();
+  const requests: {
+    refresh: boolean;
+    resolve: (catalog: selection.CodingProviderChoice[]) => void;
+  }[] = [];
+  const catalog: selection.CodingProviderChoice[] = [
+    {
+      id: "studio-local",
+      name: "On Device",
+      models: [
+        {
+          id: "local-hash",
+          name: "Friendly model",
+          api_model: "repo:Q4",
+          reasoning: "unsupported",
+          default_reasoning: null,
+        },
+      ],
+    },
+  ];
+  const props = {
+    readCatalog: (refresh: boolean) =>
+      new Promise<selection.CodingProviderChoice[]>((resolve) =>
+        requests.push({ refresh, resolve }),
+      ),
+    configuration: {
+      provider: "studio-local",
+      model: "local-hash",
+      reasoning: null,
+    },
+    disabled: false,
+    configuring: false,
+    configure: async () => {
+      throw new Error("Inventory must not configure a model");
+    },
+  };
+  const initial = view.render(props);
+  assert.equal(initial.source.selection?.placeholder, "Select model");
+  assert.equal(initial.notice, null);
+  const cleanup = view.start();
+  assert.equal(requests.length, 1);
+  requests[0].resolve(catalog);
+  await tick();
+  view.inventoryChanged();
+  view.inventoryChanged();
+  view.inventoryChanged();
+  assert.deepEqual(
+    requests.map((request) => request.refresh),
+    [false, true],
+  );
+  const refreshing = view.render(props);
+  assert.equal(refreshing.source.runtimeCatalog?.disabled, false);
+  assert.equal(
+    refreshing.source.runtimeCatalog?.models[0].name,
+    "Friendly model",
+  );
+  assert.equal(refreshing.notice, null);
+  requests[1].resolve(catalog);
+  await tick();
+  assert.deepEqual(
+    requests.map((request) => request.refresh),
+    [false, true, true],
+  );
+  requests[2].resolve([]);
+  await tick();
+  assert.deepEqual(view.render(props).source.runtimeCatalog?.models, []);
+  assert.equal(
+    view.render(props).source.selection?.id,
+    selection.modelIdentity("studio-local", "local-hash"),
+  );
+  if (typeof cleanup === "function") cleanup();
+  view.inventoryChanged();
+  assert.equal(requests.length, 3);
+});
+
+test("opening Coding after an inventory change reconciles retained native choices", async () => {
+  const view = mount(1);
+  const requests: boolean[] = [];
+  const props = {
+    readCatalog: async (refresh: boolean) => {
+      requests.push(refresh);
+      return [];
+    },
+    configuration: null,
+    disabled: false,
+    configuring: false,
+    configure: async () => {
+      throw new Error("Inventory must not configure a model");
+    },
+  };
+  view.render(props);
+  const cleanup = view.start();
+  await tick();
+  assert.deepEqual(requests, [true]);
+  assert.equal(view.render(props).source.runtimeCatalog?.disabled, false);
+  if (typeof cleanup === "function") cleanup();
 });

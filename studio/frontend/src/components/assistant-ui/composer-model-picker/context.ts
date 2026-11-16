@@ -12,9 +12,10 @@ import type {
   PerModelConfig,
 } from "@/features/model-picker";
 import { createContext, useContext } from "react";
+import type { RuntimeModelChoice } from "./picker-model";
 
 export interface ComposerRuntimeCatalog {
-  models: readonly (ExternalModelOption & { searchText?: string })[];
+  models: readonly RuntimeModelChoice[];
   disabled: boolean;
   reasoning: {
     levels: readonly string[];

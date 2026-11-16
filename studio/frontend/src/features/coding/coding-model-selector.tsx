@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
-import { useEffect, useEffectEvent, useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { ComposerModelPicker } from "@/components/assistant-ui/composer-model-picker/composer-model-picker";
 import {
   ComposerModelPickerContext,
   type ComposerModelPickerSource,
 } from "@/components/assistant-ui/composer-model-picker/context";
+import {
+  getInventoryVersion,
+  subscribeInventory,
+} from "@/features/hub/stores/inventory-events";
 import { Button } from "@/components/ui/button";
 import { RefreshCw } from "lucide-react";
 import {
@@ -42,39 +46,70 @@ export function CodingModelSelector({
   configure: (change: CodingConfigurationChange) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
-  const [request, setRequest] = useState({ refresh: false, attempt: 1 });
+  const requestCatalog = useRef<(refresh: boolean) => void>(() => {});
   const [result, setResult] = useState<{
-    attempt: number;
     catalog: CodingProviderChoice[];
+    loading: boolean;
+    ready: boolean;
     error: string | null;
-  }>({ attempt: 0, catalog: [], error: null });
+  }>({ catalog: [], loading: true, ready: false, error: null });
   const [error, setError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const read = useEffectEvent(readCatalog);
   useEffect(() => {
     const controller = new AbortController();
-    read(request.refresh, controller.signal).then(
-      (catalog) => {
-        if (!controller.signal.aborted)
-          setResult({ attempt: request.attempt, catalog, error: null });
-      },
-      (reason: unknown) => {
-        if (!controller.signal.aborted)
-          setResult((previous) => ({
-            ...previous,
-            attempt: request.attempt,
-            error:
-              reason instanceof Error
-                ? reason.message
-                : "Models could not be loaded.",
-          }));
-      },
-    );
-    return () => controller.abort();
-  }, [request]);
+    let pending: boolean | null = null;
+    let running = false;
+    async function drain() {
+      if (running) return;
+      running = true;
+      while (pending !== null && !controller.signal.aborted) {
+        const refresh = pending;
+        pending = null;
+        setResult((previous) => ({ ...previous, loading: true }));
+        try {
+          const catalog = await read(refresh, controller.signal);
+          if (!controller.signal.aborted)
+            setResult({
+              catalog,
+              loading: pending !== null,
+              ready: true,
+              error: null,
+            });
+        } catch (reason) {
+          if (!controller.signal.aborted)
+            setResult((previous) => ({
+              ...previous,
+              loading: pending !== null,
+              error:
+                reason instanceof Error
+                  ? reason.message
+                  : "Models could not be loaded.",
+            }));
+        }
+      }
+      running = false;
+    }
+    const request = (refresh: boolean) => {
+      if (controller.signal.aborted) return;
+      pending = pending === true || refresh;
+      void drain();
+    };
+    requestCatalog.current = request;
+    const unsubscribe = subscribeInventory(() => request(true));
+    request(getInventoryVersion() > 0);
+    return () => {
+      controller.abort();
+      unsubscribe();
+    };
+  }, []);
   const selectionCatalog = useMemo(
     () => codingSelectionCatalog(result.catalog),
     [result.catalog],
+  );
+  const models = useMemo(
+    () => [...selectionCatalog.values()],
+    [selectionCatalog],
   );
   const selected = findCodingModel(result.catalog, configuration);
   const identity =
@@ -85,11 +120,12 @@ export function CodingModelSelector({
     selected && selected.model.reasoning !== "unsupported"
       ? selected.model.reasoning.levels
       : [];
-  const loading = request.attempt !== result.attempt;
-  const blocked = disabled || configuring || applying || loading;
+  const loading = result.loading;
+  const blocked =
+    disabled || configuring || applying || (loading && !result.ready);
   const missing =
     unavailable ||
-    (result.attempt > 0 && !result.error && configuration?.model && !selected);
+    (result.ready && !result.error && configuration?.model && !selected);
   async function apply(change: CodingConfigurationChange) {
     if (blocked) return;
     setApplying(true);
@@ -111,9 +147,7 @@ export function CodingModelSelector({
     result.error ??
     (missing
       ? "The selected model is unavailable. Choose another model."
-      : loading
-        ? "Loading models…"
-        : null);
+      : null);
   const source: ComposerModelPickerSource = {
     models: [],
     loraModels: [],
@@ -129,11 +163,7 @@ export function CodingModelSelector({
     open: open && !disabled,
     onOpenChange: (next) => {
       setOpen(next && !blocked);
-      if (next && result.error && !blocked)
-        setRequest((previous) => ({
-          refresh: false,
-          attempt: previous.attempt + 1,
-        }));
+      if (next && result.error && !blocked) requestCatalog.current(false);
     },
     configRequest: null,
     onConfigRequestAdopted: () => undefined,
@@ -146,10 +176,11 @@ export function CodingModelSelector({
     selection: {
       id: identity ?? "",
       ggufVariant: null,
-      placeholder: configuration?.model ?? "Select model",
+      placeholder: "Select model",
+      loading: loading && !result.ready,
     },
     runtimeCatalog: {
-      models: [...selectionCatalog.values()],
+      models,
       disabled: blocked,
       reasoning: {
         levels,
@@ -175,12 +206,7 @@ export function CodingModelSelector({
         className="size-7"
         aria-label="Refresh models"
         disabled={blocked}
-        onClick={() =>
-          setRequest((previous) => ({
-            refresh: true,
-            attempt: previous.attempt + 1,
-          }))
-        }
+        onClick={() => requestCatalog.current(true)}
       >
         <RefreshCw className="size-3.5" />
       </Button>
@@ -195,12 +221,7 @@ export function CodingModelSelector({
               variant="link"
               size="sm"
               disabled={blocked}
-              onClick={() =>
-                setRequest((previous) => ({
-                  refresh: false,
-                  attempt: previous.attempt + 1,
-                }))
-              }
+              onClick={() => requestCatalog.current(false)}
             >
               Retry catalog
             </Button>

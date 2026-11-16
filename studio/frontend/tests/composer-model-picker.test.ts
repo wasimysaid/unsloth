@@ -1032,7 +1032,7 @@ test("an audio pick opens the Audio page instead of loading into Chat", () => {
   // Every pick passes the router before it reaches the page's handler.
   assert.match(
     picker,
-    /if \(!routeMediaPick\.current\(id, meta\)\) \{\s+rawSource\.onPick\(id, meta\);/,
+    /if \(rawSource\.runtimeCatalog \|\| !routeMediaPick\.current\(id, meta\)\) \{\s+rawSource\.onPick\(id, meta\);/,
   );
   assert.match(
     picker,

@@ -64,7 +64,7 @@ def open_model_list(page):
     if not search.is_visible():
         panel.get_by_role("button", name=re.compile(": show all models$")).click()
     expect(search).to_be_visible()
-    panel.get_by_role("tab", name="All models", exact=True).click()
+    panel.get_by_role("tab", name="Connected models", exact=True).click()
     search.fill("")
     return panel
 

@@ -55,6 +55,7 @@ export function codingSelectionCatalog(catalog: CodingProviderChoice[]) {
               name: model.name,
               description: provider.name,
               searchText: `${provider.id} ${model.id} ${model.api_model}`,
+              location: provider.id === "studio-local" ? "device" : "connected",
               providerId: provider.id,
               providerName: provider.name,
               providerType: provider.id,

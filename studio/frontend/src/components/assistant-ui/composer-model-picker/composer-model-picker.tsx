@@ -218,6 +218,7 @@ import {
   downloadedQuants,
   ejectTargetId,
   filterRows,
+  runtimeModelRows,
   findChosenRow,
   isChatTask,
   isTestFixtureRepo,
@@ -1473,7 +1474,7 @@ export function ComposerModelPicker({
         ? {
             ...rawSource,
             onPick: (id: string, meta: ModelSelectorChangeMeta) => {
-              if (!routeMediaPick.current(id, meta)) {
+              if (rawSource.runtimeCatalog || !routeMediaPick.current(id, meta)) {
                 rawSource.onPick(id, meta);
               }
             },
@@ -1484,6 +1485,8 @@ export function ComposerModelPicker({
   const navigate = useNavigate();
   const reasoning = useComposerReasoning();
   const runtimeCatalog = source?.runtimeCatalog;
+  const runtimeModels = runtimeCatalog?.models;
+  const runtimeOwned = runtimeCatalog !== undefined;
   const pane = source?.selection;
   const runtimeCheckpoint = useChatRuntimeStore((s) => s.params.checkpoint);
   const runtimeVariant = useChatRuntimeStore((s) => s.activeGgufVariant);
@@ -1654,8 +1657,8 @@ export function ComposerModelPicker({
     };
   }, [tabStrip]);
 
-  const inventory = useChatPickerInventory({ enabled: open });
-  const [npuStatus, setNpuStatus] = useNpuStatus(open);
+  const inventory = useChatPickerInventory({ enabled: open && !runtimeCatalog });
+  const [npuStatus, setNpuStatus] = useNpuStatus(open && !runtimeCatalog);
   const npuCatalog = useNpuCatalog(
     npuStatus?.supported === true
       ? { status: npuStatus, onStatusChange: setNpuStatus }
@@ -1664,7 +1667,7 @@ export function ComposerModelPicker({
   const npuModels = npuCatalog?.models ?? null;
   const online = useOnlineStatus();
   const hfToken = useHfTokenStore((s) => s.token);
-  const gpuInfo = useGpuInfo(open);
+  const gpuInfo = useGpuInfo(open && !runtimeCatalog);
   const quantFormats = gpuInfo.checkpointQuantFormats;
   const deviceType = usePlatformStore((s) => s.deviceType);
   const isMac = deviceType === "mac";
@@ -1681,10 +1684,10 @@ export function ComposerModelPicker({
     keepUnsupportedTags: true,
     hideEmptyUploads: true,
     accessToken: hfApiToken(hfToken),
-    enabled: open && online && onRecommended,
+    enabled: open && online && onRecommended && !runtimeCatalog,
   });
   const hubResults = hubSearch.results;
-  const inferenceGpu = useInferenceGpuInfo(open);
+  const inferenceGpu = useInferenceGpuInfo(open && !runtimeCatalog);
   const budgetFraction = useVramBudgetFraction() ?? undefined;
   const keepModelsLoaded = useChatRuntimeStore((s) => s.keepModelsLoaded);
   const expandQuantizations = useChatRuntimeStore((s) => s.expandQuantizations);
@@ -1875,7 +1878,9 @@ export function ComposerModelPicker({
     [hubResults],
   );
   const loraModels = source?.loraModels;
-  const externalModels = runtimeCatalog?.models ?? source?.externalModels;
+  const externalModels = useMemo(() => runtimeModels
+    ? runtimeModels.filter((model) => model.location === "connected")
+    : source?.externalModels, [runtimeModels, source?.externalModels]);
 
   // The inventory often reports an audio GGUF as text-generation; the audio catalog's task wins.
   const mediaTaskById = useMemo(() => {
@@ -1915,18 +1920,7 @@ export function ComposerModelPicker({
   const listsAudio = !pane;
 
   const rows = useMemo<Row[]>(() => {
-    if (runtimeCatalog) return runtimeCatalog.models.map((model) => ({
-      identity: "opaque",
-      searchText: model.searchText,
-      key: model.id,
-      id: model.id,
-      label: model.name,
-      tab: `${EXT_PREFIX}${model.providerId}`,
-      groups: [CONNECTED_TAB],
-      kind: "external",
-      providerType: model.providerType,
-      providerName: model.providerName,
-    }));
+    if (runtimeModels) return runtimeModelRows(runtimeModels);
     const device: Row[] = [];
     const isAudio = (id: string, task: string | null | undefined) =>
       listsAudio &&
@@ -2134,7 +2128,7 @@ export function ComposerModelPicker({
       }));
     return [...marked, ...npuOffers, ...hub, ...external];
   }, [
-    runtimeCatalog,
+    runtimeModels,
     inventory.cachedGguf,
     inventory.cachedModels,
     npuModels,
@@ -2435,8 +2429,8 @@ export function ComposerModelPicker({
       )
       .map(({ t }) => t);
     const available = [...pinned, ...movable];
-    return runtimeCatalog ? available.filter((item) => item.value !== RECOMMENDED_TAB && item.value !== DEVICE_TAB).map((item) => item.value === CONNECTED_TAB ? { ...item, label: "All models" } : item) : available;
-  }, [externalModels, makerTabs, connectionsOn, tabOrder, runtimeCatalog]);
+    return runtimeCatalog ? available.filter((item) => item.value !== RECOMMENDED_TAB && !item.value.startsWith(MAKER_PREFIX)) : available;
+  }, [externalModels, makerTabs, connectionsOn, tabOrder, runtimeOwned]);
   const moveTab = (from: string, to: TabDrop) => {
     const order = tabs.filter((t) => t.movable).map((t) => t.value);
     const at = order.indexOf(from);
@@ -2495,7 +2489,7 @@ export function ComposerModelPicker({
     (externalModels?.length ?? 0) > 0 ||
     rows.some((row) => row.tab === DEVICE_TAB);
   const viewed =
-    (runtimeCatalog && (!tab || !tabs.some((item) => item.value === tab)) ? CONNECTED_TAB : tab) ??
+    (runtimeCatalog && (!tab || !tabs.some((item) => item.value === tab)) ? (chosen?.tab ?? DEVICE_TAB) : tab) ??
     (hasModels
       ? ((lastTab && tabs.some((t) => t.value === lastTab) ? lastTab : null) ??
         (chosen?.tab === RECOMMENDED_TAB ? DEVICE_TAB : chosen?.tab) ??
@@ -2567,7 +2561,7 @@ export function ComposerModelPicker({
       return found;
     }
     const sorted = sortDeviceRows(
-      found.filter((row) => matchesFormat(row, formatFilter)),
+      runtimeCatalog ? found : found.filter((row) => matchesFormat(row, formatFilter)),
       deviceSort,
       lastLoaded,
       deviceSortDesc,
@@ -2577,6 +2571,7 @@ export function ComposerModelPicker({
       : sorted;
   }, [
     rows,
+    runtimeOwned,
     viewed,
     query,
     hubQuery,
@@ -2624,8 +2619,10 @@ export function ComposerModelPicker({
   const listSections = useMemo<ListSection[]>(() => {
     if (viewed === DEVICE_TAB) {
       const present = new Set(foundRows.map((row) => row.section));
-      present.add("fineTuned");
-      present.add("custom");
+      if (!runtimeCatalog) {
+        present.add("fineTuned");
+        present.add("custom");
+      }
       return orderBySection(
         [...present]
           .filter((section): section is ListSection => Boolean(section))
@@ -2639,7 +2636,7 @@ export function ComposerModelPicker({
       return npuShown ? ["npu", "recommended"] : [];
     }
     return [];
-  }, [foundRows, viewed, query, npuCatalog]);
+  }, [foundRows, viewed, query, npuCatalog, runtimeOwned]);
   const shownRows = useMemo(() => {
     const found = foundRows;
     if (listSections.length > 0) {
@@ -2675,7 +2672,7 @@ export function ComposerModelPicker({
     foundRows,
   ]);
   const customFolders = useCustomFolders({
-    enabled: open && viewed === DEVICE_TAB,
+    enabled: open && viewed === DEVICE_TAB && !runtimeCatalog,
     onFoldersChange: source?.onFoldersChange,
   });
   const favoriteDragOrder = (connected: boolean) =>
@@ -3155,6 +3152,11 @@ export function ComposerModelPicker({
 
   const pick = async (row: Row) => {
     if (!source || runtimeCatalog?.disabled) {
+      return;
+    }
+    if (runtimeCatalog) {
+      source.onPick(row.id, { source: "external", isLora: false });
+      setOpen(false);
       return;
     }
     const seq = supersede();
@@ -4732,8 +4734,9 @@ export function ComposerModelPicker({
   };
 
   // Until the device inventory or the Hub answers, an empty list is unknown, not "no models".
-  const listLoading =
-    viewed === RECOMMENDED_TAB
+  const listLoading = runtimeCatalog
+    ? pane?.loading === true
+    : viewed === RECOMMENDED_TAB
       ? online && (hubSearch.isLoading || query.trim() !== hubQuery)
       : !(
           viewed.startsWith(EXT_PREFIX) ||
@@ -5340,7 +5343,7 @@ export function ComposerModelPicker({
                 data-model-picker-search-input=""
                 className="min-w-0 flex-1 bg-transparent text-ui-14 outline-none placeholder:text-muted-foreground"
               />
-              {viewed === DEVICE_TAB ? (
+              {viewed === DEVICE_TAB && !runtimeCatalog ? (
                 <NonModalDropdownMenu
                   align="end"
                   className="composer-filter-menu w-auto min-w-[calc(140px*var(--ui-space-scale,1))]"

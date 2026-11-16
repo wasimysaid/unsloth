@@ -722,8 +722,12 @@ separate running configuration; generated bindings, carrier fixtures and package
 consumers are updated together rather than a competing old catalog projection.
 
 Coding uses the upstream Chat `ComposerModelPicker` for search, provider tabs,
-favorites, and the effort slider. Its runtime catalog contains only native
-provider/model identities. Mimir owns model configuration and deferred loading.
+favorites, and the effort slider. Completed downloaded models appear under On Device;
+remote providers appear under Connected models. Its runtime catalog contains only native
+provider/model identities. Studio inventory changes refresh this catalog automatically,
+with one read at a time and existing choices retained while it refreshes. Downloading
+does not write Mimir configuration or load weights. Selecting configures the next request;
+sending loads the exact selected model through Studio. Mimir owns model configuration and deferred loading.
 Chat connection settings, Hub downloads, and run settings are absent from this
 catalog. The previous Coding picker and its separate favorite store are removed.
 Existing browser favorites remain stored but are not imported into shared pins. Model-switch patches omit reasoning so Mimir chooses the new default.
