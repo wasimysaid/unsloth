@@ -47,6 +47,7 @@ except ImportError:  # unsloth_zoo predates the scope
 from ..device_type import DEVICE_COUNT, DEVICE_TYPE, clean_gpu_cache
 from . import _decode_graphs
 from .rl_replacements import (
+    _class_source,
     _unsloth_get_model_config,
     _unsloth_text_configs,
     RL_EXTRA_ARGS,
@@ -323,14 +324,17 @@ def PatchRL(FastLanguageModel):
                     return out.clone()
                 return out
 
+            generate_with_clone._unsloth_caller_sampling_only = (
+                generating_model is not unwrapped_model
+            )
             generating_model.generate = generate_with_clone
 
             try:
                 yield unwrapped_model
             finally:
                 generating_model.generate = original_generate
-                # Back to training: the next optimizer step invalidates the decode graphs, so free
-                # them and their decode buffers (KV cache) for the backward pass now.
+                # Back to training: free the decode graphs and their buffers (KV cache) for the backward
+                # pass, unless they fit beside it (keep_for_training: they replay the updated adapters).
                 _decode_graphs.release_for_training(model)
                 FastLanguageModel.for_training(
                     model,
@@ -512,6 +516,10 @@ try:
     from unsloth.models._utils import _unsloth_dataset_column_names
 except Exception:
     def _unsloth_dataset_column_names(dataset): return dataset.column_names
+try:
+    from unsloth.models._utils import _unsloth_tp_skip_dpo_ref_adapter
+except Exception:
+    def _unsloth_tp_skip_dpo_ref_adapter(model): return False
 # Drops/renames config arguments the installed TRL no longer accepts, so a
 # script pinned to an older TRL keeps working after an upgrade. Falls back to
 # the historical raw passthrough so this can never break trainer construction.
@@ -1494,10 +1502,7 @@ def _pin_pristine_sft_loss_type(config_cls):
 
 _UNSLOTH_KBIT_PREP_GUARD_FLAG = "_unsloth_skips_kbit_prep_for_peft_models"
 
-# TRL >= 1.7 enables the aux loss whenever output_router_logits is set; dense configs return no router logits and
-# crash (`aux_loss.to`, or Jamba's load_balancing_loss_func indexing an empty tuple). Dense = every expert count
-# 0 (granite-4.0-h-350m) or 1 (AI21-Jamba-Reasoning-3B builds a plain MLP for 1 expert; a 1-expert router's aux
-# loss is a constant with no gradient anyway). Real MoE keeps its aux loss.
+# Dense models (0 or 1 experts) need the aux loss off: TRL >= 1.7 enables it and they crash.
 _DENSE_ROUTER_AUX_LOSS_OFF = (
     "if getattr(self, 'aux_loss_enabled', False) and hasattr(getattr(self, 'model', None), 'config'):\n"
     "    _text_config = self.model.config\n"
@@ -2101,7 +2106,8 @@ def _grpo_hidden_states_reproduce_logits(model, hidden_states, logits):
         return None
     transforms = detect_logit_transforms(_unsloth_get_model_config(model))
     with torch.no_grad():
-        got = head(hidden_states[..., -1:, :].to(weight.dtype)).float()
+        # A dispatched model's top-level hook returns hidden states on the input device, not the head's.
+        got = head(hidden_states[..., -1:, :].to(device = weight.device, dtype = weight.dtype)).float()
         if transforms["logit_scale_multiply"]:
             got = got * float(transforms["logit_scale_multiply"])
         if transforms["logit_scale_divide"]:
@@ -2430,11 +2436,16 @@ def _patch_ppo_policy_value_wrapper(module):
     wrapper.gradient_checkpointing_disable = gradient_checkpointing_disable
 
 
+# trainer_file -> "<ExceptionType>: <message>" of the last failed build, so a later refusal can name the cause.
+PATCHED_TRAINER_BUILD_ERRORS = {}
+
+
 def _patch_trl_rl_trainers(trainer_file = "grpo_trainer"):
     # Defensive wrapper matching patch_trl_rl_trainers()'s try/except, so direct callers do not see exceptions from the impl on TRL versions that rename or move classes.
     try:
         return _patch_trl_rl_trainers_impl(trainer_file)
     except Exception as e:
+        PATCHED_TRAINER_BUILD_ERRORS[trainer_file] = f"{type(e).__name__}: {e}"
         # Warning, not info: the impl RETURNS for the benign case, so reaching here means generation failed and the run silently falls back to trl's trainer, losing Unsloth's compute_loss, bf16/fp16 fixup and dataset handling.
         logger.warning_once(
             f"Unsloth: Could not build the patched trl.trainer.{trainer_file}, "
@@ -2529,6 +2540,17 @@ def _patch_trl_rl_trainers_impl(trainer_file = "grpo_trainer"):
             f"Unsloth: Could not load {RLTrainer_name} from trl.trainer.{trainer_file}: {e}"
         )
         return
+    if getattr(RLTrainer, "_unsloth_cpu", False):
+        # Unsloth's CPU backend (no accelerator found) runs TRL's own trainer behind unsloth_zoo.cpu's defaults
+        # subclass by design; that subclass has no readable source, so building from it would only fail.
+        PATCHED_TRAINER_BUILD_ERRORS[trainer_file] = (
+            "the CPU backend keeps TRL's own trainer (no GPU was found)"
+        )
+        logger.info(
+            f"Unsloth: CPU backend: trl.trainer.{trainer_file} keeps TRL's own {RLTrainer_name} "
+            "with unsloth_zoo.cpu's defaults."
+        )
+        return
     _config_resolved_module = None
     try:
         RLConfig = eval(f"trl.trainer.{trainer_file}.{RLConfig_name}")
@@ -2571,7 +2593,7 @@ def _patch_trl_rl_trainers_impl(trainer_file = "grpo_trainer"):
     _trainer_src_of = RLTrainer
     _config_src_of = RLConfig
     try:
-        _trainer_src = inspect.getsource(RLTrainer)
+        _trainer_src = _class_source(RLTrainer)
         _trainer_module = inspect.getmodule(RLTrainer)
         _trainer_module_src = inspect.getsource(_trainer_module) if _trainer_module else ""
         if not RLTrainer.__module__.startswith("trl.experimental.") and (
@@ -2591,7 +2613,7 @@ def _patch_trl_rl_trainers_impl(trainer_file = "grpo_trainer"):
         pass
 
     try:
-        _config_src = inspect.getsource(RLConfig)
+        _config_src = _class_source(RLConfig)
         _config_module = inspect.getmodule(RLConfig)
         _config_module_src = inspect.getsource(_config_module) if _config_module else ""
         if not RLConfig.__module__.startswith("trl.experimental.") and (
@@ -2611,10 +2633,10 @@ def _patch_trl_rl_trainers_impl(trainer_file = "grpo_trainer"):
 
     # Reuse the probe reads above unless they failed or the class was swapped for its parent.
     if _trainer_src is None or RLTrainer is not _trainer_src_of:
-        _trainer_src = inspect.getsource(RLTrainer)
+        _trainer_src = _class_source(RLTrainer)
     old_RLTrainer_source = _trainer_src
     if _config_src is None or RLConfig is not _config_src_of:
-        _config_src = inspect.getsource(RLConfig)
+        _config_src = _class_source(RLConfig)
     old_RLConfig_source = _config_src
 
     if _trainer_resolved_module is not None:
@@ -3292,7 +3314,8 @@ def _patch_trl_rl_trainers_impl(trainer_file = "grpo_trainer"):
     if "model" in call_args:
         training_check = (
             "if hasattr(self, 'train'):\n"
-            "    self.train = MethodType(prepare_for_training_mode(self.__class__.train), self)\n"
+            # A context parallel trainer binds its train wrapper on the instance (context_parallel.py).
+            "    self.train = MethodType(prepare_for_training_mode(getattr(self.__dict__.get('train'), '__func__', None) or self.__class__.train), self)\n"
             "pass\n"
         )
         RLTrainer_post += training_check
@@ -3312,14 +3335,17 @@ def _patch_trl_rl_trainers_impl(trainer_file = "grpo_trainer"):
     if "model" in call_args:
         RLTrainer_post += _DENSE_ROUTER_AUX_LOSS_OFF
 
-    # TRL >= 1.7 writes router_aux_loss_coef to the config after MoE CausalLMs cached it at init; nll loss reads the stale copy.
+    # MoE CausalLMs cache router_aux_loss_coef at init, so a forward that adds its own aux loss reads the checkpoint
+    # value. Hand them the trainer's resolved coefficient: TRL 1.7-1.17 also wrote it to the config, TRL >= 1.18 only
+    # applies it in compute_loss.
     if trainer_file == "sft_trainer":
         RLTrainer_post += (
             "if hasattr(self, 'aux_loss_enabled') and hasattr(getattr(self, 'model', None), 'modules'):\n"
+            "    _trainer_coef = getattr(self, 'router_aux_loss_coef', None)\n"
             "    for _module in self.model.modules():\n"
             "        _config = getattr(_module, 'config', None)\n"
             "        if 'router_aux_loss_coef' in vars(_module) and hasattr(_config, 'get_text_config'):\n"
-            "            _coef = getattr(_config.get_text_config(), 'router_aux_loss_coef', None)\n"
+            "            _coef = _trainer_coef if _trainer_coef is not None else getattr(_config.get_text_config(), 'router_aux_loss_coef', None)\n"
             "            if _coef is not None:\n"
             "                _module.router_aux_loss_coef = _coef\n"
             "pass\n"
@@ -3456,7 +3482,8 @@ def _patch_trl_rl_trainers_impl(trainer_file = "grpo_trainer"):
 
     # TRL >= 1.7.0 defaults SFT to loss_type="chunked_nll" (trl#5846), which patches the lm_head and calls the backbone directly, so unsloth_fused_ce_loss never runs (ours chunks too and peaks 1.7-3.7GB lower on gemma-3-4b at 141-8192 tokens), and it divides by num_items_in_batch ignoring model_accepts_loss_kwargs, so on models setting that flag False (gemma3, qwen-vl, paligemma, glm4v) training_step divides by grad-accum again and loss and grads are scaled 1/GA. Explicit loss_type= still wins. Kept scoped to sft_trainer, since loss_type is an unrelated field in DPO/KTO/GRPO.
     if trainer_file == "sft_trainer":
-        replacements = {"loss_type": "nll"}
+        # None = unset: trainer.py packs text datasets by default.
+        replacements = {"loss_type": "nll", "packing": None}
         for k, v in replacements.items():
             x = rf"\b{k}( = [^,\n]{{1,}})?,\n"
             y = f"'{v}'" if type(v) is str else f"{v}"
@@ -3472,34 +3499,13 @@ def _patch_trl_rl_trainers_impl(trainer_file = "grpo_trainer"):
         )
         extra_args += learning_rate_check
 
-    # bitsandbytes' 8-bit optimizers step plain tensors, but FSDP2 shards parameters as DTensors, so the
-    # first step dies with "got mixed torch.Tensor and DTensor" (unsloth#3551).
+    # optim = 'adamw_8bit' is kept under FSDP2: native FSDP2 (fsdp2_native._swap_bnb_optimizer) and
+    # accelerate's FSDP2 (fsdp2._localize_or_refuse_bnb after Accelerator._prepare_fsdp2) step bitsandbytes
+    # Adam / AdamW on each rank's local shard, and refuse the bitsandbytes optimizers that cannot (unsloth#3551).
     if "optim" in call_args:
-        extra_args += "_unsloth_fsdp2 = os.environ.get('FSDP_VERSION', '').strip() == '2'\n"
-        if "fsdp" in call_args and "fsdp_config" in call_args:
-            # TrainingArguments(fsdp = ..., fsdp_config = {"fsdp_version": 2} or a JSON path) without the launcher.
-            extra_args += (
-                "_unsloth_fsdp_cfg = fsdp_config\n"
-                "if fsdp and isinstance(_unsloth_fsdp_cfg, str) and os.path.isfile(_unsloth_fsdp_cfg):\n"
-                "    try:\n"
-                "        import json as _unsloth_json\n"
-                "        with open(_unsloth_fsdp_cfg, encoding = 'utf-8') as _unsloth_f:\n"
-                "            _unsloth_fsdp_cfg = _unsloth_json.load(_unsloth_f)\n"
-                "    except Exception:\n"
-                "        _unsloth_fsdp_cfg = None\n"
-                "if fsdp and _unsloth_fsdp_cfg is None:\n"
-                "    _unsloth_fsdp_cfg = {}\n"
-                "if fsdp and isinstance(_unsloth_fsdp_cfg, dict):\n"
-                f"    _unsloth_fsdp2 = _unsloth_fsdp2 or str(_unsloth_fsdp_cfg.get('fsdp_version', _unsloth_fsdp_cfg.get('version', {_FSDP_DEFAULT_VERSION}))) == '2'\n"
-            )
         extra_args += (
             "_unsloth_flash_adamw = str(getattr(optim, 'value', optim)).strip().lower() == 'adamw_flash'\n"
             "if _unsloth_flash_adamw: optim = 'adamw_torch'\n"
-        )
-        extra_args += (
-            "if _unsloth_fsdp2 and str(getattr(optim, 'value', optim)) == 'adamw_8bit':\n"
-            "    print(\"Unsloth: FSDP2 shards parameters as DTensors, which bitsandbytes' 8-bit optimizers cannot step. Switching optim = 'adamw_8bit' to 'adamw_torch_fused'.\")\n"
-            "    optim = 'adamw_torch_fused'\n"
         )
 
     # Fix num_train_epochs = None causing a TypeError in Trainer.__init__, which does `args.num_train_epochs > 0`.
@@ -3744,6 +3750,8 @@ def _patch_trl_rl_trainers_impl(trainer_file = "grpo_trainer"):
         "            if _gc_kwargs.get('context_fn') is None and not _gc_kwargs.get('debug', False):\n"
         "                _gc_kwargs['use_reentrant'] = True\n"
         "                self.gradient_checkpointing_kwargs = _gc_kwargs\n"
+        "                if hasattr(self, 'activation_checkpointing_kwargs'):\n"
+        "                    self.activation_checkpointing_kwargs = _gc_kwargs\n"
     )
 
     if "optim" in call_args:
@@ -4135,8 +4143,16 @@ def _patch_trl_rl_trainers_impl(trainer_file = "grpo_trainer"):
             logger.info(f"Unsloth: Could not wrap GRPO DDP gradient sync for {RLTrainer_name}: {e}")
     if trainer_file in ("dpo_trainer", "grpo_trainer"):
         try:
-            from ..context_parallel import patch_rl_trainer
-            patch_rl_trainer(getattr(created_module, f"Unsloth{RLTrainer_name}"), trainer_file)
+            trainer_cls = getattr(created_module, f"Unsloth{RLTrainer_name}")
+            cp_module = sys.modules.get(__name__.rsplit(".", 2)[0] + ".context_parallel")
+            if cp_module is not None and not hasattr(cp_module, "patch_rl_trainer"):
+                # context_parallel is mid-import (its unsloth.utils import loaded us); it patches these at its end.
+                cp_module.__dict__.setdefault("_DEFERRED_RL_TRAINERS", []).append(
+                    (trainer_cls, trainer_file)
+                )
+            else:
+                from ..context_parallel import patch_rl_trainer
+                patch_rl_trainer(trainer_cls, trainer_file)
         except Exception as e:
             logger.warning(f"Unsloth: Could not add context parallelism to {RLTrainer_name}: {e}")
     if trainer_file == "ppo_trainer":
@@ -4156,6 +4172,27 @@ def _patch_trl_rl_trainers_impl(trainer_file = "grpo_trainer"):
             logger.info(
                 f"Unsloth: Could not wrap GKD hidden-state fallback for {RLTrainer_name}: {e}"
             )
+    if trainer_file in _HIDDEN_STATES_FALLBACK_TRAINERS:
+        try:
+            _wrap_grpo_hidden_states_fallback(getattr(created_module, f"Unsloth{RLTrainer_name}"))
+        except Exception as e:
+            logger.info(f"Unsloth: Could not wrap hidden-state fallback for {RLTrainer_name}: {e}")
+
+
+# The AST fused-head forward ignores UNSLOTH_RETURN_HIDDEN_STATES; unwrapped, these trainers score full logits.
+_HIDDEN_STATES_FALLBACK_TRAINERS = frozenset(
+    (
+        "dpo_trainer",
+        "kto_trainer",
+        "orpo_trainer",
+        "cpo_trainer",
+        "bco_trainer",
+        "online_dpo_trainer",
+        "xpo_trainer",
+        "nash_md_trainer",
+        "rloo_trainer",
+    )
+)
 
 
 # TRL 1.10+ rejects list train_dataset; only list or tuple, since IterableDataset skips TRL streaming
@@ -4176,6 +4213,25 @@ def _allow_list_train_dataset(function, source, trainer_file):
             "cols = _unsloth_dataset_column_names(dataset)",
         )
     return source
+
+
+# TRL >= 1.0 DPOTrainer copies ".default." into a "ref" adapter (1.0-1.6 peft_config["default"], 1.7+ default_config).
+_DPO_REF_ADAPTER_BLOCK = re.compile(
+    r"^(?P<indent>[ \t]*)model\.add_adapter\(\s*[\"']ref[\"']\s*,\s*"
+    r"(?:default_config|model\.peft_config\[\s*[\"']default[\"']\s*\])\s*\)[ \t]*\n"
+    r"(?P<body>.*?ref_param\.data\.copy_\(param\.data\)[ \t]*)$",
+    flags = re.DOTALL | re.MULTILINE,
+)
+
+
+def _guard_dpo_ref_adapter_for_tp(init):
+    def _guard(match):
+        indent = match.group("indent")
+        lines = match.group(0).split("\n")
+        body = "\n".join("    " + line if line.strip() else line for line in lines)
+        return f"{indent}if not _unsloth_tp_skip_dpo_ref_adapter(model):\n{body}"
+
+    return _DPO_REF_ADAPTER_BLOCK.sub(_guard, init, count = 1)
 
 
 def patch_functions(
@@ -4237,6 +4293,9 @@ def patch_functions(
         return "\n".join(commented_lines)
 
     init = re.sub(add_adapter_block_pattern, comment_out_block, init, flags = re.DOTALL)
+
+    if trainer_file == "dpo_trainer":
+        init = _guard_dpo_ref_adapter_for_tp(init)
 
     if "args.use_vllm" in init and "model" in init and "args" in init:
         # .*? matches the first match, .+? the final one.
@@ -4375,7 +4434,7 @@ def patch_functions(
 
     functions = dir(RLTrainer)
     if RLTrainer_source is None:
-        RLTrainer_source = inspect.getsource(RLTrainer)
+        RLTrainer_source = _class_source(RLTrainer)
     functions = [x for x in functions if f"def {x}" in RLTrainer_source]
 
     changed = {
@@ -4723,11 +4782,12 @@ class _UnslothFusedLinearHead:
         # TRL 1.14's kernel (1.1 - 1.13 take no bias and are not wrapped) takes no ``outputs`` and returns ``(log_probs, entropy)``.
         try:
             forward = getattr(function, "forward", None)
-            self._legacy = (
-                forward is not None and "outputs" not in inspect.signature(forward).parameters
-            )
+            params = inspect.signature(forward).parameters if forward is not None else {}
+            self._legacy = forward is not None and "outputs" not in params
+            self._score_ids = "score_ids" in params
         except (TypeError, ValueError):
             self._legacy = False
+            self._score_ids = False
         module = sys.modules.get(getattr(function, "__module__", None) or "")
         # TRL tiles the projection as [min(N, TOKEN_CHUNK_SIZE), chunk_size]: chunk_size counts vocab columns.
         self._token_rows = int(getattr(module, "TOKEN_CHUNK_SIZE", 4096))
@@ -4742,7 +4802,6 @@ class _UnslothFusedLinearHead:
             self._lazy_entropy = False
 
     def __getattr__(self, name):
-        # Keep TRL's attributes visible so a later patch pass recognises what it already wrapped.
         if name == "function":
             raise AttributeError(name)
         return getattr(self.function, name)
@@ -4802,6 +4861,7 @@ class _UnslothFusedLinearHead:
         logit_scale = 1.0,
         outputs = ("entropy", "log_sum_sq_probs", "mean_logits", "is_top1"),
         support_ids = None,
+        score_ids = None,
     ):
         if self._legacy:
             args = (
@@ -4827,8 +4887,10 @@ class _UnslothFusedLinearHead:
                 logit_scale,
                 outputs,
             )
-        # support_ids (TRL > 1.16, per-row kept set) and a late UNSLOTH_FUSED_LINEAR=0 go to TRL's kernel.
-        if support_ids is not None:
+        if self._score_ids:
+            if support_ids is not None or score_ids is not None:
+                return self.function.apply(*args, support_ids, score_ids)
+        elif support_ids is not None:
             return self.function.apply(*args, support_ids)
         if os.environ.get("UNSLOTH_FUSED_LINEAR", "1") == "0":
             return self.function.apply(*args)
@@ -4887,11 +4949,10 @@ class _UnslothFusedLinearHead:
             extra["log_sum_sq_probs"],
             extra["mean_logits"],
             extra["is_top1"],
-        )
+        ) + ((None,) if self._score_ids else ())
 
 
 def patch_trl_fused_lm_head_kernel():
-    # UNSLOTH_FUSED_LINEAR=0 keeps TRL's own chunked log-prob kernel.
     if os.environ.get("UNSLOTH_FUSED_LINEAR", "1") == "0":
         return
     try:
@@ -4902,9 +4963,10 @@ def patch_trl_fused_lm_head_kernel():
     if kernel is None or getattr(kernel, "_unsloth_fused_linear", False):
         return
     # TRL 1.1 - 1.13's kernel takes no ``bias``: the adapter would shift every argument after ``weight``.
+    # No readable forward (unsloth_zoo's CPU dispatch): the adapter could not tell how many outputs TRL unpacks.
     forward = getattr(kernel, "forward", None)
     try:
-        if forward is not None and "bias" not in inspect.signature(forward).parameters:
+        if forward is None or "bias" not in inspect.signature(forward).parameters:
             return
     except (TypeError, ValueError):
         return
@@ -4977,9 +5039,14 @@ def _text_prepended_position_ids(position_ids):
 
 
 @torch.no_grad()
-def _packing_honored(backbone, position_transform = None):
+def _packing_honored(
+    backbone,
+    position_transform = None,
+    packed_lengths = False,
+):
     # Runs the backbone the way the fused head does: a second packed sequence must match itself run alone far more
     # closely than when it can see the first one. Numeric, so it covers every attention and mixer implementation.
+    # packed_lengths: also pass packed_seq_lengths, as the SFT padding-free collator does.
     params = next(backbone.parameters(), None)
     if params is None:
         return False
@@ -4997,28 +5064,48 @@ def _packing_honored(backbone, position_transform = None):
     if dtype not in (torch.float16, torch.bfloat16):
         dtype = torch.bfloat16 if params.dtype == torch.float32 else params.dtype
     training = [(module, module.training) for module in backbone.modules()]
-    # Training mode, as in the trainer: some models (gpt-oss) take a different attention path when training.
-    # Dropout off so the comparison is deterministic.
+    # Train mode as in the trainer (gpt-oss differs), dropout off for a deterministic compare.
     backbone.train()
+    rates = []
     for module in backbone.modules():
         if isinstance(module, torch.nn.modules.dropout._DropoutNd):
             module.training = False
+        # Functional attention dropout (`dropout_p = self.attention_dropout if self.training`).
+        for attr in ("attention_dropout", "dropout"):
+            value = getattr(module, attr, None)
+            if type(value) is float and value > 0:
+                rates.append((module, attr, value))
+                setattr(module, attr, 0.0)
 
-    def hidden(input_ids, position_ids):
+    def hidden(input_ids, position_ids, lengths):
+        extra = {}
+        if packed_lengths:
+            extra["packed_seq_lengths"] = torch.tensor(lengths, dtype = torch.int32, device = device)
         with torch.autocast(device.type, dtype = dtype, enabled = device.type in ("cuda", "xpu")):
             out = backbone(
-                input_ids = input_ids, position_ids = transform(position_ids), use_cache = False
+                input_ids = input_ids,
+                position_ids = transform(position_ids),
+                use_cache = False,
+                **extra,
             )
-        return out.last_hidden_state.float()
+        # A backbone output, a causal LM output (remote code probed whole) or a bare tensor.
+        for name in ("last_hidden_state", "logits"):
+            value = getattr(out, name, None)
+            if isinstance(value, torch.Tensor):
+                return value.float()
+        return (out[0] if isinstance(out, (tuple, list)) else out).float()
 
     try:
         arange = lambda n: torch.arange(n, device = device)[None]
-        packed = hidden(ids, torch.cat([arange(first), arange(second)], dim = 1))[0, first:]
-        alone = hidden(ids[:, first:], arange(second))[0]
-        crossed = hidden(ids, arange(first + second))[0, first:]
+        packed = hidden(ids, torch.cat([arange(first), arange(second)], dim = 1), [first, second])
+        packed = packed[0, first:]
+        alone = hidden(ids[:, first:], arange(second), [second])[0]
+        crossed = hidden(ids, arange(first + second), [first + second])[0, first:]
     finally:
         for module, mode in training:
             module.training = mode
+        for module, attr, value in rates:
+            setattr(module, attr, value)
     leak = (packed - alone).abs().mean()
     control = (crossed - alone).abs().mean()
     return bool(torch.isfinite(leak)) and bool(control > 0) and bool(leak <= 0.2 * control)

@@ -1187,6 +1187,10 @@ class TestLoadHubDownloadExclusion:
             "parallel_slots",
             "is_mlx",
             "is_npu",
+            "npu_context_fit",
+            "npu_power_mode",
+            "npu_prefill_chunk_len",
+            "npu_img_pre_resize",
             "speaks",
             "mlx_kv_quant",
             "mlx_kv_quant_requested",
@@ -1226,6 +1230,7 @@ class TestLoadHubDownloadExclusion:
             "audio_server_task",
             "audio_convert",
             "audio_convert_route",
+            "audio_clone",
             "audio_music",
         }
         unresolved = sorted(

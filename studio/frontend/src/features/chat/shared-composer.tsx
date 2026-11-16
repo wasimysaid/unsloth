@@ -38,7 +38,9 @@ import { InternetGlyph } from "@/lib/internet-icon";
 import { MicIcon } from "@/lib/mic-icon";
 import { MenuTickIcon, Tick02Icon } from "@/lib/tick-icon";
 import { BrowserAgentMenuItem, BrowserAgentPill } from "@/features/browser/agent/lazy-composer-toggle";
+import { ComputerUseMenuItem, ComputerUsePill } from "@/features/computer-use/lazy-composer-toggle";
 import { markComposerScrollEdges } from "@/lib/composer-scroll-fade";
+import { useSurfaceRef } from "@/lib/surface-registry";
 import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
@@ -53,6 +55,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { NonModalDropdownMenu } from "@/components/ui/non-modal-dropdown-menu";
 import { applyQwenThinkingParams } from "@/features/chat/utils/qwen-params";
+import { resolveQwenThinkingParams } from "./utils/qwen-sampling-table";
 import { FIND_SKIP_ATTRIBUTE } from "@/features/find-in-page";
 import {
   DRAFT_N_MAX_SPEC_TYPES,
@@ -92,10 +95,19 @@ import {
 } from "./image-normalize";
 import { modelIdsMatch } from "@/features/hub/lib/model-identity";
 import { CONVERSATION_MARKDOWN_LABEL } from "./utils/conversation-markdown";
+import {
+  CONVERSATION_HTML_LABEL,
+  CONVERSATION_PDF_LABEL,
+} from "./utils/conversation-html-format";
 import { pasteClipboardFiles } from "./utils/clipboard-files";
+import { insertAtCaret, richPasteMarkdown } from "./utils/rich-paste";
+import { isPlainPasteChord, plainPasteStillCounts } from "./utils/pasted-text";
 import {
   composerDraftKey,
+  flushComposerDraft,
   latestDraft,
+  NEW_COMPARE_DRAFT_ID,
+  stageComposerDraft,
   publishDraft,
   subscribeDraft,
   writeComposerDraft,
@@ -139,7 +151,10 @@ import {
   exportConversationMessagesJsonl,
   exportConversationCsv,
   exportConversationMarkdown,
+  exportConversationHtml,
+  exportConversationPdf,
 } from "./prompt-storage/prompt-storage-dialog";
+import { ExportFormatItems } from "./components/export-format-items";
 import {
   listPromptEntries,
   listPromptLists,
@@ -147,6 +162,7 @@ import {
   type PromptListEntry,
 } from "./api/prompts-api";
 import { PromptCountBadge } from "./prompt-storage/prompt-count-badge";
+import { insertSavedPrompt } from "./prompt-storage/insert-prompt";
 import { McpComposerButton } from "./mcp-composer-button";
 import { SkillsComposerButton, useSkillsSwitch } from "./skills-composer-button";
 import { PermissionModeComposerPill } from "./permission-mode-select";
@@ -192,6 +208,7 @@ import {
 } from "./compare-run-ownership";
 import {
   loadedContextForParams,
+  mergeBackendRecommendedInference,
   resolveExplicitCtxPin,
   resolveFitMaxSeqLength,
   retainedContextPin,
@@ -204,6 +221,7 @@ import {
   providerModelSupportsVision,
 
   providerModelSupportsStudioTools,
+  isGeminiApiProviderType,
 } from "./external-providers";
 import { compareModelDisplayName } from "./lib/external-model-label";
 import { useExternalProvidersStore } from "./stores/external-providers-store";
@@ -273,7 +291,7 @@ export type CompareMessagePart =
 
 export interface CompareHandle {
   append: (content: CompareMessagePart[]) => void;
-  appendMessage: (content: CompareMessagePart[]) => void;
+  appendMessage: (content: CompareMessagePart[]) => Promise<void>;
   startRun: () => void;
   cancel: () => void;
   isRunning: () => boolean;
@@ -282,6 +300,19 @@ export interface CompareHandle {
 }
 
 // Inlined to avoid a new icon dep. Kept in sync with the main composer.
+// Built on call, like chatExportOptions, so an import cycle cannot leave an exporter undefined.
+function composerExportFormats() {
+  return [
+    { label: "Training JSONL", fn: exportConversationRawJsonl },
+    { label: "Message JSONL", fn: exportConversationMessagesJsonl },
+    { label: "CSV", fn: exportConversationCsv },
+    { label: "ShareGPT JSONL", fn: exportConversationShareGPT },
+    { label: CONVERSATION_MARKDOWN_LABEL, fn: exportConversationMarkdown },
+    { label: CONVERSATION_HTML_LABEL, fn: exportConversationHtml },
+    { label: CONVERSATION_PDF_LABEL, fn: exportConversationPdf },
+  ];
+}
+
 function isNativeComposing(event: Event) {
   return "isComposing" in event && (event as InputEvent).isComposing === true;
 }
@@ -454,15 +485,24 @@ export function RegisterCompareHandle({
         aui
           .thread()
           .append({ role: "user", content, createdAt: new Date() } as never),
-      appendMessage: (content) =>
-        aui
-          .thread()
-          .append({
-            role: "user",
-            content,
-            createdAt: new Date(),
-            startRun: false,
-          } as never),
+      appendMessage: (content) => {
+        const count = aui.thread().getState().messages.length;
+        aui.thread().append({
+          role: "user",
+          content,
+          createdAt: new Date(),
+          startRun: false,
+        } as never);
+        return new Promise<void>((resolve) => {
+          const landed = () => aui.thread().getState().messages.length > count;
+          if (landed()) return resolve();
+          const unsubscribe = aui.subscribe(() => {
+            if (!landed()) return;
+            unsubscribe();
+            resolve();
+          });
+        });
+      },
       startRun: () => {
         const msgs = aui.thread().getState().messages;
         const lastId = msgs.length > 0 ? msgs[msgs.length - 1].id : null;
@@ -601,6 +641,10 @@ async function waitForBackendLoadToSettle(): Promise<void> {
 }
 
 export function SharedComposer({
+  draftId,
+  pairSaved,
+  pairSubmitted,
+  onPairSubmitted,
   handlesRef,
   model1,
   model2,
@@ -611,6 +655,10 @@ export function SharedComposer({
   sendUnavailableReason,
   requireStableCheckpoint = false,
 }: {
+  draftId: string;
+  pairSaved?: boolean;
+  pairSubmitted: boolean;
+  onPairSubmitted: () => void;
   handlesRef: CompareHandles;
   model1?: CompareModelSelection;
   model2?: CompareModelSelection;
@@ -623,6 +671,7 @@ export function SharedComposer({
 }): ReactElement {
   const t = useT();
   const sendShortcut = useChatPreferencesStore((s) => s.sendShortcut);
+  const richTextPaste = useChatPreferencesStore((s) => s.richTextPaste);
   const navigate = useNavigate();
   const handleExitCompare = useCallback(() => {
     if (onExitCompare) {
@@ -632,48 +681,62 @@ export function SharedComposer({
     navigate({ to: "/chat" });
   }, [navigate, onExitCompare]);
   const incognito = useChatRuntimeStore((s) => s.incognito);
+  const shareDraft = useChatPreferencesStore((s) => s.shareComposerDraft);
+  const syncDraft = shareDraft && !incognito;
+  const unsentPair = pairSaved === false && !pairSubmitted;
+  const draftKey = composerDraftKey(unsentPair ? NEW_COMPARE_DRAFT_ID : draftId, shareDraft);
+  const draftScope = incognito ? null : draftKey;
   const [text, setText] = useState(() =>
-    useChatRuntimeStore.getState().incognito ? "" : latestDraft(),
+    incognito ? "" : latestDraft(draftKey),
   );
   const [draftSource] = useState(() => Symbol("compare composer"));
   // Text that came from the chat composer, so it isn't published back.
   const remoteDraftRef = useRef<string | null>(null);
-  const unsavedDraftRef = useRef<string | null>(null);
-  const incognitoBeforeRef = useRef(incognito);
+  const unsavedDraftRef = useRef<{ key: string; text: string } | null>(null);
+  const draftScopeBeforeRef = useRef(draftScope);
+  const draftOwnerBeforeRef = useRef({ draftId, shareDraft, draftKey });
   useEffect(() => {
-    // Leaving a temporary chat (Compare can mount just before it resets) restores the saved draft.
-    if (incognitoBeforeRef.current !== incognito) {
-      incognitoBeforeRef.current = incognito;
-      if (!incognito) {
-        remoteDraftRef.current = latestDraft();
-        setText(remoteDraftRef.current);
+    if (draftScopeBeforeRef.current !== draftScope) {
+      draftScopeBeforeRef.current = draftScope;
+      const before = draftOwnerBeforeRef.current;
+      draftOwnerBeforeRef.current = { draftId, shareDraft, draftKey };
+      let next = incognito ? "" : latestDraft(draftKey);
+      if (!incognito && before.draftId === draftId && before.shareDraft === shareDraft && text) {
+        // Same pair, slot decided by its history: what was typed while it loaded wins.
+        writeComposerDraft(before.draftKey, "");
+        writeComposerDraft(draftKey, text);
+        next = text;
       }
+      if (!incognito && !shareDraft) stageComposerDraft(draftKey, next);
+      remoteDraftRef.current = next;
+      setText(next);
       return;
     }
     if (incognito || text === remoteDraftRef.current) return;
     remoteDraftRef.current = null;
-    publishDraft(text, draftSource);
+    if (shareDraft) publishDraft(text, draftSource);
     // Emptied (a send, or cleared by hand): gone at once, so a reload can't bring back a sent prompt.
     if (text === "") {
-      writeComposerDraft(composerDraftKey(), "");
+      writeComposerDraft(draftKey, "");
       unsavedDraftRef.current = null;
       return;
     }
-    unsavedDraftRef.current = text;
+    unsavedDraftRef.current = { key: draftKey, text };
+    stageComposerDraft(draftKey, text);
     const timer = setTimeout(() => {
-      writeComposerDraft(composerDraftKey(), text);
+      writeComposerDraft(draftKey, text);
       unsavedDraftRef.current = null;
     }, 300);
     return () => clearTimeout(timer);
-  }, [text, incognito, draftSource]);
-  // Leaving Compare inside the debounce still saves what was typed.
+  }, [text, draftScope, draftKey, incognito, shareDraft, draftSource]);
   useEffect(
     () => () => {
       if (unsavedDraftRef.current !== null) {
-        writeComposerDraft(composerDraftKey(), unsavedDraftRef.current);
+        flushComposerDraft(unsavedDraftRef.current.key, unsavedDraftRef.current.text);
+        unsavedDraftRef.current = null;
       }
     },
-    [],
+    [draftScope],
   );
   const shortcutLabels = composerShortcutLabels(sendShortcut, isMacPlatform(), text);
   const [running, setRunning] = useState(false);
@@ -703,12 +766,13 @@ export function SharedComposer({
     [],
   );
   useEffect(() => {
-    if (incognito) return;
+    if (!syncDraft) return;
     return subscribeDraft(draftSource, (next) => {
+      unsavedDraftRef.current = null;
       remoteDraftRef.current = next;
       setCurrentText(next);
     });
-  }, [incognito, draftSource, setCurrentText]);
+  }, [syncDraft, draftSource, setCurrentText]);
   // Attachments still classifying or converting; a ref so runPromptList reads it synchronously.
   const attachingRef = useRef(0);
   useEffect(() => {
@@ -762,6 +826,7 @@ export function SharedComposer({
   );
   const sendRef = useRef<(() => void) | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerSurfaceRef = useSurfaceRef(COMPOSER_INPUT_SELECTOR, textareaRef);
   const pendingFixPrompt = useChatArtifactsStore(
     (state) => state.pendingFixPrompt,
   );
@@ -981,7 +1046,7 @@ export function SharedComposer({
     selectedExternalProvider?.providerType,
   );
   // Gemini rejects codeExecution alongside image modalities.
-  const isExternalGemini = selectedExternalProvider?.providerType === "gemini";
+  const isExternalGemini = isGeminiApiProviderType(selectedExternalProvider?.providerType);
   // The image or video model loaded in Unsloth, reached through generate_image / generate_video.
   const localImageToolHere = useChatRuntimeStore((s) =>
     localImageTool({ ...s, supportsBuiltinImageGeneration }),
@@ -1337,8 +1402,12 @@ export function SharedComposer({
     [trackAttaching, addFilesUntracked],
   );
 
+  // Plain paste: a paste event carries no modifiers, so the chord is read from the keydown before it.
+  const plainPasteAtRef = useRef(0);
   const handleFilePaste = useCallback(
     (event: ClipboardEvent<HTMLTextAreaElement>) => {
+      const plainPaste = plainPasteStillCounts(plainPasteAtRef.current, performance.now());
+      plainPasteAtRef.current = 0;
       pasteClipboardFiles(
         event,
         (pasted) =>
@@ -1357,8 +1426,17 @@ export function SharedComposer({
             description: "Compare supports images and audio within the attachment size limits.",
           }),
       );
+      if (event.defaultPrevented || !richTextPaste || plainPaste) return;
+      const markdown = richPasteMarkdown(event.clipboardData);
+      if (markdown === null) return;
+      event.preventDefault();
+      const input = event.currentTarget;
+      insertAtCaret(input, markdown, (next, caret) => {
+        setCurrentText(next);
+        requestAnimationFrame(() => input.setSelectionRange(caret, caret));
+      });
     },
-    [trackAttaching, addFilesUntracked],
+    [trackAttaching, addFilesUntracked, richTextPaste, setCurrentText],
   );
 
   const removePendingImage = useCallback((id: string) => {
@@ -1515,6 +1593,11 @@ export function SharedComposer({
       });
     };
     const clearSubmittedDraft = () => {
+      if (unsentPair) {
+        unsavedDraftRef.current = null;
+        if (!shareDraft) writeComposerDraft(draftKey, "");
+      }
+      onPairSubmitted();
       setCurrentText("");
       setIsWritingExpanded(false);
       setPendingImages([]);
@@ -1947,17 +2030,48 @@ export function SharedComposer({
         }
         upgradeUnloadedActive = false;
         const store = useChatRuntimeStore.getState();
+        const paneMaxTokensCap = replayMaxTokensCap(
+          loadedContextFields(resp).loadedContextLength ??
+            (!resp.is_gguf && effectiveMaxSeqLength > 0
+              ? effectiveMaxSeqLength
+              : null),
+        );
         store.setCheckpoint(
           resp.model,
           resp.is_gguf ? (sel.ggufVariant ?? undefined) : null,
+          { maxTokensCap: paneMaxTokensCap },
+        );
+        const paneState = useChatRuntimeStore.getState();
+        const paneParams = paneState.params;
+        const paneQwenParams =
+          resp.supports_reasoning &&
+          paneState.activePresetSource === "builtin-default"
+            ? resolveQwenThinkingParams(
+                resp.model,
+                (resp.reasoning_always_on ?? false) || paneState.reasoningEnabled,
+              )
+            : null;
+        store.setParams(
           {
-            maxTokensCap: replayMaxTokensCap(
-              loadedContextFields(resp).loadedContextLength ??
-                (!resp.is_gguf && effectiveMaxSeqLength > 0
-                  ? effectiveMaxSeqLength
-                  : null),
-            ),
+            ...mergeBackendRecommendedInference({
+              current: paneParams,
+              response: resp,
+              modelId: resp.model,
+              presetSource: paneState.activePresetSource,
+              loadedContextLength: loadedContextFields(resp).loadedContextLength,
+            }),
+            ...paneQwenParams,
+            ...(targetIsGguf
+              ? {}
+              : {
+                  maxSeqLength: loadedContextForParams(
+                    loadedContextFields(resp).loadedContextLength,
+                    effectiveMaxSeqLength,
+                    paneParams.maxSeqLength,
+                  ),
+                }),
           },
+          { fromModelDefaults: true, maxTokensCap: paneMaxTokensCap },
         );
         store.setModelRequiresTrustRemoteCode(
           resp.requires_trust_remote_code ?? false,
@@ -2062,17 +2176,6 @@ export function SharedComposer({
           activeNativePathExpiresAtMs: null,
           ...resolveLoadedSpeculativeSettings(resp),
         });
-        if (!targetIsGguf) {
-          const paneParams = useChatRuntimeStore.getState().params;
-          store.setParams({
-            ...paneParams,
-            maxSeqLength: loadedContextForParams(
-              loadedContextFields(resp).loadedContextLength,
-              effectiveMaxSeqLength,
-              paneParams.maxSeqLength,
-            ),
-          });
-        }
         loadedFromConfig = config != null;
         // /api/models/list can lag the model's actual state.
         const currentModels = useChatRuntimeStore.getState().models;
@@ -2108,8 +2211,10 @@ export function SharedComposer({
       const handle1 = handlesRef.current["model1"];
       const handle2 = handlesRef.current["model2"];
 
-      if (handle1) handle1.appendMessage(content);
-      if (handle2) handle2.appendMessage(content);
+      await Promise.all([
+        handle1?.appendMessage(content),
+        handle2?.appendMessage(content),
+      ]);
 
       const name1 = model1?.id ? compareModelDisplayName(model1.id) : "";
       const name2 = model2?.id ? compareModelDisplayName(model2.id) : "";
@@ -2474,6 +2579,7 @@ export function SharedComposer({
     // Compare runs no research, so the item has nothing to offer here.
     deepResearch: null,
     browserUse: <BrowserAgentMenuItem />,
+    computerUse: <ComputerUseMenuItem />,
     chatWithFiles: (
       <DropdownMenuItem
         disabled={ragDisabled}
@@ -2536,7 +2642,7 @@ export function SharedComposer({
             <DropdownMenuItem
               key={`prompt:${p.id}`}
               onSelect={() => {
-                setCurrentText(p.text);
+                insertSavedPrompt(textareaRef.current, p.text, setCurrentText);
                 requestAnimationFrame(() => textareaRef.current?.focus());
               }}
             >
@@ -2578,36 +2684,25 @@ export function SharedComposer({
           collisionPadding={16}
           className="unsloth-plus-menu w-[calc(208px*var(--ui-space-scale,1))]"
         >
-          {[
-            { label: "Training JSONL", fn: exportConversationRawJsonl },
-            { label: "Message JSONL", fn: exportConversationMessagesJsonl },
-            { label: "CSV", fn: exportConversationCsv },
-            { label: "ShareGPT JSONL", fn: exportConversationShareGPT },
-            {
-              label: CONVERSATION_MARKDOWN_LABEL,
-              fn: exportConversationMarkdown,
-            },
-          ].map(({ label, fn }) => (
-            <DropdownMenuItem
-              key={label}
-              disabled={exportThreadIds.length === 0}
-              onSelect={() => {
-                if (!exportThreadIds.length) {
-                  toast.error("No conversation to export yet.");
-                  return;
+          <ExportFormatItems
+            options={composerExportFormats().map(({ label }) => ({ key: label, label }))}
+            subContentClassName="unsloth-plus-menu w-[calc(176px*var(--ui-space-scale,1))]"
+            onSelect={(label) => {
+              const fn = composerExportFormats().find((f) => f.label === label)?.fn;
+              if (!fn) return;
+              if (!exportThreadIds.length) {
+                toast.error("No conversation to export yet.");
+                return;
+              }
+              (async () => {
+                for (const id of exportThreadIds) {
+                  await fn(id);
                 }
-                (async () => {
-                  for (const id of exportThreadIds) {
-                    await fn(id);
-                  }
-                })().catch((error) => {
-                  if (!isDownloadCancelled(error)) toast.error("Export failed.");
-                });
-              }}
-            >
-              {label}
-            </DropdownMenuItem>
-          ))}
+              })().catch((error) => {
+                if (!isDownloadCancelled(error)) toast.error("Export failed.");
+              });
+            }}
+          />
         </DropdownMenuSubContent>
       </DropdownMenuSub>
     ),
@@ -2659,7 +2754,7 @@ export function SharedComposer({
         open={promptStorageOpen}
         onOpenChange={setPromptStorageOpen}
         onUse={(t) => {
-          setCurrentText(t);
+          insertSavedPrompt(textareaRef.current, t, setCurrentText);
           requestAnimationFrame(() => textareaRef.current?.focus());
         }}
         onRunList={runPromptList}
@@ -2681,9 +2776,9 @@ export function SharedComposer({
           void addFiles(e.dataTransfer.files);
         }}
       >
-        {/* Gemini-style drop affordance, mirrored from the single composer. */}
+        {/* Gemini-style drop affordance, mirrored from the single composer; blurred only while shown (see thread.tsx). */}
         <div
-          className={`pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-1 overflow-hidden rounded-[inherit] bg-background/90 backdrop-blur-sm transition-opacity duration-150 dark:bg-card/90 ${dragging ? "opacity-100" : "opacity-0"}`}
+          className={`pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-1 overflow-hidden rounded-[inherit] bg-background/90 transition-opacity duration-150 dark:bg-card/90 ${dragging ? "opacity-100 backdrop-blur-sm" : "opacity-0"}`}
         >
           <HugeiconsIcon
             icon={Attachment01Icon}
@@ -2968,6 +3063,7 @@ export function SharedComposer({
               <span>Tools</span>
             </button>
             <BrowserAgentPill glyph={(icon) => <PillGlyph>{icon}</PillGlyph>} />
+            <ComputerUsePill glyph={(icon) => <PillGlyph>{icon}</PillGlyph>} />
             {showImagePill && (
               <button
                 type="button"
@@ -3030,7 +3126,7 @@ export function SharedComposer({
               <textarea
                 {...skillMentions.inputProps}
                 id={inputId}
-                ref={textareaRef}
+                ref={composerSurfaceRef}
                 data-type-to-activate="composer"
                 value={text}
                 onChange={(e) => {
@@ -3074,8 +3170,15 @@ export function SharedComposer({
                 onKeyDown={(event) => {
                   if (!skillMentions.onKeyDown(event)) onKeyDown(event);
                 }}
+                onKeyDownCapture={(event) => {
+                  plainPasteAtRef.current = isPlainPasteChord(event) ? performance.now() : 0;
+                }}
+                onKeyUpCapture={() => {
+                  plainPasteAtRef.current = 0;
+                }}
                 onPaste={handleFilePaste}
                 onBlur={() => {
+                  plainPasteAtRef.current = 0;
                   // Mac: switching input methods can fire compositionstart without a matching compositionend,
                   // leaving composingRef pinned. The OS always commits or cancels before focus is lost.
                   imeSessionOpenRef.current = false;

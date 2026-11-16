@@ -19,6 +19,7 @@ mod commands;
 mod debian_update;
 mod desktop_auth;
 mod desktop_backend_owner;
+mod desktop_port;
 mod desktop_update_policy;
 mod desktop_updater;
 mod diagnostics;
@@ -2382,9 +2383,10 @@ fn main() {
             webkit_rendering.nvidia_driver_branch,
             webkit_rendering.wayland_session,
         ),
+        webkit_rendering.cpu_painting,
     );
     #[cfg(not(target_os = "linux"))]
-    let gpu_launch = gpu_rendering::LaunchState::new(gpu_setting, false, None, None, None);
+    let gpu_launch = gpu_rendering::LaunchState::new(gpu_setting, false, None, None, None, false);
     // Fix PATH for GUI apps (macOS .app bundles, Linux AppImage, Windows)
     // GUI apps don't inherit shell dotfile PATH — this spawns the user's
     // login shell to source .zshrc/.bashrc/.profile and sets PATH properly.
@@ -2423,7 +2425,7 @@ fn main() {
         }
         let (major, minor, micro) = webkit_rendering.webkit_version;
         info!(
-            "GPU rendering: setting={} path={} reason={} webkit={major}.{minor}.{micro} env_override={} flag={} supervised={}",
+            "GPU rendering: setting={} path={} reason={} webkit={major}.{minor}.{micro} env_override={} flag={} supervised={} cpu_painting={}",
             gpu_setting.as_str(),
             if webkit_rendering.gpu_path.is_some() { "gpu" } else { "default-or-cpu" },
             webkit_rendering
@@ -2433,6 +2435,7 @@ fn main() {
             webkit_rendering.env_override.unwrap_or("none"),
             gpu_fallback_active,
             gpu_child.supervised,
+            webkit_rendering.cpu_painting,
         );
     }
     #[cfg(windows)]
@@ -2491,6 +2494,7 @@ fn main() {
         .manage(native_file_dialogs::ChatImportRegistry::default())
         .manage(native_file_dialogs::NativeSaveRegistry::default())
         .manage(browser_webview::new_browser_views())
+        .manage(browser_webview::new_browser_capture_rules())
         .manage(browser_downloads::new_browser_downloads())
         .invoke_handler(|invoke| {
             if invoke.message.webview().label() != "main" || invoke.message.webview().window().label() != "main" {
@@ -2512,6 +2516,7 @@ fn main() {
             browser_webview::browser_view_eval,
             browser_webview::browser_view_close,
             browser_webview::browser_view_clear_data,
+            browser_webview::browser_capture_rules_set,
             browser_webview::browser_view_mute,
             browser_webview::browser_view_layered,
             browser_webview::browser_view_input,
@@ -2580,6 +2585,9 @@ fn main() {
             native_file_dialogs::finish_native_file_save,
             native_file_dialogs::cancel_native_file_save,
             native_file_dialogs::save_native_file_from_url,
+            native_file_dialogs::pick_native_download_directory,
+            native_file_dialogs::save_native_file_in_directory,
+            native_file_dialogs::release_native_download_directory,
             native_file_dialogs::download_logs_to_downloads,
             native_file_dialogs::pick_native_chat_import,
             native_file_dialogs::read_native_chat_import_chunk,
