@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type * as Selector from "../src/features/coding/coding-model-selector.tsx";
 import type { ComposerModelPickerSource } from "../src/components/assistant-ui/composer-model-picker/context.ts";
+import * as downloadStaging from "../src/features/chat/utils/model-download-staging.ts";
 import * as selection from "../src/features/coding/model-selection.ts";
 import {
   loadWithStubs,
@@ -13,12 +14,21 @@ import {
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-function mount(inventoryVersion = 0, local = { models: [] as {id: string; group: string; quant: string; name: string}[], residency: { state: "unloaded" }, preload: (_id: string) => {}, unload: async () => {} }) {
+type LocalModel = { id: string; group: string; quant: string | null; name: string };
+type LocalStub = {
+  models: LocalModel[];
+  residency: { state: string };
+  refresh?: (signal: AbortSignal) => Promise<LocalModel[]>;
+  preload: (id: string) => void;
+  unload: () => Promise<void>;
+};
+function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency: { state: "unloaded" }, preload: () => {}, unload: async () => {} }) {
   const states: unknown[] = [];
   let cursor = 0;
   let effect: (() => void | (() => void)) | undefined;
   let mounted = false;
   let inventoryChanged: (() => void) | undefined;
+  let download!: Parameters<typeof import("../src/features/model-picker/use-load-after-download.ts").useLoadAfterDownload>;
   const { CodingModelSelector } = loadWithStubs<typeof Selector>(
     new URL(
       "../src/features/coding/coding-model-selector.tsx",
@@ -67,7 +77,10 @@ function mount(inventoryVersion = 0, local = { models: [] as {id: string; group:
       "@/components/ui/button": { Button: "button" },
       "lucide-react": { RefreshCw: "icon" },
       "./model-selection": selection,
-      "./use-local-model": { useLocalModel: () => local },
+      "./use-local-model": { useLocalModel: () => ({ ...local, refresh: local.refresh ?? (async () => local.models) }) },
+      "@/features/chat/utils/model-download-staging": downloadStaging,
+      "@/features/chat/api/chat-api": { listModels: async () => ({ models: [{ id: "org/fallback", name: "Fallback", is_gguf: true }] }) },
+      "@/features/model-picker/use-load-after-download": { useLoadAfterDownload: (...args: typeof download) => { download = args; } },
     },
   );
   return {
@@ -80,6 +93,7 @@ function mount(inventoryVersion = 0, local = { models: [] as {id: string; group:
         notice: children.at(-1),
       };
     },
+    download: () => download,
     inventoryChanged() {
       inventoryChanged?.();
     },
@@ -116,12 +130,12 @@ test("shared composer selection keeps exact native IDs, default effort, and fail
       throw new Error("Native refused selection");
     },
   };
-  assert.equal(view.render(props).source.runtimeCatalog?.disabled, true);
+  assert.equal(view.render(props).source.runtimeControls?.disabled, true);
   const cleanup = view.start();
   await tick();
   const source = view.render(props).source;
-  assert.equal(source.runtimeCatalog?.models[0].name, "Friendly model");
-  assert.deepEqual(source.runtimeCatalog?.reasoning.levels, ["low", "high"]);
+  assert.equal(source.externalModels[0].name, "Friendly model");
+  assert.deepEqual(source.runtimeControls?.reasoning.levels, ["low", "high"]);
   source.onPick(selection.modelIdentity("second", "same"), {
     source: "external",
     isLora: false,
@@ -139,7 +153,7 @@ test("shared composer selection keeps exact native IDs, default effort, and fail
     ),
   );
   const blocked = view.render({ ...props, configuring: true }).source;
-  blocked.runtimeCatalog?.reasoning.onChange("low");
+  blocked.runtimeControls?.reasoning.onChange("low");
   blocked.onPick(selection.modelIdentity("second", "same"), {
     source: "external",
     isLora: false,
@@ -180,7 +194,7 @@ test("a late catalog response after disposal cannot populate the next folder", a
     },
   ]);
   await tick();
-  assert.deepEqual(view.render(props).source.runtimeCatalog?.models, []);
+  assert.deepEqual(view.render(props).source.externalModels, []);
 });
 
 test("inventory changes coalesce behind reads and keep the prior choices usable", async () => {
@@ -235,9 +249,9 @@ test("inventory changes coalesce behind reads and keep the prior choices usable"
     [false, true],
   );
   const refreshing = view.render(props);
-  assert.equal(refreshing.source.runtimeCatalog?.disabled, false);
+  assert.equal(refreshing.source.runtimeControls?.disabled, false);
   assert.equal(
-    refreshing.source.runtimeCatalog?.models[0].name,
+    refreshing.source.selection?.placeholder,
     "Friendly model",
   );
   assert.equal(refreshing.notice, null);
@@ -249,10 +263,10 @@ test("inventory changes coalesce behind reads and keep the prior choices usable"
   );
   requests[2].resolve([]);
   await tick();
-  assert.deepEqual(view.render(props).source.runtimeCatalog?.models, []);
+  assert.deepEqual(view.render(props).source.externalModels, []);
   assert.equal(
     view.render(props).source.selection?.id,
-    selection.modelIdentity("studio-local", "local-hash"),
+    "",
   );
   if (typeof cleanup === "function") cleanup();
   view.inventoryChanged();
@@ -278,7 +292,7 @@ test("opening Coding after an inventory change reconciles retained native choice
   const cleanup = view.start();
   await tick();
   assert.deepEqual(requests, [true]);
-  assert.equal(view.render(props).source.runtimeCatalog?.disabled, false);
+  assert.equal(view.render(props).source.runtimeControls?.disabled, false);
   if (typeof cleanup === "function") cleanup();
 });
 
@@ -306,15 +320,16 @@ test("shared controls select exact inventory quant IDs and retain false preserve
   view.render(props); view.start(); await tick();
   const source = view.render(props).source;
   assert.equal(source.selection?.loaded, true);
-  assert.equal(source.runtimeCatalog?.preserveThinking?.value, false);
-  assert.deepEqual(source.runtimeCatalog?.quantization?.choices, [{ id: "exact-Q4", label: "Q4" }, { id: "exact-BF16", label: "BF16" }]);
-  source.runtimeCatalog?.quantization?.onChange("exact-BF16"); await tick();
+  assert.equal(source.runtimeControls?.preserveThinking?.value, false);
+  assert.equal(source.selection?.id, "repo");
+  assert.equal(source.selection?.ggufVariant, "Q4");
+  source.onPick("repo", { source: "hub", isLora: false, isDownloaded: true, ggufVariant: "BF16" }); await tick();
   assert.deepEqual(changes, [{ provider: "studio-local", model: "exact-BF16" }]);
   assert.deepEqual(preloads, ["exact-BF16"]);
-  view.render(props).source.runtimeCatalog?.preserveThinking?.onChange(false); await tick();
+  view.render(props).source.runtimeControls?.preserveThinking?.onChange(false); await tick();
   assert.deepEqual(changes[1], { preserve_thinking: false });
   source.eject(); await tick(); assert.equal(unloaded, 1);
-  assert.equal(view.render(props).source.runtimeCatalog?.disabled, false);
+  assert.equal(view.render(props).source.runtimeControls?.disabled, false);
 });
 
 test("native preparation shows loading only for the selected local model without blocking selection", async () => {
@@ -332,6 +347,124 @@ test("native preparation shows loading only for the selected local model without
   const preparing = { provider: "studio-local", model: "a" };
   const same = view.render({ ...props, preparing }).source;
   assert.equal(same.selection?.loading, true);
-  assert.equal(same.runtimeCatalog?.disabled, false);
+  assert.equal(same.runtimeControls?.disabled, false);
   assert.equal(view.render({ ...props, preparing: { ...preparing, model: "b" } }).source.selection?.loading, false);
+});
+
+function localProps(configure: (change: selection.CodingConfigurationChange) => Promise<void>) {
+  return {
+    readCatalog: async (): Promise<selection.CodingProviderChoice[]> => [{
+      id: "studio-local", name: "On Device", models: ["Q4", "Q8"].map((quant) => ({
+        id: `exact-${quant}`, name: quant, api_model: "repo", reasoning: "unsupported", default_reasoning: null,
+      })),
+    }],
+    configuration: { provider: "studio-local", model: "exact-Q4", reasoning: null },
+    disabled: false, configuring: false, configure,
+  };
+}
+const downloadedModels = ["Q4", "Q8"].map((quant) => ({ id: `exact-${quant}`, group: "repo", quant, name: quant }));
+const localMeta = { source: "hub" as const, isLora: false, isDownloaded: true, ggufVariant: "Q8" };
+
+test("cached model selection configures immediately and unload rejects a different model", async () => {
+  let refreshes = 0;
+  let unloads = 0;
+  const changes: selection.CodingConfigurationChange[] = [];
+  const view = mount(0, { models: downloadedModels, residency: { state: "loaded" }, refresh: async () => { refreshes++; return downloadedModels; }, preload: () => {}, unload: async () => { unloads++; } });
+  const props = localProps(async (change) => { changes.push(change); });
+  view.render(props); view.start(); await tick();
+  const source = view.render(props).source;
+  source.onPick("repo", localMeta);
+  assert.deepEqual(changes, [{ provider: "studio-local", model: "exact-Q8" }]);
+  assert.equal(refreshes, 0);
+  source.eject("another-repo");
+  assert.equal(unloads, 0);
+  source.eject("repo");
+  assert.equal(unloads, 1);
+});
+
+test("download completion cannot replace a newer pick before React renders it", async () => {
+  const changes: selection.CodingConfigurationChange[] = [];
+  const view = mount(0, { models: downloadedModels, residency: { state: "loaded" }, preload: () => {}, unload: async () => {} });
+  const props = localProps(async (change) => { changes.push(change); });
+  view.render(props); view.start(); await tick();
+  view.render(props).source.onPick("remote", { ...localMeta, isDownloaded: false });
+  const source = view.render(props).source;
+  const pending = view.download()[0];
+  const complete = view.download()[3];
+  assert.equal(pending?.id, "remote");
+  assert.equal(pending?.isCurrent?.(), true);
+  source.onPick("repo", localMeta);
+  assert.equal(pending?.isCurrent?.(), false);
+  complete("remote", localMeta);
+  await tick();
+  assert.deepEqual(changes, [{ provider: "studio-local", model: "exact-Q8" }]);
+});
+
+test("download completion is discarded after native configuration changes", async () => {
+  const changes: selection.CodingConfigurationChange[] = [];
+  const view = mount(0, { models: downloadedModels, residency: { state: "loaded" }, preload: () => {}, unload: async () => {} });
+  const props = localProps(async (change) => { changes.push(change); });
+  view.render(props); view.start(); await tick();
+  view.render(props).source.onPick("remote", { ...localMeta, isDownloaded: false });
+  view.render(props);
+  const complete = view.download()[3];
+  view.render({ ...props, configuration: { ...props.configuration, model: "exact-Q8" } });
+  complete("remote", localMeta);
+  await tick();
+  assert.deepEqual(changes, []);
+});
+
+test("newly downloaded choices refresh native catalog before configuration", async () => {
+  const order: string[] = [];
+  const view = mount(0, { models: [], residency: { state: "unloaded" }, refresh: async () => { order.push("inventory"); return downloadedModels; }, preload: () => { order.push("preload"); }, unload: async () => {} });
+  const props = localProps(async () => { order.push("configure"); });
+  const read = props.readCatalog;
+  props.readCatalog = async () => { order.push("catalog"); return read(); };
+  view.render(props); view.start(); await tick();
+  order.length = 0;
+  view.render(props).source.onPick("repo", localMeta);
+  await tick();
+  assert.deepEqual(order, ["inventory", "catalog", "configure", "preload"]);
+});
+
+test("a connected model sharing a native local ID remains a connected identity", async () => {
+  const view = mount(0, { models: downloadedModels, residency: { state: "loaded" }, preload: () => {}, unload: async () => {} });
+  const props = { ...localProps(async () => {}), configuration: { provider: "connected", model: "exact-Q4", reasoning: null } };
+  view.render(props); view.start(); await tick();
+  const source = view.render(props).source;
+  assert.equal(source.selection?.id, selection.modelIdentity("connected", "exact-Q4"));
+  assert.equal(source.selection?.ggufVariant, null);
+  assert.equal(source.selection?.loaded, false);
+});
+
+test("an inventory lookup cannot replace native configuration changed while it waited", async () => {
+  let resolve!: (models: LocalModel[]) => void;
+  const changes: selection.CodingConfigurationChange[] = [];
+  const view = mount(0, { models: [], residency: { state: "unloaded" }, refresh: () => new Promise((done) => { resolve = done; }), preload: () => {}, unload: async () => {} });
+  const props = localProps(async (change) => { changes.push(change); });
+  view.render(props); view.start(); await tick();
+  view.render(props).source.onPick("repo", localMeta);
+  view.render({ ...props, configuration: { ...props.configuration, model: "exact-Q8" } });
+  resolve(downloadedModels);
+  await tick();
+  assert.deepEqual(changes, []);
+});
+
+test("a restored local selection never exposes its native ID while inventory is loading", async () => {
+  const view = mount();
+  const props = localProps(async () => {});
+  const first = view.render(props).source;
+  assert.equal(first.selection?.id, "");
+  assert.equal(first.selection?.placeholder, "Select model");
+  view.start(); await tick();
+  const catalogReady = view.render(props).source;
+  assert.equal(catalogReady.selection?.id, "");
+  assert.equal(catalogReady.selection?.placeholder, "Q4");
+});
+
+test("Coding supplies the server Discover fallback without changing Chat selection", async () => {
+  const view = mount();
+  const props = localProps(async () => {});
+  view.render(props); view.start(); await tick();
+  assert.deepEqual(view.render(props).source.models, [{ id: "org/fallback", name: "Fallback", isGguf: true }]);
 });

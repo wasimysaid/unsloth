@@ -27,6 +27,7 @@ import { usePlatformStore } from "@/config/env";
 import { audioPickSearch } from "@/features/audio/route-search";
 import { useIsAccountOwner } from "@/features/auth";
 import {
+  chatLocalModelOptions,
   type CachedGgufRepo,
   type CachedModelRepo,
   type ChatModelSummary,
@@ -218,7 +219,6 @@ import {
   downloadedQuants,
   ejectTargetId,
   filterRows,
-  runtimeModelRows,
   findChosenRow,
   isChatTask,
   isTestFixtureRepo,
@@ -1474,7 +1474,7 @@ export function ComposerModelPicker({
         ? {
             ...rawSource,
             onPick: (id: string, meta: ModelSelectorChangeMeta) => {
-              if (rawSource.runtimeCatalog || !routeMediaPick.current(id, meta)) {
+              if (rawSource.runtimeControls || !routeMediaPick.current(id, meta)) {
                 rawSource.onPick(id, meta);
               }
             },
@@ -1484,9 +1484,8 @@ export function ComposerModelPicker({
   );
   const navigate = useNavigate();
   const reasoning = useComposerReasoning();
-  const runtimeCatalog = source?.runtimeCatalog;
-  const runtimeModels = runtimeCatalog?.models;
-  const runtimeOwned = runtimeCatalog !== undefined;
+  const runtimeControls = source?.runtimeControls;
+  const nativeOwned = runtimeControls !== undefined;
   const pane = source?.selection;
   const runtimeCheckpoint = useChatRuntimeStore((s) => s.params.checkpoint);
   const runtimeVariant = useChatRuntimeStore((s) => s.activeGgufVariant);
@@ -1494,7 +1493,12 @@ export function ComposerModelPicker({
   const checkpoint = pane ? pane.id : runtimeCheckpoint;
   const activeVariant = pane ? pane.ggufVariant : runtimeVariant;
   const modelLoading = pane ? pane.loading === true : runtimeLoading;
-  const loadedModels = useChatRuntimeStore((s) => s.loadedModels);
+  const chatLoadedModels = useChatRuntimeStore((s) => s.loadedModels);
+  const loadedModels = useMemo(() => nativeOwned
+    ? pane?.loaded && pane.id
+      ? [{ id: pane.id, checkpoint: pane.id, quant: pane.ggufVariant }]
+      : []
+    : chatLoadedModels, [nativeOwned, pane?.loaded, pane?.id, pane?.ggufVariant, chatLoadedModels]);
   const chatModels = useChatRuntimeStore((s) => s.models);
   const pinned = usePinnedModelsStore((s) => s.pinned);
   const togglePinned = usePinnedModelsStore((s) => s.togglePinned);
@@ -1657,8 +1661,8 @@ export function ComposerModelPicker({
     };
   }, [tabStrip]);
 
-  const inventory = useChatPickerInventory({ enabled: open && !runtimeCatalog });
-  const [npuStatus, setNpuStatus] = useNpuStatus(open && !runtimeCatalog);
+  const inventory = useChatPickerInventory({ enabled: open });
+  const [npuStatus, setNpuStatus] = useNpuStatus(open);
   const npuCatalog = useNpuCatalog(
     npuStatus?.supported === true
       ? { status: npuStatus, onStatusChange: setNpuStatus }
@@ -1667,7 +1671,7 @@ export function ComposerModelPicker({
   const npuModels = npuCatalog?.models ?? null;
   const online = useOnlineStatus();
   const hfToken = useHfTokenStore((s) => s.token);
-  const gpuInfo = useGpuInfo(open && !runtimeCatalog);
+  const gpuInfo = useGpuInfo(open);
   const quantFormats = gpuInfo.checkpointQuantFormats;
   const deviceType = usePlatformStore((s) => s.deviceType);
   const isMac = deviceType === "mac";
@@ -1684,10 +1688,10 @@ export function ComposerModelPicker({
     keepUnsupportedTags: true,
     hideEmptyUploads: true,
     accessToken: hfApiToken(hfToken),
-    enabled: open && online && onRecommended && !runtimeCatalog,
+    enabled: open && online && onRecommended,
   });
   const hubResults = hubSearch.results;
-  const inferenceGpu = useInferenceGpuInfo(open && !runtimeCatalog);
+  const inferenceGpu = useInferenceGpuInfo(open);
   const budgetFraction = useVramBudgetFraction() ?? undefined;
   const keepModelsLoaded = useChatRuntimeStore((s) => s.keepModelsLoaded);
   const expandQuantizations = useChatRuntimeStore((s) => s.expandQuantizations);
@@ -1877,10 +1881,11 @@ export function ComposerModelPicker({
       ),
     [hubResults],
   );
-  const loraModels = source?.loraModels;
-  const externalModels = useMemo(() => runtimeModels
-    ? runtimeModels.filter((model) => model.location === "connected")
-    : source?.externalModels, [runtimeModels, source?.externalModels]);
+  const loraModels = useMemo(
+    () => nativeOwned ? chatLocalModelOptions(inventory.localModels) : source?.loraModels,
+    [nativeOwned, inventory.localModels, source?.loraModels],
+  );
+  const externalModels = source?.externalModels;
 
   // The inventory often reports an audio GGUF as text-generation; the audio catalog's task wins.
   const mediaTaskById = useMemo(() => {
@@ -1920,7 +1925,6 @@ export function ComposerModelPicker({
   const listsAudio = !pane;
 
   const rows = useMemo<Row[]>(() => {
-    if (runtimeModels) return runtimeModelRows(runtimeModels);
     const device: Row[] = [];
     const isAudio = (id: string, task: string | null | undefined) =>
       listsAudio &&
@@ -2106,6 +2110,8 @@ export function ComposerModelPicker({
         hub: m,
       }));
     const external: Row[] = (externalModels ?? []).map((m) => ({
+      identity: m.identity,
+      searchText: m.searchText,
       key: m.id,
       id: m.id,
       label: m.name,
@@ -2128,7 +2134,6 @@ export function ComposerModelPicker({
       }));
     return [...marked, ...npuOffers, ...hub, ...external];
   }, [
-    runtimeModels,
     inventory.cachedGguf,
     inventory.cachedModels,
     npuModels,
@@ -2429,8 +2434,8 @@ export function ComposerModelPicker({
       )
       .map(({ t }) => t);
     const available = [...pinned, ...movable];
-    return runtimeCatalog ? available.filter((item) => item.value !== RECOMMENDED_TAB && !item.value.startsWith(MAKER_PREFIX)) : available;
-  }, [externalModels, makerTabs, connectionsOn, tabOrder, runtimeOwned]);
+    return available;
+  }, [externalModels, makerTabs, connectionsOn, tabOrder]);
   const moveTab = (from: string, to: TabDrop) => {
     const order = tabs.filter((t) => t.movable).map((t) => t.value);
     const at = order.indexOf(from);
@@ -2475,7 +2480,7 @@ export function ComposerModelPicker({
           checkpoint,
           externalModels ?? [],
           source?.externalConnections ?? [],
-        )?.modelName ?? (runtimeCatalog ? pane?.placeholder : modelDisplayName(checkpoint)))
+        )?.modelName ?? (runtimeControls ? pane?.placeholder : modelDisplayName(checkpoint)))
       : null);
   const chosenMark: Parameters<typeof RowMark>[0]["row"] =
     shown ??
@@ -2489,7 +2494,7 @@ export function ComposerModelPicker({
     (externalModels?.length ?? 0) > 0 ||
     rows.some((row) => row.tab === DEVICE_TAB);
   const viewed =
-    (runtimeCatalog && (!tab || !tabs.some((item) => item.value === tab)) ? (chosen?.tab ?? DEVICE_TAB) : tab) ??
+    tab ??
     (hasModels
       ? ((lastTab && tabs.some((t) => t.value === lastTab) ? lastTab : null) ??
         (chosen?.tab === RECOMMENDED_TAB ? DEVICE_TAB : chosen?.tab) ??
@@ -2561,7 +2566,7 @@ export function ComposerModelPicker({
       return found;
     }
     const sorted = sortDeviceRows(
-      runtimeCatalog ? found : found.filter((row) => matchesFormat(row, formatFilter)),
+      found.filter((row) => matchesFormat(row, formatFilter)),
       deviceSort,
       lastLoaded,
       deviceSortDesc,
@@ -2571,7 +2576,6 @@ export function ComposerModelPicker({
       : sorted;
   }, [
     rows,
-    runtimeOwned,
     viewed,
     query,
     hubQuery,
@@ -2619,10 +2623,8 @@ export function ComposerModelPicker({
   const listSections = useMemo<ListSection[]>(() => {
     if (viewed === DEVICE_TAB) {
       const present = new Set(foundRows.map((row) => row.section));
-      if (!runtimeCatalog) {
-        present.add("fineTuned");
-        present.add("custom");
-      }
+      present.add("fineTuned");
+      present.add("custom");
       return orderBySection(
         [...present]
           .filter((section): section is ListSection => Boolean(section))
@@ -2636,7 +2638,7 @@ export function ComposerModelPicker({
       return npuShown ? ["npu", "recommended"] : [];
     }
     return [];
-  }, [foundRows, viewed, query, npuCatalog, runtimeOwned]);
+  }, [foundRows, viewed, query, npuCatalog]);
   const shownRows = useMemo(() => {
     const found = foundRows;
     if (listSections.length > 0) {
@@ -2672,7 +2674,7 @@ export function ComposerModelPicker({
     foundRows,
   ]);
   const customFolders = useCustomFolders({
-    enabled: open && viewed === DEVICE_TAB && !runtimeCatalog,
+    enabled: open && viewed === DEVICE_TAB,
     onFoldersChange: source?.onFoldersChange,
   });
   const favoriteDragOrder = (connected: boolean) =>
@@ -3151,12 +3153,7 @@ export function ComposerModelPicker({
   ]);
 
   const pick = async (row: Row) => {
-    if (!source || runtimeCatalog?.disabled) {
-      return;
-    }
-    if (runtimeCatalog) {
-      source.onPick(row.id, { source: "external", isLora: false });
-      setOpen(false);
+    if (!source || runtimeControls?.disabled) {
       return;
     }
     const seq = supersede();
@@ -3469,27 +3466,24 @@ export function ComposerModelPicker({
     quants && chosen && quants.key === chosen.key
       ? pickerOrderedGgufVariants(quants.list, null, quantBudget).ordered
       : [];
-  const quantMenuChoices = runtimeCatalog?.quantization
-    ? runtimeCatalog.quantization.choices.map((choice) => ({
-        key: choice.id, label: choice.label, bytes: null, update: false,
-        selected: choice.id === runtimeCatalog.quantization?.value,
-        pick: () => { setQuantsOpen(false); runtimeCatalog.quantization?.onChange(choice.id); },
-      }))
-    : quantChoices.map((variant) => ({
-        key: variant.quant, label: ggufVariantPickerLabel(variant), bytes: quantBytes(variant),
-        update: variant.update_available, selected: variant.quant.toLowerCase() === (activeVariant ?? "").toLowerCase(),
-        pick: () => pickQuant(variant),
-      }));
+  const quantMenuChoices = quantChoices.map((variant) => ({
+    key: variant.quant,
+    label: ggufVariantPickerLabel(variant),
+    bytes: quantBytes(variant),
+    update: variant.update_available,
+    selected: variant.quant.toLowerCase() === (activeVariant ?? "").toLowerCase(),
+    pick: () => pickQuant(variant),
+  }));
   const showQuantRow = quantMenuChoices.length > 1;
-  const effortLevels = runtimeCatalog
-    ? runtimeCatalog.reasoning.levels.map((value) => ({ value, label: effortLabel(value) }))
+  const effortLevels = runtimeControls
+    ? runtimeControls.reasoning.levels.map((value) => ({ value, label: effortLabel(value) }))
     : reasoning.levels;
-  const showEffort = runtimeCatalog ? effortLevels.length > 0 : !pane && reasoning.isEffort && reasoning.levels.length > 1;
+  const showEffort = runtimeControls ? effortLevels.length > 0 : !pane && reasoning.isEffort && reasoning.levels.length > 1;
   const showThinkingSwitch =
     !pane && reasoning.supportsReasoning && !showEffort;
   const showFastSwitch = !pane && reasoning.supportsFast && !showEffort;
-  const showPreserve = runtimeCatalog ? Boolean(runtimeCatalog.preserveThinking) : !pane && reasoning.supportsPreserve;
-  const reasoningChip = runtimeCatalog ? runtimeCatalog.reasoning.value || null : pane ? null : reasoning.chipLabel;
+  const showPreserve = runtimeControls ? Boolean(runtimeControls.preserveThinking) : !pane && reasoning.supportsPreserve;
+  const reasoningChip = runtimeControls ? runtimeControls.reasoning.value || null : pane ? null : reasoning.chipLabel;
   const hasFoot =
     showQuantRow ||
     showThinkingSwitch ||
@@ -3514,7 +3508,9 @@ export function ComposerModelPicker({
       run: () => void;
     }[];
   } => {
-    if (runtimeCatalog) return { title: "No models found", hint: "Refresh the model catalog or configure a provider for this project." };
+    if (runtimeControls && (viewed === CONNECTED_TAB || viewed.startsWith(EXT_PREFIX))) {
+      return { title: "No models found", hint: "Configure a provider for this project." };
+    }
     if (
       viewed === CONNECTED_TAB &&
       !query &&
@@ -3607,7 +3603,7 @@ export function ComposerModelPicker({
       : null;
   const chipDetail =
     [formatDetail, loadedDetail].filter(Boolean).join(" · ") || null;
-  const ejectsAll = !runtimeCatalog && loadedModels.length > 1;
+  const ejectsAll = !runtimeControls && loadedModels.length > 1;
 
   const settingsMeta = async (
     row: Row,
@@ -4236,7 +4232,7 @@ export function ComposerModelPicker({
                             },
                           ]
                         : []),
-                      {
+                      ...(!runtimeControls ? [{
                         key: "run-settings",
                         label: "Run settings",
                         icon: (
@@ -4247,7 +4243,7 @@ export function ComposerModelPicker({
                           />
                         ),
                         onSelect: () => openSettings(row),
-                      },
+                      }] : []),
                       ...(hubParts(row.id)
                         ? [
                             {
@@ -4266,22 +4262,22 @@ export function ComposerModelPicker({
                         : []),
                     ]}
                     del={deleteFor(row)}
-                    runSettings={savedTarget}
+                    runSettings={runtimeControls ? undefined : savedTarget}
                     buttonClassName={cn(ACTION_DOTS, actionClass)}
                     iconClassName="composer-row-dots"
                     contentClassName="composer-row-menu"
                   />
-                  <ModelLoadSettingsAction
+                  {!runtimeControls && <ModelLoadSettingsAction
                     ariaLabel={`Run settings for ${row.label}`}
                     tooltip="Load settings"
                     savedFor={savedTarget}
                     onConfigure={() => openSettings(row)}
                     className={cn(ACTION_ROUND, actionClass)}
                     iconClassName="composer-row-icon"
-                  />
+                  />}
                 </>
               ) : null}
-              {row.kind === "external" && !runtimeCatalog ? (
+              {row.kind === "external" && !runtimeControls ? (
                 <>
                   <ModelRowMenu
                     ariaLabel={`More options for ${row.label}`}
@@ -4466,20 +4462,20 @@ export function ComposerModelPicker({
             }
             update={updateFor(row, variant)}
             del={deleteQuantFor(row, variant)}
-            runSettings={quantConfigTarget}
+            runSettings={runtimeControls ? undefined : quantConfigTarget}
             buttonClassName={cn(ACTION_DOTS, reveal)}
             iconClassName="composer-row-dots"
             contentClassName="composer-row-menu"
           />
         ) : null}
-        <ModelLoadSettingsAction
+        {!runtimeControls && <ModelLoadSettingsAction
           ariaLabel={`Run settings for ${row.label} ${variant.quant}`}
           tooltip="Load settings"
           savedFor={quantConfigTarget}
           onConfigure={() => openConfig(quantConfigTarget)}
           className={cn(button, reveal)}
           iconClassName="composer-row-icon"
-        />
+        />}
         {onDisk ? (
           <Hint label={starred ? "Remove favorite" : "Favorite"}>
             <button
@@ -4745,9 +4741,7 @@ export function ComposerModelPicker({
   };
 
   // Until the device inventory or the Hub answers, an empty list is unknown, not "no models".
-  const listLoading = runtimeCatalog
-    ? pane?.loading === true
-    : viewed === RECOMMENDED_TAB
+  const listLoading = viewed === RECOMMENDED_TAB
       ? online && (hubSearch.isLoading || query.trim() !== hubQuery)
       : !(
           viewed.startsWith(EXT_PREFIX) ||
@@ -4863,7 +4857,7 @@ export function ComposerModelPicker({
             divider={out.length > 0}
             collapsed={collapsedSections.has(sectionKey(row.tab))}
             onToggle={() => toggleSection(row.tab)}
-            trailing={!runtimeCatalog && (
+            trailing={!runtimeControls && (
               <Hint label="Connection settings">
                 <button
                   type="button"
@@ -4998,7 +4992,7 @@ export function ComposerModelPicker({
             <PopoverTrigger asChild={true}>
               <button
                 ref={triggerRef}
-                disabled={runtimeCatalog?.disabled}
+                disabled={runtimeControls?.disabled}
                 type="button"
                 className={cn(
                   "unsloth-thinking-pill composer-model-chip group/chip",
@@ -5073,7 +5067,7 @@ export function ComposerModelPicker({
         <PopoverTrigger asChild={true}>
           <button
             ref={triggerRef}
-            disabled={runtimeCatalog?.disabled}
+            disabled={runtimeControls?.disabled}
             type="button"
             className={cn(
               "unsloth-thinking-pill composer-model-chip group/chip",
@@ -5334,7 +5328,7 @@ export function ComposerModelPicker({
                 onCommit={setQuery}
                 onNavKey={onSearchNavKey}
                 placeholder={
-                  runtimeCatalog ? "Search models" : viewed === RECOMMENDED_TAB
+                  viewed === RECOMMENDED_TAB
                     ? "Search models to download"
                     : viewed === FAVORITES_TAB
                       ? "Search favorited models"
@@ -5354,7 +5348,7 @@ export function ComposerModelPicker({
                 data-model-picker-search-input=""
                 className="min-w-0 flex-1 bg-transparent text-ui-14 outline-none placeholder:text-muted-foreground"
               />
-              {viewed === DEVICE_TAB && !runtimeCatalog ? (
+              {viewed === DEVICE_TAB ? (
                 <NonModalDropdownMenu
                   align="end"
                   className="composer-filter-menu w-auto min-w-[calc(140px*var(--ui-space-scale,1))]"
@@ -5435,7 +5429,7 @@ export function ComposerModelPicker({
                   {formatGroup}
                 </NonModalDropdownMenu>
               ) : null}
-              {source && !runtimeCatalog && viewed === CONNECTED_TAB ? (
+              {source && !runtimeControls && viewed === CONNECTED_TAB ? (
                 <Hint label="Connections">
                   <button
                     type="button"
@@ -5516,7 +5510,7 @@ export function ComposerModelPicker({
                   </Hint>
                 </NonModalDropdownMenu>
               ) : null}
-              {source && connectionId && !runtimeCatalog ? (
+              {source && connectionId && !runtimeControls ? (
                 <Hint label="Connection settings">
                   <button
                     type="button"
@@ -5536,7 +5530,7 @@ export function ComposerModelPicker({
                     />
                   </button>
                 </Hint>
-              ) : source && !runtimeCatalog &&
+              ) : source && !runtimeControls &&
                 viewed !== DEVICE_TAB &&
                 viewed !== RECOMMENDED_TAB &&
                 viewed !== CONNECTED_TAB ? (
@@ -5677,7 +5671,7 @@ export function ComposerModelPicker({
                     <button
                       key={variant.key}
                       type="button"
-                      disabled={runtimeCatalog?.disabled}
+                      disabled={runtimeControls?.disabled}
                       onClick={variant.pick}
                       className="flex h-[calc(28px*var(--ui-space-scale,1))] items-center gap-2 rounded-full px-3 text-left transition-colors hover:bg-sidebar-accent"
                     >
@@ -5727,9 +5721,9 @@ export function ComposerModelPicker({
             {showPreserve ? (
               <SwitchRow
                 label="Preserve thinking"
-                checked={runtimeCatalog?.preserveThinking?.value ?? reasoning.preserve}
-                disabled={runtimeCatalog?.disabled ?? reasoning.disabled}
-                onChange={runtimeCatalog?.preserveThinking?.onChange ?? reasoning.setPreserve}
+                checked={runtimeControls?.preserveThinking?.value ?? reasoning.preserve}
+                disabled={runtimeControls?.disabled ?? reasoning.disabled}
+                onChange={runtimeControls?.preserveThinking?.onChange ?? reasoning.setPreserve}
               />
             ) : null}
             {showFastSwitch ? (
@@ -5744,7 +5738,7 @@ export function ComposerModelPicker({
                 <EffortSlider
                   title="Effort"
                   accessory={
-                    !runtimeCatalog && reasoning.supportsFast ? (
+                    !runtimeControls && reasoning.supportsFast ? (
                       <Hint label="Fast mode">
                         <button
                           type="button"
@@ -5772,9 +5766,9 @@ export function ComposerModelPicker({
                     ) : undefined
                   }
                   levels={effortLevels}
-                  value={runtimeCatalog?.reasoning.value ?? reasoning.value}
-                  onChange={runtimeCatalog?.reasoning.onChange ?? reasoning.setValue}
-                  disabled={runtimeCatalog?.disabled ?? reasoning.disabled}
+                  value={runtimeControls?.reasoning.value ?? reasoning.value}
+                  onChange={runtimeControls?.reasoning.onChange ?? reasoning.setValue}
+                  disabled={runtimeControls?.disabled ?? reasoning.disabled}
                 />
               </div>
             ) : null}

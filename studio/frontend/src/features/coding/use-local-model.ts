@@ -16,7 +16,9 @@ export function useLocalModel(selectedId: string | null) {
   const [revision, setRevision] = useState(0);
   const selected = useRef(selectedId);
   selected.current = selectedId;
-  const preloader = useRef<ReturnType<typeof createModelPreloader> | null>(null);
+  const preloader = useRef<ReturnType<typeof createModelPreloader> | null>(
+    null,
+  );
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -38,10 +40,7 @@ export function useLocalModel(selectedId: string | null) {
     );
     const controller = new AbortController();
     const read = () => {
-      void codingLocalModels
-        .inventory(controller.signal)
-        .then(setModels)
-        .catch(() => {});
+      void refresh(controller.signal).catch(() => {});
     };
     read();
     const unsubscribe = subscribeInventory(read);
@@ -96,6 +95,12 @@ export function useLocalModel(selectedId: string | null) {
     };
   }, [selectedId, revision]);
 
+  async function refresh(signal: AbortSignal) {
+    const inventory = await codingLocalModels.inventory(signal);
+    if (mounted.current && !signal.aborted) setModels(inventory);
+    return inventory;
+  }
+
   function preload(id: string) {
     preloader.current?.select(id);
   }
@@ -120,5 +125,5 @@ export function useLocalModel(selectedId: string | null) {
     }
   }
 
-  return { models, residency, preload, unload };
+  return { models, residency, refresh, preload, unload };
 }

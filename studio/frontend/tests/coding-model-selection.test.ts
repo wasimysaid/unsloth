@@ -1,16 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
-import {
-  runtimeModelRows,
-  DEVICE_TAB,
-  CONNECTED_TAB,
-  filterRows,
-} from "../src/components/assistant-ui/composer-model-picker/picker-model.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
   codingSelectionCatalog,
   findCodingModel,
+  findLocalPickerChoice,
   modelIdentity,
 } from "../src/features/coding/model-selection.ts";
 import type { CodingProviderChoice } from "../src/features/coding/model-selection.ts";
@@ -93,46 +88,15 @@ test("native case-distinct identities remain separate in shared selection and fa
   );
 });
 
-test("native local models use On Device and retain exact selection identity", () => {
-  const catalog = codingSelectionCatalog([
-    {
-      id: "studio-local",
-      name: "Studio local",
-      models: [
-        {
-          id: "local-hash",
-          name: "Qwen Q4",
-          api_model: "repo:Q4",
-          reasoning: "unsupported",
-          default_reasoning: null,
-        },
-      ],
-    },
-    {
-      id: "cloud",
-      name: "Cloud",
-      models: [
-        {
-          id: "same",
-          name: "Cloud model",
-          api_model: "remote",
-          reasoning: "unsupported",
-          default_reasoning: null,
-        },
-      ],
-    },
-  ]);
-  const rows = runtimeModelRows([...catalog.values()]);
-  assert.equal(rows[0].tab, DEVICE_TAB);
-  assert.equal(rows[0].section, "modelsDir");
-  assert.equal(rows[0].kind, "external");
-  assert.equal(rows[0].id, modelIdentity("studio-local", "local-hash"));
-  assert.deepEqual(
-    filterRows(rows, DEVICE_TAB, "", () => false).map((row) => row.label),
-    ["Qwen Q4"],
-  );
-  assert.deepEqual(
-    filterRows(rows, CONNECTED_TAB, "", () => false).map((row) => row.label),
-    ["Cloud model"],
-  );
+test("Studio picker identities map by exact load target and quant, never labels", () => {
+  const inventory = [
+    { id: "native-q4", group: "org/model@revision", quant: "Q4" },
+    { id: "native-q8", group: "org/model@revision", quant: "Q8" },
+    { id: "native-file", group: "/models/same.gguf", quant: null },
+  ];
+  assert.equal(findLocalPickerChoice(inventory, "org/model", { loadId: "org/model@revision", ggufVariant: "Q8" })?.id, "native-q8");
+  assert.equal(findLocalPickerChoice(inventory, "org/model", { ggufVariant: "Q8" }), undefined);
+  assert.equal(findLocalPickerChoice(inventory, "org/model@revision", {}), undefined);
+  assert.equal(findLocalPickerChoice(inventory, "/models/same.gguf", {})?.id, "native-file");
+  assert.equal(findLocalPickerChoice(inventory, "/models/SAME.gguf", {}), undefined);
 });

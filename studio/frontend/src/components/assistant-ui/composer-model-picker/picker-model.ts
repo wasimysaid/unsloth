@@ -113,33 +113,6 @@ export interface PickerRow {
   updatedAt?: number;
 }
 
-export interface RuntimeModelChoice {
-  id: string;
-  name: string;
-  providerId: string;
-  providerName: string;
-  providerType: string;
-  location: "device" | "connected";
-  searchText?: string;
-}
-
-export function runtimeModelRows(models: readonly RuntimeModelChoice[]): PickerRow[] {
-  return models.map((model) => ({
-    identity: "opaque",
-    searchText: model.searchText,
-    key: model.id,
-    id: model.id,
-    label: model.name,
-    tab: model.location === "device" ? DEVICE_TAB : `ext:${model.providerId}`,
-    groups: model.location === "connected" ? [CONNECTED_TAB] : [],
-    section: model.location === "device" ? "modelsDir" : undefined,
-    onDevice: model.location === "device",
-    kind: "external",
-    providerType: model.providerType,
-    providerName: model.providerName,
-  }));
-}
-
 export type DeviceSort = "recent" | "size" | "name";
 export const DEVICE_SORT_LABEL: Record<DeviceSort, string> = {
   recent: "Recent",

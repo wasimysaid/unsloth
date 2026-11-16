@@ -30,6 +30,8 @@ export interface LoraModelOption extends ModelOption {
 }
 
 export interface ExternalModelOption extends ModelOption {
+  identity?: "opaque";
+  searchText?: string;
   providerId: string;
   providerName: string;
   providerType: string;

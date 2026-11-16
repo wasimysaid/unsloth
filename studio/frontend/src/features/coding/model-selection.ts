@@ -58,7 +58,7 @@ export function codingSelectionCatalog(catalog: CodingProviderChoice[]) {
               name: model.name,
               description: provider.name,
               searchText: `${provider.id} ${model.id} ${model.api_model}`,
-              location: provider.id === "studio-local" ? "device" : "connected",
+              identity: "opaque",
               providerId: provider.id,
               providerName: provider.name,
               providerType: provider.id,
@@ -68,5 +68,19 @@ export function codingSelectionCatalog(catalog: CodingProviderChoice[]) {
           ] as const,
       ),
     ),
+  );
+}
+
+export function findLocalPickerChoice<
+  T extends { id: string; group: string; quant: string | null },
+>(
+  inventory: readonly T[],
+  id: string,
+  selection: { loadId?: string | null; ggufVariant?: string },
+): T | undefined {
+  const loadId = selection.loadId ?? id;
+  const quant = selection.ggufVariant ?? null;
+  return inventory.find(
+    (model) => model.group === loadId && model.quant === quant,
   );
 }

@@ -77,17 +77,26 @@ export function useRepoDownload(config: RepoDownloadConfig): DownloadJob {
     includeScopedJobs = false,
   } = config;
 
-  const handlersRef = useLatestRef<JobListeners>({
+  const handlersRef = useLatestRef({
+    kind,
+    repoId,
     onComplete,
     onCancelled,
     onError,
   });
   useEffect(() => {
+    // A new render can change the repo before the old subscription's cleanup runs.
+    const handlers = (): JobListeners | undefined => {
+      const current = handlersRef.current;
+      return current.kind === kind && current.repoId === repoId
+        ? current
+        : undefined;
+    };
     return subscribeJobListeners(kind, repoId, {
       onComplete: (variant, bytes) =>
-        handlersRef.current.onComplete?.(variant, bytes),
-      onCancelled: (variant) => handlersRef.current.onCancelled?.(variant),
-      onError: (variant) => handlersRef.current.onError?.(variant),
+        handlers()?.onComplete?.(variant, bytes),
+      onCancelled: (variant) => handlers()?.onCancelled?.(variant),
+      onError: (variant) => handlers()?.onError?.(variant),
     });
   }, [handlersRef, kind, repoId]);
 

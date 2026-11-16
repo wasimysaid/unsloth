@@ -12,16 +12,9 @@ import type {
   PerModelConfig,
 } from "@/features/model-picker";
 import { createContext, useContext } from "react";
-import type { RuntimeModelChoice } from "./picker-model";
 
-export interface ComposerRuntimeCatalog {
-  models: readonly RuntimeModelChoice[];
+export interface ComposerRuntimeControls {
   disabled: boolean;
-  quantization?: {
-    value: string;
-    choices: readonly { id: string; label: string }[];
-    onChange: (id: string) => void;
-  };
   preserveThinking?: {
     value: boolean;
     onChange: (value: boolean) => void;
@@ -34,8 +27,8 @@ export interface ComposerRuntimeCatalog {
 }
 
 export interface ComposerModelPickerSource {
-  /** A host-owned catalog uses exact model identities and owns all configuration. */
-  runtimeCatalog?: ComposerRuntimeCatalog;
+  /** The host owns connected providers and per-session configuration. */
+  runtimeControls?: ComposerRuntimeControls;
   models: readonly ModelOption[];
   loraModels: readonly LoraModelOption[];
   externalModels: readonly ExternalModelOption[];

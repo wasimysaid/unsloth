@@ -13,10 +13,21 @@ import {
 } from "@/features/hub/stores/inventory-events";
 import { Button } from "@/components/ui/button";
 import { RefreshCw } from "lucide-react";
+import { listModels } from "@/features/chat/api/chat-api";
+import { wantsDownloadManagerStaging } from "@/features/chat/utils/model-download-staging";
+import {
+  type PendingModelDownload,
+  useLoadAfterDownload,
+} from "@/features/model-picker/use-load-after-download";
+import type {
+  ModelOption,
+  ModelSelectorChangeMeta,
+} from "@/features/model-picker";
 import { useLocalModel } from "./use-local-model";
 import {
   codingSelectionCatalog,
   findCodingModel,
+  findLocalPickerChoice,
   modelIdentity,
 } from "./model-selection";
 import type {
@@ -49,6 +60,13 @@ export function CodingModelSelector({
   configure: (change: CodingConfigurationChange) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const [discoverModels, setDiscoverModels] = useState<ModelOption[]>([]);
+  const [pendingDownload, setPendingDownload] =
+    useState<PendingModelDownload | null>(null);
+  const intent = useRef(0);
+  const currentConfiguration = useRef(configuration);
+  currentConfiguration.current = configuration;
+  const lifetime = useRef<AbortController | null>(null);
   const requestCatalog = useRef<(refresh: boolean) => void>(() => {});
   const [result, setResult] = useState<{
     catalog: CodingProviderChoice[];
@@ -61,6 +79,20 @@ export function CodingModelSelector({
   const read = useEffectEvent(readCatalog);
   useEffect(() => {
     const controller = new AbortController();
+    lifetime.current = controller;
+    void listModels(controller.signal)
+      .then((response) => {
+        if (!controller.signal.aborted) {
+          setDiscoverModels(
+            response.models.map((model) => ({
+              id: model.id,
+              name: model.name || model.id,
+              isGguf: model.is_gguf,
+            })),
+          );
+        }
+      })
+      .catch(() => {});
     let pending: boolean | null = null;
     let running = false;
     async function drain() {
@@ -111,18 +143,27 @@ export function CodingModelSelector({
     [result.catalog],
   );
   const models = useMemo(
-    () => [...selectionCatalog.values()],
+    () =>
+      [...selectionCatalog.values()].filter(
+        (choice) => choice.provider !== "studio-local",
+      ),
     [selectionCatalog],
   );
   const selected = findCodingModel(result.catalog, configuration);
-  const local = useLocalModel(configuration?.provider === "studio-local" ? configuration.model : null);
-  const localChoice = local.models.find((model) => model.id === configuration?.model);
-  const quants = localChoice ? local.models.filter((model) => model.group === localChoice.group && model.quant) : [];
+  const local = useLocalModel(
+    configuration?.provider === "studio-local" ? configuration.model : null,
+  );
+  const localChoice =
+    configuration?.provider === "studio-local"
+      ? local.models.find((model) => model.id === configuration.model)
+      : undefined;
   const preserveDefault = selected?.model.preserve_thinking;
   const identity =
-    configuration?.provider && configuration.model
-      ? modelIdentity(configuration.provider, configuration.model)
-      : undefined;
+    configuration?.provider === "studio-local"
+      ? localChoice?.group
+      : configuration?.provider && configuration.model
+        ? modelIdentity(configuration.provider, configuration.model)
+        : undefined;
   const levels =
     selected && selected.model.reasoning !== "unsupported"
       ? selected.model.reasoning.levels
@@ -139,7 +180,8 @@ export function CodingModelSelector({
     setError(null);
     try {
       await configure(change);
-      if (change.provider === "studio-local" && change.model) void local.preload(change.model);
+      if (change.provider === "studio-local" && change.model)
+        local.preload(change.model);
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -150,6 +192,105 @@ export function CodingModelSelector({
       setApplying(false);
     }
   }
+
+  async function pickLocal(
+    id: string,
+    meta: ModelSelectorChangeMeta,
+    generation: number,
+  ) {
+    const signal = lifetime.current?.signal;
+    const origin = currentConfiguration.current;
+    const isCurrent = () =>
+      generation === intent.current &&
+      currentConfiguration.current?.provider === origin?.provider &&
+      currentConfiguration.current?.model === origin?.model;
+    if (!signal || signal.aborted || !isCurrent()) return;
+    setError(null);
+    try {
+      let choice = findLocalPickerChoice(local.models, id, meta);
+      let catalog = result.catalog;
+      if (
+        !choice ||
+        !findCodingModel(catalog, {
+          provider: "studio-local",
+          model: choice.id,
+        })
+      ) {
+        const inventory = await local.refresh(signal);
+        choice = findLocalPickerChoice(inventory, id, meta);
+        catalog = await read(true, signal);
+        if (signal.aborted || !isCurrent()) return;
+        setResult({ catalog, ready: true, loading: false, error: null });
+      }
+      if (!choice)
+        throw new Error(
+          "This model is not yet available in the local inventory. Refresh models once its download finishes.",
+        );
+      if (signal.aborted || !isCurrent()) return;
+      if (
+        !findCodingModel(catalog, {
+          provider: "studio-local",
+          model: choice.id,
+        })
+      ) {
+        throw new Error(
+          "This model is not available to Coding in this project.",
+        );
+      }
+      await apply({ provider: "studio-local", model: choice.id });
+    } catch (reason) {
+      if (!signal.aborted && isCurrent()) {
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "The model selection failed.",
+        );
+      }
+    }
+  }
+
+  function pick(id: string, meta: ModelSelectorChangeMeta) {
+    if (blocked) return;
+    const generation = ++intent.current;
+    setPendingDownload(null);
+    setError(null);
+    if (meta.source === "external") {
+      const choice = selectionCatalog.get(id);
+      if (choice)
+        void apply({ provider: choice.provider, model: choice.model });
+    } else if (wantsDownloadManagerStaging({ id, ...meta })) {
+      const origin = currentConfiguration.current;
+      setPendingDownload({
+        id,
+        meta,
+        originModel: String(generation),
+        isCurrent: () =>
+          generation === intent.current &&
+          currentConfiguration.current?.provider === origin?.provider &&
+          currentConfiguration.current?.model === origin?.model,
+      });
+    } else {
+      void pickLocal(id, meta, generation);
+    }
+  }
+
+  useLoadAfterDownload(
+    pendingDownload,
+    setPendingDownload,
+    String(intent.current),
+    (id, meta) => {
+      if (pendingDownload?.isCurrent?.() !== true) return;
+      void pickLocal(id, meta, Number(pendingDownload.originModel));
+    },
+    setError,
+  );
+
+  function unload(id?: string) {
+    if (!localChoice || (id !== undefined && id !== localChoice.group)) return;
+    ++intent.current;
+    setPendingDownload(null);
+    void local.unload();
+  }
   const notice =
     error ??
     (local.residency.state === "failed" ? local.residency.message : null) ??
@@ -158,17 +299,13 @@ export function CodingModelSelector({
       ? "The selected model is unavailable. Choose another model."
       : null);
   const source: ComposerModelPickerSource = {
-    models: [],
+    models: discoverModels,
     loraModels: [],
-    externalModels: [],
+    externalModels: models,
     externalConnections: [],
-    onPick: (id) => {
-      const choice = selectionCatalog.get(id);
-      if (choice)
-        void apply({ provider: choice.provider, model: choice.model });
-    },
-    eject: () => { void local.unload(); },
-    ejectAll: () => { void local.unload(); },
+    onPick: pick,
+    eject: unload,
+    ejectAll: unload,
     open: open && !disabled,
     onOpenChange: (next) => {
       setOpen(next && !blocked);
@@ -176,33 +313,42 @@ export function CodingModelSelector({
     },
     configRequest: null,
     onConfigRequestAdopted: () => undefined,
-    onFoldersChange: () => undefined,
-    onModelsChange: () => undefined,
+    onFoldersChange: () => requestCatalog.current(true),
+    onModelsChange: () => requestCatalog.current(true),
     deleteDisabled: true,
     activeModelConfig: null,
     loadedContextLength: null,
-    loaded: false,
+    loaded:
+      configuration?.provider === "studio-local" &&
+      Boolean(localChoice) &&
+      local.residency.state === "loaded",
     selection: {
       id: identity ?? "",
       ggufVariant: localChoice?.quant ?? null,
-      loaded: local.residency.state === "loaded",
-      placeholder: "Select model",
-      loading: (loading && !result.ready) || local.residency.state === "loading" ||
-        (local.residency.state !== "loaded" && preparing?.provider === "studio-local" &&
-          preparing.provider === configuration?.provider && preparing.model === configuration?.model),
+      loaded:
+        configuration?.provider === "studio-local" &&
+        Boolean(localChoice) &&
+        local.residency.state === "loaded",
+      placeholder: selected?.model.name ?? "Select model",
+      loading:
+        (loading && !result.ready) ||
+        local.residency.state === "loading" ||
+        (local.residency.state !== "loaded" &&
+          preparing?.provider === "studio-local" &&
+          preparing.provider === configuration?.provider &&
+          preparing.model === configuration?.model),
     },
-    runtimeCatalog: {
-      models,
+    runtimeControls: {
       disabled: blocked,
-      quantization: quants.length > 1 && configuration?.model ? {
-        value: configuration.model,
-        choices: quants.map((model) => ({ id: model.id, label: model.quant ?? model.name })),
-        onChange: (model) => { void apply({ provider: "studio-local", model }); },
-      } : undefined,
-      preserveThinking: preserveDefault != null ? {
-        value: configuration?.preserve_thinking ?? preserveDefault,
-        onChange: (preserve_thinking) => { void apply({ preserve_thinking }); },
-      } : undefined,
+      preserveThinking:
+        preserveDefault != null
+          ? {
+              value: configuration?.preserve_thinking ?? preserveDefault,
+              onChange: (preserve_thinking) => {
+                void apply({ preserve_thinking });
+              },
+            }
+          : undefined,
       reasoning: {
         levels,
         value:

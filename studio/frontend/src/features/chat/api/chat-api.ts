@@ -260,8 +260,8 @@ export function notifyChatProjectsUpdated(): void {
 }
 
 
-export async function listModels(): Promise<ListModelsResponse> {
-  const response = await authFetch("/api/models/list");
+export async function listModels(signal?: AbortSignal): Promise<ListModelsResponse> {
+  const response = await authFetch("/api/models/list", { signal });
   return parseJsonOrThrow<ListModelsResponse>(response);
 }
 

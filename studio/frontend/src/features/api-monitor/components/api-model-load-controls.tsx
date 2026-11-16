@@ -1,3 +1,4 @@
+import { type PendingModelDownload, useLoadAfterDownload } from "@/features/model-picker/use-load-after-download";
 import {
   type ComposerModelPickerSource,
   ComposerModelPickerContext,
@@ -11,11 +12,8 @@ import {
   wantsDownloadManagerStaging,
 } from "@/features/chat";
 import {
-  DOWNLOAD_KIND,
-  downloadManager,
   publicModelId,
   useDeviceInventorySources,
-  useRepoDownload,
 } from "@/features/hub";
 import {
   type LoraModelOption,
@@ -28,9 +26,7 @@ import {
 } from "@/features/model-picker";
 import { isNpuModelId } from "@/features/npu";
 import {
-  type Dispatch,
   type ReactElement,
-  type SetStateAction,
   useCallback,
   useEffect,
   useMemo,
@@ -45,34 +41,6 @@ function loadErrorMessage(err: unknown, fallback: string): string | null {
     return null;
   }
   return err instanceof Error ? err.message : fallback;
-}
-
-// An uncached Hub pick downloads first, so the resident model keeps serving the API meanwhile.
-async function startStagedDownload(
-  id: string,
-  meta: ModelSelectorChangeMeta | undefined,
-): Promise<string | null> {
-  const outcome = await downloadManager.requestStart({
-    kind: DOWNLOAD_KIND.MODEL,
-    repoId: id,
-    variant: meta?.ggufVariant ?? null,
-    expectedBytes: meta?.expectedBytes ?? 0,
-    presentation: meta?.downloadPresentation,
-    callerToast: {
-      title: "Downloading model",
-      description: "It'll load once the download finishes.",
-    },
-  });
-  if (outcome === "conflict") {
-    return "Resume this download from the Model hub.";
-  }
-  if (outcome === "busy") {
-    return "A download for this model is already in progress.";
-  }
-  if (outcome === "error") {
-    return "Failed to start the download.";
-  }
-  return null;
 }
 
 type SelectModelInput = Parameters<
@@ -110,56 +78,6 @@ function localSelection(
     previousConfig: currentRuntimePerModelConfig({ includeMaxSeqLength: true }),
     throwOnError: true,
   };
-}
-
-type PendingDownload = {
-  id: string;
-  meta: ModelSelectorChangeMeta;
-  originModel: string | null;
-};
-
-// Starts a staged pick's managed download and loads it on completion, as Chat does. The listener
-// is bound before the start, and a newer pick cancels this one's start result.
-function useLoadAfterDownload(
-  pending: PendingDownload | null,
-  setPending: Dispatch<SetStateAction<PendingDownload | null>>,
-  activeModel: string | null,
-  load: (id: string, meta: ModelSelectorChangeMeta) => void,
-  onStartError: (message: string) => void,
-): void {
-  const settle = (variant: string | null, loadIt: boolean) => {
-    if (!pending || (pending.meta.ggufVariant ?? null) !== (variant ?? null)) {
-      return;
-    }
-    setPending(null);
-    // An unload, reload or API switch since the pick means the user moved on.
-    if (loadIt && pending.originModel === activeModel) {
-      load(pending.id, { ...pending.meta, isDownloaded: true });
-    }
-  };
-  useRepoDownload({
-    kind: DOWNLOAD_KIND.MODEL,
-    repoId: pending?.id ?? "__hub_autoload_idle__",
-    activeVariant: pending?.meta.ggufVariant ?? null,
-    onComplete: (variant) => settle(variant, true),
-    onError: (variant) => settle(variant, false),
-    onCancelled: (variant) => settle(variant, false),
-  });
-  useEffect(() => {
-    if (!pending) {
-      return;
-    }
-    let active = true;
-    startStagedDownload(pending.id, pending.meta).then((error) => {
-      if (active && error) {
-        onStartError(error);
-        setPending(null);
-      }
-    });
-    return () => {
-      active = false;
-    };
-  }, [pending, setPending, onStartError]);
 }
 
 const NO_EXTERNAL_MODELS: ComposerModelPickerSource["externalModels"] = [];
@@ -218,8 +136,8 @@ export function ApiModelLoadControls({
 
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [pendingDownload, setPendingDownload] =
-    useState<PendingDownload | null>(null);
+  const [pendingDownload, setPendingModelDownload] =
+    useState<PendingModelDownload | null>(null);
   useEffect(() => {
     refresh();
     refreshLocalModels();
@@ -275,7 +193,7 @@ export function ApiModelLoadControls({
       setSelectorOpen(false);
       if (meta && wantsDownloadManagerStaging({ id: value, ...meta })) {
         // A repeat pick of the download already pending keeps it rather than starting another.
-        setPendingDownload((current) =>
+        setPendingModelDownload((current) =>
           current?.id === value &&
           (current.meta.ggufVariant ?? null) === (meta.ggufVariant ?? null)
             ? current
@@ -283,7 +201,7 @@ export function ApiModelLoadControls({
         );
         return;
       }
-      setPendingDownload(null);
+      setPendingModelDownload(null);
       if (meta?.source === "external" || isExternalModelId(value)) {
         setActionError("External provider models are not served by the API.");
         onSettled();
@@ -318,7 +236,7 @@ export function ApiModelLoadControls({
 
   useLoadAfterDownload(
     pendingDownload,
-    setPendingDownload,
+    setPendingModelDownload,
     activeModel ?? null,
     (id, meta) => {
       handlePick(id, meta);
@@ -328,7 +246,7 @@ export function ApiModelLoadControls({
 
   const handleEject = useCallback(
     (modelId?: string) => {
-      setPendingDownload(null);
+      setPendingModelDownload(null);
       if (modelId) {
         ejectModel(modelId).then(() => onSettled());
       } else {

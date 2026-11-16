@@ -742,7 +742,19 @@ after Send opens a conversation. A load failure remains visible until retry or a
 successful observed load. Explicit unload retains whole-request protection.
 Preserve thinking uses the native model default until explicitly set; it is
 request configuration, not a change to shared GPU model launch settings.
-Chat connection settings and Hub downloads remain outside this catalog. The previous Coding picker and its separate favorite store are removed.
+Coding uses the same Studio inventory, Discover search, managed downloads, maker
+icons, quant listings and local favorites as Chat. Its adapter maps the exact
+repo or path plus quant to the native inventory identity. A downloaded selection
+uses the cached native catalog immediately; a newly downloaded model refreshes
+the native catalog before configuration. A later pick, unload, native model
+change or unmount prevents an earlier download completion from selecting a model.
+The API page and Coding share the download completion hook.
+
+Native connected providers retain opaque identities and native configuration.
+Their settings are not Chat connection settings. One-time Run settings launch is
+not offered in Coding; saved Studio model overrides still apply at load. Coding's
+residency projection comes from its own model state without changing Chat's
+selected model. The previous Coding picker and its separate favorite store are removed.
 Existing browser favorites remain stored but are not imported into shared pins. Model-switch patches omit reasoning so Mimir chooses the new default.
 Uncertain configuration delivery is not replayed: a view opened before that
 operation's outcome cannot clear its uncertainty. A later reconstruction is

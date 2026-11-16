@@ -34,7 +34,9 @@ function baseModelLabel(source: LocalModelInfo["source"]): string {
 
 /** One option per `id`: GGUF and safetensors in one dir would otherwise collide on React keys. */
 export function chatLocalModelOptions(
-  rows: readonly LocalModelInfo[],
+  rows: readonly (Pick<LocalModelInfo,
+    "id" | "source" | "task" | "path" | "display_name" | "updated_at" | "audio_type"
+  > & { model_format?: string | null })[],
 ): LoraModelOption[] {
   const options: LoraModelOption[] = [];
   const seen = new Set<string>();

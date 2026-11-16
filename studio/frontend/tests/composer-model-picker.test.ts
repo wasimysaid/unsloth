@@ -841,7 +841,7 @@ test("Compare panes pick through the composer picker, with no reasoning or eject
   );
   assert.match(
     picker,
-    /const reasoningChip = runtimeCatalog \? runtimeCatalog\.reasoning\.value \|\| null : pane \? null : reasoning\.chipLabel;/,
+    /const reasoningChip = runtimeControls \? runtimeControls\.reasoning\.value \|\| null : pane \? null : reasoning\.chipLabel;/,
   );
   assert.match(picker, /const chosenLoaded = pane\s*\? pane\.loaded === true/);
   // Reopened Run settings start from the pane's own config, not the saved one.
@@ -1032,7 +1032,7 @@ test("an audio pick opens the Audio page instead of loading into Chat", () => {
   // Every pick passes the router before it reaches the page's handler.
   assert.match(
     picker,
-    /if \(rawSource\.runtimeCatalog \|\| !routeMediaPick\.current\(id, meta\)\) \{\s+rawSource\.onPick\(id, meta\);/,
+    /if \(rawSource\.runtimeControls \|\| !routeMediaPick\.current\(id, meta\)\) \{\s+rawSource\.onPick\(id, meta\);/,
   );
   assert.match(
     picker,
