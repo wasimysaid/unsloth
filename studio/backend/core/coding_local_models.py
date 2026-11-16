@@ -18,7 +18,7 @@ from core.coding_runtime import CodingRuntimeError
 
 PROVIDER_ID = "studio-local"
 PROVIDER_NAME = "Studio local"
-_NO_REASONING = (False, False, ())
+_NO_REASONING = (False, False, (), None)
 
 
 def reasoning_controls(path: str | None, model_id: str) -> dict:
@@ -26,28 +26,30 @@ def reasoning_controls(path: str | None, model_id: str) -> dict:
     try:
         stamp = os.stat(path).st_mtime_ns
     except (OSError, TypeError, ValueError):
-        thinking, toggle, levels = _NO_REASONING
+        thinking, toggle, levels, preserve = _NO_REASONING
     else:
-        thinking, toggle, levels = _template_reasoning(path, stamp, model_id)
-    return {"thinking": thinking, "toggle": toggle, "levels": list(levels)}
+        thinking, toggle, levels, preserve = _template_reasoning(path, stamp, model_id)
+    return {"thinking": thinking, "toggle": toggle, "levels": list(levels), "preserve": preserve}
 
 
 @functools.lru_cache(maxsize = 256)
-def _template_reasoning(path: str, _stamp: int, model_id: str) -> tuple[bool, bool, tuple[str, ...]]:
+def _template_reasoning(path: str, _stamp: int, model_id: str) -> tuple[bool, bool, tuple[str, ...], bool | None]:
     from core.inference.llama_cpp import detect_reasoning_flags
     from utils.models.gguf_metadata import read_gguf_chat_template
 
     flags = detect_reasoning_flags(read_gguf_chat_template(path), model_id, log_level = "debug")
+    preserve = bool(flags.get("preserve_thinking_default")) if flags.get("supports_preserve_thinking") else None
     if not flags["supports_reasoning"]:
         return _NO_REASONING
     if flags["reasoning_always_on"]:
-        return True, False, ()
+        return True, False, (), preserve
     levels = tuple(flags.get("reasoning_effort_levels") or ())
     style = flags["reasoning_style"]
     if style == "reasoning_effort":
         # Same levels Studio's request mapping accepts when the template lists none.
-        return True, False, levels or ("low", "medium", "high")
-    return True, True, levels if style == "enable_thinking_effort" else ()
+        return True, False, levels or ("low", "medium", "high"), preserve
+    return True, True, levels if style == "enable_thinking_effort" else (), preserve
+
 
 
 def local_choice(row) -> dict:
@@ -128,6 +130,47 @@ async def resolve_local_choice(identifier: str):
     raise CodingRuntimeError("unavailable", "This model is no longer downloaded. Pick another model.")
 
 
+async def model_inventory() -> list[dict]:
+    return [{"id": local_choice(row)["id"], "group": row.load_id or row.id,
+             "quant": getattr(row, "format_variant", None), "name": row.display_name}
+            for row in await downloaded_rows()]
+
+
+async def local_load_request(identifier: str, load_request_id: str | None = None, *, row = None):
+    from models.inference import LoadRequest
+    from utils.openai_auto_switch_settings import model_override_load_kwargs, resolve_override_for_load
+
+    row = row if row is not None else await resolve_local_choice(identifier)
+    load_id = row.load_id or row.id
+    variant = row.format_variant if not load_id.lower().endswith(".gguf") else None
+    _key, override = await asyncio.to_thread(resolve_override_for_load, load_id, row.id, variant)
+    launch = model_override_load_kwargs(override, is_gguf = row.model_format == "gguf")
+    launch.update(model_path = load_id, gguf_variant = variant, force_reload = False,
+                  force_cancel_active = False, alongside = False, force_alongside = False)
+    if load_request_id:
+        launch["load_request_id"] = load_request_id
+    return LoadRequest(**launch)
+
+
+async def local_model_state(identifier: str, subject: str) -> dict:
+    from routes.inference import _loaded_satisfies, _model_key, model_slots, model_load_pending
+
+    from models.inference import LoadRequest
+    row = await resolve_local_choice(identifier)
+    from hub.services.models import account_access
+    if account_access.managed_account():
+        await asyncio.to_thread(account_access.require_model_access, row.load_id or row.id)
+    account_access.require_live_account()
+    load_id = row.load_id or row.id
+    variant = row.format_variant if not load_id.lower().endswith(".gguf") else None
+    requested = _model_key(LoadRequest(model_path = load_id, gguf_variant = variant))
+    loaded = await asyncio.to_thread(lambda: any(
+        model_slots.in_slot(slot, lambda: _loaded_satisfies(requested))
+        for slot in (None, *model_slots.visible())
+    ))
+    return {"loaded": loaded, "loading": model_load_pending(requested, subject)}
+
+
 def _load_error(exc: BaseException) -> CodingRuntimeError:
     """Say why the load was refused or failed, with host paths and secrets scrubbed."""
     from fastapi import HTTPException
@@ -175,23 +218,9 @@ class CodingLocalServing:
             choice = local_choice(row)
             if body["api_model"] != choice["api_model"]:
                 raise CodingRuntimeError("conflict", "This model changed on disk. Pick it again from the model list.")
-            from models.inference import LoadRequest
             from routes.inference import load_model_for_coding
-            from utils.openai_auto_switch_settings import model_override_load_kwargs, resolve_override_for_load
-
-            # Reuse the existing Studio model-management launch preferences, not
-            # a second coding settings store. Borrowing an existing resident still
-            # leaves its actual settings untouched inside lifecycle admission.
-            load_id = row.load_id or row.id
-            variant = row.format_variant if not load_id.lower().endswith(".gguf") else None
-            _override_key, override = await asyncio.to_thread(
-                resolve_override_for_load, load_id, row.id, variant,
-            )
-            launch = model_override_load_kwargs(override, is_gguf = row.model_format == "gguf")
-            launch.update(model_path = load_id, gguf_variant = variant, force_reload = False,
-                          force_cancel_active = False, alongside = False, force_alongside = False)
             await load_model_for_coding(
-                LoadRequest(**launch), request, self.subject, body["operation_id"],
+                await local_load_request(body["model_id"], row = row), request, self.subject, body["operation_id"],
             )
             operation.state = "protected"
             operation.result = {"token": body["operation_id"], "model_id": choice["id"],

@@ -13,7 +13,7 @@ import {
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-function mount(inventoryVersion = 0) {
+function mount(inventoryVersion = 0, local = { models: [] as {id: string; group: string; quant: string; name: string}[], residency: { state: "unloaded" }, preload: (_id: string) => {}, unload: async () => {} }) {
   const states: unknown[] = [];
   let cursor = 0;
   let effect: (() => void | (() => void)) | undefined;
@@ -67,6 +67,7 @@ function mount(inventoryVersion = 0) {
       "@/components/ui/button": { Button: "button" },
       "lucide-react": { RefreshCw: "icon" },
       "./model-selection": selection,
+      "./use-local-model": { useLocalModel: () => local },
     },
   );
   return {
@@ -279,4 +280,58 @@ test("opening Coding after an inventory change reconciles retained native choice
   assert.deepEqual(requests, [true]);
   assert.equal(view.render(props).source.runtimeCatalog?.disabled, false);
   if (typeof cleanup === "function") cleanup();
+});
+
+test("shared controls select exact inventory quant IDs and retain false preserve without awaiting preload", async () => {
+  const preloads: string[] = [];
+  let unloaded = 0;
+  const view = mount(0, {
+    models: ["Q4", "BF16"].map((quant) => ({ id: `exact-${quant}`, group: "repo", quant, name: quant })),
+    residency: { state: "loaded" },
+    preload: (id) => { preloads.push(id); },
+    unload: async () => { unloaded++; },
+  });
+  const changes: selection.CodingConfigurationChange[] = [];
+  const props = {
+    readCatalog: async (): Promise<selection.CodingProviderChoice[]> => [{
+      id: "studio-local", name: "On Device", models: ["Q4", "BF16"].map((quant) => ({
+        id: `exact-${quant}`, name: quant, api_model: "unrelated-no-parsing",
+        reasoning: "unsupported", default_reasoning: null, preserve_thinking: true,
+      })),
+    }],
+    configuration: { provider: "studio-local", model: "exact-Q4", reasoning: null, preserve_thinking: false },
+    disabled: false, configuring: false,
+    configure: async (change: selection.CodingConfigurationChange) => { changes.push(change); },
+  };
+  view.render(props); view.start(); await tick();
+  const source = view.render(props).source;
+  assert.equal(source.selection?.loaded, true);
+  assert.equal(source.runtimeCatalog?.preserveThinking?.value, false);
+  assert.deepEqual(source.runtimeCatalog?.quantization?.choices, [{ id: "exact-Q4", label: "Q4" }, { id: "exact-BF16", label: "BF16" }]);
+  source.runtimeCatalog?.quantization?.onChange("exact-BF16"); await tick();
+  assert.deepEqual(changes, [{ provider: "studio-local", model: "exact-BF16" }]);
+  assert.deepEqual(preloads, ["exact-BF16"]);
+  view.render(props).source.runtimeCatalog?.preserveThinking?.onChange(false); await tick();
+  assert.deepEqual(changes[1], { preserve_thinking: false });
+  source.eject(); await tick(); assert.equal(unloaded, 1);
+  assert.equal(view.render(props).source.runtimeCatalog?.disabled, false);
+});
+
+test("native preparation shows loading only for the selected local model without blocking selection", async () => {
+  const view = mount();
+  const props: Parameters<typeof Selector.CodingModelSelector>[0] = {
+    readCatalog: async () => [],
+    configuration: { provider: "studio-local", model: "a", reasoning: null },
+    disabled: false,
+    configuring: false,
+    configure: async () => {},
+  };
+  view.render(props);
+  view.start();
+  await tick();
+  const preparing = { provider: "studio-local", model: "a" };
+  const same = view.render({ ...props, preparing }).source;
+  assert.equal(same.selection?.loading, true);
+  assert.equal(same.runtimeCatalog?.disabled, false);
+  assert.equal(view.render({ ...props, preparing: { ...preparing, model: "b" } }).source.selection?.loading, false);
 });

@@ -17940,6 +17940,7 @@ class _ScopedLoadAttempt(NamedTuple):
     subject: str
     cancel_event: threading.Event
     cancel_complete: threading.Event
+    model_key: Optional[str] = None
 
 
 _scoped_load_attempts_lock = threading.Lock()
@@ -17954,6 +17955,17 @@ _SCOPED_LOAD_CANCEL_TOMBSTONE_TTL_S = 60.0
 # Bound: nobody may set cancel_complete after a disconnect; an unbounded wait blocks exit.
 _SCOPED_LOAD_CANCEL_HANDSHAKE_TIMEOUT_S = 15.0
 _SCOPED_LOAD_CANCEL_TOMBSTONE_LIMIT_PER_SUBJECT = 256
+
+
+def model_load_pending(model_key: str, current_subject: str) -> bool:
+    if account_access.account_scope() is not None:
+        current_subject = current_account_id()
+    with _scoped_load_attempts_lock:
+        attempts = [*_pending_load_attempts.values(), *_scoped_load_attempts.values()]
+        if _running_load_attempt is not None:
+            attempts.append(_running_load_attempt)
+        return any(attempt.model_key == model_key and attempt.subject == current_subject
+                   and not attempt.cancel_event.is_set() for attempt in attempts)
 
 
 def cancel_pending_loads() -> int:
@@ -18014,6 +18026,7 @@ def _begin_load_attempt(request: LoadRequest, current_subject: str) -> _ScopedLo
         token = uuid.uuid4().hex,
         request_id = request.load_request_id,
         model_path = request.model_path,
+        model_key = _model_key(request),
         subject = current_subject,
         cancel_event = threading.Event(),
         cancel_complete = threading.Event(),

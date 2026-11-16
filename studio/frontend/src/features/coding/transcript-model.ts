@@ -3,6 +3,7 @@
 import type { ChildIdentity } from "./child-types.ts";
 import type { CodingRunState } from "./run-session.ts";
 import type { CodingRow } from "./run-types.ts";
+import { pendingImageCount } from "./pending-submission.ts";
 
 /** The native window the rows belong to. Only the latest window has a live
  * tail; a frozen historical reading window never infers liveness. */
@@ -18,6 +19,33 @@ export const transcriptWindow = (
   state?.viewingEarlier
     ? { kind: "historical" }
     : latestWindow(state?.native?.active_request ?? null);
+
+export interface PendingUserMessage {
+  key: string;
+  text: string;
+  imageCount: number;
+}
+
+export function pendingUserMessage(
+  state: Pick<
+    CodingRunState,
+    "acceptedSubmission" | "rows" | "viewingEarlier"
+  > | null,
+): PendingUserMessage | null {
+  const accepted = state?.acceptedSubmission;
+  if (
+    !accepted ||
+    state?.viewingEarlier ||
+    state?.rows.some(
+      (row) => row.kind === "user" && row.request_id === accepted.requestId,
+    )
+  ) return null;
+  return {
+    key: `pending-user:${accepted.requestId}`,
+    text: accepted.input.text,
+    imageCount: pendingImageCount(accepted.input),
+  };
+}
 
 /** Chronological presentation of immutable native rows. It never edits a row,
  * invents a count, or reads tool names: grouping follows row order and request

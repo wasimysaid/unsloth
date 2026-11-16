@@ -617,3 +617,24 @@ test("a launched agent's later record and native-only inputs add no extra rows",
     ["activity:invocation:launch", "child:child-handle:2", "row:image"],
   );
 });
+
+test("accepted input is a transient user presentation until its native row arrives", async () => {
+  const { pendingUserMessage } = await import("../src/features/coding/transcript-model.ts");
+  const acceptedSubmission = {
+    requestId: "request-pending",
+    input: {
+      key: "submission",
+      text: "hi",
+      image_manifest: [{ mime_type: "image/png", length: 12, sha256: "digest" }],
+    },
+  };
+  const state = { acceptedSubmission, rows: [], viewingEarlier: false };
+  assert.deepEqual(pendingUserMessage(state), {
+    key: "pending-user:request-pending", text: "hi", imageCount: 1,
+  });
+  assert.equal(pendingUserMessage({ ...state, viewingEarlier: true }), null);
+  assert.equal(pendingUserMessage({ ...state, acceptedSubmission: null }), null);
+  const native: CodingRow = { id: "native-user", kind: "user", request_id: "request-pending", text: "hi" };
+  assert.equal(pendingUserMessage({ ...state, rows: [native] }), null);
+  assert.equal(state.rows.length, 0);
+});

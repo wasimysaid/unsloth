@@ -726,10 +726,23 @@ favorites, and the effort slider. Completed downloaded models appear under On De
 remote providers appear under Connected models. Its runtime catalog contains only native
 provider/model identities. Studio inventory changes refresh this catalog automatically,
 with one read at a time and existing choices retained while it refreshes. Downloading
-does not write Mimir configuration or load weights. Selecting configures the next request;
-sending loads the exact selected model through Studio. Mimir owns model configuration and deferred loading.
-Chat connection settings, Hub downloads, and run settings are absent from this
-catalog. The previous Coding picker and its separate favorite store are removed.
+does not write Mimir configuration or load weights. Selecting confirms the next native
+request configuration, then starts a Studio preload without waiting to enable Send.
+Sending joins Studio's existing load gate and acquires native request protection;
+navigation never cancels an accepted preload. Rapid selections coalesce behind the
+submitted browser load. Studio owns model residency and loading; Mimir owns the
+conversation's selected model and per-request settings.
+
+The shared picker exposes hover unload, exact downloaded quant choices, and
+Preserve thinking when the model's template supports it. Normal authenticated
+`/api/coding/model-inventory` metadata joins native IDs to Studio inventory groups;
+`/api/coding/models/{id}/state`, `/load`, and `/unload` reuse Studio's tracked load
+and mutation guards. Loading state matches the exact model and account, including
+after Send opens a conversation. A load failure remains visible until retry or a
+successful observed load. Explicit unload retains whole-request protection.
+Preserve thinking uses the native model default until explicitly set; it is
+request configuration, not a change to shared GPU model launch settings.
+Chat connection settings and Hub downloads remain outside this catalog. The previous Coding picker and its separate favorite store are removed.
 Existing browser favorites remain stored but are not imported into shared pins. Model-switch patches omit reasoning so Mimir chooses the new default.
 Uncertain configuration delivery is not replayed: a view opened before that
 operation's outcome cannot clear its uncertainty. A later reconstruction is
@@ -991,7 +1004,9 @@ frame and awaiting the reply. A timeout before writing reports that nothing was
 sent. A stalled drain after writing reports uncertain delivery, invalidates the
 transport and retains process cleanup; it never automatically replays a prompt.
 
-The browser shows an acknowledged message separately while it waits for the
-native user row, including a loading notice when a local model is being loaded.
-Native rows and terminal request state retire that notice. Acceptance does not
-claim that model execution or cancellation cleanup has completed.
+The browser presents an acknowledged message as a user bubble in the transcript
+while it waits for the native user row. This temporary presentation never becomes
+a native history entry. The matching native row or terminal request state removes
+it, and historical windows omit it. Acceptance does not claim that model execution
+or cancellation cleanup has completed. Model loading does not add a separate
+notice above the composer.

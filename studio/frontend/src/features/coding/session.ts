@@ -266,7 +266,11 @@ export function createCodingSession(
         change.provider && change.model
           ? change.reasoning
           : (change.reasoning ?? state.selection?.reasoning);
-      const next = reasoning ? { ...selection, reasoning } : selection;
+      const preserve = change.provider && change.model
+        ? change.preserve_thinking
+        : change.preserve_thinking ?? state.selection?.preserve_thinking;
+      const next = { ...selection, ...(reasoning ? { reasoning } : {}),
+        ...(preserve !== undefined ? { preserve_thinking: preserve } : {}) };
       remember(MODEL_KEY, next);
       update({ selection: next });
     },

@@ -4,6 +4,7 @@
 // A load whose reply was lost (e.g. page reload) keeps running on the backend,
 // so rolling back would replace it with the previous model.
 
+import * as inferenceResponse from "../src/lib/inference-response.ts";
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import test from "node:test";
@@ -12,7 +13,7 @@ import { readSrc } from "./helpers/kit.ts";
 import { loadWithStubs } from "./helpers/module-stubs.ts";
 import { skillLoadCardEvent } from "../src/features/chat/api/skill-load-event.ts";
 
-const paddedResponse = await import("../src/features/chat/api/padded-response.ts");
+const paddedResponse = await import("../src/lib/padded-response.ts");
 const { shouldRestorePreviousModel, loadOutcomeUnknown } = await import(
   "../src/features/chat/lib/restore-previous-model.ts"
 );
@@ -101,7 +102,7 @@ function realLoadModel(auth: AuthApi): ChatApi {
       {},
     ),
     "@/features/auth": { authFetch: auth.authFetch },
-    "./padded-response": paddedResponse,
+    "@/lib/inference-response": inferenceResponse,
     "@/lib/format-fastapi-error": {
       formatApiErrorBody: (body: { detail?: unknown } | null) =>
         typeof body?.detail === "string" ? body.detail : null,

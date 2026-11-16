@@ -94,7 +94,7 @@ def test_identity_survives_label_changes_and_never_encodes_credentials():
     choice = local_choice(row())
     assert choice["id"] == local_choice(row(display_name = "renamed"))["id"]
     assert set(choice) == {"id", "name", "api_model", "reasoning", "supports_vision"}
-    assert choice["reasoning"] == {"thinking": False, "toggle": False, "levels": []}
+    assert choice["reasoning"] == {"thinking": False, "toggle": False, "levels": [], "preserve": None}
 
 
 def test_api_mapping_preserves_exact_repository_variant_but_not_duplicate_file_suffix():
@@ -152,7 +152,7 @@ async def test_native_admission_reuses_studio_launch_preferences_without_force_o
     ("{{ reasoning_effort }} {% if reasoning_effort == 'low' %}{% elif reasoning_effort == 'high' %}{% endif %}",
      {"thinking": True, "toggle": False, "levels": ["low", "high"]}),
     ("<think>{{ content }}</think>", {"thinking": True, "toggle": False, "levels": []}),
-    ("{{ messages }}", {"thinking": False, "toggle": False, "levels": []}),
+    ("{{ messages }}", {"thinking": False, "toggle": False, "levels": [], "preserve": None}),
 ])
 def test_reasoning_controls_follow_studio_template_detection(monkeypatch, tmp_path, template, expected):
     from core import coding_local_models
@@ -162,7 +162,7 @@ def test_reasoning_controls_follow_studio_template_detection(monkeypatch, tmp_pa
     coding_local_models._template_reasoning.cache_clear()
     monkeypatch.setattr(gguf_metadata, "read_gguf_chat_template", lambda read: template if read == str(path) else None)
     controls = coding_local_models.reasoning_controls(str(path), "org/model")
-    assert {**controls, "levels": [level for level in controls["levels"] if level in ("low", "high")]} == expected
+    assert {**controls, "levels": [level for level in controls["levels"] if level in ("low", "high")]} == {**expected, "preserve": None}
     assert coding_local_models.reasoning_controls(str(tmp_path / "missing.gguf"), "org/model")["thinking"] is False
 
 
@@ -183,3 +183,96 @@ def test_load_errors_say_why_without_host_paths():
 def test_catalog_preserves_inventory_image_capability(vision):
     choice = local_choice(row(capabilities = SimpleNamespace(can_chat = True, supports_vision = vision)))
     assert choice["supports_vision"] is vision
+
+@pytest.mark.asyncio
+async def test_browser_preload_uses_same_launch_preferences_and_exact_quant(monkeypatch):
+    from core.coding_local_models import local_load_request, model_inventory
+    from utils import openai_auto_switch_settings as settings
+    selected = row(load_id = "org/repo", format_variant = "Q4_K_M")
+    async def downloaded():
+        return [selected]
+    monkeypatch.setattr("core.coding_local_models.downloaded_rows", downloaded)
+    monkeypatch.setattr(settings, "resolve_override_for_load", lambda *args: ("key", {}))
+    monkeypatch.setattr(settings, "model_override_load_kwargs", lambda *args, **kwargs: {"max_seq_length": 8192})
+    request = await local_load_request(local_choice(selected)["id"], "preload-exact")
+    assert request.model_path == "org/repo"
+    assert request.gguf_variant == "Q4_K_M"
+    assert request.load_request_id == "preload-exact"
+    assert request.max_seq_length == 8192
+    assert request.force_cancel_active is False
+    assert request.force_reload is False
+    metadata = await model_inventory()
+    assert metadata[0]["id"] == local_choice(selected)["id"]
+    assert metadata[0]["group"] == "org/repo"
+    assert metadata[0]["quant"] == "Q4_K_M"
+
+
+@pytest.mark.asyncio
+async def test_scoped_unload_names_load_attempt_path_not_quant_key(monkeypatch):
+    from routes import coding, inference
+    from models.inference import LoadRequest
+    async def selected(*args, **kwargs):
+        return LoadRequest(model_path = "org/repo", gguf_variant = "Q4_K_M")
+    calls = []
+    async def unload(request, subject):
+        calls.append((request, subject))
+        return {"status": "unloaded"}
+    monkeypatch.setattr("core.coding_local_models.local_load_request", selected)
+    monkeypatch.setattr(inference, "unload_model", unload)
+    request = SimpleNamespace(state = SimpleNamespace(coding_subject = "account"))
+    await coding.browser_unload_model("local-exact", request, "attempt-exact")
+    assert calls[0][0].model_path == "org/repo"
+    assert calls[0][0].cancel_load_request_id == "attempt-exact"
+    await coding.browser_unload_model("local-exact", request)
+    assert calls[1][0].model_path == "org/repo:Q4_K_M"
+    assert calls[1][0].force_cancel_active is False
+
+
+def test_loading_state_matches_exact_quant_and_account_across_observers(monkeypatch):
+    from routes import inference
+    from models.inference import LoadRequest
+    from hub.services.models import account_access
+    monkeypatch.setattr(account_access, "account_scope", lambda: None)
+    monkeypatch.setattr(inference, "_scoped_load_attempts", {})
+    monkeypatch.setattr(inference, "_pending_load_attempts", {})
+    monkeypatch.setattr(inference, "_scoped_load_cancel_tombstones", {})
+    monkeypatch.setattr(inference, "_running_load_attempt", None)
+    attempt = inference._begin_load_attempt(LoadRequest(model_path = "org/repo", gguf_variant = "Q4_K_M", load_request_id = "browser-load"), "account-a")
+    assert inference.model_load_pending("org/repo:Q4_K_M", "account-a")
+    assert not inference.model_load_pending("org/repo:BF16", "account-a")
+    assert not inference.model_load_pending("org/repo:Q4_K_M", "account-b")
+    inference._finish_load_attempt(attempt)
+    assert not inference.model_load_pending("org/repo:Q4_K_M", "account-a")
+
+
+@pytest.mark.parametrize("default", [True, False])
+def test_preserve_capability_retains_model_template_default(monkeypatch, tmp_path, default):
+    from core import coding_local_models
+    from utils.models import gguf_metadata
+    from core.inference import llama_cpp
+    path = tmp_path / "preserve.gguf"
+    path.write_bytes(b"GGUF")
+    coding_local_models._template_reasoning.cache_clear()
+    monkeypatch.setattr(gguf_metadata, "read_gguf_chat_template", lambda path: "template")
+    monkeypatch.setattr(llama_cpp, "detect_reasoning_flags", lambda *args, **kwargs: {
+        "supports_reasoning": True, "reasoning_always_on": True,
+        "supports_preserve_thinking": True, "preserve_thinking_default": default,
+    })
+    assert coding_local_models.reasoning_controls(str(path), "model")["preserve"] is default
+
+
+@pytest.mark.asyncio
+async def test_browser_state_checks_model_access_before_residency(monkeypatch):
+    from core import coding_local_models
+    from hub.services.models import account_access
+    from fastapi import HTTPException
+    async def resolve(identifier):
+        return row()
+    def deny(path):
+        raise HTTPException(403, "No model access")
+    monkeypatch.setattr(coding_local_models, "resolve_local_choice", resolve)
+    monkeypatch.setattr(account_access, "managed_account", lambda: True)
+    monkeypatch.setattr(account_access, "require_model_access", deny)
+    with pytest.raises(HTTPException) as error:
+        await coding_local_models.local_model_state("exact-id", "other-account")
+    assert error.value.status_code == 403

@@ -304,3 +304,14 @@ test("tool rows show the verb with its argument, and groups are titled even for 
   assert.match(live, /head -100/);
   assert.match(live, /title="crates\/mimir-cli\/src\/main.rs"[^>]*>main.rs</);
 });
+
+test("accepted input uses the user bubble without a loading banner or native identity", () => {
+  const message = { key: "pending-user:request", text: "hi", imageCount: 1 };
+  const markup = renderToStaticMarkup(React.createElement(transcript.PendingUserBlock, { message }));
+  assert.match(markup, /justify-end/);
+  assert.match(markup, /whitespace-pre-wrap break-words/);
+  assert.match(markup, />hi<\/p>/);
+  assert.match(markup, /1 image/);
+  assert.match(markup, /data-reading-key="pending-user:request"/);
+  assert.doesNotMatch(markup, /data-native-entry|Message accepted|loading model/);
+});

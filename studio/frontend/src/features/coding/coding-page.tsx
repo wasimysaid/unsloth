@@ -140,6 +140,7 @@ export function CodingPage() {
               provider: configuration.provider ?? undefined,
               model: configuration.model ?? undefined,
               reasoning: configuration.reasoning ?? undefined,
+              preserve_thinking: configuration.preserve_thinking ?? undefined,
             })
           }
           landing={
@@ -168,6 +169,7 @@ export function CodingPage() {
                               provider: state.selection.provider ?? null,
                               model: state.selection.model ?? null,
                               reasoning: state.selection.reasoning ?? null,
+                              preserve_thinking: state.selection.preserve_thinking ?? null,
                             }
                           : null
                       }

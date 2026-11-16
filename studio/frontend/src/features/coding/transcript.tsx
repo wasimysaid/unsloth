@@ -19,7 +19,11 @@ import { PlanCard } from "./plan-card";
 import type { CodingRow } from "./run-types";
 import { SubagentRow } from "./subagent-card";
 import { ReasoningReport, ToolReport, useDisclosure } from "./tool-report";
-import type { ActivityItem, TranscriptBlock } from "./transcript-model";
+import type {
+  ActivityItem,
+  PendingUserMessage,
+  TranscriptBlock,
+} from "./transcript-model";
 
 // Focus intent only, not another answer/history store. A native answer row can
 // mount one render after its question controls have disappeared.
@@ -91,30 +95,64 @@ function CopyText({ text }: { text: string }) {
   );
 }
 
-function UserBlock({
-  block,
-}: { block: Extract<TranscriptBlock, { kind: "user" }> }) {
-  const { row } = block;
-  const text = row.text ?? "";
+function UserMessage({
+  text,
+  imageCount,
+  readingKey,
+  nativeEntry,
+  clipped = false,
+}: {
+  text: string;
+  imageCount: number;
+  readingKey: string;
+  nativeEntry?: string;
+  clipped?: boolean;
+}) {
   return (
     <div
       className="flex justify-end pt-4 first:pt-0"
-      data-reading-key={block.key}
-      data-native-entry={row.id}
+      data-reading-key={readingKey}
+      data-native-entry={nativeEntry}
     >
       <div className="min-w-0 max-w-[85%] rounded-[18px] bg-muted px-4 py-2.5 text-[15px] leading-6 dark:bg-accent">
         <Bounded text={text}>
           <p className="whitespace-pre-wrap break-words">{text}</p>
         </Bounded>
-        {(row.image_count ?? 0) > 0 && (
+        {imageCount > 0 && (
           <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
             <ImageIcon className="size-3.5" aria-hidden="true" />
-            {row.image_count} {row.image_count === 1 ? "image" : "images"}
+            {imageCount} {imageCount === 1 ? "image" : "images"}
           </p>
         )}
-        <Clipped row={row} />
+        {clipped && (
+          <p className="mt-1 text-xs text-muted-foreground">Content clipped</p>
+        )}
       </div>
     </div>
+  );
+}
+
+function UserBlock({
+  block,
+}: { block: Extract<TranscriptBlock, { kind: "user" }> }) {
+  return (
+    <UserMessage
+      text={block.row.text ?? ""}
+      imageCount={block.row.image_count ?? 0}
+      readingKey={block.key}
+      nativeEntry={block.row.id}
+      clipped={block.row.clipped}
+    />
+  );
+}
+
+export function PendingUserBlock({ message }: { message: PendingUserMessage }) {
+  return (
+    <UserMessage
+      text={message.text}
+      imageCount={message.imageCount}
+      readingKey={message.key}
+    />
   );
 }
 

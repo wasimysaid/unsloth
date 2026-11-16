@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import * as inferenceResponse from "../src/lib/inference-response.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import type * as Coding from "../src/features/coding/api.ts";
@@ -33,6 +34,7 @@ function client(
         },
       },
       "@/lib/format-fastapi-error": fastApiError,
+      "@/lib/inference-response": inferenceResponse,
       "./events": { consumeCodingEvents },
       "./errors": codingErrors,
     },
@@ -1052,4 +1054,12 @@ test("structured overlap refusal is distinct from native busy/capacity and malfo
     malformed.api.createCodingRunApi(7).checkOverlap("id"),
     /could not be confirmed.*No prompt was sent/,
   );
+});
+
+test("local load and unload reject deferred failures after HTTP success", async () => {
+  const { api } = client(() => new Response(JSON.stringify({
+    _deferred_error: { status_code: 409, detail: "Model is protected by a coding request" },
+  }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  await assert.rejects(api.codingLocalModels.load("local-exact", "load-exact"), /protected/);
+  await assert.rejects(api.codingLocalModels.unload("local-exact"), /protected/);
 });

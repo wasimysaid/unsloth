@@ -46,9 +46,10 @@ import {
 import type { CodingRuntimeStatus } from "./runtime-maintenance";
 import { ChildActivityRows } from "./subagent-card";
 import { DisclosureMemory } from "./tool-report";
-import { AnswerFocus, TranscriptBlocks, WorkingLine } from "./transcript";
+import { AnswerFocus, PendingUserBlock, TranscriptBlocks, WorkingLine } from "./transcript";
 import {
   createTranscriptProjection,
+  pendingUserMessage,
   transcriptWindow,
 } from "./transcript-model";
 import {
@@ -120,29 +121,6 @@ function StatusNotices({
         >
           Model unavailable: {state.native.selection_unavailable}. Choose
           another model.
-        </output>
-      )}
-      {state.acceptedSubmission && (
-        <div
-          data-testid="coding-accepted-input"
-          className={`${notice} space-y-2`}
-        >
-          <p className="whitespace-pre-wrap break-words">
-            {state.acceptedSubmission.input.text}
-          </p>
-          <p role="status" className="text-muted-foreground">
-            {preparation?.phase === "loading"
-              ? "Message accepted · loading model…"
-              : "Message accepted · preparing…"}
-          </p>
-        </div>
-      )}
-      {preparation?.phase === "loading" && !state.acceptedSubmission && (
-        <output
-          data-testid="coding-local-loading"
-          className={`${notice} block`}
-        >
-          Loading model…
         </output>
       )}
       {preparation && preparation.phase !== "loading" && (
@@ -311,6 +289,7 @@ export function CodingSurface({
     codingRunAdapter(state, run, draft, projection, canEdit),
   );
   const blocks = projection.project(state?.rows ?? [], transcriptWindow(state));
+  const pendingUser = pendingUserMessage(state);
   const viewport = useRef<HTMLElement>(null);
   const answerFocus = useRef<string | null>(null);
   const promptInput = useRef<HTMLTextAreaElement>(null);
@@ -409,6 +388,7 @@ export function CodingSurface({
     state?.rows,
     state?.native?.user_request,
     state?.activityVersion,
+    state?.acceptedSubmission,
     state?.viewingEarlier,
   ]);
   const placed = new Set<string>();
@@ -444,6 +424,8 @@ export function CodingSurface({
           : codingModelApi.catalog(conversationId, signal)
       }
       configuration={configuration}
+      preparing={state?.native?.execution_preparation?.phase === "loading"
+        ? state.native.execution_preparation.configuration : null}
       unavailable={state?.native?.selection_unavailable ?? null}
       disabled={
         state?.connection !== "connected" ||
@@ -578,6 +560,7 @@ export function CodingSurface({
                         blocks={blocks}
                         childView={run?.childView ?? null}
                       />
+                      {pendingUser && <PendingUserBlock message={pendingUser} />}
                       {run &&
                         state?.answerForms
                           .filter(

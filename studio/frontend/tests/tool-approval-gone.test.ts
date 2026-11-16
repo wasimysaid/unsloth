@@ -3,6 +3,7 @@
 
 // An expired approval 404s on every retry, so it must not render as a retryable failed post.
 
+import * as inferenceResponse from "../src/lib/inference-response.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -62,7 +63,7 @@ function harness(response: ReturnType<typeof jsonResponse>, epoch = { value: 0 }
       "../lib/load-request": {},
       "./generation-length.ts": {},
       "./gguf-variants-request": {},
-      "./padded-response": { assertCompletedPaddedBody: () => {} },
+      "@/lib/inference-response": inferenceResponse,
       "@/features/hf-auth": { prepareHfTokenForUse: async () => undefined },
       "@/features/settings/low-disk-check": { checkDiskSpace: () => Promise.resolve() },
       "@/features/igpu-carveout": {

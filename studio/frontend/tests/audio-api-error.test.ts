@@ -64,7 +64,7 @@ test("generateAudio and runAudio throw AudioApiError with the server's message, 
 });
 
 test("chat loads throw LoadModelError with the detail, for both an error status and _deferred_error", () => {
-  const chat = readSrc("features/chat/api/chat-api.ts");
+  const chat = readSrc("lib/inference-response.ts");
   assert.match(chat, /export class LoadModelError extends Error \{/);
   assert.match(
     chat,

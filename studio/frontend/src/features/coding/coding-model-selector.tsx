@@ -13,6 +13,7 @@ import {
 } from "@/features/hub/stores/inventory-events";
 import { Button } from "@/components/ui/button";
 import { RefreshCw } from "lucide-react";
+import { useLocalModel } from "./use-local-model";
 import {
   codingSelectionCatalog,
   findCodingModel,
@@ -28,6 +29,7 @@ export function CodingModelSelector({
   readCatalog,
   configuration,
   unavailable,
+  preparing,
   disabled,
   configuring,
   configure,
@@ -38,9 +40,10 @@ export function CodingModelSelector({
   ) => Promise<CodingProviderChoice[]>;
   configuration: Pick<
     CodingConfiguration,
-    "provider" | "model" | "reasoning"
+    "provider" | "model" | "reasoning" | "preserve_thinking"
   > | null;
   unavailable?: string | null;
+  preparing?: Pick<CodingConfiguration, "provider" | "model"> | null;
   disabled: boolean;
   configuring: boolean;
   configure: (change: CodingConfigurationChange) => Promise<void>;
@@ -112,6 +115,10 @@ export function CodingModelSelector({
     [selectionCatalog],
   );
   const selected = findCodingModel(result.catalog, configuration);
+  const local = useLocalModel(configuration?.provider === "studio-local" ? configuration.model : null);
+  const localChoice = local.models.find((model) => model.id === configuration?.model);
+  const quants = localChoice ? local.models.filter((model) => model.group === localChoice.group && model.quant) : [];
+  const preserveDefault = selected?.model.preserve_thinking;
   const identity =
     configuration?.provider && configuration.model
       ? modelIdentity(configuration.provider, configuration.model)
@@ -132,6 +139,7 @@ export function CodingModelSelector({
     setError(null);
     try {
       await configure(change);
+      if (change.provider === "studio-local" && change.model) void local.preload(change.model);
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -144,6 +152,7 @@ export function CodingModelSelector({
   }
   const notice =
     error ??
+    (local.residency.state === "failed" ? local.residency.message : null) ??
     result.error ??
     (missing
       ? "The selected model is unavailable. Choose another model."
@@ -158,8 +167,8 @@ export function CodingModelSelector({
       if (choice)
         void apply({ provider: choice.provider, model: choice.model });
     },
-    eject: () => undefined,
-    ejectAll: () => undefined,
+    eject: () => { void local.unload(); },
+    ejectAll: () => { void local.unload(); },
     open: open && !disabled,
     onOpenChange: (next) => {
       setOpen(next && !blocked);
@@ -175,13 +184,25 @@ export function CodingModelSelector({
     loaded: false,
     selection: {
       id: identity ?? "",
-      ggufVariant: null,
+      ggufVariant: localChoice?.quant ?? null,
+      loaded: local.residency.state === "loaded",
       placeholder: "Select model",
-      loading: loading && !result.ready,
+      loading: (loading && !result.ready) || local.residency.state === "loading" ||
+        (local.residency.state !== "loaded" && preparing?.provider === "studio-local" &&
+          preparing.provider === configuration?.provider && preparing.model === configuration?.model),
     },
     runtimeCatalog: {
       models,
       disabled: blocked,
+      quantization: quants.length > 1 && configuration?.model ? {
+        value: configuration.model,
+        choices: quants.map((model) => ({ id: model.id, label: model.quant ?? model.name })),
+        onChange: (model) => { void apply({ provider: "studio-local", model }); },
+      } : undefined,
+      preserveThinking: preserveDefault != null ? {
+        value: configuration?.preserve_thinking ?? preserveDefault,
+        onChange: (preserve_thinking) => { void apply({ preserve_thinking }); },
+      } : undefined,
       reasoning: {
         levels,
         value:

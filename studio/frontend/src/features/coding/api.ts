@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import { parseJsonOrThrow } from "@/lib/inference-response";
 import { authFetch } from "@/features/auth/api";
 import { readFastApiError } from "@/lib/format-fastapi-error";
 import { CodingHttpError, CodingOverlapError, projectOverlap } from "./errors";
@@ -393,3 +394,29 @@ export function createCodingRunApi(openingGeneration: number): RunApi {
     },
   };
 }
+
+export interface CodingLocalModel {
+  id: string;
+  group: string;
+  quant: string | null;
+  name: string;
+}
+
+export const codingLocalModels = {
+  async inventory(signal: AbortSignal): Promise<CodingLocalModel[]> {
+    return (await codingRequest("/model-inventory", { signal })).json();
+  },
+  async state(id: string, signal: AbortSignal): Promise<{ loaded: boolean; loading: boolean }> {
+    return (await codingRequest(`/models/${encodeURIComponent(id)}/state`, { signal })).json();
+  },
+  async load(id: string, loadRequestId: string): Promise<void> {
+    await parseJsonOrThrow(await codingRequest(`/models/${encodeURIComponent(id)}/load`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ load_request_id: loadRequestId }),
+    }), "Model load");
+  },
+  async unload(id: string, loadRequestId?: string): Promise<void> {
+    const query = loadRequestId ? `?${new URLSearchParams({ load_request_id: loadRequestId })}` : "";
+    await parseJsonOrThrow(await codingRequest(`/models/${encodeURIComponent(id)}/unload${query}`, { method: "POST" }), "Model unload");
+  },
+};

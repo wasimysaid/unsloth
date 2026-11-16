@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { assertCompletedPaddedBody } from "../src/features/chat/api/padded-response.ts";
+import { assertCompletedPaddedBody } from "../src/lib/padded-response.ts";
 
 import { readSrc, readText } from "./helpers/kit.ts";
 
@@ -50,7 +50,7 @@ test("only the two padded routes require a payload", () => {
     ...chatApi.matchAll(/parseJsonOrThrow<[^>]*>\(\s*response,\s*"([^"]+)"/g),
   ].map((match) => match[1]);
   assert.deepEqual(labelled, ["Model load", "Model unload"]);
-  assert.ok(chatApi.includes("assertCompletedPaddedBody(body, paddedLabel)"));
+  assert.ok(readText("../src/lib/inference-response.ts").includes("assertCompletedPaddedBody(body, paddedLabel)"));
 });
 
 test("the Python client agrees", () => {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import * as inferenceResponse from "../src/lib/inference-response.ts";
 import assert from "node:assert/strict";
 import { register } from "node:module";
 import test from "node:test";
@@ -60,7 +61,7 @@ function chatApi(body: Record<string, unknown>) {
       ),
       "./generation-length.ts": {},
       "./gguf-variants-request": {},
-      "./padded-response": { assertCompletedPaddedBody: () => {} },
+      "@/lib/inference-response": inferenceResponse,
       "@/features/hf-auth": { prepareHfTokenForUse: async () => ({ proceed: true }) },
       "@/features/igpu-carveout": {
         dismissCarveoutAdviceForModel: () => {},

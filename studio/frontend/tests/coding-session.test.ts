@@ -417,10 +417,10 @@ test("the new-conversation folder and model are remembered across New and reload
   assert.equal(await first.startConversation(), false, "no folder, no create");
   first.selectProject("/a");
   first.selectModel({ provider: "p", model: "m" });
-  first.selectModel({ reasoning: "high" });
+  first.selectModel({ reasoning: "high", preserve_thinking: false });
   first.getSnapshot().draft.syncText("first message");
   assert.equal(await first.startConversation(), true);
-  assert.deepEqual(created, [["/a", { provider: "p", model: "m", reasoning: "high" }]]);
+  assert.deepEqual(created, [["/a", { provider: "p", model: "m", reasoning: "high", preserve_thinking: false }]]);
   // The canonical folder of what was created is the next default.
   assert.equal(first.getSnapshot().project, "/canonical/a");
   assert.equal(first.getSnapshot().autoSend, true);
@@ -436,6 +436,7 @@ test("the new-conversation folder and model are remembered across New and reload
     provider: "p",
     model: "m",
     reasoning: "high",
+    preserve_thinking: false,
   });
   // Picking another model drops the previous model's effort.
   reloaded.selectModel({ provider: "p", model: "other" });

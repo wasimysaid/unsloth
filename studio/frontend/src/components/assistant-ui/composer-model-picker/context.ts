@@ -17,6 +17,15 @@ import type { RuntimeModelChoice } from "./picker-model";
 export interface ComposerRuntimeCatalog {
   models: readonly RuntimeModelChoice[];
   disabled: boolean;
+  quantization?: {
+    value: string;
+    choices: readonly { id: string; label: string }[];
+    onChange: (id: string) => void;
+  };
+  preserveThinking?: {
+    value: boolean;
+    onChange: (value: boolean) => void;
+  };
   reasoning: {
     levels: readonly string[];
     value: string;

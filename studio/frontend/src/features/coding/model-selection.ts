@@ -7,6 +7,7 @@ export interface CodingModelChoice {
   name: string;
   api_model: string;
   default_reasoning: string | null;
+  preserve_thinking?: boolean | null;
   reasoning: "unsupported" | { levels: string[] };
 }
 export interface CodingProviderChoice {
@@ -19,11 +20,13 @@ export interface CodingConfiguration {
   model: string | null;
   reasoning: string | null;
   mode: string;
+  preserve_thinking?: boolean | null;
 }
 export interface CodingConfigurationChange {
   provider?: string;
   model?: string;
   reasoning?: string;
+  preserve_thinking?: boolean;
 }
 export interface CodingModelApi {
   /** The retained controller's inventory, not a separately loaded folder catalog. */

@@ -3469,7 +3469,18 @@ export function ComposerModelPicker({
     quants && chosen && quants.key === chosen.key
       ? pickerOrderedGgufVariants(quants.list, null, quantBudget).ordered
       : [];
-  const showQuantRow = quantChoices.length > 1;
+  const quantMenuChoices = runtimeCatalog?.quantization
+    ? runtimeCatalog.quantization.choices.map((choice) => ({
+        key: choice.id, label: choice.label, bytes: null, update: false,
+        selected: choice.id === runtimeCatalog.quantization?.value,
+        pick: () => { setQuantsOpen(false); runtimeCatalog.quantization?.onChange(choice.id); },
+      }))
+    : quantChoices.map((variant) => ({
+        key: variant.quant, label: ggufVariantPickerLabel(variant), bytes: quantBytes(variant),
+        update: variant.update_available, selected: variant.quant.toLowerCase() === (activeVariant ?? "").toLowerCase(),
+        pick: () => pickQuant(variant),
+      }));
+  const showQuantRow = quantMenuChoices.length > 1;
   const effortLevels = runtimeCatalog
     ? runtimeCatalog.reasoning.levels.map((value) => ({ value, label: effortLabel(value) }))
     : reasoning.levels;
@@ -3477,7 +3488,7 @@ export function ComposerModelPicker({
   const showThinkingSwitch =
     !pane && reasoning.supportsReasoning && !showEffort;
   const showFastSwitch = !pane && reasoning.supportsFast && !showEffort;
-  const showPreserve = !pane && reasoning.supportsPreserve;
+  const showPreserve = runtimeCatalog ? Boolean(runtimeCatalog.preserveThinking) : !pane && reasoning.supportsPreserve;
   const reasoningChip = runtimeCatalog ? runtimeCatalog.reasoning.value || null : pane ? null : reasoning.chipLabel;
   const hasFoot =
     showQuantRow ||
@@ -3596,7 +3607,7 @@ export function ComposerModelPicker({
       : null;
   const chipDetail =
     [formatDetail, loadedDetail].filter(Boolean).join(" · ") || null;
-  const ejectsAll = loadedModels.length > 1;
+  const ejectsAll = !runtimeCatalog && loadedModels.length > 1;
 
   const settingsMeta = async (
     row: Row,
@@ -5647,7 +5658,7 @@ export function ComposerModelPicker({
                   >
                     <span className="flex-1">Quantization</span>
                     <span className="max-w-[calc(120px*var(--ui-space-scale,1))] truncate text-muted-foreground">
-                      {activeVariant ?? quantChoices[0]?.quant}
+                      {quantMenuChoices.find((choice) => choice.selected)?.label ?? activeVariant ?? quantMenuChoices[0]?.label}
                     </span>
                     <HugeiconsIcon
                       icon={ChevronDownStandardIcon}
@@ -5662,18 +5673,19 @@ export function ComposerModelPicker({
                   sideOffset={12}
                   className="unsloth-plus-menu w-[calc(240px*var(--ui-space-scale,1))] gap-0.5 p-2"
                 >
-                  {quantChoices.map((variant) => (
+                  {quantMenuChoices.map((variant) => (
                     <button
-                      key={variant.quant}
+                      key={variant.key}
                       type="button"
-                      onClick={() => pickQuant(variant)}
+                      disabled={runtimeCatalog?.disabled}
+                      onClick={variant.pick}
                       className="flex h-[calc(28px*var(--ui-space-scale,1))] items-center gap-2 rounded-full px-3 text-left transition-colors hover:bg-sidebar-accent"
                     >
                       <span className="flex min-w-0 flex-1 items-center gap-1.5">
                         <span className="truncate font-mono text-xs">
-                          {ggufVariantPickerLabel(variant)}
+                          {variant.label}
                         </span>
-                        {variant.update_available ? (
+                        {variant.update ? (
                           <StatusTag
                             tone="amber"
                             label="Update"
@@ -5682,15 +5694,14 @@ export function ComposerModelPicker({
                         ) : null}
                       </span>
                       <span className="font-mono text-ui-10 tabular-nums text-muted-foreground">
-                        {formatBytes(quantBytes(variant))}
+                        {variant.bytes == null ? "" : formatBytes(variant.bytes)}
                       </span>
                       <HugeiconsIcon
                         icon={Tick02Icon}
                         strokeWidth={2}
                         className={cn(
                           "size-4",
-                          variant.quant.toLowerCase() !==
-                            (activeVariant ?? "").toLowerCase() && "opacity-0",
+                          !variant.selected && "opacity-0",
                         )}
                       />
                     </button>
@@ -5716,9 +5727,9 @@ export function ComposerModelPicker({
             {showPreserve ? (
               <SwitchRow
                 label="Preserve thinking"
-                checked={reasoning.preserve}
-                disabled={reasoning.disabled}
-                onChange={reasoning.setPreserve}
+                checked={runtimeCatalog?.preserveThinking?.value ?? reasoning.preserve}
+                disabled={runtimeCatalog?.disabled ?? reasoning.disabled}
+                onChange={runtimeCatalog?.preserveThinking?.onChange ?? reasoning.setPreserve}
               />
             ) : null}
             {showFastSwitch ? (

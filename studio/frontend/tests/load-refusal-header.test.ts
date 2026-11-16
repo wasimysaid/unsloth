@@ -5,6 +5,7 @@
 // X-Unsloth-Refusal header (shared with the memory refusal, so its VALUE decides), its dict in a
 // padded body, or only the backend's wording (chat drops headers today).
 
+import * as inferenceResponse from "../src/lib/inference-response.ts";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -104,9 +105,7 @@ test("a chat load refused inside a padded body is recognised by its wording", as
       authFetch: (path: string, init?: RequestInit) =>
         originalFetch(`http://127.0.0.1:${port}${path}`, init),
     },
-    "./padded-response": await import(
-      "../src/features/chat/api/padded-response.ts"
-    ),
+    "@/lib/inference-response": inferenceResponse,
     "@/lib/format-fastapi-error": await import(
       "../src/lib/format-fastapi-error.ts"
     ),

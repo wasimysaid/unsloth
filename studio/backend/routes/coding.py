@@ -95,6 +95,7 @@ class ModelConfiguration(BaseModel):
     provider: str | None = Field(default = None, min_length = 1, max_length = 1024)
     model: str | None = Field(default = None, min_length = 1, max_length = 1024)
     reasoning: str | None = Field(default = None, min_length = 1, max_length = 1024)
+    preserve_thinking: bool | None = Field(default = None, strict = True)
 
 
 class ProjectSelection(BaseModel):
@@ -343,6 +344,51 @@ def _local_serving(request: Request, incarnation: str | None = None):
         # A browser token or an earlier process's key must not reach model holds.
         raise HTTPException(403, "This operation requires the current native serving incarnation.")
     return serving
+
+
+class LocalModelLoad(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    load_request_id: str = Field(min_length = 1, max_length = 128, pattern = r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
+
+
+@router.get("/model-inventory")
+async def browser_model_inventory():
+    from core.coding_local_models import model_inventory
+    return JSONResponse(await model_inventory(), headers = {"Cache-Control": "no-store"})
+
+
+@router.get("/models/{model_id}/state")
+async def browser_model_state(model_id: str, request: Request):
+    from core.coding_local_models import local_model_state
+    try:
+        return await local_model_state(model_id, request.state.coding_subject)
+    except CodingRuntimeError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post("/models/{model_id}/load")
+async def browser_load_model(model_id: str, body: LocalModelLoad, request: Request):
+    from core.coding_local_models import local_load_request
+    from routes.inference import load_model
+    try:
+        return await load_model(await local_load_request(model_id, body.load_request_id), request,
+                                request.state.coding_subject)
+    except CodingRuntimeError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post("/models/{model_id}/unload")
+async def browser_unload_model(model_id: str, request: Request, load_request_id: str | None = None):
+    from core.coding_local_models import local_load_request
+    from models.inference import UnloadRequest
+    from routes.inference import _model_key, unload_model
+    try:
+        load = await local_load_request(model_id)
+        target = load.model_path if load_request_id else _model_key(load)
+        return await unload_model(UnloadRequest(model_path = target, cancel_load_request_id = load_request_id),
+                                  request.state.coding_subject)
+    except CodingRuntimeError as exc:
+        raise _http_error(exc) from exc
 
 
 @router.get("/local-models/catalog")

@@ -33,4 +33,6 @@ export const isSelection = (value: unknown): value is CodingConfigurationChange 
   text((value as CodingConfigurationChange).model) &&
   ["undefined", "string"].includes(
     typeof (value as CodingConfigurationChange).reasoning,
+  ) && ["undefined", "boolean"].includes(
+    typeof (value as CodingConfigurationChange).preserve_thinking,
   );

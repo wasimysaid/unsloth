@@ -471,11 +471,9 @@ export function CodingComposer({
       : null);
   const recovery = state?.uncertainSubmission ?? state?.rejectedSubmission;
   const rejected = state?.rejectedSubmission;
-  const expanded =
-    landing || model.text.includes("\n") || model.text.length > 72;
   return (
     <ComposerPrimitive.Root
-      className="aui-composer-root relative w-full min-w-0"
+      className="aui-composer-root relative flex w-full min-w-0 flex-col"
       aria-label="Coding composer"
       onSubmit={(event) => {
         if (blocked || landing) event.preventDefault();
@@ -652,7 +650,7 @@ export function CodingComposer({
         )}
         <div
           className="unsloth-composer-line"
-          data-expanded={expanded ? "true" : "false"}
+          data-expanded="true"
         >
           <ComposerPrimitive.Input
             ref={input}
