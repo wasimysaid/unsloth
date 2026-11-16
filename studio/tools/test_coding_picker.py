@@ -89,12 +89,12 @@ class PickerEvidenceTests(unittest.TestCase):
                 assert_viewport_box(box, 390, 844, label="test")
 
     def test_effort_and_trigger_labels_mirror_the_rendered_picker(self):
-        # model-configuration-popover.tsx effortLabel and the trigger's aria-label.
+        # Shared composer effort labels and trigger text.
         for level, label in (("low", "Low"), ("minimal", "Minimal"), ("medium", "Medium"),
-                             ("high", "High"), ("xhigh", "X-High"), ("very_high", "Very High")):
+                             ("high", "High"), ("xhigh", "Extra High"), ("very_high", "Very_high")):
             with self.subTest(level=level):
                 self.assertEqual(effort_label(level), label)
-        self.assertEqual(trigger_label("Shared coding model", "minimal"), "Model: Shared coding model \u00b7 Minimal")
+        self.assertEqual(trigger_label("Shared coding model", "minimal"), "Model: Shared coding model, minimal")
         self.assertEqual(trigger_label("No reasoning control", None), "Model: No reasoning control")
         self.assertEqual({effort_label(level) for level in PICKER_LEVELS_A + PICKER_LEVELS_B},
                          {"Low", "Medium", "High", "Minimal"})

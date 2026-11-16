@@ -28,7 +28,7 @@ import {
   type HistoryScroll,
 } from "./history-scroll";
 import type { CodingInputDraft } from "./input";
-import { CodingModelPicker } from "./model-configuration-popover";
+import { CodingModelSelector } from "./coding-model-selector";
 import type { CodingConfiguration } from "./model-selection";
 import { PlanCard } from "./plan-card";
 import { ProjectOverlapDialog } from "./project-overlap-dialog";
@@ -436,7 +436,7 @@ export function CodingSurface({
   const modelPicker = isLanding ? (
     landing?.modelPicker
   ) : conversationId ? (
-    <CodingModelPicker
+    <CodingModelSelector
       key={conversationId}
       readCatalog={(refresh, signal) =>
         refresh

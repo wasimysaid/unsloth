@@ -212,6 +212,7 @@ import {
   RECOMMENDED_TAB,
   SECTION_LABEL,
   chooseQuant,
+  effortLabel,
   dedupeRows,
   discoverUsesFallback,
   downloadedQuants,
@@ -1482,6 +1483,7 @@ export function ComposerModelPicker({
   );
   const navigate = useNavigate();
   const reasoning = useComposerReasoning();
+  const runtimeCatalog = source?.runtimeCatalog;
   const pane = source?.selection;
   const runtimeCheckpoint = useChatRuntimeStore((s) => s.params.checkpoint);
   const runtimeVariant = useChatRuntimeStore((s) => s.activeGgufVariant);
@@ -1873,7 +1875,7 @@ export function ComposerModelPicker({
     [hubResults],
   );
   const loraModels = source?.loraModels;
-  const externalModels = source?.externalModels;
+  const externalModels = runtimeCatalog?.models ?? source?.externalModels;
 
   // The inventory often reports an audio GGUF as text-generation; the audio catalog's task wins.
   const mediaTaskById = useMemo(() => {
@@ -1913,6 +1915,18 @@ export function ComposerModelPicker({
   const listsAudio = !pane;
 
   const rows = useMemo<Row[]>(() => {
+    if (runtimeCatalog) return runtimeCatalog.models.map((model) => ({
+      identity: "opaque",
+      searchText: model.searchText,
+      key: model.id,
+      id: model.id,
+      label: model.name,
+      tab: `${EXT_PREFIX}${model.providerId}`,
+      groups: [CONNECTED_TAB],
+      kind: "external",
+      providerType: model.providerType,
+      providerName: model.providerName,
+    }));
     const device: Row[] = [];
     const isAudio = (id: string, task: string | null | undefined) =>
       listsAudio &&
@@ -2120,6 +2134,7 @@ export function ComposerModelPicker({
       }));
     return [...marked, ...npuOffers, ...hub, ...external];
   }, [
+    runtimeCatalog,
     inventory.cachedGguf,
     inventory.cachedModels,
     npuModels,
@@ -2419,8 +2434,9 @@ export function ComposerModelPicker({
           a.index - b.index,
       )
       .map(({ t }) => t);
-    return [...pinned, ...movable];
-  }, [externalModels, makerTabs, connectionsOn, tabOrder]);
+    const available = [...pinned, ...movable];
+    return runtimeCatalog ? available.filter((item) => item.value !== RECOMMENDED_TAB && item.value !== DEVICE_TAB).map((item) => item.value === CONNECTED_TAB ? { ...item, label: "All models" } : item) : available;
+  }, [externalModels, makerTabs, connectionsOn, tabOrder, runtimeCatalog]);
   const moveTab = (from: string, to: TabDrop) => {
     const order = tabs.filter((t) => t.movable).map((t) => t.value);
     const at = order.indexOf(from);
@@ -2465,7 +2481,7 @@ export function ComposerModelPicker({
           checkpoint,
           externalModels ?? [],
           source?.externalConnections ?? [],
-        )?.modelName ?? modelDisplayName(checkpoint))
+        )?.modelName ?? (runtimeCatalog ? pane?.placeholder : modelDisplayName(checkpoint)))
       : null);
   const chosenMark: Parameters<typeof RowMark>[0]["row"] =
     shown ??
@@ -2479,7 +2495,7 @@ export function ComposerModelPicker({
     (externalModels?.length ?? 0) > 0 ||
     rows.some((row) => row.tab === DEVICE_TAB);
   const viewed =
-    tab ??
+    (runtimeCatalog && (!tab || !tabs.some((item) => item.value === tab)) ? CONNECTED_TAB : tab) ??
     (hasModels
       ? ((lastTab && tabs.some((t) => t.value === lastTab) ? lastTab : null) ??
         (chosen?.tab === RECOMMENDED_TAB ? DEVICE_TAB : chosen?.tab) ??
@@ -3138,7 +3154,7 @@ export function ComposerModelPicker({
   ]);
 
   const pick = async (row: Row) => {
-    if (!source) {
+    if (!source || runtimeCatalog?.disabled) {
       return;
     }
     const seq = supersede();
@@ -3452,12 +3468,15 @@ export function ComposerModelPicker({
       ? pickerOrderedGgufVariants(quants.list, null, quantBudget).ordered
       : [];
   const showQuantRow = quantChoices.length > 1;
-  const showEffort = !pane && reasoning.isEffort && reasoning.levels.length > 1;
+  const effortLevels = runtimeCatalog
+    ? runtimeCatalog.reasoning.levels.map((value) => ({ value, label: effortLabel(value) }))
+    : reasoning.levels;
+  const showEffort = runtimeCatalog ? effortLevels.length > 0 : !pane && reasoning.isEffort && reasoning.levels.length > 1;
   const showThinkingSwitch =
     !pane && reasoning.supportsReasoning && !showEffort;
   const showFastSwitch = !pane && reasoning.supportsFast && !showEffort;
   const showPreserve = !pane && reasoning.supportsPreserve;
-  const reasoningChip = pane ? null : reasoning.chipLabel;
+  const reasoningChip = runtimeCatalog ? runtimeCatalog.reasoning.value || null : pane ? null : reasoning.chipLabel;
   const hasFoot =
     showQuantRow ||
     showThinkingSwitch ||
@@ -3482,6 +3501,7 @@ export function ComposerModelPicker({
       run: () => void;
     }[];
   } => {
+    if (runtimeCatalog) return { title: "No models found", hint: "Refresh the model catalog or configure a provider for this project." };
     if (
       viewed === CONNECTED_TAB &&
       !query &&
@@ -4021,6 +4041,7 @@ export function ComposerModelPicker({
             id={`${OPTION_ID}-${index}`}
             aria-selected={isChosen}
             data-row-index={index}
+            data-model-id={row.id}
             data-active={rowActive ? "true" : undefined}
             data-current={rowCurrent ? "true" : undefined}
             // Shared with the header picker's rows: the Playwright drivers select by these.
@@ -4247,7 +4268,7 @@ export function ComposerModelPicker({
                   />
                 </>
               ) : null}
-              {row.kind === "external" ? (
+              {row.kind === "external" && !runtimeCatalog ? (
                 <>
                   <ModelRowMenu
                     ariaLabel={`More options for ${row.label}`}
@@ -4828,7 +4849,7 @@ export function ComposerModelPicker({
             divider={out.length > 0}
             collapsed={collapsedSections.has(sectionKey(row.tab))}
             onToggle={() => toggleSection(row.tab)}
-            trailing={
+            trailing={!runtimeCatalog && (
               <Hint label="Connection settings">
                 <button
                   type="button"
@@ -4849,7 +4870,7 @@ export function ComposerModelPicker({
                   />
                 </button>
               </Hint>
-            }
+            )}
           />,
         );
       }
@@ -4963,6 +4984,7 @@ export function ComposerModelPicker({
             <PopoverTrigger asChild={true}>
               <button
                 ref={triggerRef}
+                disabled={runtimeCatalog?.disabled}
                 type="button"
                 className={cn(
                   "unsloth-thinking-pill composer-model-chip group/chip",
@@ -5037,6 +5059,7 @@ export function ComposerModelPicker({
         <PopoverTrigger asChild={true}>
           <button
             ref={triggerRef}
+            disabled={runtimeCatalog?.disabled}
             type="button"
             className={cn(
               "unsloth-thinking-pill composer-model-chip group/chip",
@@ -5297,7 +5320,7 @@ export function ComposerModelPicker({
                 onCommit={setQuery}
                 onNavKey={onSearchNavKey}
                 placeholder={
-                  viewed === RECOMMENDED_TAB
+                  runtimeCatalog ? "Search models" : viewed === RECOMMENDED_TAB
                     ? "Search models to download"
                     : viewed === FAVORITES_TAB
                       ? "Search favorited models"
@@ -5398,7 +5421,7 @@ export function ComposerModelPicker({
                   {formatGroup}
                 </NonModalDropdownMenu>
               ) : null}
-              {source && viewed === CONNECTED_TAB ? (
+              {source && !runtimeCatalog && viewed === CONNECTED_TAB ? (
                 <Hint label="Connections">
                   <button
                     type="button"
@@ -5479,7 +5502,7 @@ export function ComposerModelPicker({
                   </Hint>
                 </NonModalDropdownMenu>
               ) : null}
-              {source && connectionId ? (
+              {source && connectionId && !runtimeCatalog ? (
                 <Hint label="Connection settings">
                   <button
                     type="button"
@@ -5499,7 +5522,7 @@ export function ComposerModelPicker({
                     />
                   </button>
                 </Hint>
-              ) : source &&
+              ) : source && !runtimeCatalog &&
                 viewed !== DEVICE_TAB &&
                 viewed !== RECOMMENDED_TAB &&
                 viewed !== CONNECTED_TAB ? (
@@ -5707,7 +5730,7 @@ export function ComposerModelPicker({
                 <EffortSlider
                   title="Effort"
                   accessory={
-                    reasoning.supportsFast ? (
+                    !runtimeCatalog && reasoning.supportsFast ? (
                       <Hint label="Fast mode">
                         <button
                           type="button"
@@ -5734,10 +5757,10 @@ export function ComposerModelPicker({
                       </Hint>
                     ) : undefined
                   }
-                  levels={reasoning.levels}
-                  value={reasoning.value}
-                  onChange={reasoning.setValue}
-                  disabled={reasoning.disabled}
+                  levels={effortLevels}
+                  value={runtimeCatalog?.reasoning.value ?? reasoning.value}
+                  onChange={runtimeCatalog?.reasoning.onChange ?? reasoning.setValue}
+                  disabled={runtimeCatalog?.disabled ?? reasoning.disabled}
                 />
               </div>
             ) : null}

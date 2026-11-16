@@ -721,9 +721,12 @@ check or fallback. SDK session-control@11 adds native defaults/API mapping and t
 separate running configuration; generated bindings, carrier fixtures and packaged
 consumers are updated together rather than a competing old catalog projection.
 
-The Studio-styled popover supports configuration/list/Back, search, provider
-navigation, identity-pair favorites, and a discrete slider over native offered
-values. Model-switch patches omit reasoning so Mimir chooses the new default.
+Coding uses the upstream Chat `ComposerModelPicker` for search, provider tabs,
+favorites, and the effort slider. Its runtime catalog contains only native
+provider/model identities. Mimir owns model configuration and deferred loading.
+Chat connection settings, Hub downloads, and run settings are absent from this
+catalog. The previous Coding picker and its separate favorite store are removed.
+Existing browser favorites remain stored but are not imported into shared pins. Model-switch patches omit reasoning so Mimir chooses the new default.
 Uncertain configuration delivery is not replayed: a view opened before that
 operation's outcome cannot clear its uncertainty. A later reconstruction is
 required before further selection or input; native Stop stays available.

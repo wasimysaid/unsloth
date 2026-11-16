@@ -15,7 +15,7 @@ import {
 } from "react";
 import { readCodingCatalog } from "./api";
 import { CodingSurface } from "./coding-surface";
-import { CodingModelPicker } from "./model-configuration-popover";
+import { CodingModelSelector } from "./coding-model-selector";
 import { ProjectFolderDialog } from "./project-folder-dialog";
 import { projectName } from "./project-name";
 import { ProjectPicker, recentProjects } from "./project-picker";
@@ -157,7 +157,7 @@ export function CodingPage() {
                     />
                   ),
                   modelPicker: (
-                    <CodingModelPicker
+                    <CodingModelSelector
                       key={`folder:${project ?? ""}`}
                       readCatalog={(_, signal) =>
                         readCodingCatalog(project, signal)

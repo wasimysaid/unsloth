@@ -13,7 +13,19 @@ import type {
 } from "@/features/model-picker";
 import { createContext, useContext } from "react";
 
+export interface ComposerRuntimeCatalog {
+  models: readonly (ExternalModelOption & { searchText?: string })[];
+  disabled: boolean;
+  reasoning: {
+    levels: readonly string[];
+    value: string;
+    onChange: (value: string) => void;
+  };
+}
+
 export interface ComposerModelPickerSource {
+  /** A host-owned catalog uses exact model identities and owns all configuration. */
+  runtimeCatalog?: ComposerRuntimeCatalog;
   models: readonly ModelOption[];
   loraModels: readonly LoraModelOption[];
   externalModels: readonly ExternalModelOption[];

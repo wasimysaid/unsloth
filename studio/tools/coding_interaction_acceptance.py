@@ -20,6 +20,7 @@ import base64
 import hashlib
 import json
 import os
+
 from pathlib import Path
 import secrets
 import shlex
@@ -33,6 +34,7 @@ import urllib.request
 from urllib.parse import urlparse
 
 import coding_ui
+from coding_picker_scenarios import picker_trigger, picker_panel, picker_row, open_model_list
 from coding_provider_fixture import ProviderFixture
 from coding_refresh_acceptance import large_png, native_capture, sha256
 from coding_recovery_scenarios import wait_native_terminal
@@ -629,13 +631,13 @@ class InteractionRun:
         page, expect = self.page, self.expect
         self.stage("compact-picker-and-context")
         provider_count = len(self.provider.pending)
-        page.get_by_test_id("coding-model-trigger").click()
-        picker = page.get_by_test_id("coding-model-picker")
+        picker_trigger(page).click()
+        picker = picker_panel(page)
         expect(picker).to_be_visible()
         assert "Catalog details" not in picker.inner_text()
         assert "API model" not in picker.inner_text()
-        picker.get_by_role("button", name="Choose model", exact=True).click()
-        expect(picker.get_by_test_id("coding-model-list").locator('button[data-model="offline"]')).to_be_visible()
+        open_model_list(page)
+        expect(picker_row(page, "coding-acceptance", "offline")).to_be_visible()
         self.snapshot("compact-model-picker")
         page.keyboard.press("Escape")
         page.keyboard.press("Escape")

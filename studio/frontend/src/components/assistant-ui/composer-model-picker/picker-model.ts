@@ -92,6 +92,8 @@ export function sectionsHaveRows(
 export type FormatTone = "gguf" | "mlx" | "checkpoint" | "adapter";
 
 export interface PickerRow {
+  identity?: "opaque";
+  searchText?: string;
   key: string;
   id: string;
   label: string;
@@ -218,9 +220,10 @@ const norm = (value: string | null | undefined): string =>
   (value ?? "").trim().toLowerCase();
 
 export function rowMatchesCheckpoint(
-  row: Pick<PickerRow, "id" | "aliases">,
+  row: Pick<PickerRow, "id" | "aliases" | "identity">,
   checkpoint: string | null | undefined,
 ): boolean {
+  if (row.identity === "opaque") return row.id === checkpoint;
   const target = norm(checkpoint);
   if (!target) {
     return false;
@@ -254,10 +257,10 @@ export function filterRows<T extends PickerRow>(
   const seen = new Set<string>();
   return rows.filter((row) => {
     if (tab === FAVORITES_TAB) {
-      if (!isFavorite(row) || seen.has(norm(row.id))) {
+      if (!isFavorite(row) || seen.has(row.identity === "opaque" ? row.id : norm(row.id))) {
         return false;
       }
-      seen.add(norm(row.id));
+      seen.add(row.identity === "opaque" ? row.id : norm(row.id));
     } else if (row.tab !== tab && !row.groups?.includes(tab)) {
       return false;
     }
@@ -266,7 +269,8 @@ export function filterRows<T extends PickerRow>(
       matched?.(row) === true ||
       norm(row.label).includes(q) ||
       norm(row.id).includes(q) ||
-      norm(row.providerName).includes(q)
+      norm(row.providerName).includes(q) ||
+      norm(row.searchText).includes(q)
     );
   });
 }

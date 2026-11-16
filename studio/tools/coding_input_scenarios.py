@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import base64
 import json
+
 from pathlib import Path
 import re
 import struct
 import zlib
 
+from coding_picker_scenarios import picker_trigger
 from coding_run_scenarios import expand_tool, unfold_activity
 from coding_ui import opened_id
 
@@ -241,8 +243,7 @@ def live_input_scenario(page, context, base, project, report, scenario, snapshot
     prompt = page.get_by_label("Coding prompt", exact = True)
     status = page.get_by_test_id("coding-run-status")
     evidence = report.setdefault("workload", {"kind": "live-existing-provider-rich-input", "requests": [], "deadline_seconds": 180})
-    # The composer's model chip names the configured model ("Model: <name>[ · effort]").
-    evidence["configured_model"] = (page.get_by_test_id("coding-model-trigger").get_attribute("aria-label") or "").removeprefix("Model: ")
+    evidence["configured_model"] = (picker_trigger(page).get_attribute("aria-label") or "").removeprefix("Model: ")
     # Prepare instructions before opening: native owns the effective skill snapshot.
     # Use a resolvable visual fixture rather than the 1px transport-contract image.
     page.get_by_label("Image files", exact = True).set_input_files({"name": "visual.png", "mimeType": "image/png", "buffer": LIVE_PNG})

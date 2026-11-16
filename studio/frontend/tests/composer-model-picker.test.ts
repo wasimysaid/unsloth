@@ -841,7 +841,7 @@ test("Compare panes pick through the composer picker, with no reasoning or eject
   );
   assert.match(
     picker,
-    /const reasoningChip = pane \? null : reasoning\.chipLabel;/,
+    /const reasoningChip = runtimeCatalog \? runtimeCatalog\.reasoning\.value \|\| null : pane \? null : reasoning\.chipLabel;/,
   );
   assert.match(picker, /const chosenLoaded = pane\s*\? pane\.loaded === true/);
   // Reopened Run settings start from the pane's own config, not the saved one.

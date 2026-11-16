@@ -43,77 +43,26 @@ export function findCodingModel(
   return provider && model ? { provider, model } : null;
 }
 
-export function filterCodingModels(
-  catalog: CodingProviderChoice[],
-  search: string,
-) {
-  const query = search.trim().toLocaleLowerCase();
-  return catalog
-    .map((provider) => ({
-      ...provider,
-      models: provider.models.filter((model) =>
-        [
-          provider.id,
-          provider.name,
-          model.id,
-          model.name,
-          model.api_model,
-        ].some((text) => text.toLocaleLowerCase().includes(query)),
+export function codingSelectionCatalog(catalog: CodingProviderChoice[]) {
+  return new Map(
+    catalog.flatMap((provider) =>
+      provider.models.map(
+        (model) =>
+          [
+            modelIdentity(provider.id, model.id),
+            {
+              id: modelIdentity(provider.id, model.id),
+              name: model.name,
+              description: provider.name,
+              searchText: `${provider.id} ${model.id} ${model.api_model}`,
+              providerId: provider.id,
+              providerName: provider.name,
+              providerType: provider.id,
+              provider: provider.id,
+              model: model.id,
+            },
+          ] as const,
       ),
-    }))
-    .filter((provider) => provider.models.length > 0);
-}
-
-export const STARRED_GROUP = "starred";
-/** Starred models first, then one group per provider, in catalog order. */
-export function modelGroups(
-  catalog: CodingProviderChoice[],
-  favorites: ReadonlySet<string>,
-) {
-  const entry =
-    (provider: CodingProviderChoice) => (model: CodingModelChoice) => ({
-      provider: provider.id,
-      model,
-    });
-  const starred = catalog.flatMap((provider) =>
-    provider.models
-      .filter((model) => favorites.has(modelIdentity(provider.id, model.id)))
-      .map(entry(provider)),
+    ),
   );
-  return [
-    ...(starred.length
-      ? [{ key: STARRED_GROUP, name: "Starred", models: starred }]
-      : []),
-    ...catalog.map((provider) => ({
-      key: provider.id,
-      name: provider.name,
-      models: provider.models.map(entry(provider)),
-    })),
-  ];
-}
-
-/** Favorite persistence stores exact identity pairs, never copies of catalog entries. */
-export function readCodingFavorites(value: string | null): Set<string> {
-  try {
-    const parsed: unknown = JSON.parse(value ?? "[]");
-    if (!Array.isArray(parsed)) return new Set();
-    return new Set(
-      parsed.filter((key): key is string => {
-        if (typeof key !== "string") return false;
-        try {
-          const pair: unknown = JSON.parse(key);
-          return (
-            Array.isArray(pair) &&
-            pair.length === 2 &&
-            pair.every((part) => typeof part === "string" && part.length > 0) &&
-            JSON.stringify(pair) === key
-          );
-        } catch {
-          return false;
-        }
-      }),
-    );
-  } catch {
-    return new Set();
-  }
 }

@@ -3,12 +3,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  STARRED_GROUP,
-  filterCodingModels,
-  modelGroups,
+  codingSelectionCatalog,
   findCodingModel,
   modelIdentity,
-  readCodingFavorites,
 } from "../src/features/coding/model-selection.ts";
 import type { CodingProviderChoice } from "../src/features/coding/model-selection.ts";
 
@@ -31,7 +28,7 @@ const catalog: CodingProviderChoice[] = ["provider/a", "provider/b"].map(
   }),
 );
 
-test("catalog selection and favorites use exact identity, never colliding labels or API mapping", () => {
+test("catalog selection use exact identity, never colliding labels or API mapping", () => {
   const selection = {
     provider: "provider/b",
     model: "local-id",
@@ -53,53 +50,39 @@ test("catalog selection and favorites use exact identity, never colliding labels
   const a = modelIdentity("provider/a", "local-id");
   const b = modelIdentity("provider/b", "local-id");
   assert.notEqual(a, b);
-  const favorites = readCodingFavorites(
-    JSON.stringify([a, a, "Same model label", '["single"]', '["", "id"]']),
-  );
-  assert.deepEqual([...favorites], [a]);
-  const [starred, ...providers] = modelGroups(
-    filterCodingModels(catalog, ""),
-    favorites,
-  );
-  assert.equal(starred.key, STARRED_GROUP);
-  assert.deepEqual(
-    starred.models.map(({ provider, model }) => [provider, model.id]),
-    [["provider/a", "local-id"]],
-    "only the exact starred identity, never the same id of another provider",
-  );
-  assert.deepEqual(
-    providers.map((group) => group.key),
-    catalog.map((provider) => provider.id),
-  );
-  assert.equal(
-    modelGroups(filterCodingModels(catalog, ""), new Set())[0].key,
-    catalog[0].id,
-    "no Starred group without favorites",
-  );
+  const choices = codingSelectionCatalog(catalog);
+  assert.equal(choices.get(a)?.provider, "provider/a");
+  assert.equal(choices.get(b)?.provider, "provider/b");
+  assert.equal(choices.get(b)?.model, "local-id");
+  assert.equal(choices.get("Same model label"), undefined);
+  assert.equal(choices.get("native-api-provider/b"), undefined);
 });
 
-test("search/provider navigation derive exclusively from native entries and do not invent reasoning levels", () => {
-  const before = structuredClone(catalog);
-  assert.deepEqual(
-    filterCodingModels(catalog, " NATIVE-api-PROVIDER/B ").map(
-      (provider) => provider.id,
-    ),
-    ["provider/b"],
-  );
-  assert.equal(filterCodingModels(catalog, "no such model").length, 0);
-  assert.deepEqual(
-    modelGroups(filterCodingModels(catalog, "same"), new Set()).find(
-      (group) => group.key === "provider/b",
-    )?.models[0].model.reasoning,
-    "unsupported",
-  );
-  assert.deepEqual(catalog, before);
-});
-
-test("favorite keys are collision safe even when IDs contain separators, quotes or Unicode", () => {
+test("selection identities remain distinct with separators and unicode", () => {
   assert.notEqual(modelIdentity("a/b", "c"), modelIdentity("a", "b/c"));
-  const key = modelIdentity('provider/"ü', "local:model");
-  assert.equal(readCodingFavorites(JSON.stringify([key])).has(key), true);
-  for (const malformed of [null, "not JSON", '{"models":[]}', "[null,42,{}]"])
-    assert.equal(readCodingFavorites(malformed).size, 0);
+  assert.notEqual(
+    modelIdentity('provider/"ü', "local:model"),
+    modelIdentity("provider", '"ü/local:model'),
+  );
+});
+
+test("native case-distinct identities remain separate in shared selection and favorites", async () => {
+  const { findChosenRow, filterRows, FAVORITES_TAB } = await import(
+    "../src/components/assistant-ui/composer-model-picker/picker-model.ts"
+  );
+  const rows = ["Case", "case"].map((provider) => ({
+    identity: "opaque" as const,
+    searchText: "native-api-only",
+    id: modelIdentity(provider, "Model"),
+    key: provider,
+    label: "Same label",
+    tab: "connected",
+    kind: "external" as const,
+  }));
+  assert.equal(findChosenRow(rows, rows[1].id), rows[1]);
+  assert.equal(filterRows(rows, FAVORITES_TAB, "", () => true).length, 2);
+  assert.equal(
+    filterRows(rows, "connected", "native-api-only", () => false).length,
+    2,
+  );
 });

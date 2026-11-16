@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+
 from collections import Counter
 import hashlib
 import json
@@ -34,6 +35,7 @@ import urllib.request
 from urllib.parse import urlparse
 import zlib
 
+from coding_picker_scenarios import picker_trigger, picker_panel, picker_row, open_model_list
 from coding_provider_fixture import ProviderFixture
 from coding_ui import create_and_open, enter_plan_mode, leave_plan_mode, open_saved
 
@@ -382,17 +384,17 @@ def main() -> int:
 
                 stage("model-picker")
                 provider_count = len(provider.pending)
-                page.get_by_test_id("coding-model-trigger").click()
-                expect(page.get_by_test_id("coding-model-picker")).to_be_visible()
-                page.get_by_role("button", name="Choose model", exact=True).click()
-                expect(page.get_by_test_id("coding-model-list")).to_contain_text("Deterministic protocol (not a live model)")
+                picker_trigger(page).click()
+                expect(picker_panel(page)).to_be_visible()
+                open_model_list(page)
+                expect(picker_panel(page).get_by_role("listbox")).to_contain_text("Deterministic protocol (not a live model)")
                 snapshot("desktop-model-picker")
-                model_geometry = page.get_by_test_id("coding-model-list").locator("button[data-model]").evaluate_all("""rows => rows.map(row => {
-                    const label = row.querySelector(':scope > span');
+                model_geometry = picker_panel(page).get_by_role("listbox").get_by_role("option").evaluate_all("""rows => rows.map(row => {
+                    const label = row.querySelector('span.truncate');
                     if (!label) throw new Error('Native model choice has no rendered name');
                     const range = document.createRange(); range.selectNodeContents(label);
                     const text = range.getBoundingClientRect(), button = row.getBoundingClientRect();
-                    return {model: row.dataset.model, label: label.textContent, textRight: text.right,
+                    return {model: row.dataset.modelId, label: label.textContent, textRight: text.right,
                         buttonRight: button.right, labelWidth: label.clientWidth, labelScrollWidth: label.scrollWidth,
                         whiteSpace: getComputedStyle(label).whiteSpace, overflow: getComputedStyle(label).overflow};
                 })""")
@@ -401,9 +403,9 @@ def main() -> int:
                     if geometry["textRight"] > geometry["buttonRight"] + 1 and geometry["overflow"] == "visible":
                         report["visual_findings"].append({"id": "model-label-overlaps-favorite", "status": "failed", "detail": geometry, "screenshot": str(run / "desktop-model-picker.png")})
                 with page.expect_response(lambda response: response.url == base + prefix + "/configuration" and response.request.method == "POST") as configured:
-                    page.locator('button[data-provider="coding-acceptance"][data-model="alternate"]').click()
+                    picker_row(page, "coding-acceptance", "alternate").click()
                 assert configured.value.ok, configured.value.text()
-                expect(page.get_by_role("button", name="Choose model", exact=True)).to_contain_text("Refresh alternate model")
+                expect(picker_trigger(page)).to_contain_text("Refresh alternate model")
                 page.keyboard.press("Escape")
                 selection = native_capture(base, headers, conversation)["state"]["configuration"]
                 assert selection["provider"] == "coding-acceptance" and selection["model"] == "alternate"
