@@ -111,7 +111,7 @@ export {
   useGgufVariantsCacheVersions,
   useHubInventory,
 } from "./inventory";
-export { bumpInventoryVersion } from "./stores/inventory-events";
+export { bumpInventoryVersion, getInventoryVersion, subscribeInventory } from "./stores/inventory-events";
 export {
   getHfToken,
   hfApiToken,

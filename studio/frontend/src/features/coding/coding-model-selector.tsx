@@ -15,6 +15,8 @@ import {
   RunSettingsToggle,
   RunSettingsSection,
   residentModelConfig,
+  type PendingModelDownload,
+  useLoadAfterDownload,
 } from "@/features/model-picker";
 import type { LocalModelLoadOptions } from "./local-model-preload";
 import { ComposerModelPicker } from "@/components/assistant-ui/composer-model-picker/composer-model-picker";
@@ -25,15 +27,10 @@ import {
 import {
   getInventoryVersion,
   subscribeInventory,
-} from "@/features/hub/stores/inventory-events";
+} from "@/features/hub";
 import { Button } from "@/components/ui/button";
 import { RefreshCw } from "lucide-react";
-import { listModels } from "@/features/chat/api/chat-api";
-import { wantsDownloadManagerStaging } from "@/features/chat/utils/model-download-staging";
-import {
-  type PendingModelDownload,
-  useLoadAfterDownload,
-} from "@/features/model-picker/use-load-after-download";
+import { listModels, wantsDownloadManagerStaging } from "@/features/chat";
 import type {
   ModelOption,
   ModelSelectorChangeMeta,

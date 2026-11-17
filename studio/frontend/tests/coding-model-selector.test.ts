@@ -35,7 +35,7 @@ function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency:
       import.meta.url,
     ),
     {
-      "@/features/hub/stores/inventory-events": {
+      "@/features/hub": {
         getInventoryVersion: () => inventoryVersion,
         subscribeInventory(callback: () => void) {
           inventoryChanged = callback;
@@ -45,7 +45,7 @@ function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency:
         },
       },
       "react-dom": { createPortal: () => null },
-      "@/features/model-picker": { SidebarModelConfig: "sidebar-config", RunSettingsPanel: "settings-panel", RunSettingsToggle: "settings-toggle", RunSettingsSection: "settings-section", residentModelConfig: () => null },
+      "@/features/model-picker": { SidebarModelConfig: "sidebar-config", RunSettingsPanel: "settings-panel", RunSettingsToggle: "settings-toggle", RunSettingsSection: "settings-section", residentModelConfig: () => null, useLoadAfterDownload: (...args: typeof download) => { download = args; } },
       react: {
         useContext: (context: { initial: unknown }) => context.initial,
         useRef(initial: unknown) {
@@ -82,9 +82,7 @@ function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency:
       "./coding-layout-context": { CodingLayoutHosts: { initial: { settingsPanel: null, settingsTrigger: null, contextUsage: null } } },
       "./model-selection": selection,
       "./use-local-model": { useLocalModel: () => ({ ...local, refresh: local.refresh ?? (async () => local.models) }) },
-      "@/features/chat/utils/model-download-staging": downloadStaging,
-      "@/features/chat/api/chat-api": { listModels: async () => ({ models: [{ id: "org/fallback", name: "Fallback", is_gguf: true }] }) },
-      "@/features/model-picker/use-load-after-download": { useLoadAfterDownload: (...args: typeof download) => { download = args; } },
+      "@/features/chat": { ...downloadStaging, listModels: async () => ({ models: [{ id: "org/fallback", name: "Fallback", is_gguf: true }] }) },
     },
   );
   return {
