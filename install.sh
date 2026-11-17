@@ -1,5 +1,5 @@
 #!/bin/sh
-# Unsloth Studio Installer. Usage, supported options and the web one-liner live in the README under "Unsloth Studio (web UI)" and are deliberately not repeated here: this file ships inside the Linux desktop bundle, where a header rehearsing download-and-run command lines is the first thing a generic script classifier reads. A piped install takes options as environment variables after the pipe (UNSLOTH_NO_TORCH, UNSLOTH_SKIP_AUTOSTART, UNSLOTH_INSTALL_SYSTEMD, UNSLOTH_SYSTEMD_HOST, UNSLOTH_SYSTEMD_PORT, UNSLOTH_ISOLATE_UV_CACHE, UNSLOTH_INSTALL_NO_ROLLBACK, UNSLOTH_PYTHON, UNSLOTH_STUDIO_HOME), because a bare `--no-torch` after the pipe would be read as an option to sh itself; a local run takes the equivalent flags (--no-torch, --isolated-uv-cache, --no-rollback, --python, --local). Install dir priority: UNSLOTH_STUDIO_HOME > STUDIO_HOME > UNSLOTH_HOME/studio > $HOME/.unsloth/studio
+# Unsloth Studio Installer. Usage, supported options and the web one-liner live in the README under "Unsloth Studio (web UI)" and are deliberately not repeated here: this file ships inside the Linux desktop bundle, where a header rehearsing download-and-run command lines is the first thing a generic script classifier reads. A piped install takes options as environment variables after the pipe (UNSLOTH_NO_TORCH, UNSLOTH_SKIP_AUTOSTART, UNSLOTH_INSTALL_SYSTEMD, UNSLOTH_SYSTEMD_HOST, UNSLOTH_SYSTEMD_PORT, UNSLOTH_INSTALL_LAUNCHD, UNSLOTH_LAUNCHD_HOST, UNSLOTH_LAUNCHD_PORT, UNSLOTH_ISOLATE_UV_CACHE, UNSLOTH_INSTALL_NO_ROLLBACK, UNSLOTH_PYTHON, UNSLOTH_STUDIO_HOME), because a bare `--no-torch` after the pipe would be read as an option to sh itself; a local run takes the equivalent flags (--no-torch, --isolated-uv-cache, --no-rollback, --python, --local). Install dir priority: UNSLOTH_STUDIO_HOME > STUDIO_HOME > UNSLOTH_HOME/studio > $HOME/.unsloth/studio
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 set -e
@@ -45,6 +45,8 @@ _VENV_DISCARDED=false
 _VENV_DISCARD_LEFTOVER=""
 _INSTALL_SYSTEMD=false
 _SYSTEMD_STARTED=false
+_INSTALL_LAUNCHD=false
+_LAUNCHD_STARTED=false
 _VERBOSE=false
 _SHORTCUTS_ONLY=false
 _next_is_package=false
@@ -86,6 +88,7 @@ case "${UNSLOTH_SKIP_AUTOSTART:-}" in 1|true|TRUE|yes|YES|on|ON) _SKIP_AUTOSTART
 case "${UNSLOTH_ISOLATE_UV_CACHE:-}" in 1|true|TRUE|yes|YES|on|ON) _ISOLATE_UV_CACHE=true ;; esac
 case "${UNSLOTH_INSTALL_NO_ROLLBACK:-}" in 1|true|TRUE|yes|YES|on|ON) _NO_ROLLBACK=true ;; esac
 case "${UNSLOTH_INSTALL_SYSTEMD:-}" in 1|true|TRUE|yes|YES|on|ON) _INSTALL_SYSTEMD=true ;; esac
+case "${UNSLOTH_INSTALL_LAUNCHD:-}" in 1|true|TRUE|yes|YES|on|ON) _INSTALL_LAUNCHD=true ;; esac
 [ -z "$_USER_PYTHON" ] && [ -n "${UNSLOTH_PYTHON:-}" ] && _USER_PYTHON="$UNSLOTH_PYTHON"
 
 if [ "$_VERBOSE" = true ]; then
@@ -299,22 +302,18 @@ _run_install_cmd_once() {
     if _is_verbose; then
         _rcf=$(mktemp)
         tauri_stream_log stdout "OUTPUT_CLEAR" "$_label"
-        _log=""
-        if [ -n "${_UNSLOTH_MIRROR_SPARE:-}" ]; then
-            _log=$(mktemp)
-            _ric_run "$@" | _ric_tee "$_log" | _uv_download_markers "" "$UNSLOTH_DL_MARKER_MIN_BYTES" | _redact_install_output
-        else
-            _ric_run "$@" | _uv_download_markers "" "$UNSLOTH_DL_MARKER_MIN_BYTES" | _redact_install_output
-        fi
+        _log=$(mktemp)
+        _ric_run "$@" | _ric_tee "$_log" | _uv_download_markers "" "$UNSLOTH_DL_MARKER_MIN_BYTES" | _redact_install_output
         _rc=$(cat "$_rcf" 2>/dev/null || echo 1)
         rm -f "$_rcf"
         _rc=${_rc:-1}
         if [ "$_rc" -eq 0 ] 2>/dev/null; then
-            [ -z "$_log" ] || rm -f "$_log"
+            rm -f "$_log"
             tauri_clear_install_error "$_label recovered"
             return 0
         fi
-        _ric_log=$_log
+        _ric_damaged=$(_uv_damaged_wheels "$_log")
+        if [ -n "${_UNSLOTH_MIRROR_SPARE:-}" ]; then _ric_log=$_log; else rm -f "$_log"; fi
         tauri_stream_log stdout "ERROR_OUTPUT" "$_label failed (exit code $_rc)"
         step "error" "$_label failed (exit code $_rc)" "$C_ERR" >&2
         return "$_rc"
@@ -341,8 +340,37 @@ _run_install_cmd_once() {
     step "error" "$_label failed (exit code $_rc)" "$C_ERR" >&2
     _redact_install_output "$_log" >&2
     tauri_stream_log stderr "ERROR_OUTPUT" "$_label failed (exit code $_rc)"
+    _ric_damaged=$(_uv_damaged_wheels "$_log")
     if [ -n "${_UNSLOTH_MIRROR_SPARE:-}" ]; then _ric_log=$_log; else rm -f "$_log"; fi
     return $_rc
+}
+
+# uv reuses a damaged cached wheel on every run, --refresh included (#17375).
+_uv_damaged_wheels() {
+    [ -f "$1" ] || return 0
+    awk '
+        p != "" && /^[ \t]*(cause|Caused by): The wheel is invalid/ { print tolower(p) }
+        { p = "" }
+        /Failed to install: [^ ]+ \(/ {
+            p = $0; sub(/.*Failed to install: [^ ]+ \(/, "", p); sub(/(==| @ ).*/, "", p)
+            if (p !~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/) p = ""
+        }' "$1"
+}
+
+_repair_uv_damaged_wheels() {
+    _rudw_new=""
+    for _rudw_n in ${_ric_damaged:-}; do
+        case "$_ricr_cleaned" in *" $_rudw_n "*) continue ;; esac
+        [ "$_ricr_cleaned_n" -lt 50 ] || break
+        _ricr_cleaned="$_ricr_cleaned$_rudw_n "
+        _ricr_cleaned_n=$((_ricr_cleaned_n + 1))
+        _rudw_new="$_rudw_new $_rudw_n"
+    done
+    [ -n "$_rudw_new" ] || return 1
+    substep "clearing damaged uv cache entries for$_rudw_new..." "$C_WARN"
+    # Another uv process may hold the cache lock.
+    # shellcheck disable=SC2086
+    UV_LOCK_TIMEOUT=${UV_LOCK_TIMEOUT:-60} uv cache clean $_rudw_new >/dev/null 2>&1
 }
 
 : "${UNSLOTH_INSTALL_RETRIES:=3}"
@@ -359,10 +387,15 @@ run_install_cmd_retry() {
         *) if [ "${#UNSLOTH_INSTALL_RETRY_DELAY}" -le 4 ] && [ "$UNSLOTH_INSTALL_RETRY_DELAY" -ge 0 ] 2>/dev/null && [ "$UNSLOTH_INSTALL_RETRY_DELAY" -le 3600 ] 2>/dev/null; then _ricr_delay=$UNSLOTH_INSTALL_RETRY_DELAY; else _ricr_delay=3; fi ;;
     esac
     _ricr_attempt=1
+    _ricr_cleaned=" "
+    _ricr_cleaned_n=0
     while :; do
+        _ric_damaged=""
         # AND-OR (not `if`) preserves the real failure code for the rollback path.
         _run_install_cmd_once "$@" && return 0
         _ricr_rc=$?
+        # Not an attempt: uv names one damaged package per run.
+        _repair_uv_damaged_wheels && continue
         if [ "$_ricr_attempt" -ge "$_ricr_max" ]; then
             _mirror_retry_install "$_ricr_rc" "$@" && return 0
             return $?
@@ -1418,6 +1451,55 @@ _install_systemd_user_service() {
         substep "for boot without a login session, run once: loginctl enable-linger \"\$USER\""
     else
         step "systemd" "user service install failed; see the error above" "$C_WARN"
+    fi
+}
+
+_resolve_launchd_install_script() {
+    if [ "$_REPO_IS_CHECKOUT" = "1" ] && [ -f "$_REPO_ROOT/studio/launchd/install_user_agent.sh" ]; then
+        printf '%s\n' "$_REPO_ROOT/studio/launchd/install_user_agent.sh"
+        return 0
+    fi
+    [ -x "$VENV_DIR/bin/python" ] || return 0
+    "$VENV_DIR/bin/python" -I -c \
+        "import importlib.resources as r; print(r.files('studio') / 'launchd' / 'install_user_agent.sh')" \
+        2>/dev/null || true
+}
+
+_install_launchd_user_agent() {
+    if [ "$OS" != "macos" ]; then
+        step "launchd" "UNSLOTH_INSTALL_LAUNCHD is macOS only; skipped" "$C_WARN"
+        return 0
+    fi
+    # The desktop app's "Run Unsloth at login" agent already keeps a Studio backend up; a second
+    # server on the same home would fight it for the port.
+    _ld_account_home=$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | awk '{print $2}' || true)
+    for _ld_h in "$HOME" "$_ld_account_home"; do
+        if [ -n "$_ld_h" ] && [ -f "$_ld_h/Library/LaunchAgents/Unsloth.plist" ]; then
+            step "launchd" "desktop app's Run at login is on; skipped" "$C_WARN"
+            return 0
+        fi
+    done
+    _ld_script=$(_resolve_launchd_install_script)
+    if [ -z "$_ld_script" ] || [ ! -f "$_ld_script" ]; then
+        step "launchd" "agent helper not found in this install; skipped" "$C_WARN"
+        return 0
+    fi
+
+    set -- --unsloth-exe "$VENV_DIR/bin/unsloth" \
+        --host "${UNSLOTH_LAUNCHD_HOST:-127.0.0.1}" --port "${UNSLOTH_LAUNCHD_PORT:-8888}" --enable --start
+    [ "$_STUDIO_HOME_REDIRECT" != "default" ] && set -- "$@" --studio-home "$STUDIO_HOME"
+
+    if bash "$_ld_script" "$@" >/dev/null; then
+        _LAUNCHD_STARTED=true
+        step "launchd" "user agent loaded (ai.unsloth.studio.server)"
+        substep "status:  launchctl print gui/\$(id -u)/ai.unsloth.studio.server"
+        substep "restart: launchctl kickstart -k gui/\$(id -u)/ai.unsloth.studio.server"
+        substep "stop:    launchctl bootout gui/\$(id -u)/ai.unsloth.studio.server"
+        substep "logs:    $STUDIO_HOME/logs/server/"
+        substep "not running? $VENV_DIR/bin/unsloth studio -p ${UNSLOTH_LAUNCHD_PORT:-8888} shows why"
+        substep "binds 127.0.0.1 by default; set UNSLOTH_LAUNCHD_HOST=0.0.0.0 before install for LAN"
+    else
+        step "launchd" "user agent install failed; see the error above" "$C_WARN"
     fi
 }
 
@@ -2581,7 +2663,11 @@ if [ "$_NO_TORCH_FLAG" = true ] || [ "$MAC_INTEL" = true ]; then
     SKIP_TORCH=true
 fi
 
-if [ "$OS" = "macos" ] && [ "$_ARCH" = "arm64" ]; then
+_OVERRIDES_FILE=""
+# A checkout's pins describe that checkout, not the released wheel, so take them only when the
+# checkout is what gets installed; otherwise _bootstrap_packaged_mlx_override reads the wheel's copy.
+if [ "$OS" = "macos" ] && [ "$_ARCH" = "arm64" ] \
+   && { [ "$STUDIO_LOCAL_INSTALL" = true ] || [ -n "${UNSLOTH_CI_SOURCE_OVERLAY:-}" ]; }; then
     _OVERRIDES_FILE="$(cd "$(dirname "$0" 2>/dev/null || echo ".")" && pwd)/studio/backend/requirements/single-env/overrides-darwin-arm64.txt"
     if [ -f "$_OVERRIDES_FILE" ]; then
         # uv splits UV_OVERRIDE on whitespace; hand uv a copy in a whitespace-free temp dir.
@@ -7581,8 +7667,8 @@ _unsloth_desktop_install_spec=""
 if [ -n "${UNSLOTH_DESKTOP_BACKEND_VERSION:-}" ]; then
     _unsloth_desktop_install_spec="unsloth>=${UNSLOTH_DESKTOP_BACKEND_VERSION}"
 fi
-_unsloth_release_install_spec="${_unsloth_desktop_install_spec:-unsloth>=2026.11.2}"
-_unsloth_zoo_install_spec="unsloth-zoo>=2026.11.2"
+_unsloth_release_install_spec="${_unsloth_desktop_install_spec:-unsloth>=2026.11.4}"
+_unsloth_zoo_install_spec="unsloth-zoo>=2026.11.4"
 
 # An index lagging PyPI (mirror, delayed feed, cutoff) may lack these floors (#14031): lower them to its newest release.
 # The marker tells Desktop preflight this older backend is the newest available, so it is not repaired forever.
@@ -8626,6 +8712,12 @@ echo ""
 if [ "$_INSTALL_SYSTEMD" = true ]; then
     _install_systemd_user_service
     if [ "$_SYSTEMD_STARTED" = true ]; then
+        _SKIP_AUTOSTART=true
+    fi
+fi
+if [ "$_INSTALL_LAUNCHD" = true ]; then
+    _install_launchd_user_agent
+    if [ "$_LAUNCHD_STARTED" = true ]; then
         _SKIP_AUTOSTART=true
     fi
 fi

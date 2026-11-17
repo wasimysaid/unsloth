@@ -20,6 +20,7 @@ from utils.paths.storage_roots import account_path
 
 from .diffusion_content import ROLE_LORA, inspect_checkpoint
 from .diffusion_families import DIFFUSION_CANCELLED_MSG
+from .sd_cpp_args import strip_lora_tags
 from utils.paths.path_utils import is_appledouble_metadata
 
 _ALL_EXTS = (".safetensors", ".gguf")
@@ -346,11 +347,8 @@ def _read_lora_sidecar(weight_path: Path) -> tuple[tuple[str, ...], float]:
 def list_loras(
     *, family: Optional[str] = None, include_copies: bool = False
 ) -> list[LoraCatalogEntry]:
-    """The merged catalog (curated + local), optionally family-filtered.
-
-    Cheap: one directory scan plus the in-memory curated list. Network is only touched on
-    resolve(), when a hub adapter is selected.
-    """
+    """Merged curated and local catalog, optionally family-filtered; cheap (one directory scan plus
+    the in-memory curated list), with network touched only by resolve() for a hub adapter."""
     merged = [e for e in list(_CURATED) + _scan_local() if include_copies or not e.copy_of]
     if family:
         fam = family.strip().lower()
@@ -371,11 +369,9 @@ def _staging_name(dest_dir: Path, stem: str) -> str:
 
 
 def export_local_lora(lora_id: str, dest_dir: Path) -> Path:
-    """Copy a local adapter into ``dest_dir`` with a ``<stem>.json`` sidecar carrying the image LoRA marker.
-
-    Takes a catalog id, never a path, so only listed image LoRAs can be read. Returns the copied weight
-    file; a stem already used by other bytes, another weight format or a foreign ``.json`` gets a suffix.
-    """
+    """Copy a listed local adapter (by catalog id, never a path) into dest_dir with an image LoRA
+    <stem>.json sidecar; returns the weight file; a stem used by other bytes, another weight
+    format or a foreign .json gets a suffix."""
     import filecmp
     import shutil
 
@@ -438,6 +434,10 @@ def export_local_lora(lora_id: str, dest_dir: Path) -> Path:
     return out
 
 
+class LoraSelectionError(ValueError):
+    """A LoRA selection the loaded model cannot take; the caller's to fix."""
+
+
 def resolve_one(
     spec_id: str,
     weight: float,
@@ -454,7 +454,7 @@ def resolve_one(
     if entry is not None:
         req_fam = (family or "").strip().lower()
         if entry.families and req_fam and req_fam not in {f.lower() for f in entry.families}:
-            raise ValueError(
+            raise LoraSelectionError(
                 f"LoRA '{spec_id}' is for {', '.join(entry.families)}, not the loaded "
                 f"'{family}' model family; pick a LoRA built for this family."
             )
@@ -467,7 +467,7 @@ def resolve_one(
                 raise FileNotFoundError(f"LoRA '{spec_id}' is no longer present on disk")
             return ResolvedLora(spec_id, sanitize_alias(spec_id), path, entry.fmt, weight)
         if not entry.repo_id or not entry.weight_name:
-            raise ValueError(f"LoRA '{spec_id}' has no downloadable weight")
+            raise LoraSelectionError(f"LoRA '{spec_id}' has no downloadable weight")
         path = hf_hub_download_with_xet_fallback(
             entry.repo_id, entry.weight_name, hf_token, cancel_event = cancel_event
         )
@@ -574,7 +574,7 @@ def resolve_specs(
         EntryNotFoundError,
         GatedRepoError,
     ) as exc:
-        raise ValueError(_scrub_hub_url(str(exc))) from exc
+        raise LoraSelectionError(_scrub_hub_url(str(exc))) from exc
     except RuntimeError as exc:
         if str(exc) == "Cancelled":
             raise RuntimeError(DIFFUSION_CANCELLED_MSG) from exc
@@ -633,13 +633,9 @@ def materialize_native_dir(
     return out
 
 
-_TAG_RE = re.compile(r"<lora:([^:>]+):([^>]+)>")
-
-
 def inject_prompt_tags(prompt: str, resolved: list[ResolvedLora]) -> str:
     """Strips all user <lora:...> tags first so the validated weight wins over any typed weight."""
-    cleaned = _TAG_RE.sub("", prompt)
-    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+    cleaned = re.sub(r"[ \t]{2,}", " ", strip_lora_tags(prompt)).strip()
     tags = [f"<lora:{r.alias}:{_fmt_weight(r.weight)}>" for r in resolved]
     if not tags:
         return cleaned
@@ -653,10 +649,12 @@ def _fmt_weight(w: float) -> str:
     return s or "0"
 
 
-# Families sd-cli LoRA name conversion supports (not Qwen-Image); substring match.
+# Families sd-cli LoRA name conversion supports (not Qwen-Image); substring match. Qwen-Image-2.1's diffusers keys are
+# the GGUF's tensor names, and sd.cpp folds proj / gate_layer into the fused img_mlp.gate_up (upstream #2057).
 _NATIVE_LORA_FAMILY_TOKENS = (
     "flux.1",
     "flux.2",
+    "qwen-image-2.1",
     "z-image",
     "sd1",
     "sd2",
@@ -712,6 +710,12 @@ def lora_unavailable_reason(
     if engine == "sd_cpp":
         if any(tok in fam for tok in _NATIVE_LORA_FAMILY_TOKENS):
             return None
+        if fam == "minimax-h3-image":
+            # sd-cli has no key mapping for this DiT's adapters; the diffusers engine merges them at load.
+            return (
+                f"The native sd.cpp engine cannot apply LoRAs to {name}. LoRAs need the diffusers engine: load "
+                "MiniMaxAI/MiniMax-H3-Image (not a GGUF) with the LoRA selected."
+            )
         return f"The native sd.cpp engine cannot apply LoRAs to {name}."
     if not diffusers_lora_family_supported(fam):
         return f"LoRAs are not supported for {name} yet: its pipeline has no LoRA loader."
