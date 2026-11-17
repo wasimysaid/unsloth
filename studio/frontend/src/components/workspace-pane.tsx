@@ -157,6 +157,7 @@ export function WorkspacePane({
           >
             {pane && (
               <section
+                data-slot="workspace-pane"
                 aria-label={pane.label}
                 data-testid={pane.testId}
                 onKeyDown={(event) => {

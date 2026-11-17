@@ -198,7 +198,7 @@ export function ChildInspector({ view }: { view: ChildView }) {
       data-testid="coding-child-inspector"
       data-child-handle={child.handle}
       data-child-attempt={child.attempt}
-      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-card text-foreground"
+      className="panel-document-surface relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden text-foreground"
     >
       <header className="flex shrink-0 items-start gap-2.5 border-b border-border/60 px-3 py-2.5">
         <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md coding-wash-strong">

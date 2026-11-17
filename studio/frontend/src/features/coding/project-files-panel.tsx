@@ -411,7 +411,7 @@ export function ProjectFilesPanel({ files }: { files: ProjectFiles }) {
           </>
         }
       />
-      <div className="flex min-h-0 flex-1 overflow-hidden bg-card">
+      <div className="panel-document-surface flex min-h-0 flex-1 overflow-hidden">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border/60 px-3">
             {selected && <ProjectFileIcon path={selected.path} />}

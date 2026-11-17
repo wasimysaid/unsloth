@@ -5588,6 +5588,18 @@ html.force-reduced-motion .sidebar-section-drop-line {
 	font-size: calc(1rem * var(--ui-space-scale, 1));
 }
 
+.panel-document-surface {
+  --panel-document-background: color-mix(in oklab, var(--muted) 55%, var(--card));
+  background-color: var(--panel-document-background);
+}
+
+html[data-glass] .panel-document-surface {
+  --muted: var(--glass-page-muted);
+  --card: var(--glass-page-card);
+  --color-muted: var(--muted);
+  --color-card: var(--card);
+}
+
 /* Layered, or it outranks a child's own text-* utility (the agent bar rendered at 16px). */
 @layer base {
 	.browser-panel-body > * {
@@ -7329,9 +7341,11 @@ html[data-glass="liquid-3d"] .wallpaper-preview[data-wallpaper-preview-outline-o
 /* Frost the tab strip and the body, never the section: a backdrop-filter there would make it a
    stacking context, trapping the tab strip under the macOS drag strip. A macOS
    native page cuts its hole only through elements. File views and the overlay's dialog stay solid. */
+html[data-glass][data-chat-wallpaper-workspace-ready] [data-slot="workspace-pane"],
 html[data-glass][data-chat-wallpaper-workspace-ready]:not([data-browser-overlay-open]) [data-slot="browser-panel"] {
   background: transparent;
 }
+html[data-glass][data-chat-wallpaper-workspace-ready] [data-slot="workspace-pane"] .browser-chrome,
 html[data-glass][data-chat-wallpaper-workspace-ready]:not([data-browser-overlay-open]) [data-windows-browser="web"]::before,
 html[data-glass][data-chat-wallpaper-workspace-ready]:not([data-browser-overlay-open]) :not([data-windows-browser="web"])[data-slot="browser-panel"] > .browser-chrome,
 html[data-glass][data-chat-wallpaper-workspace-ready]:not([data-browser-overlay-open]) [data-slot="browser-panel"]:not([data-windows-browser]):not([data-browser-document]) > .browser-panel-body {
@@ -7339,6 +7353,7 @@ html[data-glass][data-chat-wallpaper-workspace-ready]:not([data-browser-overlay-
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
+html[data-glass][data-chat-wallpaper-workspace-ready] [data-slot="workspace-pane"] .browser-chrome [role="tab"][aria-selected="true"],
 html[data-glass][data-chat-wallpaper-workspace-ready]:not([data-browser-overlay-open]) [data-slot="browser-panel"] > .browser-chrome [role="tab"][aria-selected="true"] {
   background-color: color-mix(in srgb, var(--glass-hover), var(--foreground) 4%) !important;
   background-image: var(--glass-sheen, none);
@@ -7349,6 +7364,7 @@ html[data-glass][data-chat-wallpaper-workspace-ready]:not([data-browser-overlay-
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
+html[data-glass^="liquid"][data-chat-wallpaper-workspace-ready] [data-slot="workspace-pane"] .browser-chrome,
 html[data-glass^="liquid"][data-chat-wallpaper-workspace-ready]:not([data-browser-overlay-open]) [data-windows-browser="web"]::before,
 html[data-glass^="liquid"][data-chat-wallpaper-workspace-ready]:not([data-browser-overlay-open]) :not([data-windows-browser="web"])[data-slot="browser-panel"] > .browser-chrome,
 html[data-glass^="liquid"][data-chat-wallpaper-workspace-ready]:not([data-browser-overlay-open]) [data-slot="browser-panel"]:not([data-windows-browser]):not([data-browser-document]) > .browser-panel-body {
@@ -7841,7 +7857,7 @@ html[data-glass][data-chat-wallpaper-workspace-ready] [data-wallpaper-workspace]
 html[data-glass] [data-wallpaper-workspace][data-wallpaper-route="page"]:not([data-windows-wallpaper-page]) > .chat-wallpaper::after {
   content: none;
 }
-html[data-glass][data-chat-wallpaper-workspace-ready] [data-wallpaper-workspace][data-wallpaper-route="page"] > [data-slot="sidebar-inset"] .sticky {
+html[data-glass][data-chat-wallpaper-workspace-ready] [data-wallpaper-workspace][data-wallpaper-route="page"] > [data-slot="sidebar-inset"] .sticky:not(.panel-document-surface *) {
   background-color: transparent;
   -webkit-backdrop-filter: blur(16px);
   backdrop-filter: blur(16px);
@@ -8093,9 +8109,11 @@ html.tauri.client-windows[data-glass-clear] .chat-artifact-pop-surface:not(.chat
   border-image: linear-gradient(to bottom, transparent var(--studio-custom-titlebar-height), var(--border) var(--studio-custom-titlebar-height)) 1;
 }
 html.tauri.client-windows[data-glass-clear] .chat-browser-floating,
+html.tauri.client-windows[data-glass-clear] [data-slot="workspace-pane"],
 html.tauri.client-windows[data-glass-clear]:not([data-browser-overlay-open]) [data-slot="browser-panel"] {
   background-color: transparent;
 }
+html.tauri.client-windows[data-glass-clear] [data-slot="workspace-pane"] .browser-chrome,
 html.tauri.client-windows[data-glass-clear]:not([data-browser-overlay-open]) [data-slot="browser-panel"] > .browser-chrome,
 html.tauri.client-windows[data-glass-clear]:not([data-browser-overlay-open]) [data-slot="browser-panel"]:not([data-browser-document]) > .browser-panel-body {
   background-color: var(--panel-surface);

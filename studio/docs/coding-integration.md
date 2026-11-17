@@ -1096,3 +1096,8 @@ or removed during coding. Source uses the existing highlight worker and virtual
 rows, with four cached sections and 64 cached directories. Very long lines have
 an explicit shortened-preview notice. Small Markdown files reuse MarkdownPreview
 without its compact card styling.
+
+Files and Subagents share the Browser panel's glass tab styling and document
+background. The tab bar follows the selected glass material. Document content
+keeps its reading colors, and sticky source line numbers do not inherit page-header
+blur or card outlines. Transparent mode follows the app's transparent color tokens.

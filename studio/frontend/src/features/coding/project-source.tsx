@@ -75,7 +75,7 @@ export function ProjectSource({
             >
               <span
                 aria-hidden="true"
-                className="sticky left-0 z-10 w-[7ch] shrink-0 select-none bg-card pr-3 text-right text-muted-foreground/60"
+                className="sticky left-0 z-10 w-[7ch] shrink-0 select-none bg-[var(--panel-document-background)] pr-3 text-right text-muted-foreground/60"
               >
                 {firstLine + row.index}
               </span>

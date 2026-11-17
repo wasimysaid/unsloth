@@ -320,7 +320,7 @@ export function PanelTabStrip({
               className={cn(
                 "group/tab relative flex h-[calc(32px*var(--ui-space-scale,1))] min-w-[calc(88px*var(--ui-space-scale,1))] max-w-60 flex-1 basis-0 cursor-pointer touch-none select-none items-center gap-1 rounded-[10px] pl-2 pr-1.5 text-ui-13 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                 active
-                  ? "bg-card text-foreground dark:bg-accent"
+                  ? "bg-[var(--card)] text-foreground dark:bg-accent"
                   : "text-muted-foreground hover:bg-[color-mix(in_oklab,var(--foreground)_calc(6%*var(--contrast-wash-gain,1)),transparent)] hover:text-foreground",
               )}
             >
