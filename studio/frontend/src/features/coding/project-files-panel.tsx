@@ -500,7 +500,7 @@ export function ProjectFilesPanel({ files }: { files: ProjectFiles }) {
             <p className="m-auto max-w-sm px-6 text-center text-sm text-muted-foreground">
               {document.kind === "binary"
                 ? "This binary file has no text preview."
-                : "This file’s encoding is not supported."}
+                : "This file encoding is not supported."}
             </p>
           )}
           {document?.kind === "text" &&

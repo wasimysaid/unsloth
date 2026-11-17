@@ -235,8 +235,7 @@ export function createProjectFiles(root: string, api: ProjectFilesApi) {
       if (
         !selected ||
         document?.phase !== "ready" ||
-        document.value.kind !== "text" ||
-        document.value.next_offset === null
+        document.value.kind !== "text"
       )
         return;
       const value = document.value;
