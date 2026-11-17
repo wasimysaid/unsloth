@@ -199,6 +199,7 @@ export {
   isContextCommand,
 } from "./utils/context-command";
 export {
+  type ContextUsageBarInput,
   formatTokenCountFull,
   getSeverityColor,
 } from "./lib/context-usage-bar-state";
@@ -719,3 +720,5 @@ export { wantsDownloadManagerStaging } from "./utils/model-download-staging";
 
 export { loadedGpuMemoryFields } from "./stores/chat-runtime-store";
 export { mlxOffloadStateFrom, mlxRuntimeStateFrom } from "./lib/mlx-runtime-state";
+
+export { ContextUsageBar } from "./components/context-usage-bar";

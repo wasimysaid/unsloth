@@ -15,10 +15,8 @@ import {
 } from "react";
 import { readCodingCatalog } from "./api";
 import { CodingSurface } from "./coding-surface";
-import {
-  CodingModelSelector,
-  CodingModelSettingsHosts,
-} from "./coding-model-selector";
+import { CodingModelSelector } from "./coding-model-selector";
+import { CodingLayoutHosts } from "./coding-layout-context";
 import { ProjectFolderDialog } from "./project-folder-dialog";
 import { projectName } from "./project-name";
 import { ProjectPicker, recentProjects } from "./project-picker";
@@ -46,6 +44,8 @@ export function CodingPage() {
     useState<HTMLDivElement | null>(null);
   const [settingsTriggerHost, setSettingsTriggerHost] =
     useState<HTMLDivElement | null>(null);
+  const [contextUsageHost, setContextUsageHost] =
+    useState<HTMLDivElement | null>(null);
   const folderInvoker = useRef<HTMLElement | null>(null);
   const projectTrigger = useRef<HTMLButtonElement | null>(null);
   const signalReady = useAppShellReadySignal();
@@ -70,8 +70,12 @@ export function CodingPage() {
       : null;
 
   return (
-    <CodingModelSettingsHosts.Provider
-      value={{ panel: settingsPanelHost, trigger: settingsTriggerHost }}
+    <CodingLayoutHosts.Provider
+      value={{
+        settingsPanel: settingsPanelHost,
+        settingsTrigger: settingsTriggerHost,
+        contextUsage: contextUsageHost,
+      }}
     >
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <div
@@ -108,10 +112,10 @@ export function CodingPage() {
                 }
               />
             )}
-            <div
-              ref={setSettingsTriggerHost}
-              className="ml-auto flex shrink-0 items-center"
-            />
+            <div className="ml-auto flex min-w-0 items-center gap-1.5 self-stretch">
+              <div ref={setContextUsageHost} className="flex min-w-0 items-center" />
+              <div ref={setSettingsTriggerHost} className="flex shrink-0 items-center" />
+            </div>
           </header>
           <RuntimeNotice maintenance={maintenance} runtime={runtime} />
           <main
@@ -225,6 +229,6 @@ export function CodingPage() {
         </div>
         <div ref={setSettingsPanelHost} className="flex shrink-0" />
       </div>
-    </CodingModelSettingsHosts.Provider>
+    </CodingLayoutHosts.Provider>
   );
 }

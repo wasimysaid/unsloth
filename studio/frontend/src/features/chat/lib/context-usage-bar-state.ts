@@ -48,6 +48,8 @@ export type ContextUsageBarInput = {
   estimated?: boolean;
   /** A cloud model: the window is the provider's, so the local limit advice does not apply. */
   cloud?: boolean;
+  /** Hosts with their own compaction policy can omit local-loader advice. */
+  limitAdvice?: "auto" | "none";
   /** Tokens at which this chat auto-compacts; marked on the ring and named in the tooltip. */
   compactAt?: number | null;
 };
@@ -167,6 +169,7 @@ export function deriveContextUsageBar({
   contextBudget,
   estimated,
   cloud,
+  limitAdvice,
   compactAt,
 }: ContextUsageBarInput): ContextUsageBarState | null {
   const state = deriveUsageFace({
@@ -187,7 +190,7 @@ export function deriveContextUsageBar({
   return {
     ...state,
     // A provider's window is not a local setting: nothing here stops at it or can raise it.
-    advice: cloud ? "none" : state.advice,
+    advice: cloud || limitAdvice === "none" ? "none" : state.advice,
     compactMarkPercent: compactMarkPercent(compactAt, total),
   };
 }

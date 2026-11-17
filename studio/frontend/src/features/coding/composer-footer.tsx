@@ -1,93 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { Folder, LoaderCircle, Map as MapIcon, X } from "lucide-react";
-import type { SessionUsage } from "./command-types";
 import { projectName } from "./project-name";
 import type { CodingRun, CodingRunState } from "./run-session";
 import { codingModeControlReason } from "./run-session";
-
-const tokens = (count: number) => count.toLocaleString();
-
-/** Ring + percent; details open on click. Absent without a reported window. */
-export function ContextUsage({ usage }: { usage?: SessionUsage | null }) {
-  const window = usage?.context_window;
-  if (!window) return null;
-  const prompt = usage?.prompt_tokens;
-  const used = prompt?.used_prompt_tokens;
-  const share = used === undefined ? null : Math.min(1, used / window);
-  const tone =
-    share === null
-      ? "text-muted-foreground/60"
-      : share >= 0.9
-        ? "text-destructive"
-        : share >= 0.75
-          ? "text-amber-600 dark:text-amber-400"
-          : "text-muted-foreground";
-  const percent = share === null ? "—" : `${Math.round(share * 100)}%`;
-  const circumference = 2 * Math.PI * 6;
-  const qualifiers = [
-    prompt && !prompt.provider_confirmed ? "estimated" : null,
-    usage?.stale ? "stale" : null,
-  ].filter(Boolean);
-  return (
-    <Popover>
-      <PopoverTrigger asChild={true}>
-        <button
-          type="button"
-          aria-label={`Context window ${percent} used`}
-          data-testid="coding-context-usage"
-          className={`flex h-6 items-center gap-1.5 rounded-md px-1.5 text-[11px] transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${tone}`}
-        >
-          <svg viewBox="0 0 16 16" className="size-3.5 -rotate-90" aria-hidden="true">
-            <circle cx="8" cy="8" r="6" fill="none" strokeWidth="1.8" className="stroke-muted-foreground/25" />
-            <circle
-              cx="8"
-              cy="8"
-              r="6"
-              fill="none"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              className="stroke-current"
-              strokeDasharray={`${(share ?? 0) * circumference} ${circumference}`}
-            />
-          </svg>
-          {percent}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        side="top"
-        align="end"
-        className="w-auto min-w-48 gap-1 rounded-xl border border-border p-3 text-xs dark:bg-card"
-      >
-        <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-          Context window
-        </p>
-        {used === undefined ? (
-          <p className="text-muted-foreground">
-            {tokens(window)} tokens · not reported yet
-          </p>
-        ) : (
-          <p className="leading-5 text-muted-foreground">
-            {tokens(used)} / {tokens(window)} tokens
-            <br />
-            {tokens(Math.max(0, window - used))} tokens remaining
-            {qualifiers.length > 0 && (
-              <>
-                <br />
-                {qualifiers.join(", ")}
-              </>
-            )}
-          </p>
-        )}
-      </PopoverContent>
-    </Popover>
-  );
-}
 
 /** The row under an open conversation's composer. */
 export function ComposerFooter({
@@ -145,9 +61,6 @@ export function ComposerFooter({
           Compacting context…
         </span>
       )}
-      <span className="ml-auto flex shrink-0 items-center">
-        <ContextUsage usage={state?.native?.usage} />
-      </span>
     </div>
   );
 }

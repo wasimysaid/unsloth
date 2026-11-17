@@ -6,7 +6,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { type CSSProperties, type FC, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type FC, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   type ContextUsageBarInput,
   deriveContextUsageBar,
@@ -134,6 +134,8 @@ function useClickPin(enabled: boolean) {
 export const ContextUsageBar: FC<
   ContextUsageBarInput & {
     className?: string;
+    estimateDescription?: ReactNode;
+    usageDescription?: ReactNode;
     compactUnknownAsIcon?: boolean;
     pinOnClick?: boolean;
     /** Replaces the hover surface's shape and colour (the API page's pill). */
@@ -144,7 +146,7 @@ export const ContextUsageBar: FC<
     /** Text width, never compacting: the ch widths assume the mono face. */
     fitContent?: boolean;
   }
-> = ({ className, compactUnknownAsIcon = false, pinOnClick = false, hoverClassName, padX = 2.5, ringFirst = false, fitContent = false, ...input }) => {
+> = ({ className, compactUnknownAsIcon = false, pinOnClick = false, hoverClassName, padX = 2.5, ringFirst = false, fitContent = false, estimateDescription, usageDescription, ...input }) => {
   const pin = useClickPin(pinOnClick);
   const state = deriveContextUsageBar(input);
   if (!state) return null;
@@ -313,8 +315,15 @@ export const ContextUsageBar: FC<
           </div>
           {input.estimated ? (
             <div className="mt-1 max-w-64 text-ui-11 leading-snug text-muted-foreground/90">
-              Estimated from the chat&apos;s text, without attachments. A
-              loaded model replaces it with an exact count.
+              {estimateDescription ?? (
+                <>Estimated from the chat&apos;s text, without attachments. A
+                loaded model replaces it with an exact count.</>
+              )}
+            </div>
+          ) : null}
+          {usageDescription ? (
+            <div className="mt-1 max-w-64 text-ui-11 leading-snug text-muted-foreground/90">
+              {usageDescription}
             </div>
           ) : null}
           {advice !== "none" ? (

@@ -47,7 +47,6 @@ function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency:
       "react-dom": { createPortal: () => null },
       "@/features/model-picker": { SidebarModelConfig: "sidebar-config", RunSettingsPanel: "settings-panel", RunSettingsToggle: "settings-toggle", RunSettingsSection: "settings-section", residentModelConfig: () => null },
       react: {
-        createContext: (initial: unknown) => ({ initial }),
         useContext: (context: { initial: unknown }) => context.initial,
         useRef(initial: unknown) {
           const index = cursor++;
@@ -80,6 +79,7 @@ function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency:
       },
       "@/components/ui/button": { Button: "button" },
       "lucide-react": { RefreshCw: "icon" },
+      "./coding-layout-context": { CodingLayoutHosts: { initial: { settingsPanel: null, settingsTrigger: null, contextUsage: null } } },
       "./model-selection": selection,
       "./use-local-model": { useLocalModel: () => ({ ...local, refresh: local.refresh ?? (async () => local.models) }) },
       "@/features/chat/utils/model-download-staging": downloadStaging,

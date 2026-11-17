@@ -2,7 +2,6 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 import {
-  createContext,
   useContext,
   useEffect,
   useMemo,
@@ -39,6 +38,7 @@ import type {
   ModelOption,
   ModelSelectorChangeMeta,
 } from "@/features/model-picker";
+import { CodingLayoutHosts } from "./coding-layout-context";
 import { useLocalModel } from "./use-local-model";
 import {
   codingSelectionCatalog,
@@ -51,11 +51,6 @@ import type {
   CodingConfigurationChange,
   CodingProviderChoice,
 } from "./model-selection";
-
-export const CodingModelSettingsHosts = createContext<{
-  panel: HTMLElement | null;
-  trigger: HTMLElement | null;
-}>({ panel: null, trigger: null });
 
 export function CodingModelSelector({
   readCatalog,
@@ -82,7 +77,7 @@ export function CodingModelSelector({
 }) {
   const [open, setOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const hosts = useContext(CodingModelSettingsHosts);
+  const hosts = useContext(CodingLayoutHosts);
   const [discoverModels, setDiscoverModels] = useState<ModelOption[]>([]);
   const [pendingDownload, setPendingDownload] =
     useState<PendingModelDownload | null>(null);
@@ -405,14 +400,14 @@ export function CodingModelSelector({
       className="flex min-w-0 flex-wrap items-center gap-1"
       data-testid="coding-model-selector"
     >
-      {hosts.trigger &&
+      {hosts.settingsTrigger &&
         localChoice &&
         !settingsOpen &&
         createPortal(
           <RunSettingsToggle onOpen={() => setSettingsOpen(true)} />,
-          hosts.trigger,
+          hosts.settingsTrigger,
         )}
-      {hosts.panel &&
+      {hosts.settingsPanel &&
         localChoice &&
         createPortal(
           <RunSettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen}>
@@ -458,10 +453,10 @@ export function CodingModelSelector({
               )}
             </div>
           </RunSettingsPanel>,
-          hosts.panel,
+          hosts.settingsPanel,
         )}
       <ComposerModelPickerContext.Provider value={source}>
-        <ComposerModelPicker align="start" />
+        <ComposerModelPicker />
       </ComposerModelPickerContext.Provider>
       <Button
         variant="ghost"

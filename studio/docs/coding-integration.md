@@ -1025,6 +1025,12 @@ notice above the composer.
 
 ## Model Run settings
 
+Coding uses New Chat's model picker alignment, so changing the effort label does
+not move the open menu. Its header uses the same `ContextUsageBar`, fed directly
+by Mimir's native prompt accounting. Estimated and stale counts stay identified;
+request totals do not replace the context count. Mimir owns compaction policy,
+so Coding omits the local-loader limit advice.
+
 Coding uses the shared `ComposerModelPicker` gear menu, `ModelConfigPage` presets,
 `SidebarModelConfig`, and `RunSettingsPanel` used by New Chat. Preset edits retain
 that editor's existing save behavior. A selected preset travels with the load

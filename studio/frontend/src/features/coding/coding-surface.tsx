@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import { ContextUsageBar } from "@/features/chat";
+import { createPortal } from "react-dom";
+import { CodingLayoutHosts } from "./coding-layout-context";
+import { codingContextUsage } from "./context-usage";
 import { Button } from "@/components/ui/button";
 import {
   AssistantRuntimeProvider,
@@ -9,6 +13,7 @@ import {
 } from "@assistant-ui/react";
 import { ArrowDown } from "lucide-react";
 import {
+  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -259,6 +264,7 @@ export function CodingSurface({
   /** A confirmed model change, remembered for the next new conversation. */
   onConfigured?: (configuration: CodingConfiguration) => void;
 }) {
+  const hosts = useContext(CodingLayoutHosts);
   const [run] = useState(() => {
     if (
       !conversationId ||
@@ -469,6 +475,15 @@ export function CodingSurface({
   );
   return (
     <AssistantRuntimeProvider runtime={runtime}>
+      {hosts.contextUsage && createPortal(
+        <ContextUsageBar
+          {...codingContextUsage(state?.native?.usage)}
+          className="h-[calc(30px*var(--ui-space-scale,1))]"
+          compactUnknownAsIcon
+          pinOnClick
+        />,
+        hosts.contextUsage,
+      )}
       <ProjectOverlapDialog
         overlap={state?.overlapWarning?.overlap ?? null}
         disabled={Boolean(
