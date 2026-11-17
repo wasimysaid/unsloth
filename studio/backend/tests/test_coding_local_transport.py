@@ -44,7 +44,7 @@ async def test_browser_and_other_incarnation_cannot_control_protections(coding_a
     assert not serving.operations
 
 
-async def _empty_catalog():
+async def _empty_catalog(subject):
     return dict(id = "studio-local", name = "Studio local", models = [])
 
 

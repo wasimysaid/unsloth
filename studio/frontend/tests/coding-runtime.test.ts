@@ -2,6 +2,7 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 import assert from "node:assert/strict";
+import ts from "@typescript/typescript6";
 import { readFileSync } from "node:fs";
 import test, { type TestContext } from "node:test";
 import { ExternalStoreThreadRuntimeCore } from "../node_modules/@assistant-ui/core/dist/runtimes/external-store/external-store-thread-runtime-core.js";
@@ -288,8 +289,12 @@ test("coding route stays authenticated and excludes general-chat execution and t
     "input.ts",
   ]) {
     const contents = source(`../src/features/coding/${name}`);
+    const executable = ts.transpileModule(contents, {
+      fileName: name,
+      compilerOptions: { module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.ReactJSX },
+    }).outputText;
     assert.doesNotMatch(
-      contents,
+      executable,
       /from ["'][^"']*(?:features\/chat|app-sidebar|assistant-ui\/thread|chat-history|sandbox|model-picker)/,
     );
     assert.doesNotMatch(

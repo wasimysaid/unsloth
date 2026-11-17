@@ -26,7 +26,10 @@ export interface ComposerRuntimeControls {
   };
 }
 
+import type { ResidentEditorSnapshot } from "@/features/model-picker";
+
 export interface ComposerModelPickerSource {
+  resident?: ResidentEditorSnapshot;
   /** The host owns connected providers and per-session configuration. */
   runtimeControls?: ComposerRuntimeControls;
   models: readonly ModelOption[];

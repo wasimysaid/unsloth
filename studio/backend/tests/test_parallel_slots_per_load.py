@@ -555,3 +555,31 @@ def test_a_load_reply_carries_the_two_window_facts_and_the_width_that_selects_th
     assert reply(can_batch = False, context_unbounded_when_batched = False)["parallel_slots"] == 1
     assert reply(spec_draft_model = "org/drafter")["spec_draft_model"] == "org/drafter"
     assert _InferenceRuntimeFields.model_fields["context_unbounded_when_batched"].default is False
+
+
+@pytest.mark.parametrize("from_default, expected", [(True, None), (False, 4)])
+def test_runtime_parallel_pin_preserves_auto_provenance(backend, from_default, expected):
+    from routes.inference import _llama_runtime_fields
+
+    backend._last_load_intent = GgufLoadIntent(
+        model_identifier = "owner/repo", n_parallel = 4, n_parallel_from_default = from_default,
+    )
+    backend._requested_n_parallel = 4
+    backend._commit_effective_parallel_slots(2)
+    fields = _llama_runtime_fields(backend)
+    assert fields["requested_n_parallel"] == expected
+    assert fields["requested_parallel_slots"] == 4
+    assert fields["parallel_slots"] == 2
+    assert InferenceStatusResponse(**fields).model_dump()["requested_n_parallel"] == expected
+
+
+@pytest.mark.parametrize("length, auto_derived, expected", [(0, False, None), (16384, True, None), (8192, False, 8192)])
+def test_runtime_context_pin_keeps_automatic_replay_unpinned(backend, length, auto_derived, expected):
+    from routes.inference import _llama_runtime_fields
+
+    backend._last_load_intent = GgufLoadIntent(
+        model_identifier = "owner/repo", n_ctx = length, max_seq_length_auto_derived = auto_derived,
+    )
+    fields = _llama_runtime_fields(backend)
+    assert fields["requested_context_pin"] == expected
+    assert InferenceStatusResponse(**fields).model_dump()["requested_context_pin"] == expected

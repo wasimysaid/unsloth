@@ -7,7 +7,10 @@ import { residentModelConfigTarget } from "../model-config/model-config-handoff"
 import type { PerModelConfig } from "../model-config/per-model-config";
 import { ModelConfigPage } from "./model-config-page";
 
+import type { ResidentEditorSnapshot } from "../model-config/resident-editor-runtime";
+
 interface SidebarModelConfigProps {
+  resident?: ResidentEditorSnapshot;
   modelId: string;
   ggufVariant: string | null;
   isGguf: boolean;
@@ -22,6 +25,7 @@ interface SidebarModelConfigProps {
 // Memoized: the chat page re-renders it on every event, even with the panel collapsed.
 export const SidebarModelConfig = memo(function SidebarModelConfig({
   modelId,
+  resident,
   ggufVariant,
   isGguf,
   isLora,
@@ -47,6 +51,7 @@ export const SidebarModelConfig = memo(function SidebarModelConfig({
     <ModelConfigPage
       key={modelConfigInstanceKey(modelId, target.ggufVariant, loadedConfig)}
       target={target}
+      resident={resident}
       onRun={onReload}
       loadedConfig={loadedConfig}
       loadedContextLength={loadedContextLength}

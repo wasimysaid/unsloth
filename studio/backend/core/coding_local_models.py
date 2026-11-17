@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 from core.coding_runtime import CodingRuntimeError
+from models.model_load_config import ModelLoadConfig
 
 PROVIDER_ID = "studio-local"
 PROVIDER_NAME = "Studio local"
@@ -118,9 +119,35 @@ async def downloaded_rows():
     return gguf_rows + others
 
 
-async def local_catalog() -> dict:
-    return {"id": PROVIDER_ID, "name": PROVIDER_NAME,
-            "models": [local_choice(row) for row in await downloaded_rows()]}
+async def local_catalog(subject: str | None = None) -> dict:
+    from utils.account_context import current_account_id
+
+    models = []
+    for row in await downloaded_rows():
+        choice = local_choice(row)
+        status = await _resident_status(choice["api_model"], subject or current_account_id())
+        if status is not None:
+            style = status.reasoning_style
+            thinking = status.supports_reasoning
+            always_on = status.reasoning_always_on
+            levels = []
+            if thinking and not always_on:
+                if style == "reasoning_effort":
+                    levels = status.reasoning_effort_levels or ["low", "medium", "high"]
+                elif style == "enable_thinking_effort":
+                    levels = status.reasoning_effort_levels
+            choice.update(
+                supports_vision = status.is_vision and not status.disable_vision,
+                context_length = status.context_length,
+                reasoning = {
+                    "thinking": thinking,
+                    "toggle": thinking and not always_on and style != "reasoning_effort",
+                    "levels": levels,
+                    "preserve": status.preserve_thinking_default if status.supports_preserve_thinking else None,
+                },
+            )
+        models.append(choice)
+    return {"id": PROVIDER_ID, "name": PROVIDER_NAME, "models": models}
 
 
 async def resolve_local_choice(identifier: str):
@@ -132,43 +159,71 @@ async def resolve_local_choice(identifier: str):
 
 async def model_inventory() -> list[dict]:
     return [{"id": local_choice(row)["id"], "group": row.load_id or row.id,
-             "quant": getattr(row, "format_variant", None), "name": row.display_name}
+             "quant": getattr(row, "format_variant", None), "name": row.display_name,
+             "is_lora": row.model_format == "adapter"}
             for row in await downloaded_rows()]
 
 
-async def local_load_request(identifier: str, load_request_id: str | None = None, *, row = None):
+async def local_load_request(
+    identifier: str, load_request_id: str | None = None, *, row = None,
+    config: ModelLoadConfig | None = None, force_reload: bool = False,
+):
     from models.inference import LoadRequest
     from utils.openai_auto_switch_settings import model_override_load_kwargs, resolve_override_for_load
 
     row = row if row is not None else await resolve_local_choice(identifier)
     load_id = row.load_id or row.id
     variant = row.format_variant if not load_id.lower().endswith(".gguf") else None
-    _key, override = await asyncio.to_thread(resolve_override_for_load, load_id, row.id, variant)
+    if config is None:
+        _key, override = await asyncio.to_thread(resolve_override_for_load, load_id, row.id, variant)
+    else:
+        override = config.model_dump(exclude_none = True)
     launch = model_override_load_kwargs(override, is_gguf = row.model_format == "gguf")
-    launch.update(model_path = load_id, gguf_variant = variant, force_reload = False,
+    if config is not None:
+        # Explicit settings own the whole load, including defaults that clear a previous launch.
+        launch.setdefault("llama_extra_args", [])
+        launch.setdefault("max_seq_length", 0)
+        launch.setdefault("load_in_4bit", config.load_in_4bit)
+    launch.update(model_path = load_id, gguf_variant = variant, force_reload = force_reload,
                   force_cancel_active = False, alongside = False, force_alongside = False)
     if load_request_id:
         launch["load_request_id"] = load_request_id
     return LoadRequest(**launch)
 
 
-async def local_model_state(identifier: str, subject: str) -> dict:
-    from routes.inference import _loaded_satisfies, _model_key, model_slots, model_load_pending
+async def _resident_status(requested: str, subject: str):
+    from models.inference import InferenceStatusResponse
+    from routes.inference import _loaded_satisfies, get_status, model_slots, routed_slot
 
-    from models.inference import LoadRequest
-    row = await resolve_local_choice(identifier)
-    from hub.services.models import account_access
-    if account_access.managed_account():
-        await asyncio.to_thread(account_access.require_model_access, row.load_id or row.id)
-    account_access.require_live_account()
-    load_id = row.load_id or row.id
-    variant = row.format_variant if not load_id.lower().endswith(".gguf") else None
-    requested = _model_key(LoadRequest(model_path = load_id, gguf_variant = variant))
     loaded = await asyncio.to_thread(lambda: any(
         model_slots.in_slot(slot, lambda: _loaded_satisfies(requested))
         for slot in (None, *model_slots.visible())
     ))
-    return {"loaded": loaded, "loading": model_load_pending(requested, subject)}
+    if not loaded:
+        return None
+    previous = routed_slot.set(None)
+    try:
+        status = await get_status(subject, model = requested)
+        if (isinstance(status, InferenceStatusResponse) and status.active_model
+                and await asyncio.to_thread(_loaded_satisfies, requested)):
+            return status
+        return None
+    finally:
+        routed_slot.reset(previous)
+
+
+async def local_model_state(identifier: str, subject: str) -> dict:
+    from routes.inference import model_load_pending
+    from hub.services.models import account_access
+
+    row = await resolve_local_choice(identifier)
+    if account_access.managed_account():
+        await asyncio.to_thread(account_access.require_model_access, row.load_id or row.id)
+    account_access.require_live_account()
+    requested = local_choice(row)["api_model"]
+    status = await _resident_status(requested, subject)
+    return {"loaded": status is not None, "loading": model_load_pending(requested, subject),
+            "status": status.model_dump() if status is not None else None}
 
 
 def _load_error(exc: BaseException) -> CodingRuntimeError:

@@ -8,6 +8,13 @@ from core.coding_local_models import local_catalog, local_choice, resolve_local_
 from core.coding_runtime import CodingRuntimeError
 
 
+@pytest.fixture(autouse = True)
+def no_resident(monkeypatch):
+    async def status(*args):
+        return None
+    monkeypatch.setattr("core.coding_local_models._resident_status", status)
+
+
 def row(identity = "semantic-a", **changes):
     values = dict(inventory_id = identity, id = "wire-a", load_id = "/models/a.gguf", source = "custom",
                   display_name = "Same label", partial = False, model_format = "gguf", format_variant = None,

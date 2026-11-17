@@ -732,6 +732,9 @@ def model_override_load_kwargs(override: dict[str, Any], *, is_gguf: bool) -> di
         ("mlx_fast_verify", "mlx_fast_verify"),
         ("mlx_ple_offload", "mlx_ple_offload"),
         ("mlx_expert_offload", "mlx_expert_offload"),
+        ("npu_power_mode", "npu_power_mode"),
+        ("npu_prefill_chunk_len", "npu_prefill_chunk_len"),
+        ("npu_img_pre_resize", "npu_img_pre_resize"),
     ):
         if override.get(source) is not None and source not in gguf_drops:
             kwargs[target] = override[source]

@@ -329,6 +329,8 @@ export interface LoadModelResponse {
   n_moe_layers?: number;
   gpu_ids?: number[] | null;
   requested_gpu_ids?: number[] | null;
+  requested_context_pin?: number | null;
+  requested_n_parallel?: number | null;
   requested_parallel_slots?: number | null;
   reasoning_budget?: number;
   reasoning_budget_message?: string;
@@ -486,6 +488,8 @@ export interface InferenceStatusResponse {
   requested_context_length?: number | null;
   gpu_ids?: number[] | null;
   requested_gpu_ids?: number[] | null;
+  requested_context_pin?: number | null;
+  requested_n_parallel?: number | null;
   requested_parallel_slots?: number | null;
   reasoning_budget?: number;
   reasoning_budget_message?: string;

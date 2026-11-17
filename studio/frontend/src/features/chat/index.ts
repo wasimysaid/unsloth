@@ -95,7 +95,7 @@ export {
   moeCpuOffloadApplies,
   resolveStagedDiffusionClassification,
 } from "./lib/gpu-placement";
-export { describePlacement, offloadCountsFrom, offloadWarning } from "./lib/partial-offload";
+export { describePlacement, offloadCountsFrom, offloadWarning, loadedPlacementFrom } from "./lib/partial-offload";
 export type { PlacementPool } from "./lib/partial-offload";
 export {
   betweenToolRounds,
@@ -716,3 +716,6 @@ export { chatLocalModelOptions } from "./local-model-options";
 export { readLastLocalModelLoad } from "./utils/last-local-model-load";
 export { decideAutoRead } from "./utils/auto-read-aloud";
 export { wantsDownloadManagerStaging } from "./utils/model-download-staging";
+
+export { loadedGpuMemoryFields } from "./stores/chat-runtime-store";
+export { mlxOffloadStateFrom, mlxRuntimeStateFrom } from "./lib/mlx-runtime-state";

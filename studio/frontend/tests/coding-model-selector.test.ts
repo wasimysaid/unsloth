@@ -44,7 +44,11 @@ function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency:
           };
         },
       },
+      "react-dom": { createPortal: () => null },
+      "@/features/model-picker": { SidebarModelConfig: "sidebar-config", RunSettingsPanel: "settings-panel", RunSettingsToggle: "settings-toggle", RunSettingsSection: "settings-section", residentModelConfig: () => null },
       react: {
+        createContext: (initial: unknown) => ({ initial }),
+        useContext: (context: { initial: unknown }) => context.initial,
         useRef(initial: unknown) {
           const index = cursor++;
           if (states.length <= index) states.push({ current: initial });
@@ -89,7 +93,7 @@ function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency:
       const tree = CodingModelSelector(props) as unknown as StubElement;
       const children = tree.props.children as StubElement[];
       return {
-        source: children[0].props.value as ComposerModelPickerSource,
+        source: children.find((child) => child && child.type === "provider")!.props.value as ComposerModelPickerSource,
         notice: children.at(-1),
       };
     },

@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import {
+  ResidentEditorContext,
+  useResidentEditorRuntime,
+  type ResidentEditorSnapshot,
+} from "../model-config/resident-editor-runtime";
 import { AdvancedGpuSlider } from "./advanced-gpu-slider";
 // eslint-disable-next-line no-restricted-imports -- leaf import; the UI barrels would cycle.
 import { VramBudgetControl } from "@/features/settings/components/vram-budget-control";
@@ -115,7 +120,6 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { useShallow } from "zustand/react/shallow";
 import {
   type ModelMemorySettings,
   loadModelMemorySettings,
@@ -145,7 +149,6 @@ import {
 } from "../model-config/memory-fit";
 import {
   resolveResidentEstimateRequest,
-  selectResidentEstimateSettings,
 } from "../model-config/resident-memory-request";
 import { useMemoryEstimate } from "../hooks/use-memory-estimate";
 import { usePrefillOptionAvailable } from "../hooks/use-int8-prefill-available";
@@ -720,7 +723,7 @@ function clampMaxSeqLength(value: number, max: number): number {
 }
 
 function VramBudgetRow() {
-  const modelLoading = useChatRuntimeStore((s) => s.modelLoading);
+  const { modelLoading } = useResidentEditorRuntime();
   return <VramBudgetControl modelLoading={modelLoading} />;
 }
 
@@ -2638,6 +2641,7 @@ function ExtraArgsRow({
 }
 
 interface ModelConfigPageProps {
+  resident?: ResidentEditorSnapshot;
   target: ModelPickTarget;
   onBack?: () => void;
   onRun: (config: PerModelConfig, isDiffusion?: boolean) => void;
@@ -2650,7 +2654,15 @@ interface ModelConfigPageProps {
   focusField?: ModelConfigFocus;
 }
 
-export function ModelConfigPage({
+export function ModelConfigPage({ resident, ...props }: ModelConfigPageProps) {
+  return (
+    <ResidentEditorContext.Provider value={resident}>
+      <ModelConfigEditor {...props} />
+    </ResidentEditorContext.Provider>
+  );
+}
+
+function ModelConfigEditor({
   target,
   onBack,
   onRun,
@@ -2668,48 +2680,33 @@ export function ModelConfigPage({
   // Wording only ("Unified" vs "Shared"); not the capacity signal, see hasUnifiedMemory.
   const isAppleUnifiedMemory = usePlatformStore((s) => s.appleSilicon);
   const platformChatOnlyReason = usePlatformStore((s) => s.chatOnlyReason);
-  const mlxKvQuantReason = useChatRuntimeStore((s) => s.mlxKvQuantReason);
-  const chatTemplateOverrideReason = useChatRuntimeStore(
-    (s) => s.chatTemplateOverrideReason,
-  );
-  const loadedChatTemplateOverride = useChatRuntimeStore(
-    (s) => s.loadedChatTemplateOverride,
-  );
-  const loadedLlamaExtraArgs = useChatRuntimeStore((s) => s.loadedLlamaExtraArgs);
-  const loadedGpuIds = useChatRuntimeStore((s) => s.loadedGpuIds);
-  const loadedGpuIndexKind = useChatRuntimeStore((s) => s.loadedGpuIndexKind);
-  const loadedCpuFallback = useChatRuntimeStore((s) => s.loadedCpuFallback);
-  const residentModelLoading = useChatRuntimeStore((s) => s.modelLoading);
-  const residentEstimateSettings = useChatRuntimeStore(
-    useShallow(selectResidentEstimateSettings),
-  );
-  const mlxKvQuantNote = useChatRuntimeStore((s) => s.mlxKvQuantNote);
-  const loadedMlxPleOffloadRequested = useChatRuntimeStore(
-    (s) => s.loadedMlxPleOffloadRequested,
-  );
-  const loadedMlxExpertOffloadRequested = useChatRuntimeStore(
-    (s) => s.loadedMlxExpertOffloadRequested,
-  );
-  const loadedMlxPleOffload = useChatRuntimeStore((s) => s.loadedMlxPleOffload);
-  const loadedMlxExpertOffload = useChatRuntimeStore((s) => s.loadedMlxExpertOffload);
-  const mlxPleOffloadReason = useChatRuntimeStore((s) => s.mlxPleOffloadReason);
-  const mlxExpertOffloadReason = useChatRuntimeStore((s) => s.mlxExpertOffloadReason);
-  const loadedMlxKvQuantRequested = useChatRuntimeStore(
-    (s) => s.loadedMlxKvQuantRequested,
-  );
+  const {
+    mlxKvQuantReason,
+    chatTemplateOverrideReason,
+    loadedChatTemplateOverride,
+    loadedLlamaExtraArgs,
+    loadedGpuIds,
+    loadedGpuIndexKind,
+    loadedCpuFallback,
+    modelLoading: residentModelLoading,
+    residentEstimateSettings,
+    mlxKvQuantNote,
+    loadedMlxPleOffloadRequested,
+    loadedMlxExpertOffloadRequested,
+    loadedMlxPleOffload,
+    loadedMlxExpertOffload,
+    mlxPleOffloadReason,
+    mlxExpertOffloadReason,
+    loadedMlxKvQuantRequested,
+    activeNativePathToken,
+    defaultChatTemplate: loadedDefaultChatTemplate,
+    loadedNpuContextFit: npuContextFit,
+    maxContextLength: loadedMaxContextLength,
+    activePresetSource,
+  } = useResidentEditorRuntime();
   const isActiveModel = loadedConfig != null;
   const sharedVariantUnresolved = isRunConfigVariantUnresolved(target);
   const hfToken = useChatRuntimeStore((s) => s.hfToken);
-  const activeNativePathToken = useChatRuntimeStore(
-    (s) => s.activeNativePathToken,
-  );
-  const loadedDefaultChatTemplate = useChatRuntimeStore(
-    (s) => s.defaultChatTemplate,
-  );
-  const npuContextFit = useChatRuntimeStore((s) => s.loadedNpuContextFit);
-  const loadedMaxContextLength = useChatRuntimeStore(
-    (s) => s.maxContextLength,
-  );
   const configId = target.configId ?? target.id;
   const targetIsNpu = isNpuModelId(target.id);
   const npuName = useNpuDisplayName(targetIsNpu ? target.id : null);
@@ -3357,7 +3354,6 @@ export function ModelConfigPage({
   const activeLoadedContext =
     isActiveModel && target.isGguf ? loadedContextLength : null;
   // resolveLoadMaxSeqLength returns 0 for a builtin-default GGUF load, so do not fall back to it.
-  const activePresetSource = useChatRuntimeStore((s) => s.activePresetSource);
   const minContext = CONTEXT_LENGTH_MIN;
   const maxContext = Math.max(
     minContext,

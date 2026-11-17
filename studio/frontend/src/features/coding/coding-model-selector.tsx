@@ -1,7 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
+import {
+  SidebarModelConfig,
+  RunSettingsPanel,
+  RunSettingsToggle,
+  RunSettingsSection,
+  residentModelConfig,
+} from "@/features/model-picker";
+import type { LocalModelLoadOptions } from "./local-model-preload";
 import { ComposerModelPicker } from "@/components/assistant-ui/composer-model-picker/composer-model-picker";
 import {
   ComposerModelPickerContext,
@@ -36,6 +52,11 @@ import type {
   CodingProviderChoice,
 } from "./model-selection";
 
+export const CodingModelSettingsHosts = createContext<{
+  panel: HTMLElement | null;
+  trigger: HTMLElement | null;
+}>({ panel: null, trigger: null });
+
 export function CodingModelSelector({
   readCatalog,
   configuration,
@@ -60,6 +81,8 @@ export function CodingModelSelector({
   configure: (change: CodingConfigurationChange) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const hosts = useContext(CodingModelSettingsHosts);
   const [discoverModels, setDiscoverModels] = useState<ModelOption[]>([]);
   const [pendingDownload, setPendingDownload] =
     useState<PendingModelDownload | null>(null);
@@ -76,7 +99,8 @@ export function CodingModelSelector({
   }>({ catalog: [], loading: true, ready: false, error: null });
   const [error, setError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
-  const read = useEffectEvent(readCatalog);
+  const read = useRef(readCatalog);
+  read.current = readCatalog;
   useEffect(() => {
     const controller = new AbortController();
     lifetime.current = controller;
@@ -103,7 +127,7 @@ export function CodingModelSelector({
         pending = null;
         setResult((previous) => ({ ...previous, loading: true }));
         try {
-          const catalog = await read(refresh, controller.signal);
+          const catalog = await read.current(refresh, controller.signal);
           if (!controller.signal.aborted)
             setResult({
               catalog,
@@ -152,6 +176,7 @@ export function CodingModelSelector({
   const selected = findCodingModel(result.catalog, configuration);
   const local = useLocalModel(
     configuration?.provider === "studio-local" ? configuration.model : null,
+    () => requestCatalog.current(true),
   );
   const localChoice =
     configuration?.provider === "studio-local"
@@ -174,14 +199,17 @@ export function CodingModelSelector({
   const missing =
     unavailable ||
     (result.ready && !result.error && configuration?.model && !selected);
-  async function apply(change: CodingConfigurationChange) {
+  async function apply(
+    change: CodingConfigurationChange,
+    options: LocalModelLoadOptions = {},
+  ) {
     if (blocked) return;
     setApplying(true);
     setError(null);
     try {
       await configure(change);
       if (change.provider === "studio-local" && change.model)
-        local.preload(change.model);
+        local.preload(change.model, options);
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -218,7 +246,7 @@ export function CodingModelSelector({
       ) {
         const inventory = await local.refresh(signal);
         choice = findLocalPickerChoice(inventory, id, meta);
-        catalog = await read(true, signal);
+        catalog = await read.current(true, signal);
         if (signal.aborted || !isCurrent()) return;
         setResult({ catalog, ready: true, loading: false, error: null });
       }
@@ -237,7 +265,7 @@ export function CodingModelSelector({
           "This model is not available to Coding in this project.",
         );
       }
-      await apply({ provider: "studio-local", model: choice.id });
+      await apply({ provider: "studio-local", model: choice.id }, meta);
     } catch (reason) {
       if (!signal.aborted && isCurrent()) {
         setError(
@@ -293,12 +321,24 @@ export function CodingModelSelector({
   }
   const notice =
     error ??
-    (local.residency.state === "failed" ? local.residency.message : null) ??
+    local.error ??
     result.error ??
     (missing
       ? "The selected model is unavailable. Choose another model."
       : null);
+  const loadedConfig = useMemo(
+    () => (local.status ? residentModelConfig(local.status) : null),
+    [local.status],
+  );
+  const resident = useMemo(
+    () => ({
+      status: local.status,
+      loading: local.residency.state === "loading",
+    }),
+    [local.status, local.residency.state],
+  );
   const source: ComposerModelPickerSource = {
+    resident,
     models: discoverModels,
     loraModels: [],
     externalModels: models,
@@ -316,8 +356,8 @@ export function CodingModelSelector({
     onFoldersChange: () => requestCatalog.current(true),
     onModelsChange: () => requestCatalog.current(true),
     deleteDisabled: true,
-    activeModelConfig: null,
-    loadedContextLength: null,
+    activeModelConfig: loadedConfig,
+    loadedContextLength: local.status?.context_length ?? null,
     loaded:
       configuration?.provider === "studio-local" &&
       Boolean(localChoice) &&
@@ -330,6 +370,7 @@ export function CodingModelSelector({
         Boolean(localChoice) &&
         local.residency.state === "loaded",
       placeholder: selected?.model.name ?? "Select model",
+      config: loadedConfig,
       loading:
         (loading && !result.ready) ||
         local.residency.state === "loading" ||
@@ -364,6 +405,61 @@ export function CodingModelSelector({
       className="flex min-w-0 flex-wrap items-center gap-1"
       data-testid="coding-model-selector"
     >
+      {hosts.trigger &&
+        localChoice &&
+        !settingsOpen &&
+        createPortal(
+          <RunSettingsToggle onOpen={() => setSettingsOpen(true)} />,
+          hosts.trigger,
+        )}
+      {hosts.panel &&
+        localChoice &&
+        createPortal(
+          <RunSettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen}>
+            <div className="px-[calc(18px*var(--ui-space-scale,1))] pt-3">
+              {loadedConfig && local.status ? (
+                <RunSettingsSection
+                  label="Model"
+                  defaultOpen={true}
+                  first={true}
+                >
+                  <SidebarModelConfig
+                    resident={resident}
+                    modelId={localChoice.group}
+                    ggufVariant={localChoice.quant}
+                    isGguf={local.status.is_gguf === true}
+                    isLora={localChoice.is_lora}
+                    isDiffusion={false}
+                    nativeContextLength={
+                      local.status.native_context_length ?? null
+                    }
+                    loadedContextLength={local.status.context_length ?? null}
+                    loadedConfig={loadedConfig}
+                    onReload={(config) => {
+                      if (!blocked)
+                        local.preload(localChoice.id, {
+                          config,
+                          forceReload: true,
+                        });
+                    }}
+                  />
+                </RunSettingsSection>
+              ) : (
+                <p className="py-3 text-sm text-muted-foreground">
+                  {local.residency.state === "loading"
+                    ? "Loading model…"
+                    : "Load the selected model to view its run settings."}
+                </p>
+              )}
+              {local.error && (
+                <p role="alert" className="py-3 text-sm text-destructive">
+                  {local.error}
+                </p>
+              )}
+            </div>
+          </RunSettingsPanel>,
+          hosts.panel,
+        )}
       <ComposerModelPickerContext.Provider value={source}>
         <ComposerModelPicker align="start" />
       </ComposerModelPickerContext.Provider>

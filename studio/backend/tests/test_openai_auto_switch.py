@@ -9262,15 +9262,16 @@ def test_gpu_ids_payload_is_bounded():
     import pydantic
 
     from utils.openai_auto_switch_settings import MAX_GPU_ID
+    from models.model_load_config import MAX_GPU_IDS
 
-    assert settings_route.MAX_GPU_IDS == MAX_GPU_ID + 1
+    assert MAX_GPU_IDS == MAX_GPU_ID + 1
     at_limit = settings_route.ModelOverridePayload(
-        model_id = "x", gpu_ids = list(range(settings_route.MAX_GPU_IDS))
+        model_id = "x", gpu_ids = list(range(MAX_GPU_IDS))
     )
-    assert len(at_limit.gpu_ids) == settings_route.MAX_GPU_IDS
+    assert len(at_limit.gpu_ids) == MAX_GPU_IDS
     with pytest.raises(pydantic.ValidationError):
         settings_route.ModelOverridePayload(
-            model_id = "x", gpu_ids = [0] * (settings_route.MAX_GPU_IDS + 1)
+            model_id = "x", gpu_ids = [0] * (MAX_GPU_IDS + 1)
         )
     assert settings_route.ModelOverridePayload(model_id = "x", gpu_ids = [0, 1]).gpu_ids == [0, 1]
 

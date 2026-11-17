@@ -4,8 +4,8 @@
 import {
   describePlacement,
   type PlacementPool,
-  useChatRuntimeStore,
 } from "@/features/chat";
+import { useResidentEditorRuntime } from "../model-config/resident-editor-runtime";
 import { useT } from "@/i18n";
 
 /** Where the resident GGUF's weights landed. Under Auto, --fit decides, and the layer count alone hides a
@@ -13,7 +13,7 @@ import { useT } from "@/i18n";
  *  Always shown: the estimate above it is a forecast, and this is the only lasting account of the load. */
 export function LoadedPlacementRow({ pool }: { pool: PlacementPool | null }) {
   const t = useT();
-  const placement = useChatRuntimeStore((s) => s.loadedPlacement);
+  const { loadedPlacement: placement } = useResidentEditorRuntime();
   if (placement === null) return null;
   const { layers, memory } = describePlacement(placement, t, pool);
   if (layers === null && memory === null) return null;

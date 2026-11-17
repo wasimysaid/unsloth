@@ -1022,3 +1022,31 @@ a native history entry. The matching native row or terminal request state remove
 it, and historical windows omit it. Acceptance does not claim that model execution
 or cancellation cleanup has completed. Model loading does not add a separate
 notice above the composer.
+
+## Model Run settings
+
+Coding uses the shared `ComposerModelPicker` gear menu, `ModelConfigPage` presets,
+`SidebarModelConfig`, and `RunSettingsPanel` used by New Chat. Preset edits retain
+that editor's existing save behavior. A selected preset travels with the load
+request even when a different preset remains the saved default.
+
+The browser sends the shared model-override representation to
+`POST /api/coding/models/{id}/load`. An omitted `config` uses saved settings;
+an explicit `config`, including an empty object, replaces them for this load.
+`force_reload` reloads through Unsloth's guarded loader without force-cancelling
+active Chat or Coding work. A busy response leaves the resident model intact.
+Typing and sending prompts remain available during preload.
+
+`GET /api/coding/models/{id}/state` returns the exact resident slot's status.
+The editor seeds its configuration from that status, with the resolved context
+length shown separately from the requested context pin. Its shared editor uses an
+explicit resident context for placement, runtime notes, and memory estimates; an
+absent Coding resident never falls back to Chat state. A failed reload does not
+replace the displayed resident settings with the attempted settings. Explicit
+unload cancels only its own load request when it is still pending.
+
+Studio overlays resident vision, reasoning, and context capabilities onto the
+local model catalog. The frontend refreshes its native catalog when those values
+change. Mimir resolves execution capabilities after acquiring the protected
+resident model, so a reload from another Chat or browser is observed before the
+next Coding request starts.

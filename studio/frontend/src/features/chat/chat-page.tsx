@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import { RunSettingsToggle } from "@/features/model-picker";
 import { isWebKitGTK } from "@/components/ui/theme-view-transition";
 import { useAppShellReadySignal } from "@/components/app-readiness";
 import {
@@ -140,7 +141,6 @@ import {
   ArchiveIcon,
   Download01Icon,
   Edit03Icon,
-  LayoutAlignRightIcon,
   MoreHorizontalIcon,
   MoreVerticalIcon,
   PinIcon,
@@ -5135,32 +5135,10 @@ export function ChatPage({
               </Tooltip>
             ) : null}
             {!settingsOpen && (
-              <Tooltip>
-                <TooltipPrimitive.Trigger asChild={true}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      useResearchRunStore.getState().closePanel();
-                      setSettingsOpen(true);
-                    }}
-                    className="flex size-[calc(30px*var(--ui-space-scale,1))] cursor-pointer items-center justify-center rounded-[10px] text-nav-fg transition-colors hover:bg-nav-surface-hover hover:text-black dark:hover:text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                    aria-label="Open run settings"
-                  >
-                    <HugeiconsIcon
-                      icon={LayoutAlignRightIcon}
-                      strokeWidth={1.75}
-                      className="size-icon"
-                    />
-                  </button>
-                </TooltipPrimitive.Trigger>
-                <TooltipContent
-                  side="bottom"
-                  sideOffset={6}
-                  className="tooltip-compact"
-                >
-                  Open run settings
-                </TooltipContent>
-              </Tooltip>
+              <RunSettingsToggle onOpen={() => {
+                useResearchRunStore.getState().closePanel();
+                setSettingsOpen(true);
+              }} />
             )}
           </div>
         </div>

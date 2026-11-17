@@ -9136,6 +9136,20 @@ class LlamaCppBackend:
         return self._offload_overridden
 
     @property
+    def requested_context_pin(self) -> Optional[int]:
+        """A positive replay of an automatically fitted context is still unpinned."""
+        intent = self._last_load_intent
+        if intent is None or intent.max_seq_length_auto_derived or intent.n_ctx <= 0:
+            return None
+        return intent.n_ctx
+
+    @property
+    def requested_n_parallel(self) -> Optional[int]:
+        """The explicit per-load pin, before resolving the server-wide default."""
+        intent = self._last_load_intent
+        return None if intent is None or intent.n_parallel_from_default else intent.n_parallel
+
+    @property
     def requested_parallel_slots(self) -> int:
         """--parallel the last load asked for, before any fit-time reduction.
         The reload dedupe compares requested-vs-requested (like requested_n_ctx);

@@ -2216,6 +2216,14 @@ class _InferenceRuntimeFields(BaseModel):
             "or None for automatic selection."
         ),
     )
+    requested_context_pin: Optional[int] = Field(
+        None,
+        description = "Explicit GGUF context pin; None retains automatic fitting even when a load replays a resolved length.",
+    )
+    requested_n_parallel: Optional[int] = Field(
+        None,
+        description = "Explicit per-load GGUF parallelism pin; None follows the server-wide default.",
+    )
     requested_parallel_slots: Optional[int] = Field(
         None,
         description = (

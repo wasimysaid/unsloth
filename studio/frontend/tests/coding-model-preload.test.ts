@@ -88,3 +88,35 @@ test("selecting an explicitly unloaded model starts a fresh preload after the di
   assert.deepEqual(calls, ["A", "A"]);
   loader.close(); finish(); await tick();
 });
+
+test("same-model settings and reload intents are not lost behind an existing preload", async () => {
+  const calls: { id: string; options: unknown }[] = [];
+  const finish: (() => void)[] = [];
+  const loader = createModelPreloader((id, _requestId, options) => {
+    calls.push({ id, options });
+    return new Promise<void>((resolve) => finish.push(resolve));
+  }, () => {});
+  loader.select("A");
+  loader.select("A", { forceReload: true });
+  assert.equal(calls.length, 1);
+  finish[0](); await tick();
+  assert.deepEqual(calls, [{ id: "A", options: {} }, { id: "A", options: { forceReload: true } }]);
+  finish[1](); await tick();
+  assert.equal(loader.isLoading("A"), false);
+});
+
+test("a rejected reload reports the failure and drains the newer intent", async () => {
+  const calls: string[] = [];
+  const failures: unknown[] = [];
+  let reject = (_reason: Error) => {};
+  const loader = createModelPreloader((id) => {
+    calls.push(id);
+    return calls.length === 1 ? new Promise<void>((_resolve, fail) => { reject = fail; }) : Promise.resolve();
+  }, (_id, error) => { if (error) failures.push(error); });
+  loader.select("A", { forceReload: true }); loader.select("B");
+  const busy = new Error("An active request protects this model.");
+  reject(busy); await tick();
+  assert.deepEqual(calls, ["A", "B"]);
+  assert.deepEqual(failures, [busy]);
+  assert.equal(loader.isLoading("B"), false);
+});

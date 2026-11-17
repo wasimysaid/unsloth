@@ -1063,3 +1063,21 @@ test("local load and unload reject deferred failures after HTTP success", async 
   await assert.rejects(api.codingLocalModels.load("local-exact", "load-exact"), /protected/);
   await assert.rejects(api.codingLocalModels.unload("local-exact"), /protected/);
 });
+
+test("Coding passes explicit Run settings and reload independently from saved defaults", async () => {
+  const c = client(() => Response.json({ status: "success" }));
+  const config = { custom_context_length: 16384, disable_vision: true, llama_extra_args: [] };
+  await c.api.codingLocalModels.load("exact/id", "reload-1", { config, forceReload: true });
+  assert.equal(c.requests[0].path, "/api/coding/models/exact%2Fid/load");
+  assert.deepEqual(JSON.parse(String(c.requests[0].init?.body)), {
+    load_request_id: "reload-1", force_reload: true, config,
+  });
+  await c.api.codingLocalModels.load("exact/id", "load-2", { config: {} });
+  assert.deepEqual(JSON.parse(String(c.requests[1].init?.body)), {
+    load_request_id: "load-2", force_reload: false, config: {},
+  });
+  await c.api.codingLocalModels.load("exact/id", "load-3");
+  assert.deepEqual(JSON.parse(String(c.requests[2].init?.body)), {
+    load_request_id: "load-3", force_reload: false,
+  });
+});

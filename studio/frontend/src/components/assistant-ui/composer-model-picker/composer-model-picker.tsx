@@ -4232,7 +4232,7 @@ export function ComposerModelPicker({
                             },
                           ]
                         : []),
-                      ...(!runtimeControls ? [{
+                      ...([{
                         key: "run-settings",
                         label: "Run settings",
                         icon: (
@@ -4243,7 +4243,7 @@ export function ComposerModelPicker({
                           />
                         ),
                         onSelect: () => openSettings(row),
-                      }] : []),
+                      }]),
                       ...(hubParts(row.id)
                         ? [
                             {
@@ -4262,19 +4262,19 @@ export function ComposerModelPicker({
                         : []),
                     ]}
                     del={deleteFor(row)}
-                    runSettings={runtimeControls ? undefined : savedTarget}
+                    runSettings={savedTarget}
                     buttonClassName={cn(ACTION_DOTS, actionClass)}
                     iconClassName="composer-row-dots"
                     contentClassName="composer-row-menu"
                   />
-                  {!runtimeControls && <ModelLoadSettingsAction
+                  <ModelLoadSettingsAction
                     ariaLabel={`Run settings for ${row.label}`}
                     tooltip="Load settings"
                     savedFor={savedTarget}
                     onConfigure={() => openSettings(row)}
                     className={cn(ACTION_ROUND, actionClass)}
                     iconClassName="composer-row-icon"
-                  />}
+                  />
                 </>
               ) : null}
               {row.kind === "external" && !runtimeControls ? (
@@ -4462,20 +4462,20 @@ export function ComposerModelPicker({
             }
             update={updateFor(row, variant)}
             del={deleteQuantFor(row, variant)}
-            runSettings={runtimeControls ? undefined : quantConfigTarget}
+            runSettings={quantConfigTarget}
             buttonClassName={cn(ACTION_DOTS, reveal)}
             iconClassName="composer-row-dots"
             contentClassName="composer-row-menu"
           />
         ) : null}
-        {!runtimeControls && <ModelLoadSettingsAction
+        <ModelLoadSettingsAction
           ariaLabel={`Run settings for ${row.label} ${variant.quant}`}
           tooltip="Load settings"
           savedFor={quantConfigTarget}
           onConfigure={() => openConfig(quantConfigTarget)}
           className={cn(button, reveal)}
           iconClassName="composer-row-icon"
-        />}
+        />
         {onDisk ? (
           <Hint label={starred ? "Remove favorite" : "Favorite"}>
             <button
@@ -5191,6 +5191,13 @@ export function ComposerModelPicker({
                   configResident ? (source?.activeModelConfig ?? null) : null,
                 )}
                 target={configTarget}
+                resident={
+                  source?.resident === undefined
+                    ? undefined
+                    : configResident
+                      ? source.resident
+                      : { status: null, loading: false }
+                }
                 onBack={
                   configStandalone ? undefined : () => setConfigTarget(null)
                 }

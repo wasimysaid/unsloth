@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from auth.authentication import get_current_credential
 from core.coding_runtime import CodingRuntimeError, runtime_for
+from models.model_load_config import ModelLoadConfig
 
 
 async def _coding_credential(request: Request, credential = Depends(get_current_credential)):
@@ -348,6 +349,8 @@ def _local_serving(request: Request, incarnation: str | None = None):
 
 class LocalModelLoad(BaseModel):
     model_config = ConfigDict(extra = "forbid")
+    config: ModelLoadConfig | None = None
+    force_reload: bool = False
     load_request_id: str = Field(min_length = 1, max_length = 128, pattern = r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 
 
@@ -371,8 +374,9 @@ async def browser_load_model(model_id: str, body: LocalModelLoad, request: Reque
     from core.coding_local_models import local_load_request
     from routes.inference import load_model
     try:
-        return await load_model(await local_load_request(model_id, body.load_request_id), request,
-                                request.state.coding_subject)
+        return await load_model(await local_load_request(
+            model_id, body.load_request_id, config = body.config, force_reload = body.force_reload,
+        ), request, request.state.coding_subject)
     except CodingRuntimeError as exc:
         raise _http_error(exc) from exc
 
@@ -393,10 +397,10 @@ async def browser_unload_model(model_id: str, request: Request, load_request_id:
 
 @router.get("/local-models/catalog")
 async def local_models_catalog(request: Request):
-    _local_serving(request)
+    serving = _local_serving(request)
     from core.coding_local_models import local_catalog
     try:
-        return JSONResponse(await local_catalog(), headers = {"Cache-Control": "no-store"})
+        return JSONResponse(await local_catalog(serving.subject), headers = {"Cache-Control": "no-store"})
     except Exception:
         raise HTTPException(503, "Studio downloaded model inventory is unavailable. Retry explicitly.") from None
 
