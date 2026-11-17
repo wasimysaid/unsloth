@@ -46,11 +46,13 @@ export function createChildView(
 ) {
   let state: {
     attempts: ChildAttempt[];
+    tabs: ChildIdentity[];
     inspection: ChildInspection | null;
     connected: boolean;
     omitted: boolean;
   } = {
     attempts: [],
+    tabs: [],
     inspection: null,
     connected: false,
     omitted: false,
@@ -109,7 +111,7 @@ export function createChildView(
         (item) =>
           item.historical &&
           !liveRows(item).length &&
-          (!state.inspection || !sameChild(item, state.inspection)),
+          !state.tabs.some((tab) => sameChild(item, tab)),
       );
       if (remove < 0) break;
       attempts.splice(remove, 1);
@@ -330,6 +332,12 @@ export function createChildView(
     const g = ++generation;
     saved = [];
     update({
+      tabs: state.tabs.some((tab) => sameChild(tab, identity))
+        ? state.tabs
+        : [
+            ...state.tabs,
+            { handle: identity.handle, attempt: identity.attempt },
+          ],
       inspection: {
         ...identity,
         rows: liveRows(identity),
@@ -358,7 +366,7 @@ export function createChildView(
     abort?.abort();
     abort = null;
     saved = [];
-    update({ inspection: null });
+    update({ inspection: null, tabs: [] });
   }
   return {
     getSnapshot: () => state,
@@ -366,14 +374,16 @@ export function createChildView(
     history,
     capture(children: ChildAttempt[], rows: CodingRow[]) {
       const identity = state.inspection;
-      // Preserve only the inspected old immutable attempt across reconstruction.
-      const retained = selected();
+      const retained = state.attempts.filter((child) =>
+        state.tabs.some((tab) => sameChild(child, tab)),
+      );
       live.clear();
       update({ attempts: [], omitted: false });
       for (const child of children) put(child);
       history(rows);
-      if (retained && !state.attempts.some((item) => sameChild(item, retained)))
-        put(retained, true);
+      for (const child of retained)
+        if (!state.attempts.some((item) => sameChild(item, child)))
+          put(child, true);
       return identity ? open(identity) : Promise.resolve();
     },
     setConnected(connected: boolean) {
@@ -463,6 +473,26 @@ export function createChildView(
     },
     open,
     close,
+    async closeTab(identity: ChildIdentity) {
+      const index = state.tabs.findIndex((tab) => sameChild(tab, identity));
+      if (index < 0) return;
+      const tabs = state.tabs.filter((tab) => !sameChild(tab, identity));
+      if (!tabs.length) {
+        close();
+        return;
+      }
+      update({ tabs });
+      if (state.inspection && sameChild(state.inspection, identity))
+        await open(tabs[Math.min(index, tabs.length - 1)]);
+    },
+    moveTab(identity: ChildIdentity, index: number) {
+      const from = state.tabs.findIndex((tab) => sameChild(tab, identity));
+      if (from < 0) return;
+      const tabs = [...state.tabs];
+      const [tab] = tabs.splice(from, 1);
+      tabs.splice(Math.max(0, Math.min(index, tabs.length)), 0, tab);
+      update({ tabs });
+    },
     async loadEarlier() {
       const inspection = state.inspection;
       if (

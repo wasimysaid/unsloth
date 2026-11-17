@@ -621,3 +621,106 @@ test("historical unavailable cut never substitutes later journal and clipped res
   assert.equal(h.view.getSnapshot().inspection?.outcome?.result_clipped, true);
   h.view.detach();
 });
+
+test("child tabs deduplicate exact attempts, retain inactive tabs and close to their neighbor", async () => {
+  const { view } = harness();
+  await view.capture([child(1), child(2), child(3)], []);
+  await view.open(child(1));
+  await view.open(child(2));
+  await view.open(child(2));
+  await view.open(child(3));
+  assert.deepEqual(
+    view.getSnapshot().tabs.map((tab) => tab.attempt),
+    [1, 2, 3],
+  );
+  await view.closeTab(child(1));
+  assert.equal(view.getSnapshot().inspection?.attempt, 3);
+  await view.closeTab(child(3));
+  assert.equal(view.getSnapshot().inspection?.attempt, 2);
+  await view.closeTab(child(2));
+  assert.equal(view.getSnapshot().inspection, null);
+  assert.deepEqual(view.getSnapshot().tabs, []);
+});
+
+test("tab order changes without replacing the selected child transcript", async () => {
+  const { view, reads } = harness();
+  await view.capture([child(1), child(2), child(3)], []);
+  for (const attempt of [1, 2, 3]) await view.open(child(attempt));
+  const inspection = view.getSnapshot().inspection;
+  const priorReads = reads.length;
+  view.moveTab(child(3), 0);
+  assert.deepEqual(
+    view.getSnapshot().tabs.map((tab) => tab.attempt),
+    [3, 1, 2],
+  );
+  assert.equal(view.getSnapshot().inspection, inspection);
+  assert.equal(reads.length, priorReads);
+  await view.closeTab(child(3));
+  assert.equal(view.getSnapshot().inspection?.attempt, 1);
+});
+
+test("recapture keeps every open historical attempt and detach clears tabs", async () => {
+  const { view } = harness();
+  await view.capture([child(1), child(2)], []);
+  await view.open(child(1));
+  await view.open(child(2));
+  await view.capture([child(3)], []);
+  assert.deepEqual(
+    view.getSnapshot().tabs.map((tab) => tab.attempt),
+    [1, 2],
+  );
+  assert.deepEqual(
+    view.getSnapshot().attempts.map((tab) => tab.attempt),
+    [3, 1, 2],
+  );
+  assert.equal(view.getSnapshot().inspection?.attempt, 2);
+  await view.open(child(1));
+  assert.equal(view.getSnapshot().inspection?.attempt, 1);
+  assert.equal(
+    view.getSnapshot().attempts.find((tab) => tab.attempt === 1)?.historical,
+    true,
+  );
+  view.detach();
+  assert.deepEqual(view.getSnapshot().tabs, []);
+  assert.equal(view.getSnapshot().inspection, null);
+});
+
+test("closing an active tab aborts its read and late detail cannot replace its neighbor", async () => {
+  let settle: ((value: ChildDetail) => void) | undefined;
+  let signal: AbortSignal | undefined;
+  const view = createChildView("parent", {
+    async readEntries() {
+      throw new Error("No history in this fixture");
+    },
+    async readPublicEntry() {
+      throw new Error("No public entry in this fixture");
+    },
+    async readChild(_id, _handle, attempt, requestSignal) {
+      if (attempt !== 2) return { child: null, outcome: null };
+      signal = requestSignal;
+      return new Promise<ChildDetail>((resolve) => {
+        settle = resolve;
+      });
+    },
+  });
+  await view.capture(
+    [
+      { ...child(1), cut: null },
+      { ...child(2), cut: null },
+    ],
+    [],
+  );
+  await view.open(child(1));
+  const pending = view.open(child(2));
+  await view.closeTab(child(2));
+  assert.equal(signal?.aborted, true);
+  assert.equal(view.getSnapshot().inspection?.attempt, 1);
+  settle?.({ child: null, outcome: outcome(2) });
+  await pending;
+  assert.equal(view.getSnapshot().inspection?.attempt, 1);
+  assert.equal(view.getSnapshot().inspection?.outcome, null);
+  assert.deepEqual(
+    view.getSnapshot().tabs.map((tab) => tab.attempt),
+    [1],
+  );
+});

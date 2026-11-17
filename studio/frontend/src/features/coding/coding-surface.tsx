@@ -22,7 +22,7 @@ import {
 } from "react";
 import { watchAnswerFocus } from "./answer-focus";
 import { codingModelApi, createCodingRunApi } from "./api";
-import { ChildInspector } from "./child-inspector";
+import type { ChildView } from "./child-view";
 import { CodingComposer } from "./coding-composer";
 import { CommandFeedback, ComposerFooter } from "./composer-footer";
 import { GoalSummary } from "./goal-summary";
@@ -51,7 +51,12 @@ import {
 import type { CodingRuntimeStatus } from "./runtime-maintenance";
 import { ChildActivityRows } from "./subagent-card";
 import { DisclosureMemory } from "./tool-report";
-import { AnswerFocus, PendingUserBlock, TranscriptBlocks, WorkingLine } from "./transcript";
+import {
+  AnswerFocus,
+  PendingUserBlock,
+  TranscriptBlocks,
+  WorkingLine,
+} from "./transcript";
 import {
   createTranscriptProjection,
   pendingUserMessage,
@@ -249,7 +254,9 @@ export function CodingSurface({
   autoSend = false,
   onAutoSent,
   onConfigured,
+  onChildView,
 }: {
+  onChildView: (view: ChildView | null) => void;
   conversationId: string | null;
   conversationGeneration?: number;
   cwd?: string | null;
@@ -280,6 +287,10 @@ export function CodingSurface({
       { onRuntimeLost },
     );
   });
+  useEffect(() => {
+    onChildView(run?.childView ?? null);
+    return () => onChildView(null);
+  }, [run, onChildView]);
   const state = useSyncExternalStore(
     run?.subscribe ?? (() => () => {}),
     run?.getSnapshot ?? (() => null),
@@ -430,8 +441,11 @@ export function CodingSurface({
           : codingModelApi.catalog(conversationId, signal)
       }
       configuration={configuration}
-      preparing={state?.native?.execution_preparation?.phase === "loading"
-        ? state.native.execution_preparation.configuration : null}
+      preparing={
+        state?.native?.execution_preparation?.phase === "loading"
+          ? state.native.execution_preparation.configuration
+          : null
+      }
       unavailable={state?.native?.selection_unavailable ?? null}
       disabled={
         state?.connection !== "connected" ||
@@ -475,15 +489,16 @@ export function CodingSurface({
   );
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      {hosts.contextUsage && createPortal(
-        <ContextUsageBar
-          {...codingContextUsage(state?.native?.usage)}
-          className="h-[calc(30px*var(--ui-space-scale,1))]"
-          compactUnknownAsIcon
-          pinOnClick
-        />,
-        hosts.contextUsage,
-      )}
+      {hosts.contextUsage &&
+        createPortal(
+          <ContextUsageBar
+            {...codingContextUsage(state?.native?.usage)}
+            className="h-[calc(30px*var(--ui-space-scale,1))]"
+            compactUnknownAsIcon
+            pinOnClick
+          />,
+          hosts.contextUsage,
+        )}
       <ProjectOverlapDialog
         overlap={state?.overlapWarning?.overlap ?? null}
         disabled={Boolean(
@@ -575,7 +590,9 @@ export function CodingSurface({
                         blocks={blocks}
                         childView={run?.childView ?? null}
                       />
-                      {pendingUser && <PendingUserBlock message={pendingUser} />}
+                      {pendingUser && (
+                        <PendingUserBlock message={pendingUser} />
+                      )}
                       {run &&
                         state?.answerForms
                           .filter(
@@ -655,7 +672,6 @@ export function CodingSurface({
                   )}
                 </div>
               </section>
-              {run && <ChildInspector view={run.childView} />}
               {(reading.away || state?.viewingEarlier) && (
                 <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
                   <Button

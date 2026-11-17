@@ -2,14 +2,8 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 import { MarkdownPreview } from "@/components/markdown/markdown-preview";
 import { Button } from "@/components/ui/button";
-import { ArrowDown, Bot, LoaderCircle, X } from "lucide-react";
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { ArrowDown, Bot, LoaderCircle } from "lucide-react";
+import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   childDescription,
   childKey,
@@ -74,8 +68,6 @@ const statusText: Record<string, string> = {
   interrupted: "Interrupted",
 };
 
-/** Non-modal right-hand panel; at narrow widths it covers only the transcript,
- * leaving the main-session composer/Stop and connection feedback available. */
 export function ChildInspector({ view }: { view: ChildView }) {
   const state = useSyncExternalStore(
     view.subscribe,
@@ -86,11 +78,8 @@ export function ChildInspector({ view }: { view: ChildView }) {
   const child = state.attempts.find(
     (attempt) => inspection && sameChild(attempt, inspection),
   );
-  const closeButton = useRef<HTMLButtonElement>(null);
-  const invoker = useRef<HTMLElement | null>(null);
   const [projection] = useState(createTranscriptProjection);
   const [disclosures] = useState(() => new Map<string, boolean>());
-  const open = Boolean(inspection);
   const key = inspection ? childKey(inspection) : null;
   const viewport = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -180,51 +169,6 @@ export function ChildInspector({ view }: { view: ChildView }) {
     inspection?.loadingEarlier,
     inspection?.error,
   ]);
-  useEffect(() => {
-    if (!open) return;
-    invoker.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    const transcript = document.querySelector<HTMLElement>(
-      '[data-testid="coding-transcript"]',
-    );
-    const media = window.matchMedia("(max-width: 1023px)");
-    const apply = () => {
-      if (transcript) transcript.inert = media.matches;
-    };
-    apply();
-    media.addEventListener("change", apply);
-    return () => {
-      media.removeEventListener("change", apply);
-      if (transcript) transcript.inert = false;
-    };
-  }, [open]);
-  useEffect(() => {
-    if (!open) return;
-    closeButton.current?.focus();
-    return () => {
-      if (invoker.current?.isConnected) invoker.current.focus();
-      else {
-        const identity = invoker.current?.dataset;
-        const rows = document.querySelectorAll<HTMLElement>(
-          '[data-testid="coding-child-row"]',
-        );
-        const replacement = Array.from(rows).find(
-          (row) =>
-            row.dataset.childHandle === identity?.childHandle &&
-            row.dataset.childAttempt === identity?.childAttempt,
-        );
-        const fallback = document.querySelector<HTMLElement>(
-          '[aria-label="Coding prompt"]',
-        );
-        (replacement ?? fallback)?.focus();
-      }
-    };
-  }, [open]);
-  useEffect(() => {
-    if (key) closeButton.current?.focus();
-  }, [key]);
   if (!inspection || !child) return null;
   const outcome = inspection.outcome;
   const presentation = child.presentation;
@@ -249,21 +193,12 @@ export function ChildInspector({ view }: { view: ChildView }) {
       ? outcome.result
       : null;
   return (
-    <dialog
-      open={true}
-      aria-modal="false"
+    <section
       aria-label="Subagent"
       data-testid="coding-child-inspector"
       data-child-handle={child.handle}
       data-child-attempt={child.attempt}
-      className="absolute inset-0 z-20 m-0 flex h-full w-full min-h-0 min-w-0 max-w-none flex-col overflow-hidden rounded-xl border border-border bg-background p-0 text-foreground shadow-[0_2px_8px_-2px_rgba(0,0,0,0.16)] lg:relative lg:inset-auto lg:my-3 lg:h-auto lg:w-112 lg:shrink-0 dark:bg-card"
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          event.stopPropagation();
-          view.close();
-        }
-      }}
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-card text-foreground"
     >
       <header className="flex shrink-0 items-start gap-2.5 border-b border-border/60 px-3 py-2.5">
         <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md coding-wash-strong">
@@ -297,16 +232,6 @@ export function ChildInspector({ view }: { view: ChildView }) {
             )}
           </p>
         </div>
-        <Button
-          ref={closeButton}
-          size="icon-sm"
-          variant="ghost"
-          className="shrink-0"
-          aria-label="Close subagent"
-          onClick={() => view.close()}
-        >
-          <X className="size-4" aria-hidden="true" />
-        </Button>
       </header>
       {attempts.length > 1 && (
         <nav
@@ -450,6 +375,6 @@ export function ChildInspector({ view }: { view: ChildView }) {
           </div>
         )}
       </div>
-    </dialog>
+    </section>
   );
 }

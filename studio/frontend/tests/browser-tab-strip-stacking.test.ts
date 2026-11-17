@@ -13,7 +13,8 @@ test("no query container wraps the browser tab strip, so it stays above the macO
   const strip = panel.indexOf("<TabStrip ", section);
   assert.ok(root >= 0 && section > root && strip > section);
   assert.doesNotMatch(panel.slice(section, strip), /@container/);
-  assert.match(panel, /className="browser-chrome relative z-40 flex /);
+  assert.match(panel, /<PanelTabStrip/);
+  assert.match(readSrc("components/panel-tabs.tsx"), /className="browser-chrome relative z-40 flex /);
   assert.match(
     panel.slice(strip),
     /^<TabStrip [^\n]*\n(?:[^\n]*\n){0,3}\s*<div className="browser-panel-body @container\/browser /,

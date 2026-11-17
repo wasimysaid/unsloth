@@ -527,6 +527,7 @@ for (const ownerGeneration of [1, 2, 100]) {
     };
     const surface = loadWithStubs<{
       CodingSurface: (props: {
+        onChildView: (view: unknown) => void;
         conversationId: string;
         conversationGeneration?: number;
         runtimeStatus: CodingRuntimeStatus | null;
@@ -535,6 +536,10 @@ for (const ownerGeneration of [1, 2, 100]) {
         children: unknown;
       }) => StubElement;
     }>(new URL("../src/features/coding/coding-surface.tsx", import.meta.url), {
+      "react-dom": { createPortal: () => null },
+      "@/features/chat": { ContextUsageBar: "context-usage" },
+      "./coding-layout-context": { CodingLayoutHosts: { current: { contextUsage: null } } },
+      "./context-usage": { codingContextUsage: () => ({}) },
       "react/jsx-runtime": stubJsxRuntime(),
       "@/components/ui/button": { Button: "button" },
       "@/components/ui/popover": {
@@ -619,7 +624,6 @@ for (const ownerGeneration of [1, 2, 100]) {
       "./tool-report": { DisclosureMemory: "disclosures" },
       "./unsent-draft": { CodingUnsentDraft: "draft" },
       "./recovery-controls": { CodingRecoveryControls: "recovery" },
-      "./child-inspector": { ChildInspector: "child-inspector" },
       "./subagent-card": { ChildActivityRows: "children" },
       "./coding-composer": composer,
       "./composer-footer": { CommandFeedback: "command-feedback", ComposerFooter: "footer" },
@@ -632,6 +636,7 @@ for (const ownerGeneration of [1, 2, 100]) {
       refIndex = 0;
       effectIndex = 0;
       return surface.CodingSurface({
+        onChildView: () => {},
         conversationId: "saved",
         conversationGeneration: ownerGeneration,
         runtimeStatus,
@@ -719,6 +724,7 @@ for (const ownerGeneration of [1, 2, 100]) {
     effects.length = 0;
     stateIndex = refIndex = effectIndex = 0;
     const unfenced = surface.CodingSurface({
+      onChildView: () => {},
       conversationId: "saved",
       runtimeStatus: running(ownerGeneration + 1),
       draft: codingInput.createInputDraft(),

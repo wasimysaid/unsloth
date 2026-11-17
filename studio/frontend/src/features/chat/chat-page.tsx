@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import { panelDefaultSize } from "@/components/panel-sizing";
 import { RunSettingsToggle } from "@/features/model-picker";
 import { isWebKitGTK } from "@/components/ui/theme-view-transition";
 import { useAppShellReadySignal } from "@/components/app-readiness";
@@ -648,14 +649,6 @@ const IMMEDIATE_CONTEXT_PANEL =
   isWebKitGTK(navigator.platform, navigator.userAgent);
 
 const ARTIFACT_PANEL_DEFAULT_SIZE = "38%";
-// t3code's default docked width, never more than half the chat or under the panel's 30% minimum.
-const BROWSER_PANEL_DEFAULT_PX = 540;
-
-function browserPanelDefaultSize(split: HTMLElement | null | undefined): string {
-  const width = split?.getBoundingClientRect().width ?? 0;
-  if (width <= 0) return "50%";
-  return `${Math.min(50, Math.max(30, (BROWSER_PANEL_DEFAULT_PX / width) * 100))}%`;
-}
 const ARTIFACT_PANEL_TRANSITION_MS = 260;
 const ARTIFACT_LAYOUT_INSTANT_ATTRIBUTE = "data-artifact-layout-instant";
 
@@ -754,7 +747,7 @@ const SingleContent = memo(function SingleContent({
   const defaultPanelSizeRef = useRef(ARTIFACT_PANEL_DEFAULT_SIZE);
   useEffect(() => {
     defaultPanelSizeRef.current = showBrowserPanel
-      ? browserPanelDefaultSize(contextSurfaceRef.current?.closest<HTMLElement>(".chat-artifact-split"))
+      ? panelDefaultSize(contextSurfaceRef.current?.closest<HTMLElement>(".chat-artifact-split")?.getBoundingClientRect().width ?? 0)
       : ARTIFACT_PANEL_DEFAULT_SIZE;
   });
   const showContextPanel = showResearchPanel || browserDocked;

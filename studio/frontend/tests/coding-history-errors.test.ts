@@ -182,7 +182,12 @@ test("main history ignores unrelated run errors and retains paging recovery afte
     new URL("../src/features/coding/coding-surface.tsx", import.meta.url),
     {
       "react/jsx-runtime": stubJsxRuntime(),
+      "react-dom": { createPortal: () => null },
+      "@/features/chat": { ContextUsageBar: "context-usage" },
+      "./coding-layout-context": { CodingLayoutHosts: { current: { contextUsage: null } } },
+      "./context-usage": { codingContextUsage: () => ({}) },
       react: {
+        useContext: (context: { current: unknown }) => context.current,
         useState(initial: unknown) {
           const index = stateIndex++;
           if (index >= states.length)
@@ -218,7 +223,6 @@ test("main history ignores unrelated run errors and retains paging recovery afte
       "lucide-react": { ArrowDown: "icon" },
       "./answer-focus": { watchAnswerFocus() {} },
       "./api": { codingModelApi: {}, createCodingRunApi: () => api },
-      "./child-inspector": { ChildInspector: "child-inspector" },
       "./coding-composer": { CodingComposer: "composer" },
       "./composer-footer": {
         CommandFeedback: "command-feedback",
@@ -253,6 +257,7 @@ test("main history ignores unrelated run errors and retains paging recovery afte
   const render = () => {
     stateIndex = refIndex = 0;
     return surface.CodingSurface({
+      onChildView: () => {},
       conversationId: "history",
       conversationGeneration: 1,
       runtimeStatus: null,

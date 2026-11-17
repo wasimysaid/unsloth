@@ -16,7 +16,7 @@ import { useT } from "@/i18n";
 import { InternetIcon, PictureInPictureOnIcon, PlusSignIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useRef, useState } from "react";
-import { EnterFullViewIcon } from "./icons";
+import { EnterFullViewIcon } from "@/lib/panel-icons";
 import { useBrowserStore } from "./store";
 
 // Long enough that passing over the button, or crossing the gap to the menu, doesn't toggle it.

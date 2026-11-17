@@ -48,7 +48,6 @@ export function SubagentCard({
       data-reading-control={
         identity ? `child:${identity.handle}:${identity.attempt}` : undefined
       }
-      aria-haspopup={inspectable ? "dialog" : undefined}
       aria-expanded={inspectable ? open : undefined}
       aria-label={`Agent ${description}${problem ? ` · ${problem}` : running ? " · running" : ""}`}
       disabled={!inspectable}

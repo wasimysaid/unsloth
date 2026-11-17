@@ -90,7 +90,7 @@ test("a native tab keeps the page it leaves for a local origin, whose view start
 
 test("the Local badge follows the tab's granted entry, not a data: or about:blank page it shows", () => {
   const panel = readSrc("features/browser/browser-panel.tsx");
-  assert.match(panel, /const local = entry\.kind === "web" && !tab\.nativeError && localOriginGranted\(tab\.id, entry\.url\);/);
+  assert.match(panel, /const local =\s*entry\.kind === "web" &&\s*!tab\.nativeError &&\s*localOriginGranted\(tab\.id, entry\.url\);/);
 });
 
 test("a generated page a native tab showed is not kept as its history across a local boundary", () => {

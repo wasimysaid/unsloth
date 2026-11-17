@@ -653,12 +653,18 @@ activity, checkpoints, bounded child-journal reads, and non-consuming retained
 outcomes. The authenticated child-inspection endpoint exposes no delegation controls.
 Mimir remains the delegation and completion-delivery owner.
 
-The browser presents compact agent-icon rows and a right-hand inspector, expanded
-only on demand. The narrow layout covers the transcript width while leaving native
-connection feedback and main-session Stop available. Inspecting another attempt or
-dismissing the panel aborts only obsolete inspection reads. Historical attempts and
-outcomes keep their exact identities; historical reports cannot turn old work live
-and launch acceptance never fabricates completion. Native outcome reads do not
+Agent rows open exact child attempts in tabs. Coding and New Chat's browser share
+the tab strip, drag behavior, window controls, and default panel sizing. Desktop
+inspection opens beside the full conversation at 540px, clamped between 30% and
+50% of the available width, and resizes between 30% and 70%. Narrow screens stack the panels
+vertically so the main composer and Stop remain available. Full view keeps the
+conversation mounted but excludes its hidden controls from keyboard navigation.
+
+`ChildView` owns the open tab identities and one active bounded transcript. Switching
+tabs or dismissing the panel aborts only obsolete inspection reads. Open historical
+attempts survive reconnection, and closing a tab selects its nearest neighbor.
+Historical attempts and outcomes keep their exact identities. Historical reports
+cannot turn old work live, and launch acceptance never fabricates completion. Native outcome reads do not
 claim the parent’s pending completion. Missing old transcript cuts are explicitly
 unavailable, never replaced with the newer attempt’s journal. Public oversized
 entry/detail/result prefixes stay bounded with truthful incomplete-content labels.

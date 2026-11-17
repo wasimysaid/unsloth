@@ -7,6 +7,7 @@ import { isTauri } from "@/lib/api-base";
 import { cn } from "@/lib/utils";
 import { LoaderCircle } from "lucide-react";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -14,6 +15,8 @@ import {
   useSyncExternalStore,
 } from "react";
 import { readCodingCatalog } from "./api";
+import { CodingWorkspace } from "./coding-workspace";
+import type { ChildView } from "./child-view";
 import { CodingSurface } from "./coding-surface";
 import { CodingModelSelector } from "./coding-model-selector";
 import { CodingLayoutHosts } from "./coding-layout-context";
@@ -39,6 +42,17 @@ export function CodingPage() {
     return () => clearInterval(timer);
   }, []);
   const { isMobile, pinned } = useSidebar();
+  const conversationKey = `${state.active?.id ?? "unopened"}:${state.openingGeneration}`;
+  const [childView, setChildView] = useState<{
+    key: string;
+    view: ChildView | null;
+  } | null>(null);
+  const registerChildView = useCallback(
+    (view: ChildView | null) => {
+      setChildView({ key: conversationKey, view });
+    },
+    [conversationKey],
+  );
   const [folderOpen, setFolderOpen] = useState(false);
   const [settingsPanelHost, setSettingsPanelHost] =
     useState<HTMLDivElement | null>(null);
@@ -78,155 +92,168 @@ export function CodingPage() {
       }}
     >
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        <div
-          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pt-[var(--studio-content-top-inset,0px)]"
-          data-testid="coding-shell"
+        <CodingWorkspace
+          key={conversationKey}
+          view={childView?.key === conversationKey ? childView.view : null}
         >
-          <header
-            className={cn(
-              "flex h-12 shrink-0 items-center gap-1.5 pr-2 sm:pr-4",
-              // Clear the shell's own sidebar controls, as the chat header does.
-              isMobile
-                ? "pl-12 pt-2"
-                : pinned
-                  ? "pl-4"
-                  : isTauri
-                    ? "pl-[var(--studio-collapsed-chat-controls-inset,0.75rem)]"
-                    : "pl-[calc(1rem*var(--ui-space-scale,1)+max(0px,var(--studio-mac-traffic-light-inset,0px)-var(--sidebar-width-icon,3rem)))]",
-            )}
+          <div
+            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pt-[var(--studio-content-top-inset,0px)]"
+            data-testid="coding-shell"
           >
-            <h2
-              className="min-w-0 truncate font-heading text-sm font-medium"
-              data-testid="coding-opened-conversation"
-              title={state.active?.cwd}
+            <header
+              className={cn(
+                "flex h-12 shrink-0 items-center gap-1.5 pr-2 sm:pr-4",
+                // Clear the shell's own sidebar controls, as the chat header does.
+                isMobile
+                  ? "pl-12 pt-2"
+                  : pinned
+                    ? "pl-4"
+                    : isTauri
+                      ? "pl-[var(--studio-collapsed-chat-controls-inset,0.75rem)]"
+                      : "pl-[calc(1rem*var(--ui-space-scale,1)+max(0px,var(--studio-mac-traffic-light-inset,0px)-var(--sidebar-width-icon,3rem)))]",
+              )}
             >
-              {state.active
-                ? state.active.title || projectName(state.active.cwd)
-                : "New conversation"}
-            </h2>
-            {state.pending && (
-              <LoaderCircle
-                className="size-4 shrink-0 animate-spin text-muted-foreground"
-                aria-label={
-                  creating ? "Starting conversation" : "Opening conversation"
+              <h2
+                className="min-w-0 truncate font-heading text-sm font-medium"
+                data-testid="coding-opened-conversation"
+                title={state.active?.cwd}
+              >
+                {state.active
+                  ? state.active.title || projectName(state.active.cwd)
+                  : "New conversation"}
+              </h2>
+              {state.pending && (
+                <LoaderCircle
+                  className="size-4 shrink-0 animate-spin text-muted-foreground"
+                  aria-label={
+                    creating ? "Starting conversation" : "Opening conversation"
+                  }
+                />
+              )}
+              <div className="ml-auto flex min-w-0 items-center gap-1.5 self-stretch">
+                <div
+                  ref={setContextUsageHost}
+                  className="flex min-w-0 items-center"
+                />
+                <div
+                  ref={setSettingsTriggerHost}
+                  className="flex shrink-0 items-center"
+                />
+              </div>
+            </header>
+            <RuntimeNotice maintenance={maintenance} runtime={runtime} />
+            <main
+              className="flex min-h-0 min-w-0 flex-1 flex-col"
+              aria-busy={Boolean(state.pending)}
+              aria-label="Coding conversation"
+            >
+              {(state.openingUncertainty || state.openingError) && (
+                <div className="mx-auto w-full max-w-3xl shrink-0 space-y-1 px-3 pt-1 text-xs sm:px-6">
+                  {state.openingUncertainty && (
+                    <output
+                      data-testid="coding-opening-reconciliation"
+                      className="block rounded-xl border border-border/60 bg-muted/40 px-3 py-2"
+                    >
+                      {state.openingUncertainty.inspected
+                        ? "The conversation may have been created. Open it from the sidebar if it's there."
+                        : "Checking whether the conversation was created…"}
+                    </output>
+                  )}
+                  {state.openingError && (
+                    <p
+                      role="alert"
+                      data-testid="coding-opening-error"
+                      className="break-words rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-destructive"
+                    >
+                      {state.openingError}
+                    </p>
+                  )}
+                </div>
+              )}
+              <CodingSurface
+                onChildView={registerChildView}
+                key={`${state.active?.id ?? "unopened"}:${state.openingGeneration}`}
+                conversationId={state.active?.id ?? null}
+                conversationGeneration={state.active?.runtime_generation}
+                cwd={state.active?.cwd ?? null}
+                runtimeStatus={runtime.status}
+                onRuntimeLost={inspectFreshRuntime}
+                draft={state.draft}
+                autoSend={state.autoSend}
+                onAutoSent={session.clearAutoSend}
+                onConfigured={(configuration) =>
+                  session.selectModel({
+                    provider: configuration.provider ?? undefined,
+                    model: configuration.model ?? undefined,
+                    reasoning: configuration.reasoning ?? undefined,
+                    preserve_thinking:
+                      configuration.preserve_thinking ?? undefined,
+                  })
+                }
+                landing={
+                  state.active
+                    ? null
+                    : {
+                        project: (
+                          <ProjectPicker
+                            triggerRef={projectTrigger}
+                            project={project}
+                            projects={recentProjects(
+                              state.conversations,
+                              project,
+                            )}
+                            disabled={creating}
+                            onSelect={session.selectProject}
+                            onBrowse={chooseFolder}
+                          />
+                        ),
+                        modelPicker: (
+                          <CodingModelSelector
+                            key={`folder:${project ?? ""}`}
+                            readCatalog={(_, signal) =>
+                              readCodingCatalog(project, signal)
+                            }
+                            configuration={
+                              state.selection
+                                ? {
+                                    provider: state.selection.provider ?? null,
+                                    model: state.selection.model ?? null,
+                                    reasoning:
+                                      state.selection.reasoning ?? null,
+                                    preserve_thinking:
+                                      state.selection.preserve_thinking ?? null,
+                                  }
+                                : null
+                            }
+                            disabled={creating}
+                            configuring={false}
+                            configure={async (change) =>
+                              session.selectModel(change)
+                            }
+                          />
+                        ),
+                        onStart: () => void session.startConversation(),
+                        starting: creating,
+                        blocked: landingBlocked,
+                      }
                 }
               />
-            )}
-            <div className="ml-auto flex min-w-0 items-center gap-1.5 self-stretch">
-              <div ref={setContextUsageHost} className="flex min-w-0 items-center" />
-              <div ref={setSettingsTriggerHost} className="flex shrink-0 items-center" />
-            </div>
-          </header>
-          <RuntimeNotice maintenance={maintenance} runtime={runtime} />
-          <main
-            className="flex min-h-0 min-w-0 flex-1 flex-col"
-            aria-busy={Boolean(state.pending)}
-            aria-label="Coding conversation"
-          >
-            {(state.openingUncertainty || state.openingError) && (
-              <div className="mx-auto w-full max-w-3xl shrink-0 space-y-1 px-3 pt-1 text-xs sm:px-6">
-                {state.openingUncertainty && (
-                  <output
-                    data-testid="coding-opening-reconciliation"
-                    className="block rounded-xl border border-border/60 bg-muted/40 px-3 py-2"
-                  >
-                    {state.openingUncertainty.inspected
-                      ? "The conversation may have been created. Open it from the sidebar if it's there."
-                      : "Checking whether the conversation was created…"}
-                  </output>
-                )}
-                {state.openingError && (
-                  <p
-                    role="alert"
-                    data-testid="coding-opening-error"
-                    className="break-words rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-destructive"
-                  >
-                    {state.openingError}
-                  </p>
-                )}
-              </div>
-            )}
-            <CodingSurface
-              key={`${state.active?.id ?? "unopened"}:${state.openingGeneration}`}
-              conversationId={state.active?.id ?? null}
-              conversationGeneration={state.active?.runtime_generation}
-              cwd={state.active?.cwd ?? null}
-              runtimeStatus={runtime.status}
-              onRuntimeLost={inspectFreshRuntime}
-              draft={state.draft}
-              autoSend={state.autoSend}
-              onAutoSent={session.clearAutoSend}
-              onConfigured={(configuration) =>
-                session.selectModel({
-                  provider: configuration.provider ?? undefined,
-                  model: configuration.model ?? undefined,
-                  reasoning: configuration.reasoning ?? undefined,
-                  preserve_thinking:
-                    configuration.preserve_thinking ?? undefined,
-                })
+            </main>
+            <ProjectFolderDialog
+              open={folderOpen}
+              onOpenChange={setFolderOpen}
+              onRestoreFocus={() =>
+                (folderInvoker.current?.isConnected
+                  ? folderInvoker.current
+                  : projectTrigger.current
+                )?.focus()
               }
-              landing={
-                state.active
-                  ? null
-                  : {
-                      project: (
-                        <ProjectPicker
-                          triggerRef={projectTrigger}
-                          project={project}
-                          projects={recentProjects(
-                            state.conversations,
-                            project,
-                          )}
-                          disabled={creating}
-                          onSelect={session.selectProject}
-                          onBrowse={chooseFolder}
-                        />
-                      ),
-                      modelPicker: (
-                        <CodingModelSelector
-                          key={`folder:${project ?? ""}`}
-                          readCatalog={(_, signal) =>
-                            readCodingCatalog(project, signal)
-                          }
-                          configuration={
-                            state.selection
-                              ? {
-                                  provider: state.selection.provider ?? null,
-                                  model: state.selection.model ?? null,
-                                  reasoning: state.selection.reasoning ?? null,
-                                  preserve_thinking:
-                                    state.selection.preserve_thinking ?? null,
-                                }
-                              : null
-                          }
-                          disabled={creating}
-                          configuring={false}
-                          configure={async (change) =>
-                            session.selectModel(change)
-                          }
-                        />
-                      ),
-                      onStart: () => void session.startConversation(),
-                      starting: creating,
-                      blocked: landingBlocked,
-                    }
-              }
+              onSelect={session.selectProject}
+              session={session}
+              state={state}
             />
-          </main>
-          <ProjectFolderDialog
-            open={folderOpen}
-            onOpenChange={setFolderOpen}
-            onRestoreFocus={() =>
-              (folderInvoker.current?.isConnected
-                ? folderInvoker.current
-                : projectTrigger.current
-              )?.focus()
-            }
-            onSelect={session.selectProject}
-            session={session}
-            state={state}
-          />
-        </div>
+          </div>
+        </CodingWorkspace>
         <div ref={setSettingsPanelHost} className="flex shrink-0" />
       </div>
     </CodingLayoutHosts.Provider>
