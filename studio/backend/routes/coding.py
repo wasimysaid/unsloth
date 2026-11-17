@@ -498,6 +498,57 @@ async def refresh_models(conversation_id: str, request: Request):
     return JSONResponse(result, headers = {"Cache-Control": "no-store"})
 
 
+def _project_text(value: str, limit: int, *, relative: bool = False, empty: bool = False):
+    if ((not empty and not value.strip()) or len(value.encode("utf-8")) > limit
+            or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in value)
+            or (relative and ("\\" in value or ":" in value
+                              or (value and any(part in ("", ".", "..") for part in value.split("/")))))):
+        raise HTTPException(422, "Choose a valid path or search within the selected project.")
+
+
+@router.get("/project/directory")
+async def project_directory(request: Request,
+                            project_path: str = Query(min_length = 1, max_length = 16384),
+                            path: str = Query(default = "", max_length = 16384),
+                            show_hidden: bool = False):
+    _project_text(project_path, 16384)
+    _project_text(path, 16384, relative = True, empty = True)
+    return await _command(request, "project_directory", {
+        "project_path": project_path, "path": path, "show_hidden": show_hidden,
+    })
+
+
+@router.get("/project/search")
+async def project_search(request: Request,
+                         project_path: str = Query(min_length = 1, max_length = 16384),
+                         query: str = Query(min_length = 1, max_length = 1024),
+                         show_hidden: bool = False):
+    _project_text(project_path, 16384)
+    _project_text(query, 1024)
+    return await _command(request, "project_search", {
+        "project_path": project_path, "query": query, "show_hidden": show_hidden,
+    })
+
+
+@router.get("/project/file")
+async def project_file(request: Request,
+                       project_path: str = Query(min_length = 1, max_length = 16384),
+                       path: str = Query(min_length = 1, max_length = 16384),
+                       offset: int = Query(default = 0, ge = 0, le = 9007199254740991),
+                       limit: int = Query(default = 131072, ge = 4, le = 262144),
+                       revision: str | None = Query(default = None, min_length = 1, max_length = 128)):
+    _project_text(project_path, 16384)
+    _project_text(path, 16384, relative = True)
+    if offset and revision is None:
+        raise HTTPException(422, "The next file section requires its previous revision.")
+    if revision is not None:
+        _project_text(revision, 128)
+    return await _command(request, "project_file", {
+        "project_path": project_path, "path": path, "offset": offset,
+        "limit": limit, "revision": revision,
+    })
+
+
 @router.get("/conversations")
 async def conversations(request: Request, cursor: str | None = Query(default = None, max_length = 16384)):
     page = await _command(request, "list", {"cursor": cursor})

@@ -1062,3 +1062,39 @@ local model catalog. The frontend refreshes its native catalog when those values
 change. Mimir resolves execution capabilities after acquiring the protected
 resident model, so a reload from another Chat or browser is observed before the
 next Coding request starts.
+
+## Read-only project Files
+
+Files opens independently from Run settings, Subagents and Browser, using their
+shared pane chrome. The frontend sends the active conversation's working folder,
+or the chosen project before a conversation exists. Browsing does not create a
+conversation, load a model, grant agent trust or initiate inference.
+
+Authenticated GET `/api/coding/project/directory`, `/search` and `/file` forward to
+`studio.frontend` plugin commands. The plugin owns filesystem preview policy and
+uses Mimir's existing host-path mapping and asynchronous WASI filesystem access.
+Unsloth validates transport inputs and forwards results; it does not duplicate
+filesystem traversal or add a Mimir core service.
+
+Directory listings stop at 512 children. Search returns at most 100 matches and
+scans at most 32,768 entries. Hidden files require explicit selection, and VCS
+metadata directories are excluded from recursive search. Relative paths cannot
+escape through parent components or symlinks. Binary and nonregular files return
+metadata instead of preview text.
+
+Text sections default to 128 KiB, never exceed 256 KiB or 4096 newline-terminated
+lines, and preserve UTF-8 boundaries. The next section requires the returned byte
+offset and revision. Revision combines file identity, size and modification time.
+A detected change returns HTTP 409 and requires Reload. Same-size edits that
+preserve modification time can go undetected. Reads remain bounded instead of
+hashing the entire file. The plugin awaits filesystem stream completion and uses
+existing retained-command admission, while the bridge retains its command timeout
+and failure mapping.
+
+File tabs belong to the project and survive conversation changes within that
+project. Subagents retain their separate conversation-owned tabs. The right-side
+tree loads expanded directories lazily; its refresh action discovers files added
+or removed during coding. Source uses the existing highlight worker and virtual
+rows, with four cached sections and 64 cached directories. Very long lines have
+an explicit shortened-preview notice. Small Markdown files reuse MarkdownPreview
+without its compact card styling.

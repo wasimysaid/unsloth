@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 import { ArrowUpRight, Bot, LoaderCircle } from "lucide-react";
-import { useSyncExternalStore } from "react";
+import { useContext, useSyncExternalStore } from "react";
 import {
   type ChildAttempt,
   type ChildIdentity,
@@ -10,6 +10,7 @@ import {
   sameChild,
 } from "./child-types";
 import type { ChildView } from "./child-view";
+import { CodingPanels } from "./coding-panels-context";
 import type { CodingRow } from "./run-types";
 
 const statusLabel: Partial<Record<ChildStatus, string>> = {
@@ -35,6 +36,7 @@ export function SubagentCard({
   view: ChildView | null;
   open: boolean;
 }) {
+  const panels = useContext(CodingPanels);
   const running = status === "queued" || status === "running";
   const problem = statusLabel[status];
   const inspectable = Boolean(identity && view);
@@ -52,7 +54,10 @@ export function SubagentCard({
       aria-label={`Agent ${description}${problem ? ` · ${problem}` : running ? " · running" : ""}`}
       disabled={!inspectable}
       onClick={() => {
-        if (identity) void view?.open(identity);
+        if (identity) {
+          panels.openSubagents();
+          void view?.open(identity);
+        }
       }}
       className={`group/agent flex h-8.5 w-full min-w-0 items-center gap-2 rounded-[9px] border px-2 text-left text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default ${problem ? "border-destructive/20 bg-destructive/[0.04]" : "border-border coding-wash-faint enabled:hover:coding-wash"} ${open ? "coding-wash" : ""}`}
     >

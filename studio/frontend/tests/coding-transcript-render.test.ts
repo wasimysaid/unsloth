@@ -40,6 +40,12 @@ const stubs: Record<string, unknown> = {
   "./answer-focus": answerFocus,
   "./bounded-content": boundedContent,
   "./child-types": childTypes,
+  "./coding-panels-context": {
+    CodingPanels: React.createContext({
+      openFiles: () => {}, openSubagents: () => {},
+      hasProject: false, filesOpen: false,
+    }),
+  },
   "./file-change-report": { FileChangeReport: () => null },
   "./plan-card": { PlanCard: () => null },
 };

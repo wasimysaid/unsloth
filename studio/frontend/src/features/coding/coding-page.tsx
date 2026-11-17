@@ -16,6 +16,7 @@ import {
 } from "react";
 import { readCodingCatalog } from "./api";
 import { CodingWorkspace } from "./coding-workspace";
+import { ProjectFilesButton } from "./project-files-panel";
 import type { ChildView } from "./child-view";
 import { CodingSurface } from "./coding-surface";
 import { CodingModelSelector } from "./coding-model-selector";
@@ -93,7 +94,9 @@ export function CodingPage() {
     >
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <CodingWorkspace
-          key={conversationKey}
+          key={state.active?.cwd ?? project ?? "no-project"}
+          project={state.active?.cwd ?? project}
+          conversationKey={conversationKey}
           view={childView?.key === conversationKey ? childView.view : null}
         >
           <div
@@ -139,6 +142,7 @@ export function CodingPage() {
                   ref={setSettingsTriggerHost}
                   className="flex shrink-0 items-center"
                 />
+                <ProjectFilesButton />
               </div>
             </header>
             <RuntimeNotice maintenance={maintenance} runtime={runtime} />

@@ -20,7 +20,7 @@ import type {
   CodingProjectDirectory,
 } from "./types";
 
-async function codingRequest(
+export async function codingRequest(
   path: string,
   init?: RequestInit,
 ): Promise<Response> {
