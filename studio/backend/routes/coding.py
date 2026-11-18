@@ -428,11 +428,30 @@ async def release_local_model(body: LocalOperationIdentity, request: Request):
         raise _http_error(exc) from exc
 
 
-def _browse(path: str | None) -> dict:
-    """Directory names only; choosing a folder here grants it nothing."""
+def _is_git_folder(path: Path) -> bool:
     try:
-        target = Path(path).expanduser() if path else Path.home()
-        target = target.resolve(strict = True)
+        marker = path / ".git"
+        return marker.is_dir() or marker.is_file()
+    except OSError:
+        return False
+
+
+def _browse(path: str | None, complete: bool = False, hidden: bool = False) -> dict:
+    """Read host folders only. Completion never grants project execution authority."""
+    try:
+        query = (path or "").strip()
+        if len(query) >= 2 and query[0] == query[-1] and query[0] in ("'", '"'):
+            query = query[1:-1]
+        target = Path(query).expanduser() if query else Path.home()
+        leaf = ""
+        try:
+            target = target.resolve(strict = True)
+        except FileNotFoundError:
+            # Only the final component is a completion. A missing ancestor is an error.
+            if not complete:
+                raise
+            leaf = target.name
+            target = target.parent.resolve(strict = True)
         if not target.is_dir():
             raise HTTPException(400, "Choose a host directory, not a file.")
         if not os.access(target, os.R_OK | os.X_OK):
@@ -440,25 +459,31 @@ def _browse(path: str | None) -> dict:
         entries = []
         truncated = False
         with os.scandir(target) as children:
-            for index, child in enumerate(children):
-                if index >= 2000:
-                    truncated = True
-                    break
+            for child in children:
+                if child.name.startswith(".") and not (hidden or leaf.startswith(".")):
+                    continue
+                if not child.name.casefold().startswith(leaf.casefold()):
+                    continue
                 try:
-                    if child.is_dir():
-                        entries.append({"name": child.name, "path": child.path})
+                    if not child.is_dir():
+                        continue
                 except OSError:
                     continue
+                if len(entries) == 200:
+                    truncated = True
+                    break
+                entries.append({"name": child.name, "path": child.path,
+                                "is_git": _is_git_folder(Path(child.path))})
         entries.sort(key = lambda entry: entry["name"].casefold())
-        return {"path": str(target), "parent": str(target.parent),
-                "entries": entries, "truncated": truncated}
+        return {"path": str(target),
+                "parent": str(target.parent) if target.parent != target else None,
+                "entries": entries, "truncated": truncated, "filter": leaf,
+                "is_git": _is_git_folder(target)}
     except FileNotFoundError as exc:
         raise HTTPException(404, "That host folder does not exist. Check the path or choose its parent.") from exc
     except PermissionError as exc:
         raise HTTPException(403, "The host OS denies access to that folder. Choose another folder or ask its owner for access.") from exc
     except (OSError, ValueError, RuntimeError) as exc:
-        # Python 3.12 reports symlink loops/unknown ~users as RuntimeError;
-        # they are invalid host paths, not an internal-server failure.
         raise HTTPException(400, "That host folder cannot be read. Check the path and host permissions.") from exc
 
 
@@ -476,8 +501,12 @@ async def restart_whole_runtime(body: RuntimeRestart, request: Request):
 
 
 @router.get("/projects/browse")
-async def browse_projects(path: str | None = Query(default = None, max_length = 32768)):
-    return await asyncio.to_thread(_browse, path)
+async def browse_projects(
+    path: str | None = Query(default = None, max_length = 32768),
+    complete: bool = False,
+    hidden: bool = False,
+):
+    return await asyncio.to_thread(_browse, path, complete, hidden)
 
 
 @router.get("/catalog")

@@ -17,7 +17,9 @@ export interface CodingConversation {
 export interface CodingProjectDirectory {
   path: string;
   parent: string | null;
-  entries: { name: string; path: string }[];
+  entries: { name: string; path: string; is_git: boolean }[];
+  filter: string;
+  is_git: boolean;
   truncated: boolean;
 }
 
@@ -35,5 +37,6 @@ export interface CodingApi {
   browseProjects(
     path: string,
     signal: AbortSignal,
+    hidden?: boolean,
   ): Promise<CodingProjectDirectory>;
 }

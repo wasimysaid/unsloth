@@ -69,13 +69,11 @@ export function CodingPage() {
   }, [signalReady]);
   useEffect(() => {
     void session.refreshConversations();
-    return () => session.cancelBrowse();
   }, []);
   const creating = state.pending?.operation === "create";
   const chooseFolder = (invoker: HTMLElement) => {
     folderInvoker.current = invoker;
     setFolderOpen(true);
-    void session.browse(state.project ?? "");
   };
   const project = state.project;
   const landingBlocked = !project
@@ -202,12 +200,7 @@ export function CodingPage() {
                           <ProjectPicker
                             triggerRef={projectTrigger}
                             project={project}
-                            projects={recentProjects(
-                              state.conversations,
-                              project,
-                            )}
                             disabled={creating}
-                            onSelect={session.selectProject}
                             onBrowse={chooseFolder}
                           />
                         ),
@@ -253,8 +246,8 @@ export function CodingPage() {
                 )?.focus()
               }
               onSelect={session.selectProject}
-              session={session}
-              state={state}
+              project={project}
+              projects={recentProjects(state.conversations, project)}
             />
           </div>
         </CodingWorkspace>

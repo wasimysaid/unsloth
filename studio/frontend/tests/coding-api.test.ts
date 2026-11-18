@@ -153,7 +153,9 @@ test("browse uses authenticated host API with query encoding and cancellation", 
   const directory = {
     path: "/canonical",
     parent: "/",
-    entries: [{ name: "project", path: "/canonical/project" }],
+    entries: [{ name: "project", path: "/canonical/project", is_git: true }],
+    filter: "",
+    is_git: false,
     truncated: false,
   };
   const c = client(() => Response.json(directory));
@@ -164,7 +166,7 @@ test("browse uses authenticated host API with query encoding and cancellation", 
   );
   assert.equal(
     c.requests[0].path,
-    "/api/coding/projects/browse?path=%2Fhost%2Fa+%26+b%3F",
+    "/api/coding/projects/browse?path=%2Fhost%2Fa+%26+b%3F&complete=true&hidden=false",
   );
   assert.equal(c.requests[0].init?.signal, abort.signal);
 });

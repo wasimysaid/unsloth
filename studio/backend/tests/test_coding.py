@@ -93,6 +93,8 @@ async def test_browse_is_canonical_bounded_os_discovery(coding_app, tmp_path):
         assert good.status_code == 200
         assert good.json()["path"] == str(project.resolve())
         assert [row["name"] for row in good.json()["entries"]] == ["src"]
+        siblings = await client.get("/api/coding/projects/browse", params = {"path": str(tmp_path)})
+        assert siblings.status_code == 200, "an unreadable sibling must not break Git detection"
         for path, status in ((project / "absent", 404), (project / "file.txt", 400), (denied, 403)):
             response = await client.get("/api/coding/projects/browse", params = {"path": str(path)})
             assert response.status_code == status
@@ -913,3 +915,50 @@ async def test_malformed_overlap_refusal_fails_transport_without_orphaning_comma
         await future
     assert failure.value.code == "disconnected"
     assert not runtime._pending
+
+
+@pytest.mark.asyncio
+async def test_folder_completion_git_worktrees_and_hidden_folders(coding_app, tmp_path):
+    app, headers = coding_app
+    for name in ("mimir", "mimir-plugins", "other", ".hidden"):
+        (tmp_path / name).mkdir()
+    (tmp_path / "mimir" / ".git").mkdir()
+    (tmp_path / "mimir-plugins" / ".git").write_text("gitdir: /some/repo/.git/worktrees/plugins")
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        response = await client.get("/api/coding/projects/browse", params = {"path": str(tmp_path / "mi"), "complete": True})
+        assert response.status_code == 200
+        result = response.json()
+        assert result["path"] == str(tmp_path)
+        assert result["filter"] == "mi"
+        assert [(row["name"], row["is_git"]) for row in result["entries"]] == [("mimir", True), ("mimir-plugins", True)]
+        exact = (await client.get("/api/coding/projects/browse", params = {"path": str(tmp_path / "mimir"), "complete": True})).json()
+        assert exact["filter"] == ""
+        assert exact["is_git"] is True
+        assert exact["entries"] == []
+        hidden = (await client.get("/api/coding/projects/browse", params = {"path": str(tmp_path), "hidden": True})).json()
+        assert ".hidden" in [row["name"] for row in hidden["entries"]]
+        dot = (await client.get("/api/coding/projects/browse", params = {"path": str(tmp_path / ".hi"), "complete": True})).json()
+        assert [row["name"] for row in dot["entries"]] == [".hidden"]
+    assert not hasattr(app.state, "coding_runtime")
+
+
+@pytest.mark.asyncio
+async def test_completion_filters_before_limiting_and_preserves_invalid_ancestors(coding_app, tmp_path):
+    app, headers = coding_app
+    for index in range(2100):
+        (tmp_path / f"file-{index}").touch()
+    for index in range(205):
+        (tmp_path / f"folder-{index:04}").mkdir()
+    (tmp_path / "zz-project").mkdir()
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        listing = (await client.get("/api/coding/projects/browse", params = {"path": str(tmp_path)})).json()
+        assert listing["truncated"] is True
+        assert len(listing["entries"]) == 200
+        found = (await client.get("/api/coding/projects/browse", params = {"path": str(tmp_path / "zz-"), "complete": True})).json()
+        assert [row["name"] for row in found["entries"]] == ["zz-project"]
+        assert found["truncated"] is False
+        invalid = await client.get("/api/coding/projects/browse", params = {"path": str(tmp_path / "missing" / "nested"), "complete": True})
+        assert invalid.status_code == 404
+        quoted = (await client.get("/api/coding/projects/browse", params = {"path": f'"{tmp_path / "zz-project"}"', "complete": True})).json()
+        assert quoted["path"] == str(tmp_path / "zz-project")
+        assert quoted["filter"] == ""

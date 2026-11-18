@@ -15,7 +15,6 @@ import {
 import type {
   CodingApi,
   CodingConversation,
-  CodingProjectDirectory,
 } from "./types.ts";
 
 /** A navigation the page is waiting on. A pending open is superseded by any
@@ -38,9 +37,6 @@ export interface CodingSessionState {
     id: string | null;
     inspected: boolean;
   } | null;
-  directory: CodingProjectDirectory | null;
-  browsing: boolean;
-  browseError: string | null;
   /** The composer draft of the current view: text, selected mentions, images.
    * A conversation created from the landing takes the landing's draft over as
    * it is when the create lands. Every other opening, and New, starts a fresh one. */
@@ -84,9 +80,6 @@ export function createCodingSession(
     pending: null,
     openingError: null,
     openingUncertainty: null,
-    directory: null,
-    browsing: false,
-    browseError: null,
     draft: createInputDraft(),
     project: recall(memory, PROJECT_KEY, isProject),
     selection: recall(memory, MODEL_KEY, isSelection),
@@ -97,8 +90,6 @@ export function createCodingSession(
   let navigation = 0;
   let current: { abort: AbortController; pending: PendingOpening } | null =
     null;
-  let browseRevision = 0;
-  let browseAbort: AbortController | null = null;
   const update = (patch: Partial<CodingSessionState>) => {
     state = { ...state, ...patch };
     for (const listener of listeners) listener();
@@ -276,27 +267,7 @@ export function createCodingSession(
     },
     clearAutoSend: () => update({ autoSend: false }),
     clearOpeningError: () => update({ openingError: null }),
-    async browse(path: string) {
-      const revision = ++browseRevision;
-      browseAbort?.abort();
-      const abort = new AbortController();
-      browseAbort = abort;
-      // Disable choosing while loading so a path edit cannot select a stale folder.
-      update({ directory: null, browsing: true, browseError: null });
-      try {
-        const directory = await api.browseProjects(path, abort.signal);
-        if (revision === browseRevision) update({ directory, browsing: false });
-      } catch (error) {
-        if (revision === browseRevision)
-          update({ browseError: errorText(error), browsing: false });
-      }
-    },
-    cancelBrowse() {
-      ++browseRevision;
-      browseAbort?.abort();
-      browseAbort = null;
-      update({ directory: null, browsing: false, browseError: null });
-    },
+
   };
 }
 

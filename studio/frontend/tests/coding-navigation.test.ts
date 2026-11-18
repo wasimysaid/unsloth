@@ -41,7 +41,7 @@ function sessionApi(open: CodingApi["openConversation"]): CodingApi {
       path: "/",
       parent: null,
       entries: [],
-      truncated: false,
+      truncated: false, filter: "", is_git: false,
     }),
   };
 }

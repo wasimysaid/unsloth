@@ -13,6 +13,30 @@ saved public history. The browser keeps only an ephemeral Session View projectio
 there is no second scheduler, inference loop, provider configuration or transcript
 database. Providers and credentials remain configured on the Mimir host.
 
+## Project folder picker
+
+The composer folder button opens the shared Studio dialog directly. Recent projects
+and Home sit beside the folder listing. Typing is debounced for 120 ms; the host
+resolves an exact directory or completes the final path segment. Arrow keys move
+through results, Tab opens a highlighted or unique completion, Enter opens the
+highlighted folder (or confirms a valid current directory), and Ctrl/Cmd+Enter
+confirms the current directory. Escape cancels and restores focus to the invoker.
+Browsing alone never opens a Mimir conversation or changes the selected project.
+
+`project-folder-browser.ts` owns the dialog's draft, debounce, abort and response
+generation. Editing immediately invalidates selection. Previous rows remain visible
+but inactive while loading; stale replies cannot replace the draft or enable Use.
+Closing or leaving the route cancels pending lookups. This state does not live in
+the conversation session.
+
+`GET /projects/browse?complete=true` returns canonical `path`, `parent`, the
+unresolved final `filter` (empty for an exact directory), and up to 200 matching
+subfolders. The host filters names before applying the result limit, so typing can
+find a folder beyond the original unfiltered listing. Truncation stays visible.
+Hidden folders require the toggle or a dot-prefixed completion. `is_git` detects a
+`.git` directory or worktree file without launching Git or reading project config.
+The dialog reuses Studio surface, typography, input and button styles in every theme.
+
 ## Installed assistant-ui contract
 
 React **0.12.28**, Core **0.1.17**, Store **0.2.9** are lockfile-pinned.

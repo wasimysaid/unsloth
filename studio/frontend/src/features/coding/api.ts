@@ -126,8 +126,8 @@ export const codingApi: CodingApi = {
     );
     return openedConversation((await response.json()) as CodingConversation);
   },
-  async browseProjects(path, signal) {
-    const query = new URLSearchParams({ path });
+  async browseProjects(path, signal, hidden = false) {
+    const query = new URLSearchParams({ path, complete: "true", hidden: String(hidden) });
     const response = await codingRequest(`/projects/browse?${query}`, {
       signal,
     });

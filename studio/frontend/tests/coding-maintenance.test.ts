@@ -812,7 +812,7 @@ function openingApi(generation: number, calls: string[]): CodingApi {
       path: "/project",
       parent: "/",
       entries: [],
-      truncated: false,
+      truncated: false, filter: "", is_git: false,
     }),
   };
 }

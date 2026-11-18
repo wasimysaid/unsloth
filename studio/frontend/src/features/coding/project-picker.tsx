@@ -1,18 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
-import {
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
-import { NonModalDropdownMenu } from "@/components/ui/non-modal-dropdown-menu";
-import {
-  Check,
-  ChevronDown,
-  Folder,
-  FolderOpen,
-  FolderSearch,
-} from "lucide-react";
+
+import { ChevronDown, Folder } from "lucide-react";
 import type { RefObject } from "react";
 import type { CodingConversation } from "./types";
 
@@ -51,89 +40,37 @@ export function recentProjects(
   return projects;
 }
 
-/** The new conversation's folder: a remembered choice, not an opened conversation. */
+/** Open the folder browser directly; recent projects live in the same dialog. */
 export function ProjectPicker({
   triggerRef,
   project,
-  projects,
   disabled,
-  onSelect,
   onBrowse,
 }: {
   triggerRef: RefObject<HTMLButtonElement | null>;
   project: string | null;
-  projects: RecentProject[];
   disabled: boolean;
-  onSelect: (cwd: string) => void;
   onBrowse: (invoker: HTMLElement) => void;
 }) {
   return (
-    <NonModalDropdownMenu
-      side="top"
-      align="end"
-      className="w-[min(18rem,calc(100vw-2rem))]"
-      trigger={(menuRef) => (
-        <button
-          ref={(node) => {
-            menuRef.current = node;
-            triggerRef.current = node;
-          }}
-          type="button"
-          data-testid="coding-project-chooser"
-          disabled={disabled}
-          title={project ?? "Choose the folder Mimir works in"}
-          aria-label={
-            project ? `Project folder: ${project}` : "Choose project folder"
-          }
-          className={`flex h-6 min-w-0 max-w-64 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 data-[state=open]:bg-accent ${project ? "text-muted-foreground" : "text-foreground"}`}
-        >
-          <Folder className="size-3.5 shrink-0" aria-hidden="true" />
-          <span className="truncate">
-            {project ? splitPath(project).name : "Choose folder"}
-          </span>
-          <ChevronDown
-            className="size-3 shrink-0 opacity-60"
-            aria-hidden="true"
-          />
-        </button>
-      )}
+    <button
+      ref={triggerRef}
+      type="button"
+      data-testid="coding-project-chooser"
+      disabled={disabled}
+      title={project ?? "Choose the folder Mimir works in"}
+      aria-label={
+        project ? `Project folder: ${project}` : "Choose project folder"
+      }
+      aria-haspopup="dialog"
+      onClick={(event) => onBrowse(event.currentTarget)}
+      className="flex h-6 min-w-0 max-w-64 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
     >
-      {projects.length > 0 && (
-        <>
-          <DropdownMenuLabel className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Projects
-          </DropdownMenuLabel>
-          {projects.map((item) => (
-            <DropdownMenuItem
-              key={item.cwd}
-              title={item.cwd}
-              onSelect={() => onSelect(item.cwd)}
-            >
-              <FolderOpen aria-hidden="true" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate">{item.name}</span>
-                {item.parent && (
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {item.parent}
-                  </span>
-                )}
-              </span>
-              {item.cwd === project && (
-                <Check className="ml-auto" aria-label="Selected" />
-              )}
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuSeparator />
-        </>
-      )}
-      <DropdownMenuItem
-        onSelect={() => {
-          if (triggerRef.current) onBrowse(triggerRef.current);
-        }}
-      >
-        <FolderSearch aria-hidden="true" />
-        Choose folder…
-      </DropdownMenuItem>
-    </NonModalDropdownMenu>
+      <Folder className="size-3.5 shrink-0" aria-hidden="true" />
+      <span className="truncate">
+        {project ? splitPath(project).name : "Choose folder"}
+      </span>
+      <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
+    </button>
   );
 }

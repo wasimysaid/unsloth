@@ -469,7 +469,7 @@ function sessionApi(
       path: "/",
       parent: null,
       entries: [],
-      truncated: false,
+      truncated: false, filter: "", is_git: false,
     }),
   };
 }

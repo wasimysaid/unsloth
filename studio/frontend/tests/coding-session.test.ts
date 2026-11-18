@@ -8,7 +8,6 @@ import { createCodingSession } from "../src/features/coding/session.ts";
 import type {
   CodingApi,
   CodingConversation,
-  CodingProjectDirectory,
 } from "../src/features/coding/types.ts";
 
 function deferred<T>() {
@@ -34,7 +33,7 @@ function nativeApi(overrides: Partial<CodingApi> = {}): CodingApi {
       path: "/host",
       parent: "/",
       entries: [],
-      truncated: false,
+      truncated: false, filter: "", is_git: false,
     }),
     ...overrides,
   };
@@ -191,62 +190,6 @@ test("native validation/open failures preserve the open conversation and expose 
   assert.equal(session.getSnapshot().openingError, "Saved project was removed");
   session.clearOpeningError();
   assert.equal(session.getSnapshot().openingError, null);
-});
-
-test("directory navigation clears stale selection and ignores late responses/errors", async () => {
-  const first = deferred<CodingProjectDirectory>();
-  const second = deferred<CodingProjectDirectory>();
-  const signals: AbortSignal[] = [];
-  const session = createCodingSession(
-    nativeApi({
-      browseProjects: (path, signal) => {
-        signals.push(signal);
-        return path === "/old" ? first.promise : second.promise;
-      },
-    }),
-  );
-  const oldRead = session.browse("/old");
-  assert.equal(session.getSnapshot().browsing, true);
-  const newRead = session.browse("/new");
-  assert.equal(signals[0].aborted, true);
-  assert.equal(session.getSnapshot().directory, null);
-  second.resolve({
-    path: "/canonical/new",
-    parent: "/canonical",
-    entries: [],
-    truncated: false,
-  });
-  await newRead;
-  first.reject(new Error("stale denied folder"));
-  await oldRead;
-  assert.equal(session.getSnapshot().directory?.path, "/canonical/new");
-  assert.equal(session.getSnapshot().browseError, null);
-});
-
-test("closing the folder picker aborts browsing without creating any conversation", async () => {
-  const read = deferred<CodingProjectDirectory>();
-  let signal: AbortSignal | undefined;
-  let creations = 0;
-  const session = createCodingSession(
-    nativeApi({
-      browseProjects: (_path, current) => {
-        signal = current;
-        return read.promise;
-      },
-      createConversation: async () => {
-        creations++;
-        return { id: "never", cwd: "/never" };
-      },
-    }),
-  );
-  const pending = session.browse("/host");
-  session.cancelBrowse();
-  assert.equal(signal?.aborted, true);
-  read.resolve({ path: "/late", parent: null, entries: [], truncated: false });
-  await pending;
-  assert.equal(session.getSnapshot().directory, null);
-  assert.equal(session.getSnapshot().browsing, false);
-  assert.equal(creations, 0);
 });
 
 test("failed history refresh is visible, can recover, and cannot overwrite a newer read", async () => {
