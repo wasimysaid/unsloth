@@ -5,7 +5,6 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   ArrowRight,
   ArrowUp,
-  Check,
   ChevronRight,
   Eye,
   EyeOff,
@@ -13,6 +12,7 @@ import {
   GitBranch,
   Home,
   LoaderCircle,
+  Monitor,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +32,9 @@ import {
 } from "./project-folder-browser";
 import { projectName } from "./project-name";
 import type { RecentProject } from "./project-picker";
+
+const folderRowClass =
+  "flex h-10 min-w-0 items-center gap-2.5 rounded-full px-3 text-sm font-normal";
 
 export function ProjectFolderDialog({
   open,
@@ -201,69 +204,84 @@ export function ProjectFolderDialog({
             )}
           </div>
         </div>
-        <div className="grid min-h-0 flex-1 grid-cols-[8rem_minmax(0,1fr)] gap-3 sm:h-72 sm:flex-none sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-5">
+        <div className="grid min-h-0 flex-1 grid-cols-[8rem_minmax(0,1fr)] gap-2 rounded-2xl bg-muted/35 p-2 sm:h-88 sm:flex-none sm:grid-cols-[11rem_minmax(0,1fr)] sm:gap-4">
           <nav
-            className="min-h-0 space-y-4 overflow-y-auto"
+            className="flex min-h-0 min-w-0 flex-col"
             aria-label="Folder shortcuts"
           >
+            <p className="flex h-8 shrink-0 items-center px-3 text-xs text-muted-foreground">
+              Places
+            </p>
             <Button
               variant="ghost"
-              size="sm"
-              className="w-full justify-start gap-2"
+              className={cn(folderRowClass, "w-full shrink-0 justify-start")}
+              aria-label="Go to home folder"
               onClick={() => navigate("~")}
             >
               <Home
-                className="size-4 text-muted-foreground"
+                className="size-4 shrink-0 text-muted-foreground"
                 aria-hidden="true"
-              />{" "}
+              />
               Home
             </Button>
-            <div>
-              <p className="mb-2 px-3 text-xs text-muted-foreground">
-                Recent projects
-              </p>
-              <div className="space-y-0.5">
-                {projects.map((item) => {
-                  const current = selected?.path === item.cwd;
-                  const git =
-                    (directory?.path === item.cwd && directory.is_git) ||
-                    entries.some(
-                      (entry) => entry.path === item.cwd && entry.is_git,
-                    );
-                  const Icon = git ? GitBranch : Folder;
-                  return (
-                    <Button
-                      key={item.cwd}
-                      variant="ghost"
-                      size="sm"
-                      className={cn(
-                        "w-full min-w-0 justify-start gap-2",
-                        current && "bg-accent",
-                      )}
-                      title={item.cwd}
-                      onClick={() => navigate(item.cwd)}
-                    >
-                      <Icon
-                        className="size-4 shrink-0 text-muted-foreground"
-                        aria-hidden="true"
-                      />
-                      <span className="truncate">{item.name}</span>
-                    </Button>
+            <p className="mt-2 flex h-8 shrink-0 items-center px-3 text-xs text-muted-foreground">
+              Recent projects
+            </p>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {projects.map((item) => {
+                const current = selected?.path === item.cwd;
+                const git =
+                  (directory?.path === item.cwd && directory.is_git) ||
+                  entries.some(
+                    (entry) => entry.path === item.cwd && entry.is_git,
                   );
-                })}
-                {!projects.length && (
-                  <p className="px-3 text-xs leading-relaxed text-muted-foreground">
-                    Your project folders will appear here.
-                  </p>
-                )}
-              </div>
+                const Icon = git ? GitBranch : Folder;
+                return (
+                  <Button
+                    key={item.cwd}
+                    variant="ghost"
+                    className={cn(
+                      folderRowClass,
+                      "w-full justify-start",
+                      current && "bg-accent",
+                    )}
+                    title={item.cwd}
+                    onClick={() => navigate(item.cwd)}
+                  >
+                    <Icon
+                      className="size-4 shrink-0 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">{item.name}</span>
+                  </Button>
+                );
+              })}
+              {!projects.length && (
+                <p className="px-3 text-xs leading-relaxed text-muted-foreground">
+                  Your project folders will appear here.
+                </p>
+              )}
+            </div>
+            <p className="mt-2 flex h-8 shrink-0 items-center px-3 text-xs text-muted-foreground">
+              Devices
+            </p>
+            <div
+              className={cn(folderRowClass, "shrink-0")}
+              aria-label="Current device: Studio host"
+              title="The machine running Studio"
+            >
+              <Monitor
+                className="size-4 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <span className="truncate">Studio host</span>
             </div>
           </nav>
           <section
-            className="flex min-h-0 min-w-0 flex-col rounded-2xl bg-muted/35 p-2"
+            className="flex min-h-0 min-w-0 flex-col"
             aria-label="Host folder browser"
           >
-            <div className="flex h-7 shrink-0 items-center justify-between px-2 text-xs text-muted-foreground">
+            <div className="flex h-8 shrink-0 items-center justify-between px-3 text-xs text-muted-foreground">
               <span>{directory?.filter ? "Matching folders" : "Folders"}</span>
               <Button
                 variant="ghost"
@@ -321,7 +339,7 @@ export function ProjectFolderDialog({
                       }}
                       title={entry.path}
                       className={cn(
-                        "flex min-h-10 items-center gap-2.5 rounded-xl px-3 py-2 text-sm",
+                        folderRowClass,
                         ready
                           ? "cursor-pointer hover:bg-accent"
                           : "pointer-events-none",
@@ -370,7 +388,7 @@ export function ProjectFolderDialog({
             <p
               id="coding-folder-status"
               role="status"
-              className="min-h-5 shrink-0 px-2 pt-1 text-[11px] leading-4 text-muted-foreground"
+              className="min-h-5 shrink-0 px-3 pt-1 text-[11px] leading-4 text-muted-foreground"
             >
               {state.status === "loading"
                 ? "Finding folders…"
@@ -382,49 +400,38 @@ export function ProjectFolderDialog({
             </p>
           </section>
         </div>
-        <div className="flex min-h-10 shrink-0 items-center gap-3 px-1">
-          <SelectionIcon
-            className="size-4 shrink-0 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">
-              {selected ? projectName(selected.path) : "Choose a folder"}
-            </p>
-            <p
-              data-testid="coding-browsed-path"
-              title={selected?.path}
-              className="truncate text-xs text-muted-foreground"
-            >
-              {selected?.path ??
-                (directory?.filter
-                  ? `Matching in ${directory.path}`
-                  : "Type a path or open a folder above")}
-            </p>
-          </div>
-          {selected && (
-            <Check
+        <DialogFooter className="shrink-0 flex-col items-stretch gap-4 sm:flex-row sm:items-center">
+          <div className="flex min-h-10 min-w-0 flex-1 items-center gap-3 px-1">
+            <SelectionIcon
               className="size-4 shrink-0 text-muted-foreground"
-              aria-label="Folder ready to use"
+              aria-hidden="true"
             />
-          )}
-        </div>
-        <DialogFooter className="shrink-0 items-center max-sm:flex-row max-sm:justify-end">
-          <p className="mr-auto hidden text-[11px] text-muted-foreground sm:block">
-            ↑↓ navigate · Tab complete · Enter open
-          </p>
-          <Button variant="ghost" onClick={() => close(false)}>
-            Cancel
-          </Button>
-          <Button disabled={!selected} onClick={choose}>
-            Use this folder{" "}
-            <ArrowRight className="size-3.5" aria-hidden="true" />
-          </Button>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">
+                {selected ? projectName(selected.path) : "Choose a folder"}
+              </p>
+              <p
+                data-testid="coding-browsed-path"
+                title={selected?.path}
+                className="truncate text-xs text-muted-foreground"
+              >
+                {selected?.path ??
+                  (directory?.filter
+                    ? `Matching in ${directory.path}`
+                    : "Type a path or open a folder above")}
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center justify-end gap-2">
+            <Button variant="ghost" onClick={() => close(false)}>
+              Cancel
+            </Button>
+            <Button disabled={!selected} onClick={choose}>
+              Use this folder{" "}
+              <ArrowRight className="size-3.5" aria-hidden="true" />
+            </Button>
+          </div>
         </DialogFooter>
-        <p className="shrink-0 text-[11px] leading-relaxed text-muted-foreground">
-          Mimir can edit files here and use this folder’s project settings and
-          extensions.
-        </p>
       </DialogContent>
     </Dialog>
   );
