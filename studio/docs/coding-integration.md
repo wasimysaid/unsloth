@@ -747,7 +747,9 @@ the picker returns to “Select model”, or adopts another eligible resident as
 does. Opening Coding can adopt an already-loaded local model without loading it
 again. A selected model's pending status check is distinct from confirmed absence;
 fallback adoption waits for that check so selecting another resident cannot revert
-to the first one. An explicit native connected-provider choice remains selected.
+to the first one. Duplicate-adoption suppression resets with each confirmed model
+selection, allowing fallback to a previous resident after subsequent ejects.
+An explicit native connected-provider choice remains selected.
 The conversation's native configuration remains available for next-request preparation.
 
 The shared picker exposes hover unload, exact downloaded quant choices, and

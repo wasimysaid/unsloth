@@ -630,3 +630,30 @@ test("a pending selected-model status never adopts the first of multiple residen
   assert.deepEqual(changes[1], { provider: "studio-local", model: "exact-Q4" });
   cleanup();
 });
+
+test("adoption can return to a previous resident after repeated explicit selection changes", async () => {
+  const changes: selection.CodingConfigurationChange[] = [];
+  const local: LocalStub = {
+    models: downloadedModels,
+    loadedModels: ["Q4", "Q8"].map((quant) => ({ id: "repo", checkpoint: "repo", quant })),
+    residency: { state: "unloaded" }, preload: () => {}, unload: async () => {},
+  };
+  const base = localProps(async (change) => { changes.push(change); });
+  const view = mount(0, local);
+  const empty = { ...base, configuration: null };
+  view.render(empty); const cleanup = view.start(); await tick();
+  view.render(empty); view.flushEffects(); await tick();
+  assert.deepEqual(changes, [{ provider: "studio-local", model: "exact-Q4" }]);
+  for (let cycle = 0; cycle < 2; cycle++) {
+    local.residency.state = "loaded";
+    view.render(base); view.flushEffects();
+    const second = { ...base, configuration: { ...base.configuration, model: "exact-Q8" } };
+    view.render(second); view.flushEffects();
+    local.residency.state = "unloaded";
+    local.loadedModels = [{ id: "repo", checkpoint: "repo", quant: "Q4" }];
+    view.render(second); view.flushEffects(); await tick();
+    assert.equal(changes.length, cycle + 2, "a new selection must release the old adoption guard");
+    assert.deepEqual(changes.at(-1), { provider: "studio-local", model: "exact-Q4" });
+  }
+  cleanup();
+});

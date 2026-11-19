@@ -211,6 +211,9 @@ export function CodingModelSelector({
     disabled || configuring || applying || (loading && !result.ready);
   const adoptedResident = useRef<string | null>(null);
   useEffect(() => {
+    adoptedResident.current = null;
+  }, [configuration?.provider, configuration?.model]);
+  useEffect(() => {
     if (
       blocked ||
       !result.ready ||
