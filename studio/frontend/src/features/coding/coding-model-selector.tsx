@@ -1,13 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
-import {
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   SidebarModelConfig,
@@ -24,12 +18,8 @@ import {
   ComposerModelPickerContext,
   type ComposerModelPickerSource,
 } from "@/components/assistant-ui/composer-model-picker/context";
-import {
-  getInventoryVersion,
-  subscribeInventory,
-} from "@/features/hub";
+import { getInventoryVersion, subscribeInventory } from "@/features/hub";
 import { Button } from "@/components/ui/button";
-import { RefreshCw } from "lucide-react";
 import { listModels, wantsDownloadManagerStaging } from "@/features/chat";
 import type {
   ModelOption,
@@ -41,6 +31,7 @@ import {
   codingSelectionCatalog,
   findCodingModel,
   findLocalPickerChoice,
+  findResidentLocalChoice,
   modelIdentity,
 } from "./model-selection";
 import type {
@@ -174,20 +165,102 @@ export function CodingModelSelector({
     configuration?.provider === "studio-local"
       ? local.models.find((model) => model.id === configuration.model)
       : undefined;
-  const preserveDefault = selected?.model.preserve_thinking;
+  const localLoading =
+    local.residency.state === "loading" ||
+    (local.residency.state !== "loaded" &&
+      preparing?.provider === "studio-local" &&
+      preparing.provider === configuration?.provider &&
+      preparing.model === configuration?.model);
+  const localLoaded =
+    configuration?.provider === "studio-local" &&
+    Boolean(localChoice) &&
+    local.residency.state === "loaded";
+  // Session configuration can survive an unload; the picker follows residency.
+  const pickerSelected =
+    configuration?.provider === "studio-local" && !localLoaded && !localLoading
+      ? undefined
+      : selected;
+  const preserveDefault = pickerSelected?.model.preserve_thinking;
   const identity =
     configuration?.provider === "studio-local"
-      ? localChoice?.group
+      ? localLoaded || localLoading
+        ? localChoice?.group
+        : undefined
       : configuration?.provider && configuration.model
         ? modelIdentity(configuration.provider, configuration.model)
         : undefined;
   const levels =
-    selected && selected.model.reasoning !== "unsupported"
-      ? selected.model.reasoning.levels
+    pickerSelected && pickerSelected.model.reasoning !== "unsupported"
+      ? pickerSelected.model.reasoning.levels
       : [];
+  const reasoningValue = pickerSelected
+    ? (configuration?.reasoning ?? pickerSelected.model.default_reasoning ?? "")
+    : "";
+  const reasoningOn =
+    (pickerSelected?.model.default_reasoning !== "off"
+      ? pickerSelected?.model.default_reasoning
+      : null) ?? levels.find((value) => value !== "off");
+  const thinkingToggle = Boolean(
+    localLoaded &&
+      local.status?.supports_reasoning &&
+      (local.status.reasoning_always_on ||
+        local.status.reasoning_style === "enable_thinking"),
+  );
   const loading = result.loading;
   const blocked =
     disabled || configuring || applying || (loading && !result.ready);
+  const adoptedResident = useRef<string | null>(null);
+  useEffect(() => {
+    adoptedResident.current = null;
+  }, [configuration?.provider, configuration?.model]);
+  useEffect(() => {
+    if (
+      blocked ||
+      !result.ready ||
+      local.residency.state !== "unloaded" ||
+      localLoading ||
+      local.unloading ||
+      (configuration?.provider && configuration.provider !== "studio-local")
+    )
+      return;
+    const choice = findResidentLocalChoice(local.models, local.loadedModels);
+    if (!choice) {
+      adoptedResident.current = null;
+      return;
+    }
+    if (
+      !findCodingModel(result.catalog, {
+        provider: "studio-local",
+        model: choice.id,
+      }) ||
+      choice.id === configuration?.model ||
+      adoptedResident.current === choice.id
+    )
+      return;
+    adoptedResident.current = choice.id;
+    void configure({ provider: "studio-local", model: choice.id }).catch(
+      (reason: unknown) => {
+        if (!lifetime.current?.signal.aborted)
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : "The loaded model could not be selected.",
+          );
+      },
+    );
+  }, [
+    blocked,
+    result.ready,
+    result.catalog,
+    local.residency.state,
+    localLoading,
+    local.unloading,
+    local.models,
+    local.loadedModels,
+    configuration?.provider,
+    configuration?.model,
+    configure,
+  ]);
   const missing =
     unavailable ||
     (result.ready && !result.error && configuration?.model && !selected);
@@ -200,8 +273,17 @@ export function CodingModelSelector({
     setError(null);
     try {
       await configure(change);
-      if (change.provider === "studio-local" && change.model)
-        local.preload(change.model, options);
+      if (change.provider === "studio-local" && change.model) {
+        const inventory = local.models.filter(
+          (model) => model.id === change.model,
+        );
+        const alreadyLoaded = findResidentLocalChoice(
+          inventory,
+          local.loadedModels,
+        );
+        if (!alreadyLoaded || options.forceReload || options.config != null)
+          local.preload(change.model, options);
+      }
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -306,10 +388,16 @@ export function CodingModelSelector({
   );
 
   function unload(id?: string) {
-    if (!localChoice || (id !== undefined && id !== localChoice.group)) return;
+    if (!localChoice && id === undefined) return;
+    if (
+      id !== undefined &&
+      id !== localChoice?.group &&
+      !local.loadedModels.some((model) => (model.checkpoint ?? model.id) === id)
+    )
+      return;
     ++intent.current;
     setPendingDownload(null);
-    void local.unload();
+    void local.unload(id === localChoice?.group ? undefined : id);
   }
   const notice =
     error ??
@@ -331,13 +419,18 @@ export function CodingModelSelector({
   );
   const source: ComposerModelPickerSource = {
     resident,
+    loadedModels: local.loadedModels,
     models: discoverModels,
     loraModels: [],
     externalModels: models,
     externalConnections: [],
     onPick: pick,
     eject: unload,
-    ejectAll: unload,
+    ejectAll: () => {
+      ++intent.current;
+      setPendingDownload(null);
+      void local.unloadAll();
+    },
     open: open && !disabled,
     onOpenChange: (next) => {
       setOpen(next && !blocked);
@@ -347,29 +440,21 @@ export function CodingModelSelector({
     onConfigRequestAdopted: () => undefined,
     onFoldersChange: () => requestCatalog.current(true),
     onModelsChange: () => requestCatalog.current(true),
-    deleteDisabled: true,
+    deleteDisabled: blocked || localLoading || local.unloading,
     activeModelConfig: loadedConfig,
     loadedContextLength: local.status?.context_length ?? null,
-    loaded:
-      configuration?.provider === "studio-local" &&
-      Boolean(localChoice) &&
-      local.residency.state === "loaded",
+    loaded: localLoaded,
     selection: {
       id: identity ?? "",
-      ggufVariant: localChoice?.quant ?? null,
-      loaded:
-        configuration?.provider === "studio-local" &&
-        Boolean(localChoice) &&
-        local.residency.state === "loaded",
-      placeholder: selected?.model.name ?? "Select model",
+      ggufVariant: identity ? (localChoice?.quant ?? null) : null,
+      loaded: localLoaded,
+      placeholder: pickerSelected?.model.name ?? "Select model",
       config: loadedConfig,
-      loading:
-        (loading && !result.ready) ||
-        local.residency.state === "loading" ||
-        (local.residency.state !== "loaded" &&
-          preparing?.provider === "studio-local" &&
-          preparing.provider === configuration?.provider &&
-          preparing.model === configuration?.model),
+      operation: local.unloading
+        ? "unloading"
+        : (loading && !result.ready) || localLoading
+          ? "loading"
+          : undefined,
     },
     runtimeControls: {
       disabled: blocked,
@@ -378,16 +463,44 @@ export function CodingModelSelector({
           ? {
               value: configuration?.preserve_thinking ?? preserveDefault,
               onChange: (preserve_thinking) => {
-                void apply({ preserve_thinking });
+                void apply({
+                  preserve_thinking,
+                  ...(preserve_thinking &&
+                  configuration?.provider === "studio-local" &&
+                  reasoningValue === "off" &&
+                  reasoningOn
+                    ? { reasoning: reasoningOn }
+                    : {}),
+                });
               },
             }
           : undefined,
       reasoning: {
-        levels,
-        value:
-          configuration?.reasoning ?? selected?.model.default_reasoning ?? "",
+        thinking: thinkingToggle
+          ? {
+              enabled:
+                local.status?.reasoning_always_on === true ||
+                reasoningValue !== "off",
+              lockedOn: local.status?.reasoning_always_on === true,
+              onChange: (enabled) => {
+                if (local.status?.reasoning_always_on || !reasoningOn) return;
+                void apply({
+                  reasoning: enabled ? reasoningOn : "off",
+                  ...(!enabled ? { preserve_thinking: false } : {}),
+                });
+              },
+            }
+          : undefined,
+        levels: thinkingToggle ? [] : levels,
+        value: reasoningValue,
         onChange: (reasoning) => {
-          void apply({ reasoning });
+          void apply({
+            reasoning,
+            ...(reasoning === "off" &&
+            configuration?.provider === "studio-local"
+              ? { preserve_thinking: false }
+              : {}),
+          });
         },
       },
     },
@@ -398,6 +511,7 @@ export function CodingModelSelector({
       data-testid="coding-model-selector"
     >
       {hosts.settingsTrigger &&
+        identity &&
         localChoice &&
         !settingsOpen &&
         createPortal(
@@ -405,6 +519,7 @@ export function CodingModelSelector({
           hosts.settingsTrigger,
         )}
       {hosts.settingsPanel &&
+        identity &&
         localChoice &&
         createPortal(
           <RunSettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen}>
@@ -455,16 +570,6 @@ export function CodingModelSelector({
       <ComposerModelPickerContext.Provider value={source}>
         <ComposerModelPicker />
       </ComposerModelPickerContext.Provider>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="size-7"
-        aria-label="Refresh models"
-        disabled={blocked}
-        onClick={() => requestCatalog.current(true)}
-      >
-        <RefreshCw className="size-3.5" />
-      </Button>
       {notice && (
         <span
           role={error || result.error || missing ? "alert" : "status"}

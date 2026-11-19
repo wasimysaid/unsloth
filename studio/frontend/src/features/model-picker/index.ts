@@ -157,3 +157,5 @@ export { toApiOverride } from "./api/model-overrides";
 export type { ResidentEditorSnapshot } from "./model-config/resident-editor-runtime";
 
 export { useLoadAfterDownload, type PendingModelDownload } from "./use-load-after-download";
+
+export { loadedModelsFromStatus, type LoadedModelSummary } from "./loaded-models";

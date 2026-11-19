@@ -306,7 +306,7 @@ export function ApiModelLoadControls({
         id: effectiveModel,
         ggufVariant: isLoaded ? activeGgufVariant : null,
         loaded: isLoaded && !busy,
-        loading: busy,
+        operation: busy ? unloading ? "unloading" : "loading" : undefined,
         placeholder: "Load models",
       },
     }),

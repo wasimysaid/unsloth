@@ -13,8 +13,8 @@ import {
 export type { AudioApiModel, OpenAIModel };
 
 /** Chat-capable only: /v1/models also lists image, video and STT models. */
-export async function listOpenAIModels(): Promise<OpenAIModel[]> {
-  const res = await authFetch("/v1/models");
+export async function listOpenAIModels(signal?: AbortSignal): Promise<OpenAIModel[]> {
+  const res = await authFetch("/v1/models", { signal });
   if (!res.ok) {
     throw new Error(`Failed to list models (${res.status})`);
   }

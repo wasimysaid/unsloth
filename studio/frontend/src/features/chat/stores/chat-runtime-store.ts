@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import type { LoadedModelSummary } from "@/features/model-picker";
 import { authFetch } from "@/features/auth";
 import { getFullAccessAllowed } from "@/features/auth/login-client";
 import { AUTH_SESSION_CLEARED_EVENT, AUTH_SESSION_STORED_EVENT } from "@/features/auth/session-events";
@@ -2501,7 +2502,7 @@ type ToolStatusEntry = {
   owner?: () => void;
 };
 
-export type LoadedModelSummary = { id: string; quant?: string | null; checkpoint?: string };
+export type { LoadedModelSummary } from "@/features/model-picker";
 
 type ChatRuntimeStore = {
   settingsHydrated: boolean;

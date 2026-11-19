@@ -1492,13 +1492,10 @@ export function ComposerModelPicker({
   const runtimeLoading = useChatRuntimeStore((s) => s.modelLoading);
   const checkpoint = pane ? pane.id : runtimeCheckpoint;
   const activeVariant = pane ? pane.ggufVariant : runtimeVariant;
-  const modelLoading = pane ? pane.loading === true : runtimeLoading;
+  const modelLoading = pane ? pane.operation !== undefined : runtimeLoading;
   const chatLoadedModels = useChatRuntimeStore((s) => s.loadedModels);
-  const loadedModels = useMemo(() => nativeOwned
-    ? pane?.loaded && pane.id
-      ? [{ id: pane.id, checkpoint: pane.id, quant: pane.ggufVariant }]
-      : []
-    : chatLoadedModels, [nativeOwned, pane?.loaded, pane?.id, pane?.ggufVariant, chatLoadedModels]);
+  const loadedModels = source?.loadedModels ?? chatLoadedModels;
+  const isolatedPane = Boolean(pane) && !runtimeControls;
   const chatModels = useChatRuntimeStore((s) => s.models);
   const pinned = usePinnedModelsStore((s) => s.pinned);
   const togglePinned = usePinnedModelsStore((s) => s.togglePinned);
@@ -1702,7 +1699,7 @@ export function ComposerModelPicker({
     !keepModelsLoaded &&
     typeof checkpoint === "string" &&
     checkpoint !== "" &&
-    !isExternalModelId(checkpoint);
+    (pane ? pane.loaded === true : !isExternalModelId(checkpoint));
   const fitOf = useCallback(
     (sizeBytes: number | undefined) =>
       chatGgufFit(sizeBytes, inferenceGpu, {
@@ -2768,7 +2765,7 @@ export function ComposerModelPicker({
   const sawLoad = useRef(false);
   // modelLoading also covers unloads: only a cycle with a load pick is a fresh load.
   const loadPicked = useChatRuntimeStore((s) => s.loadingModelPick !== null);
-  const loadingFresh = pane ? modelLoading : modelLoading && loadPicked;
+  const loadingFresh = pane ? pane.operation === "loading" : modelLoading && loadPicked;
   useEffect(() => {
     if (modelLoading) {
       if (loadingFresh) {
@@ -2793,7 +2790,7 @@ export function ComposerModelPicker({
     }
   }, [residentKey, modelLoading, loadingFresh, checkpoint, setExpanded]);
   // A Compare pane ejects nothing, and the API page only once its load has settled.
-  const canEject = !pane || pane.loaded === true;
+  const canEject = !isolatedPane || pane?.loaded === true;
   const eject = (row: Row) => {
     source?.eject(ejectTargetId(row, chosen?.id));
   };
@@ -3479,11 +3476,18 @@ export function ComposerModelPicker({
     ? runtimeControls.reasoning.levels.map((value) => ({ value, label: effortLabel(value) }))
     : reasoning.levels;
   const showEffort = runtimeControls ? effortLevels.length > 0 : !pane && reasoning.isEffort && reasoning.levels.length > 1;
-  const showThinkingSwitch =
-    !pane && reasoning.supportsReasoning && !showEffort;
+  const thinking = runtimeControls?.reasoning.thinking;
+  const showThinkingSwitch = runtimeControls
+    ? Boolean(thinking)
+    : !pane && reasoning.supportsReasoning && !showEffort;
   const showFastSwitch = !pane && reasoning.supportsFast && !showEffort;
   const showPreserve = runtimeControls ? Boolean(runtimeControls.preserveThinking) : !pane && reasoning.supportsPreserve;
-  const reasoningChip = runtimeControls ? runtimeControls.reasoning.value || null : pane ? null : reasoning.chipLabel;
+  const reasoningChip = runtimeControls
+    ? modelLoading ? null
+      : thinking ? thinking.enabled ? "Thinking" : null
+        : runtimeControls.reasoning.value && runtimeControls.reasoning.value !== "off"
+          ? effortLabel(runtimeControls.reasoning.value) : null
+    : pane ? null : reasoning.chipLabel;
   const hasFoot =
     showQuantRow ||
     showThinkingSwitch ||
@@ -3595,15 +3599,15 @@ export function ComposerModelPicker({
   const loadedIsMlx = useChatRuntimeStore((s) => s.loadedIsMlx);
   const formatDetail =
     activeVariant && chosenLoaded && !pending
-      ? `${loadedIsMlx ? "MLX" : "GGUF"} · ${activeVariant}`
+      ? `${(source?.resident ? source.resident.status?.is_mlx : loadedIsMlx) ? "MLX" : "GGUF"} · ${activeVariant}`
       : null;
   const loadedDetail =
-    (!pane || pane.loaded) && loadedModels.length > 1
+    (!isolatedPane || pane?.loaded) && loadedModels.length > 1
       ? `${loadedModels.length} models loaded`
       : null;
   const chipDetail =
     [formatDetail, loadedDetail].filter(Boolean).join(" · ") || null;
-  const ejectsAll = !runtimeControls && loadedModels.length > 1;
+  const ejectsAll = loadedModels.length > 1;
 
   const settingsMeta = async (
     row: Row,
@@ -5044,7 +5048,7 @@ export function ComposerModelPicker({
                 <span className="unsloth-thinking-label composer-model-chip-name truncate">
                   {chipLabel}
                 </span>
-                {(chosenName || modelLoading || pending) && !pane ? null : (
+                {(chosenName || modelLoading || pending) && !isolatedPane ? null : (
                   <HugeiconsIcon
                     icon={ChevronDownStandardIcon}
                     strokeWidth={1.75}
@@ -5118,7 +5122,7 @@ export function ComposerModelPicker({
             <span className="unsloth-thinking-label composer-model-chip-name truncate">
               {chipLabel}
             </span>
-            {(chosenName || modelLoading || pending) && !pane ? null : (
+            {(chosenName || modelLoading || pending) && !isolatedPane ? null : (
               <HugeiconsIcon
                 icon={ChevronDownStandardIcon}
                 strokeWidth={1.75}
@@ -5266,7 +5270,7 @@ export function ComposerModelPicker({
                   />
                 ))}
               </div>
-              {(!pane || pane.loaded) &&
+              {(!isolatedPane || pane?.loaded) &&
               (chosenLoaded || loadedModels.length > 0) &&
               !pending &&
               !modelLoading ? (
@@ -5537,7 +5541,7 @@ export function ComposerModelPicker({
                     />
                   </button>
                 </Hint>
-              ) : source && !runtimeControls &&
+              ) : source &&
                 viewed !== DEVICE_TAB &&
                 viewed !== RECOMMENDED_TAB &&
                 viewed !== CONNECTED_TAB ? (
@@ -5714,15 +5718,15 @@ export function ComposerModelPicker({
               <SwitchRow
                 label="Thinking"
                 hint={
-                  reasoning.lockedOn
+                  (thinking?.lockedOn ?? reasoning.lockedOn)
                     ? "Always on"
-                    : reasoning.disabled
+                    : (runtimeControls?.disabled ?? reasoning.disabled)
                       ? "Load a model first"
                       : undefined
                 }
-                checked={reasoning.enabled}
-                disabled={reasoning.lockedOn || reasoning.disabled}
-                onChange={reasoning.setEnabled}
+                checked={thinking?.enabled ?? reasoning.enabled}
+                disabled={(thinking?.lockedOn ?? reasoning.lockedOn) || (runtimeControls?.disabled ?? reasoning.disabled)}
+                onChange={thinking?.onChange ?? reasoning.setEnabled}
               />
             ) : null}
             {showPreserve ? (

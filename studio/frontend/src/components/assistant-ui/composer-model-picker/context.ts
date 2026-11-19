@@ -6,6 +6,7 @@ import type {
   ExternalConnectionRef,
   ExternalModelOption,
   LoraModelOption,
+  LoadedModelSummary,
   ModelConfigHandoffRequest,
   ModelOption,
   ModelSelectorChangeMeta,
@@ -20,6 +21,11 @@ export interface ComposerRuntimeControls {
     onChange: (value: boolean) => void;
   };
   reasoning: {
+    thinking?: {
+      enabled: boolean;
+      lockedOn: boolean;
+      onChange: (enabled: boolean) => void;
+    };
     levels: readonly string[];
     value: string;
     onChange: (value: string) => void;
@@ -30,6 +36,8 @@ import type { ResidentEditorSnapshot } from "@/features/model-picker";
 
 export interface ComposerModelPickerSource {
   resident?: ResidentEditorSnapshot;
+  /** Authoritative residents when the host owns its model lifecycle. */
+  loadedModels?: readonly LoadedModelSummary[];
   /** The host owns connected providers and per-session configuration. */
   runtimeControls?: ComposerRuntimeControls;
   models: readonly ModelOption[];
@@ -52,12 +60,12 @@ export interface ComposerModelPickerSource {
   loaded: boolean;
   /** False where only local models run (the API page): no Connected or provider tabs. */
   connections?: boolean;
-  /** A choice owned outside Chat (Compare, API page): no reasoning controls, Eject only while `loaded`. */
+  /** A choice owned outside Chat. Runtime controls opt into the full composer UI. */
   selection?: {
     id: string;
     ggufVariant: string | null;
     loaded?: boolean;
-    loading?: boolean;
+    operation?: "loading" | "unloading";
     placeholder?: string;
     /** The settings this selection runs with, seeding its Run settings. */
     config?: PerModelConfig | null;

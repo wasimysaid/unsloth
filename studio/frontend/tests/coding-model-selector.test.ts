@@ -18,6 +18,9 @@ type LocalModel = { id: string; group: string; quant: string | null; name: strin
 type LocalStub = {
   models: LocalModel[];
   residency: { state: string };
+  status?: Partial<import("../src/features/chat/types/api.ts").InferenceStatusResponse>;
+  loadedModels?: { id: string; checkpoint?: string; quant?: string | null }[];
+  unloadAll?: () => Promise<void>;
   refresh?: (signal: AbortSignal) => Promise<LocalModel[]>;
   preload: (id: string) => void;
   unload: () => Promise<void>;
@@ -25,8 +28,17 @@ type LocalStub = {
 function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency: { state: "unloaded" }, preload: () => {}, unload: async () => {} }) {
   const states: unknown[] = [];
   let cursor = 0;
-  let effect: (() => void | (() => void)) | undefined;
-  let mounted = false;
+  let effectCursor = 0;
+  const effects: { callback: () => void | (() => void); deps: readonly unknown[];
+    dirty: boolean; cleanup?: () => void }[] = [];
+  function flushEffects() {
+    for (const effect of effects) {
+      if (!effect.dirty) continue;
+      effect.dirty = false;
+      effect.cleanup?.();
+      effect.cleanup = effect.callback() || undefined;
+    }
+  }
   let inventoryChanged: (() => void) | undefined;
   let download!: Parameters<typeof import("../src/features/model-picker/use-load-after-download.ts").useLoadAfterDownload>;
   const { CodingModelSelector } = loadWithStubs<typeof Selector>(
@@ -64,8 +76,12 @@ function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency:
             },
           ];
         },
-        useEffect: (callback: () => void) => {
-          if (!mounted) effect = callback;
+        useEffect: (callback: () => void | (() => void), deps: readonly unknown[]) => {
+          const index = effectCursor++;
+          const previous = effects[index];
+          effects[index] = { callback, deps, cleanup: previous?.cleanup,
+            dirty: !previous || previous.dirty || deps.some((value, i) => !Object.is(value, previous.deps[i])),
+          };
         },
         useEffectEvent: (callback: unknown) => callback,
         useMemo: (callback: () => unknown) => callback(),
@@ -81,13 +97,14 @@ function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency:
       "lucide-react": { RefreshCw: "icon" },
       "./coding-layout-context": { CodingLayoutHosts: { initial: { settingsPanel: null, settingsTrigger: null, contextUsage: null } } },
       "./model-selection": selection,
-      "./use-local-model": { useLocalModel: () => ({ ...local, refresh: local.refresh ?? (async () => local.models) }) },
+      "./use-local-model": { useLocalModel: () => ({ loadedModels: [], unloading: false, unloadAll: async () => {}, ...local, refresh: local.refresh ?? (async () => local.models) }) },
       "@/features/chat": { ...downloadStaging, listModels: async () => ({ models: [{ id: "org/fallback", name: "Fallback", is_gguf: true }] }) },
     },
   );
   return {
     render(props: Parameters<typeof CodingModelSelector>[0]) {
       cursor = 0;
+      effectCursor = 0;
       const tree = CodingModelSelector(props) as unknown as StubElement;
       const children = tree.props.children as StubElement[];
       return {
@@ -99,9 +116,10 @@ function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency:
     inventoryChanged() {
       inventoryChanged?.();
     },
+    flushEffects,
     start() {
-      mounted = true;
-      return effect?.();
+      flushEffects();
+      return () => { for (const effect of effects) effect.cleanup?.(); };
     },
   };
 }
@@ -254,7 +272,7 @@ test("inventory changes coalesce behind reads and keep the prior choices usable"
   assert.equal(refreshing.source.runtimeControls?.disabled, false);
   assert.equal(
     refreshing.source.selection?.placeholder,
-    "Friendly model",
+    "Select model",
   );
   assert.equal(refreshing.notice, null);
   requests[1].resolve(catalog);
@@ -348,9 +366,9 @@ test("native preparation shows loading only for the selected local model without
   await tick();
   const preparing = { provider: "studio-local", model: "a" };
   const same = view.render({ ...props, preparing }).source;
-  assert.equal(same.selection?.loading, true);
+  assert.equal(same.selection?.operation, "loading");
   assert.equal(same.runtimeControls?.disabled, false);
-  assert.equal(view.render({ ...props, preparing: { ...preparing, model: "b" } }).source.selection?.loading, false);
+  assert.equal(view.render({ ...props, preparing: { ...preparing, model: "b" } }).source.selection?.operation, undefined);
 });
 
 function localProps(configure: (change: selection.CodingConfigurationChange) => Promise<void>) {
@@ -366,6 +384,47 @@ function localProps(configure: (change: selection.CodingConfigurationChange) => 
 }
 const downloadedModels = ["Q4", "Q8"].map((quant) => ({ id: `exact-${quant}`, group: "repo", quant, name: quant }));
 const localMeta = { source: "hub" as const, isLora: false, isDownloaded: true, ggufVariant: "Q8" };
+
+test("local picker clears unloaded selections and restores controls only while loading or loaded", async () => {
+  const preloads: string[] = [];
+  const local: LocalStub = {
+    models: downloadedModels,
+    residency: { state: "unloaded" },
+    preload: (id) => { preloads.push(id); },
+    unload: async () => { local.residency.state = "unloaded"; },
+  };
+  const view = mount(0, local);
+  const props = localProps(async () => {});
+  view.render(props);
+  const cleanup = view.start();
+  await tick();
+  const source = view.render(props).source;
+  assert.equal(source.selection?.id, "");
+  assert.equal(source.selection?.placeholder, "Select model");
+  assert.equal(source.runtimeControls?.reasoning.value, "");
+  assert.equal(source.runtimeControls?.preserveThinking, undefined);
+  assert.equal(source.selection?.ggufVariant, null);
+  assert.equal(source.selection?.loaded, false);
+  assert.equal(source.loaded, false);
+  assert.deepEqual(preloads, []);
+  source.onPick("repo", { ...localMeta, ggufVariant: "Q4" });
+  await tick();
+  assert.deepEqual(preloads, ["exact-Q4"]);
+  local.residency.state = "loading";
+  assert.equal(view.render(props).source.selection?.id, "repo");
+  assert.equal(view.render(props).source.selection?.ggufVariant, "Q4");
+  assert.equal(view.render(props).source.selection?.operation, "loading");
+  assert.equal(view.render(props).source.selection?.loaded, false);
+  local.residency.state = "loaded";
+  const resident = view.render(props).source;
+  assert.equal(resident.selection?.loaded, true);
+  resident.eject("repo");
+  await tick();
+  assert.equal(view.render(props).source.selection?.loaded, false);
+  assert.equal(view.render(props).source.selection?.id, "");
+  assert.equal(view.render(props).source.selection?.placeholder, "Select model");
+  if (typeof cleanup === "function") cleanup();
+});
 
 test("cached model selection configures immediately and unload rejects a different model", async () => {
   let refreshes = 0;
@@ -461,7 +520,7 @@ test("a restored local selection never exposes its native ID while inventory is 
   view.start(); await tick();
   const catalogReady = view.render(props).source;
   assert.equal(catalogReady.selection?.id, "");
-  assert.equal(catalogReady.selection?.placeholder, "Q4");
+  assert.equal(catalogReady.selection?.placeholder, "Select model");
 });
 
 test("Coding supplies the server Discover fallback without changing Chat selection", async () => {
@@ -469,4 +528,132 @@ test("Coding supplies the server Discover fallback without changing Chat selecti
   const props = localProps(async () => {});
   view.render(props); view.start(); await tick();
   assert.deepEqual(view.render(props).source.models, [{ id: "org/fallback", name: "Fallback", isGguf: true }]);
+});
+
+test("shared picker receives every resident and ejects a non-selected model or all models", async () => {
+  const targets: (string | undefined)[] = [];
+  let all = 0;
+  const residents = [
+    { id: "repo", checkpoint: "repo", quant: "Q4" },
+    { id: "other", checkpoint: "/models/other.gguf", quant: "Q8" },
+  ];
+  const view = mount(0, {
+    models: downloadedModels,
+    loadedModels: residents,
+    residency: { state: "loaded" },
+    preload: () => {},
+    unload: async (id?: string) => { targets.push(id); },
+    unloadAll: async () => { all++; },
+  });
+  const props = localProps(async () => {});
+  view.render(props); view.start(); await tick();
+  const source = view.render(props).source;
+  assert.deepEqual(source.loadedModels, residents);
+  assert.equal(source.deleteDisabled, false);
+  source.eject("/models/other.gguf");
+  source.eject();
+  source.eject("missing");
+  await tick();
+  assert.deepEqual(targets, ["/models/other.gguf", undefined]);
+  source.ejectAll(); await tick();
+  assert.equal(all, 1);
+});
+
+test("toggle-only thinking and preserve thinking use the same coupled controls as Chat", async () => {
+  const changes: selection.CodingConfigurationChange[] = [];
+  const view = mount(0, {
+    models: downloadedModels, residency: { state: "loaded" },
+    status: { supports_reasoning: true, reasoning_style: "enable_thinking", reasoning_always_on: false },
+    preload: () => {}, unload: async () => {},
+  });
+  const props = { ...localProps(async (change) => { changes.push(change); }),
+    readCatalog: async (): Promise<selection.CodingProviderChoice[]> => [{
+      id: "studio-local", name: "Local", models: [{ id: "exact-Q4", name: "Q4", api_model: "repo",
+        default_reasoning: "high", reasoning: { levels: ["off", "high"] }, preserve_thinking: true }],
+    }],
+  };
+  view.render(props); view.start(); await tick();
+  const controls = view.render(props).source.runtimeControls;
+  assert.deepEqual(controls?.reasoning.levels, []);
+  assert.equal(controls?.reasoning.thinking?.enabled, true);
+  controls?.reasoning.thinking?.onChange(false); await tick();
+  assert.deepEqual(changes[0], { reasoning: "off", preserve_thinking: false });
+  const off = view.render({ ...props, configuration: { ...props.configuration, reasoning: "off" } }).source.runtimeControls;
+  assert.equal(off?.reasoning.thinking?.enabled, false);
+  off?.preserveThinking?.onChange(true); await tick();
+  assert.deepEqual(changes[1], { preserve_thinking: true, reasoning: "high" });
+});
+
+test("selecting an already resident quant configures Mimir without another load", async () => {
+  const preloads: string[] = [];
+  const changes: selection.CodingConfigurationChange[] = [];
+  const view = mount(0, {
+    models: downloadedModels, loadedModels: [{ id: "repo", checkpoint: "repo", quant: "Q8" }],
+    residency: { state: "unloaded" }, preload: (id) => { preloads.push(id); }, unload: async () => {},
+  });
+  const props = localProps(async (change) => { changes.push(change); });
+  view.render(props); view.start(); await tick();
+  view.render(props).source.onPick("repo", localMeta); await tick();
+  assert.deepEqual(changes, [{ provider: "studio-local", model: "exact-Q8" }]);
+  assert.deepEqual(preloads, []);
+  view.render(props).source.onPick("repo", { ...localMeta, forceReload: true }); await tick();
+  assert.deepEqual(preloads, ["exact-Q8"]);
+});
+
+test("a pending selected-model status never adopts the first of multiple residents", async () => {
+  const changes: selection.CodingConfigurationChange[] = [];
+  const local: LocalStub = {
+    models: downloadedModels,
+    loadedModels: ["Q4", "Q8"].map((quant) => ({ id: "repo", checkpoint: "repo", quant })),
+    residency: { state: "loaded" },
+    preload: () => { throw new Error("Resident selection must not load again"); },
+    unload: async () => {},
+  };
+  const props = localProps(async (change) => { changes.push(change); });
+  const view = mount(0, local);
+  view.render(props); const cleanup = view.start(); await tick();
+  const initial = view.render(props); view.flushEffects();
+  initial.source.onPick("repo", localMeta); await tick();
+  assert.deepEqual(changes, [{ provider: "studio-local", model: "exact-Q8" }]);
+  local.residency.state = "checking";
+  const next = { ...props, configuration: { ...props.configuration, model: "exact-Q8" } };
+  view.render(next); view.flushEffects(); await tick();
+  assert.equal(changes.length, 1, "waiting for Q8 must not configure Q4");
+  local.residency.state = "loaded";
+  const settled = view.render(next); view.flushEffects(); await tick();
+  assert.equal(settled.source.selection?.ggufVariant, "Q8");
+  assert.equal(changes.length, 1);
+  // Only a confirmed absence permits fallback to the remaining resident.
+  local.residency.state = "unloaded";
+  local.loadedModels = [{ id: "repo", checkpoint: "repo", quant: "Q4" }];
+  view.render(next); view.flushEffects(); await tick();
+  assert.deepEqual(changes[1], { provider: "studio-local", model: "exact-Q4" });
+  cleanup();
+});
+
+test("adoption can return to a previous resident after repeated explicit selection changes", async () => {
+  const changes: selection.CodingConfigurationChange[] = [];
+  const local: LocalStub = {
+    models: downloadedModels,
+    loadedModels: ["Q4", "Q8"].map((quant) => ({ id: "repo", checkpoint: "repo", quant })),
+    residency: { state: "unloaded" }, preload: () => {}, unload: async () => {},
+  };
+  const base = localProps(async (change) => { changes.push(change); });
+  const view = mount(0, local);
+  const empty = { ...base, configuration: null };
+  view.render(empty); const cleanup = view.start(); await tick();
+  view.render(empty); view.flushEffects(); await tick();
+  assert.deepEqual(changes, [{ provider: "studio-local", model: "exact-Q4" }]);
+  for (let cycle = 0; cycle < 2; cycle++) {
+    local.residency.state = "loaded";
+    view.render(base); view.flushEffects();
+    const second = { ...base, configuration: { ...base.configuration, model: "exact-Q8" } };
+    view.render(second); view.flushEffects();
+    local.residency.state = "unloaded";
+    local.loadedModels = [{ id: "repo", checkpoint: "repo", quant: "Q4" }];
+    view.render(second); view.flushEffects(); await tick();
+    assert.equal(changes.length, cycle + 2, "a new selection must release the old adoption guard");
+    assert.deepEqual(changes.at(-1), { provider: "studio-local", model: "exact-Q4" });
+  }
+  cleanup();
 });

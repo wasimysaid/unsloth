@@ -198,7 +198,7 @@ test("thinking without effort levels is a switch, as Preserve thinking is", () =
   );
   assert.match(
     picker,
-    /const showThinkingSwitch =\s*!pane && reasoning\.supportsReasoning && !showEffort;/,
+    /const showThinkingSwitch = runtimeControls\s*\? Boolean\(thinking\)\s*: !pane && reasoning\.supportsReasoning && !showEffort;/,
   );
   assert.match(picker, /<SwitchRow\s+label="Thinking"/);
   assert.match(picker, /<SwitchRow\s+label="Preserve thinking"/);
@@ -219,7 +219,7 @@ test("a loaded row ejects from its menu and the collapsed view, never its dot", 
     "components/assistant-ui/composer-model-picker/composer-model-picker.tsx",
   );
   // A Compare pane has nothing to eject.
-  assert.match(picker, /const canEject = !pane \|\| pane\.loaded === true;/);
+  assert.match(picker, /const canEject = !isolatedPane \|\| pane\?\.loaded === true;/);
   // The dot is only a mark: hovering it never turns it into Eject.
   assert.match(picker, /<LoadedDot \/>/);
   assert.doesNotMatch(picker, /Loaded\. Click to eject/);
@@ -841,7 +841,7 @@ test("Compare panes pick through the composer picker, with no reasoning or eject
   );
   assert.match(
     picker,
-    /const reasoningChip = runtimeControls \? runtimeControls\.reasoning\.value \|\| null : pane \? null : reasoning\.chipLabel;/,
+    /: pane \? null : reasoning\.chipLabel;/,
   );
   assert.match(picker, /const chosenLoaded = pane\s*\? pane\.loaded === true/);
   // Reopened Run settings start from the pane's own config, not the saved one.
@@ -873,7 +873,7 @@ test("Compare and the API page always show the picker's dropdown chevron", () =>
   );
   assert.equal(
     picker.match(
-      /\{\(chosenName \|\| modelLoading \|\| pending\) && !pane \? null : \(\s*<HugeiconsIcon\s*icon=\{ChevronDownStandardIcon\}/g,
+      /\{\(chosenName \|\| modelLoading \|\| pending\) && !isolatedPane \? null : \(\s*<HugeiconsIcon\s*icon=\{ChevronDownStandardIcon\}/g,
     )?.length,
     2,
   );
@@ -1595,10 +1595,15 @@ test("a cancelled or failed eject keeps the expand choice; only a real load star
   );
   assert.match(
     picker,
-    /const loadingFresh = pane \? modelLoading : modelLoading && loadPicked;/,
+    /const loadingFresh = pane \? pane\.operation === "loading" : modelLoading && loadPicked;/,
   );
   assert.match(
     picker,
     /if \(modelLoading\) \{\s*if \(loadingFresh\) \{\s*sawLoad\.current = true;/,
   );
+});
+
+test("the API and native composers both retain Eject all for multiple residents", () => {
+  const picker = readSrc("components/assistant-ui/composer-model-picker/composer-model-picker.tsx");
+  assert.match(picker, /const ejectsAll = loadedModels\.length > 1;/);
 });

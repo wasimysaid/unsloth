@@ -6,6 +6,7 @@ import {
   codingSelectionCatalog,
   findCodingModel,
   findLocalPickerChoice,
+  findResidentLocalChoice,
   modelIdentity,
 } from "../src/features/coding/model-selection.ts";
 import type { CodingProviderChoice } from "../src/features/coding/model-selection.ts";
@@ -99,4 +100,17 @@ test("Studio picker identities map by exact load target and quant, never labels"
   assert.equal(findLocalPickerChoice(inventory, "org/model@revision", {}), undefined);
   assert.equal(findLocalPickerChoice(inventory, "/models/same.gguf", {})?.id, "native-file");
   assert.equal(findLocalPickerChoice(inventory, "/models/SAME.gguf", {}), undefined);
+});
+
+test("resident adoption uses the exact checkpoint and quant, including loose files", () => {
+  const models = [
+    { id: "q4", group: "org/repo", quant: "Q4" },
+    { id: "q8", group: "org/repo", quant: "Q8" },
+    { id: "file", group: "/models/a.gguf", quant: "Q4" },
+  ];
+  assert.equal(findResidentLocalChoice(models, [{ id: "org/repo", quant: "Q8" }])?.id, "q8");
+  assert.equal(findResidentLocalChoice(models, [{ id: "a", checkpoint: "/models/a.gguf", quant: "Q4" }])?.id, "file");
+  assert.equal(findResidentLocalChoice(models, [{ id: "a", checkpoint: "/models/b.gguf", quant: "Q4" }]), undefined);
+  assert.equal(findResidentLocalChoice(models, [{ id: "org/repo" }]), undefined);
+  assert.equal(findResidentLocalChoice(models, []), undefined);
 });
