@@ -140,7 +140,7 @@ export function CodingComposer({
   sendBlocked: string | null;
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
   modelPicker?: React.ReactNode;
-  /** New conversation: Send creates it in the chosen folder first. */
+  /** New conversation: Send creates the conversation first. */
   onStart?: () => void;
   starting?: boolean;
   /** Send the carried new-conversation draft once this owner accepts it. */
@@ -863,7 +863,7 @@ export function CodingComposer({
           {blocked ??
             (conversationId
               ? "Enter sends. Type / for commands and @ to mention files, skills or agents. Leaving this view does not stop work."
-              : "Enter starts a new conversation in the chosen folder.")}
+              : "Enter starts a new conversation.")}
         </p>
       </div>
       {footer}

@@ -211,10 +211,9 @@ export function createCodingSession(
       };
     },
     refreshConversations,
-    /** Create in the chosen folder with the chosen first model. */
+    /** Start with the chosen model, with or without a project. */
     startConversation() {
       const cwd = state.project;
-      if (!cwd) return Promise.resolve(false);
       return open(
         () => api.createConversation(cwd, state.selection),
         "create",
@@ -228,8 +227,8 @@ export function createCodingSession(
     startNew() {
       if (!supersede()) return false;
       // New work starts where the open conversation is.
-      const project = state.active?.cwd ?? state.project;
-      if (project) remember(PROJECT_KEY, project);
+      const project = state.active ? state.active.cwd : state.project;
+      remember(PROJECT_KEY, project);
       update({
         active: null,
         pending: null,
@@ -242,7 +241,7 @@ export function createCodingSession(
       });
       return true;
     },
-    selectProject(cwd: string) {
+    selectProject(cwd: string | null) {
       remember(PROJECT_KEY, cwd);
       update({ project: cwd, openingError: null });
     },

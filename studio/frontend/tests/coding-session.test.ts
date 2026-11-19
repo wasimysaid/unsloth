@@ -40,7 +40,7 @@ function nativeApi(overrides: Partial<CodingApi> = {}): CodingApi {
 }
 
 test("every confirmed folder creates a distinct native conversation; only native cwd is displayed", async () => {
-  const calls: string[] = [];
+  const calls: (string | null)[] = [];
   const records: CodingConversation[] = [];
   const session = createCodingSession(
     nativeApi({
@@ -357,7 +357,6 @@ test("the new-conversation folder and model are remembered across New and reload
   });
   const first = createCodingSession(api, { memory: stored });
   assert.equal(first.getSnapshot().project, null);
-  assert.equal(await first.startConversation(), false, "no folder, no create");
   first.selectProject("/a");
   first.selectModel({ provider: "p", model: "m" });
   first.selectModel({ reasoning: "high", preserve_thinking: false });
@@ -393,6 +392,32 @@ test("New from an open conversation starts in its folder; an empty draft is neve
   assert.equal(session.getSnapshot().project, "/saved");
   assert.equal(await session.startConversation(), true);
   assert.equal(session.getSnapshot().autoSend, false);
+});
+
+test("No project sends the draft and survives reopening, New, and reload", async () => {
+  const stored = memory();
+  const calls: (string | null)[] = [];
+  const api = nativeApi({
+    createConversation: async (cwd) => {
+      calls.push(cwd);
+      return { id: "chat", cwd };
+    },
+    openConversation: async (id) => ({ id, cwd: null }),
+  });
+  const session = createCodingSession(api, { memory: stored });
+  session.selectProject("/previous-project");
+  session.selectProject(null);
+  session.getSnapshot().draft.syncText("Hello");
+  assert.equal(await session.startConversation(), true);
+  assert.deepEqual(calls, [null]);
+  assert.equal(session.getSnapshot().autoSend, true);
+  assert.equal(session.getSnapshot().project, null);
+  session.startNew();
+  session.selectProject("/another-project");
+  await session.openConversation("chat");
+  session.startNew();
+  assert.equal(session.getSnapshot().project, null);
+  assert.equal(createCodingSession(api, { memory: stored }).getSnapshot().project, null);
 });
 
 test("unusable remembered values are ignored", () => {

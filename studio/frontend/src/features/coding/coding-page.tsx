@@ -76,11 +76,10 @@ export function CodingPage() {
     setFolderOpen(true);
   };
   const project = state.project;
-  const landingBlocked = !project
-    ? "Choose a project folder first."
-    : state.openingUncertainty
-      ? "Check the sidebar: the last conversation may already have been created."
-      : null;
+  const workspace = state.active ? state.active.cwd : project;
+  const landingBlocked = state.openingUncertainty
+    ? "Check the sidebar: the last conversation may already have been created."
+    : null;
 
   return (
     <CodingLayoutHosts.Provider
@@ -92,8 +91,8 @@ export function CodingPage() {
     >
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <CodingWorkspace
-          key={state.active?.cwd ?? project ?? "no-project"}
-          project={state.active?.cwd ?? project}
+          key={workspace ?? "no-project"}
+          project={workspace}
           conversationKey={conversationKey}
           view={childView?.key === conversationKey ? childView.view : null}
         >
@@ -117,10 +116,13 @@ export function CodingPage() {
               <h2
                 className="min-w-0 truncate font-heading text-sm font-medium"
                 data-testid="coding-opened-conversation"
-                title={state.active?.cwd}
+                title={state.active?.cwd ?? undefined}
               >
                 {state.active
-                  ? state.active.title || projectName(state.active.cwd)
+                  ? state.active.title ||
+                    (state.active.cwd
+                      ? projectName(state.active.cwd)
+                      : "New conversation")
                   : "New conversation"}
               </h2>
               {state.pending && (
@@ -200,6 +202,11 @@ export function CodingPage() {
                           <ProjectPicker
                             triggerRef={projectTrigger}
                             project={project}
+                            projects={recentProjects(
+                              state.conversations,
+                              project,
+                            )}
+                            onSelect={session.selectProject}
                             disabled={creating}
                             onBrowse={chooseFolder}
                           />

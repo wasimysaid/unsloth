@@ -110,7 +110,7 @@ export function CodingRecents() {
                   aria-current={active ? "true" : undefined}
                   aria-busy={pending}
                   disabled={disabled}
-                  title={conversation.cwd}
+                  title={conversation.cwd ?? "No project"}
                   className="sidebar-nav-btn h-[calc(30px*var(--ui-space-scale,1))] cursor-pointer rounded-full py-0 pl-3 pr-4 text-ui-14p5 leading-ui-19 tracking-nav font-medium"
                   onClick={() => {
                     if (isMobile) setOpenMobile(false);
@@ -127,7 +127,9 @@ export function CodingRecents() {
                     />
                   ) : (
                     <span className="ml-auto max-w-[40%] shrink-0 truncate pl-2 text-ui-10 font-normal text-muted-foreground">
-                      {projectName(conversation.cwd)}
+                      {conversation.cwd
+                        ? projectName(conversation.cwd)
+                        : "No project"}
                     </span>
                   )}
                 </SidebarMenuButton>
