@@ -1,5 +1,21 @@
 # Coding: native execution, recovery, maintenance, plans, questions, goals, rich inputs, models, file changes and Settings
 
+## Project selection and no-project chat
+
+The composer dropdown offers **No project**, recent projects, and the existing
+folder browser. A new installation starts with No project; the last deliberate
+choice is remembered. Sending creates the native conversation and submits the
+draft through the same model-loading and streaming path in either mode.
+
+`POST /api/coding/conversations` accepts a nullable or omitted `cwd`. Without one,
+Studio creates a unique durable working directory under
+`<studio_root>/coding/chats/` and passes it to Mimir's existing Session Control.
+Create, list, and reopen responses expose these conversations with `cwd: null`.
+They appear as No project and do not populate recent projects or the project file
+viewer. Native history and files remain available when the conversation reopens.
+This is a workspace default, not a sandbox or a different tool policy; execution,
+tools, model loading, and cancellation retain their existing owners.
+
 ## Process recovery and whole-runtime maintenance (#249)
 
 Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`

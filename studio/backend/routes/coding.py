@@ -8,6 +8,7 @@ import base64
 import binascii
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -18,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from auth.authentication import get_current_credential
 from core.coding_runtime import CodingRuntimeError, runtime_for
 from models.model_load_config import ModelLoadConfig
+from utils.paths import studio_root
 
 
 async def _coding_credential(request: Request, credential = Depends(get_current_credential)):
@@ -101,7 +103,7 @@ class ModelConfiguration(BaseModel):
 
 class ProjectSelection(BaseModel):
     model_config = ConfigDict(extra = "forbid")
-    cwd: str = Field(min_length = 1, max_length = 32768)
+    cwd: str | None = Field(default = None, min_length = 1, max_length = 32768)
     # The first request's selection, chosen before the conversation existed.
     configuration: ModelConfiguration | None = None
 
@@ -581,22 +583,39 @@ async def project_file(request: Request,
 @router.get("/conversations")
 async def conversations(request: Request, cursor: str | None = Query(default = None, max_length = 16384)):
     page = await _command(request, "list", {"cursor": cursor})
-    return {"conversations": page["sessions"], "next_cursor": page.get("next_cursor")}
+    return {"conversations": [_conversation_info(info) for info in page["sessions"]],
+            "next_cursor": page.get("next_cursor")}
+
+
+def _chat_workspaces() -> Path:
+    return studio_root() / "coding" / "chats"
+
+
+def _conversation_info(info: dict) -> dict:
+    # Managed chat directories are durable native working directories, not user projects.
+    if Path(info["cwd"]).parent.resolve() == _chat_workspaces().resolve():
+        return {**info, "cwd": None}
+    return info
 
 
 @router.post("/conversations", status_code = 201)
 async def create_conversation(body: ProjectSelection, request: Request):
-    params = {"cwd": body.cwd}
+    cwd = body.cwd
+    if cwd is None:
+        root = _chat_workspaces()
+        root.mkdir(parents = True, exist_ok = True)
+        cwd = tempfile.mkdtemp(prefix = "chat-", dir = root)
+    params = {"cwd": cwd}
     if body.configuration is not None:
         params["configuration"] = body.configuration.model_dump(exclude_none = True)
     state = await _command(request, "create", params)
-    return state["info"]
+    return _conversation_info(state["info"])
 
 
 @router.post("/conversations/{conversation_id}/open")
 async def open_conversation(conversation_id: str, request: Request):
     state = await _command(request, "open", {"conversation_id": conversation_id})
-    return state["info"]
+    return _conversation_info(state["info"])
 
 
 @router.post("/conversations/{conversation_id}/configuration")

@@ -6,7 +6,7 @@ import type { CodingConfigurationChange } from "./model-selection.ts";
 /** Read-only native records. Studio does not persist a second coding history. */
 export interface CodingConversation {
   id: string;
-  cwd: string;
+  cwd: string | null;
   title?: string | null;
   /** Supervisor incarnation that actually opened this live owner (not catalog identity). */
   runtime_generation?: number;
@@ -27,7 +27,7 @@ export interface CodingApi {
   listConversations(): Promise<CodingConversation[]>;
   /** The first request's model, chosen before the conversation existed. */
   createConversation(
-    cwd: string,
+    cwd: string | null,
     configuration?: CodingConfigurationChange | null,
   ): Promise<CodingConversation>;
   openConversation(
