@@ -739,6 +739,15 @@ navigation never cancels an accepted preload. Rapid selections coalesce behind t
 submitted browser load. Studio owns model residency and loading; Mimir owns the
 conversation's selected model and per-request settings.
 
+The local model picker follows Unsloth residency, not the remembered Mimir
+configuration: an unloaded selection shows “Select model” with no selected row,
+quantization, or model-specific controls. A loading selection shows progress;
+a resident selection exposes the shared hover eject action. After unloading,
+the picker returns to “Select model”, or adopts another eligible resident as Chat
+does. Opening Coding can adopt an already-loaded local model without loading it
+again. An explicit native connected-provider choice remains selected.
+The conversation's native configuration remains available for next-request preparation.
+
 The shared picker exposes hover unload, exact downloaded quant choices, and
 Preserve thinking when the model's template supports it. Normal authenticated
 `/api/coding/model-inventory` metadata joins native IDs to Studio inventory groups;
@@ -757,10 +766,17 @@ change or unmount prevents an earlier download completion from selecting a model
 The API page and Coding share the download completion hook.
 
 Native connected providers retain opaque identities and native configuration.
-Their settings are not Chat connection settings. One-time Run settings launch is
-not offered in Coding; saved Studio model overrides still apply at load. Coding's
-residency projection comes from its own model state without changing Chat's
-selected model. The previous Coding picker and its separate favorite store are removed.
+Their settings are not Chat connection settings. Coding reuses the shared Run
+settings editor, presets, saved overrides, and explicit Load/Reload actions. Coding's
+residency projection reads Unsloth's shared inference status and uses Chat's
+resident-list projection, without changing Chat's selected model. The shared
+picker marks all resident models, offers per-model and Eject all actions, and
+uses the same chip layout and Thinking/effort controls. Load and unload operations
+are distinct, so an unload refusal preserves the expanded list. Unloads remain
+guarded and stop on the first refusal;
+active Chat/Coding work is preserved. Inventory changes refresh automatically;
+there is no separate Coding refresh button. Native provider administration stays
+with Mimir rather than opening Chat's unrelated connection editor. The previous Coding picker and its separate favorite store are removed.
 Existing browser favorites remain stored but are not imported into shared pins. Model-switch patches omit reasoning so Mimir chooses the new default.
 Uncertain configuration delivery is not replayed: a view opened before that
 operation's outcome cannot clear its uncertainty. A later reconstruction is

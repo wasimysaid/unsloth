@@ -1,9 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { ensureGpuDeviceCache } from "@/hooks/use-gpu-info";
-import { toApiOverride } from "@/features/model-picker";
-import type { InferenceStatusResponse } from "@/features/chat";
-import { subscribeInventory } from "@/features/hub/stores/inventory-events";
+import {
+  loadedModelsFromStatus,
+  toApiOverride,
+  type LoadedModelSummary,
+} from "@/features/model-picker";
+import {
+  getInferenceStatus,
+  unloadModel,
+  syncKeepModelsLoaded,
+  type InferenceStatusResponse,
+} from "@/features/chat";
+import { listOpenAIModels } from "@/features/settings";
+import { subscribeInventory } from "@/features/hub";
 import { codingLocalModels, type CodingLocalModel } from "./api";
 import {
   createModelPreloader,
@@ -13,6 +23,9 @@ import {
 export type LocalModelResidency = { state: "unloaded" | "loading" | "loaded" };
 
 export function useLocalModel(selectedId: string | null, onLoaded: () => void) {
+  const [loadedModels, setLoadedModels] = useState<LoadedModelSummary[]>([]);
+  const residents = useRef<LoadedModelSummary[]>([]);
+  const [unloading, setUnloading] = useState(false);
   const [models, setModels] = useState<CodingLocalModel[]>([]);
   const [snapshot, setSnapshot] = useState<{
     id: string;
@@ -78,24 +91,61 @@ export function useLocalModel(selectedId: string | null, onLoaded: () => void) {
   }, []);
 
   useEffect(() => {
-    if (!selectedId) return;
     const id = selectedId;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
       try {
-        const result = await codingLocalModels.state(id, controller.signal);
+        const [globalStatus, result] = await Promise.all([
+          getInferenceStatus(controller.signal),
+          id
+            ? codingLocalModels
+                .state(id, controller.signal)
+                .catch((reason: unknown) => {
+                  if (!controller.signal.aborted)
+                    setFailure({
+                      id,
+                      message:
+                        reason instanceof Error
+                          ? reason.message
+                          : "Model status is unavailable.",
+                    });
+                  return null;
+                })
+            : null,
+        ]);
+        let next = loadedModelsFromStatus(globalStatus, residents.current);
+        if (next.some((model) => model.quant === undefined)) {
+          const details = await listOpenAIModels(controller.signal);
+          const quants = new Map(
+            details
+              .filter((model) => model.loaded)
+              .map((model) => [model.id, model.quant]),
+          );
+          next = next.map((model) =>
+            model.quant === undefined
+              ? { ...model, quant: quants.get(model.id) ?? null }
+              : model,
+          );
+        }
         if (!controller.signal.aborted) {
-          setSnapshot({
-            id,
-            status: result.loaded ? result.status : null,
-            loading: result.loading,
-          });
+          residents.current = next;
+          setLoadedModels(next);
+          syncKeepModelsLoaded(globalStatus.multi_model_mode);
+          setSnapshot(
+            id && result
+              ? {
+                  id,
+                  status: result.loaded ? result.status : null,
+                  loading: result.loading,
+                }
+              : null,
+          );
         }
       } catch (reason) {
         if (!controller.signal.aborted)
           setFailure({
-            id,
+            id: id ?? "",
             message:
               reason instanceof Error
                 ? reason.message
@@ -121,31 +171,46 @@ export function useLocalModel(selectedId: string | null, onLoaded: () => void) {
     preloader.current?.select(id, options);
   }
 
-  async function unload() {
-    if (!selectedId) return;
-    preloader.current?.removePending(selectedId);
+  async function unload(target?: string) {
+    const id = selected.current;
+    if (!target && !id) return;
+    if (!target && id) preloader.current?.removePending(id);
     const active = preloader.current?.active();
-    const requestId = active?.id === selectedId ? active.requestId : undefined;
+    const requestId =
+      !target && active?.id === id ? active?.requestId : undefined;
+    setUnloading(true);
     try {
-      await codingLocalModels.unload(selectedId, requestId);
+      if (target) await unloadModel({ model_path: target });
+      else if (id) await codingLocalModels.unload(id, requestId);
       if (requestId) preloader.current?.dismissCompletion(requestId);
       if (mounted.current) {
         setRevision((value) => value + 1);
         setFailure(null);
       }
+      return true;
     } catch (reason) {
-      if (mounted.current && selected.current === selectedId)
+      if (mounted.current)
         setFailure({
-          id: selectedId,
+          id: selected.current ?? "",
           message:
             reason instanceof Error ? reason.message : "Model unload failed.",
         });
+      return false;
+    } finally {
+      if (mounted.current) setUnloading(false);
+    }
+  }
+
+  async function unloadAll() {
+    // Every target is guarded independently; active Chat/Coding work is never cancelled.
+    for (const model of residents.current) {
+      if (!(await unload(model.checkpoint ?? model.id))) break;
     }
   }
 
   const current = snapshot?.id === selectedId ? snapshot : null;
   const status = current?.status ?? null;
-  const error = failure?.id === selectedId ? failure.message : null;
+  const error = failure?.id === (selectedId ?? "") ? failure.message : null;
   const residency: LocalModelResidency = {
     state:
       preloader.current?.isLoading(selectedId) || current?.loading
@@ -169,5 +234,16 @@ export function useLocalModel(selectedId: string | null, onLoaded: () => void) {
   useEffect(() => {
     if (snapshot?.id === selectedId) loaded();
   }, [capabilities, selectedId, snapshot?.id]);
-  return { models, residency, status, error, refresh, preload, unload };
+  return {
+    models,
+    loadedModels,
+    unloading,
+    residency,
+    status,
+    error,
+    refresh,
+    preload,
+    unload,
+    unloadAll,
+  };
 }

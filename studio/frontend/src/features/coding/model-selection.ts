@@ -84,3 +84,17 @@ export function findLocalPickerChoice<
     (model) => model.group === loadId && model.quant === quant,
   );
 }
+
+/** Match a resident by its checkpoint and exact quant, never its display name. */
+export function findResidentLocalChoice<T extends { id: string; group: string; quant: string | null }>(
+  inventory: readonly T[],
+  residents: readonly { id: string; checkpoint?: string; quant?: string | null }[],
+): T | undefined {
+  for (const resident of residents) {
+    const choice = inventory.find((model) =>
+      model.group === (resident.checkpoint ?? resident.id) &&
+      model.quant === (resident.quant ?? null));
+    if (choice) return choice;
+  }
+  return undefined;
+}

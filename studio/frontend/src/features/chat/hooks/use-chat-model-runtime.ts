@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import { loadedModelsFromStatus } from "@/features/model-picker";
 import {
   CACHE_MISS_DOWNLOAD_DESCRIPTION,
   EMPTY_CACHE_MISS_WATCH,
@@ -607,15 +608,12 @@ function publishLoadedModels(
   checkpoints?: string[],
 ): void {
   const current = useChatRuntimeStore.getState().loadedModels;
-  const known = new Map(current.map((m) => [m.checkpoint ?? m.id, m]));
-  const next = ids.map((id, i) => {
-    const checkpoint = checkpoints?.[i] || id;
-    const prev = known.get(checkpoint);
-    const quant = id === statusId ? (statusQuant ?? null) : prev?.quant;
-    return prev && prev.quant === quant && prev.checkpoint === checkpoint
-      ? prev
-      : { id, quant, checkpoint };
-  });
+  const next = loadedModelsFromStatus({
+    serving: ids,
+    serving_checkpoints: checkpoints,
+    active_model: statusId ?? null,
+    gguf_variant: statusQuant,
+  }, current);
   if (next.length !== current.length || next.some((m, i) => m !== current[i])) {
     useChatRuntimeStore.setState({ loadedModels: next });
   }
