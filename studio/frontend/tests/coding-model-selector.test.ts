@@ -28,8 +28,17 @@ type LocalStub = {
 function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency: { state: "unloaded" }, preload: () => {}, unload: async () => {} }) {
   const states: unknown[] = [];
   let cursor = 0;
-  const effects: (() => void | (() => void))[] = [];
-  let mounted = false;
+  let effectCursor = 0;
+  const effects: { callback: () => void | (() => void); deps: readonly unknown[];
+    dirty: boolean; cleanup?: () => void }[] = [];
+  function flushEffects() {
+    for (const effect of effects) {
+      if (!effect.dirty) continue;
+      effect.dirty = false;
+      effect.cleanup?.();
+      effect.cleanup = effect.callback() || undefined;
+    }
+  }
   let inventoryChanged: (() => void) | undefined;
   let download!: Parameters<typeof import("../src/features/model-picker/use-load-after-download.ts").useLoadAfterDownload>;
   const { CodingModelSelector } = loadWithStubs<typeof Selector>(
@@ -67,8 +76,12 @@ function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency:
             },
           ];
         },
-        useEffect: (callback: () => void) => {
-          if (!mounted) effects.push(callback);
+        useEffect: (callback: () => void | (() => void), deps: readonly unknown[]) => {
+          const index = effectCursor++;
+          const previous = effects[index];
+          effects[index] = { callback, deps, cleanup: previous?.cleanup,
+            dirty: !previous || previous.dirty || deps.some((value, i) => !Object.is(value, previous.deps[i])),
+          };
         },
         useEffectEvent: (callback: unknown) => callback,
         useMemo: (callback: () => unknown) => callback(),
@@ -91,6 +104,7 @@ function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency:
   return {
     render(props: Parameters<typeof CodingModelSelector>[0]) {
       cursor = 0;
+      effectCursor = 0;
       const tree = CodingModelSelector(props) as unknown as StubElement;
       const children = tree.props.children as StubElement[];
       return {
@@ -102,10 +116,10 @@ function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency:
     inventoryChanged() {
       inventoryChanged?.();
     },
+    flushEffects,
     start() {
-      mounted = true;
-      const cleanups = effects.map((effect) => effect());
-      return () => { for (const cleanup of cleanups) cleanup?.(); };
+      flushEffects();
+      return () => { for (const effect of effects) effect.cleanup?.(); };
     },
   };
 }
@@ -584,4 +598,35 @@ test("selecting an already resident quant configures Mimir without another load"
   assert.deepEqual(preloads, []);
   view.render(props).source.onPick("repo", { ...localMeta, forceReload: true }); await tick();
   assert.deepEqual(preloads, ["exact-Q8"]);
+});
+
+test("a pending selected-model status never adopts the first of multiple residents", async () => {
+  const changes: selection.CodingConfigurationChange[] = [];
+  const local: LocalStub = {
+    models: downloadedModels,
+    loadedModels: ["Q4", "Q8"].map((quant) => ({ id: "repo", checkpoint: "repo", quant })),
+    residency: { state: "loaded" },
+    preload: () => { throw new Error("Resident selection must not load again"); },
+    unload: async () => {},
+  };
+  const props = localProps(async (change) => { changes.push(change); });
+  const view = mount(0, local);
+  view.render(props); const cleanup = view.start(); await tick();
+  const initial = view.render(props); view.flushEffects();
+  initial.source.onPick("repo", localMeta); await tick();
+  assert.deepEqual(changes, [{ provider: "studio-local", model: "exact-Q8" }]);
+  local.residency.state = "checking";
+  const next = { ...props, configuration: { ...props.configuration, model: "exact-Q8" } };
+  view.render(next); view.flushEffects(); await tick();
+  assert.equal(changes.length, 1, "waiting for Q8 must not configure Q4");
+  local.residency.state = "loaded";
+  const settled = view.render(next); view.flushEffects(); await tick();
+  assert.equal(settled.source.selection?.ggufVariant, "Q8");
+  assert.equal(changes.length, 1);
+  // Only a confirmed absence permits fallback to the remaining resident.
+  local.residency.state = "unloaded";
+  local.loadedModels = [{ id: "repo", checkpoint: "repo", quant: "Q4" }];
+  view.render(next); view.flushEffects(); await tick();
+  assert.deepEqual(changes[1], { provider: "studio-local", model: "exact-Q4" });
+  cleanup();
 });

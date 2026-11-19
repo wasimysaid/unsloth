@@ -214,7 +214,7 @@ export function CodingModelSelector({
     if (
       blocked ||
       !result.ready ||
-      localLoaded ||
+      local.residency.state !== "unloaded" ||
       localLoading ||
       local.unloading ||
       (configuration?.provider && configuration.provider !== "studio-local")
@@ -249,7 +249,7 @@ export function CodingModelSelector({
     blocked,
     result.ready,
     result.catalog,
-    localLoaded,
+    local.residency.state,
     localLoading,
     local.unloading,
     local.models,

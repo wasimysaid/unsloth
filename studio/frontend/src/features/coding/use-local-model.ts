@@ -20,7 +20,7 @@ import {
   type LocalModelLoadOptions,
 } from "./local-model-preload";
 
-export type LocalModelResidency = { state: "unloaded" | "loading" | "loaded" };
+export type LocalModelResidency = { state: "checking" | "unloaded" | "loading" | "loaded" };
 
 export function useLocalModel(selectedId: string | null, onLoaded: () => void) {
   const [loadedModels, setLoadedModels] = useState<LoadedModelSummary[]>([]);
@@ -217,7 +217,9 @@ export function useLocalModel(selectedId: string | null, onLoaded: () => void) {
         ? "loading"
         : status
           ? "loaded"
-          : "unloaded",
+          : selectedId !== null && current === null
+            ? "checking"
+            : "unloaded",
   };
   const capabilities = JSON.stringify([
     selectedId,
