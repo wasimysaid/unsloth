@@ -6,6 +6,7 @@ permissions:
   contents: read
 jobs:
   package:
+    timeout-minutes: 8
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -21,7 +22,7 @@ jobs:
           .github/scripts/prefetch-tauri-windows-tools.ps1 -TauriCliVersion 'tauri-cli 2.10.1'
           $cert = New-SelfSignedCertificate -Subject 'CN=Unsloth Staging Test Only' -Type CodeSigningCert -CertStoreLocation Cert:\CurrentUser\My
           Export-Certificate -Cert $cert -FilePath staging.cer | Out-Null
-          Import-Certificate -FilePath staging.cer -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
+          Import-Certificate -FilePath staging.cer -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
           function Sign-TestFile($file) {
             $result = Set-AuthenticodeSignature $file -Certificate $cert -HashAlgorithm SHA256
             if ($result.Status -ne 'Valid') { throw "CI signing failed on ${file}: $($result.Status)" }
@@ -91,6 +92,21 @@ jobs:
           name: combined
       - shell: pwsh
         run: |
+          $arch = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
+          $launcher = Start-Process -FilePath ./combined.exe -PassThru
+          try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(45)
+            do {
+              $child = Get-Process -Name "setup-$arch" -ErrorAction SilentlyContinue | Where-Object MainWindowHandle -ne 0 | Select-Object -First 1
+              if ($child) { break }
+              Start-Sleep -Milliseconds 250
+            } while ([DateTime]::UtcNow -lt $deadline)
+            if (-not $child) { throw 'Missing native setup window on double-click' }
+            Write-Host "Interactive setup: $($child.ProcessName) => $($child.MainWindowTitle)"
+          } finally {
+            if ($child) { $child.Kill() }
+            if (-not $launcher.WaitForExit(5000)) { $launcher.Kill() }
+          }
           $dest = Join-Path $env:RUNNER_TEMP 'Unsloth installation test'
           $p = Start-Process -FilePath ./combined.exe -ArgumentList "/S /NS /D=$dest" -PassThru
           if (-not $p.WaitForExit(120000)) { throw 'Silent installer timed out' }
