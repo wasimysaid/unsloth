@@ -28,6 +28,21 @@ def selected(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_browser_load_opts_into_shared_placement_without_forcing_cancellation(monkeypatch, selected):
+    async def load(request, fastapi_request, subject):
+        assert subject == "subject"
+        assert request.alongside and not request.force_alongside
+        assert not request.force_cancel_active
+        return {"loaded": request.model_path}
+
+    monkeypatch.setattr(inference, "load_model", load)
+    request = Request({"type": "http", "state": {"coding_subject": "subject"}})
+    result = await coding.browser_load_model(local.local_choice(selected)["id"],
+        coding.LocalModelLoad(load_request_id = "attempt"), request)
+    assert result == {"loaded": "org/A"}
+
+
+@pytest.mark.asyncio
 async def test_explicit_load_settings_replace_saved_preset_without_saving(monkeypatch, selected):
     def saved(*args):
         raise AssertionError("An explicit load must not read or write the saved preset")
@@ -63,6 +78,34 @@ async def test_explicit_defaults_clear_saved_and_resident_settings(monkeypatch, 
 def test_invalid_or_destructive_settings_are_rejected_at_boundary(config):
     with pytest.raises(ValidationError):
         coding.LocalModelLoad(load_request_id = "attempt", config = config)
+
+
+@pytest.mark.asyncio
+async def test_status_poll_reuses_inventory_identity_until_inventory_changes(monkeypatch):
+    from hub.utils import inventory_scan
+
+    model = row("status-cache-fixture", load_id = "org/A", format_variant = "Q4_K_M")
+    scans, epoch = 0, 0
+
+    async def downloaded():
+        nonlocal scans
+        scans += 1
+        return [model]
+
+    async def resident(requested, subject):
+        assert requested == "org/A:Q4_K_M" and subject == "subject"
+        return None
+
+    monkeypatch.setattr(inventory_scan, "hf_cache_scans_epoch", lambda: epoch)
+    monkeypatch.setattr(local, "downloaded_rows", downloaded)
+    monkeypatch.setattr(local, "_resident_status", resident)
+    identifier = local.local_choice(model)["id"]
+    await local.local_model_state(identifier, "subject")
+    await local.local_model_state(identifier, "subject")
+    assert scans == 1
+    epoch += 1
+    await local.local_model_state(identifier, "subject")
+    assert scans == 2
 
 
 @pytest.mark.asyncio

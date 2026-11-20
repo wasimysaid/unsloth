@@ -32,10 +32,9 @@ export function useLocalModel(selectedId: string | null, onLoaded: () => void) {
     status: InferenceStatusResponse | null;
     loading: boolean;
   } | null>(null);
-  const [failure, setFailure] = useState<{
-    id: string;
-    message: string;
-  } | null>(null);
+  type ModelFailure = { id: string; message: string };
+  const [actionFailure, setActionFailure] = useState<ModelFailure | null>(null);
+  const [statusFailure, setStatusFailure] = useState<ModelFailure | null>(null);
   const [revision, setRevision] = useState(0);
   const selected = useRef(selectedId);
   selected.current = selectedId;
@@ -58,7 +57,7 @@ export function useLocalModel(selectedId: string | null, onLoaded: () => void) {
       (id, error) => {
         setRevision((value) => value + 1);
         if (selected.current !== id) return;
-        setFailure(
+        setActionFailure(
           error
             ? {
                 id,
@@ -99,19 +98,13 @@ export function useLocalModel(selectedId: string | null, onLoaded: () => void) {
         const [globalStatus, result] = await Promise.all([
           getInferenceStatus(controller.signal),
           id
-            ? codingLocalModels
-                .state(id, controller.signal)
-                .catch((reason: unknown) => {
-                  if (!controller.signal.aborted)
-                    setFailure({
-                      id,
-                      message:
-                        reason instanceof Error
-                          ? reason.message
-                          : "Model status is unavailable.",
-                    });
-                  return null;
-                })
+            ? codingLocalModels.state(id, controller.signal).then(
+                (value) => ({ value, error: null }),
+                (reason: unknown) => ({
+                  value: null,
+                  error: reason instanceof Error ? reason.message : "Model status is unavailable.",
+                }),
+              )
             : null,
         ]);
         let next = loadedModelsFromStatus(globalStatus, residents.current);
@@ -132,24 +125,25 @@ export function useLocalModel(selectedId: string | null, onLoaded: () => void) {
           residents.current = next;
           setLoadedModels(next);
           syncKeepModelsLoaded(globalStatus.multi_model_mode);
-          setSnapshot(
-            id && result
-              ? {
-                  id,
-                  status: result.loaded ? result.status : null,
-                  loading: result.loading,
-                }
-              : null,
-          );
+          setStatusFailure(result?.error ? { id: id ?? "", message: result.error } : null);
+          if (!result?.error) {
+            setSnapshot(
+              id && result?.value
+                ? {
+                    id,
+                    status: result.value.loaded ? result.value.status : null,
+                    loading: result.value.loading,
+                  }
+                : null,
+            );
+          }
         }
       } catch (reason) {
         if (!controller.signal.aborted)
-          setFailure({
+          setStatusFailure({
             id: id ?? "",
             message:
-              reason instanceof Error
-                ? reason.message
-                : "Model status is unavailable.",
+              reason instanceof Error ? reason.message : "Model status is unavailable.",
           });
       }
       if (!controller.signal.aborted) timer = setTimeout(poll, 1500);
@@ -185,12 +179,12 @@ export function useLocalModel(selectedId: string | null, onLoaded: () => void) {
       if (requestId) preloader.current?.dismissCompletion(requestId);
       if (mounted.current) {
         setRevision((value) => value + 1);
-        setFailure(null);
+        setActionFailure(null);
       }
       return true;
     } catch (reason) {
       if (mounted.current)
-        setFailure({
+        setActionFailure({
           id: selected.current ?? "",
           message:
             reason instanceof Error ? reason.message : "Model unload failed.",
@@ -210,7 +204,9 @@ export function useLocalModel(selectedId: string | null, onLoaded: () => void) {
 
   const current = snapshot?.id === selectedId ? snapshot : null;
   const status = current?.status ?? null;
-  const error = failure?.id === (selectedId ?? "") ? failure.message : null;
+  const modelError = (failure: ModelFailure | null) =>
+    failure?.id === (selectedId ?? "") ? failure.message : null;
+  const error = modelError(actionFailure) ?? modelError(statusFailure);
   const residency: LocalModelResidency = {
     state:
       preloader.current?.isLoading(selectedId) || current?.loading

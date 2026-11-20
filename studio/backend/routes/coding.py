@@ -376,9 +376,12 @@ async def browser_load_model(model_id: str, body: LocalModelLoad, request: Reque
     from core.coding_local_models import local_load_request
     from routes.inference import load_model
     try:
-        return await load_model(await local_load_request(
+        load = await local_load_request(
             model_id, body.load_request_id, config = body.config, force_reload = body.force_reload,
-        ), request, request.state.coding_subject)
+        )
+        # The shared loader consults Keep models loaded and owns slot placement.
+        return await load_model(load.model_copy(update = {"alongside": True}),
+                                request, request.state.coding_subject)
     except CodingRuntimeError as exc:
         raise _http_error(exc) from exc
 

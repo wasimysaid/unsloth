@@ -158,7 +158,7 @@ export function RunSettingsPanel({
         >
           <SheetHeader className="sr-only">
             <SheetTitle>Run settings</SheetTitle>
-            <SheetDescription>Chat inference settings</SheetDescription>
+            <SheetDescription>Model and inference settings</SheetDescription>
           </SheetHeader>
           <div data-tour="chat-settings" className="flex h-full flex-col">
             {settingsContent}
@@ -260,6 +260,25 @@ function saveCollapsibleOpen(label: string, open: boolean) {
   } catch {
     // ignore
   }
+}
+
+export function RunSettingsBody({
+  model,
+  children,
+}: {
+  model?: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="px-[calc(18px*var(--ui-space-scale,1))] pt-3">
+      {model && (
+        <RunSettingsSection label="Model" defaultOpen={true} first={true}>
+          <div className="flex flex-col gap-5">{model}</div>
+        </RunSettingsSection>
+      )}
+      {children}
+    </div>
+  );
 }
 
 export function RunSettingsSection({

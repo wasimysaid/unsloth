@@ -34,12 +34,16 @@ function loadEvents(forge: "ok" | "fails", loads: string[]): Events {
       return { default: fakeForge };
     },
   };
+  const hash = loadWithStubs<typeof import("../src/lib/sha256.ts")>(
+    new URL("../src/lib/sha256.ts", import.meta.url),
+    stubs,
+  );
   return loadWithStubs<Events>(
     new URL(
       "../src/features/chat/utils/chat-attachment-events.ts",
       import.meta.url,
     ),
-    stubs,
+    { "../../../lib/sha256.ts": hash },
   );
 }
 

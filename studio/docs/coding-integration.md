@@ -16,6 +16,15 @@ viewer. Native history and files remain available when the conversation reopens.
 This is a workspace default, not a sandbox or a different tool policy; execution,
 tools, model loading, and cancellation retain their existing owners.
 
+Studio's local model bridge uses a Linux or macOS pipe bootstrap. On Windows,
+Coding can still open native history and use Mimir's configured providers.
+
+Coding and New Chat share the Run settings panel and the per-model editor.
+A selected local model can open its named settings, save a set, Load or Reload
+through the same guarded Studio loader. The editor reads the exact resident
+settings. Provider sampling and system prompt presets belong to New Chat;
+Coding's model and effort are controlled by Mimir's session catalog.
+
 ## Process recovery and whole-runtime maintenance (#249)
 
 Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`

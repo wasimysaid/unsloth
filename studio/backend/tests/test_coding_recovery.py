@@ -206,7 +206,8 @@ async def test_local_provider_is_fresh_and_authenticated_after_explicit_restart(
     bootstrap, trace = replacement_frontend(tmp_path, runtime)
     app.state.coding_runtime = runtime
 
-    async def catalog():
+    async def catalog(subject):
+        assert subject == "unsloth"
         return {"id": "studio-local", "name": "Studio local", "models": [{"id": "downloaded-model"}]}
 
     monkeypatch.setattr("core.coding_local_models.local_catalog", catalog)
@@ -242,6 +243,17 @@ async def test_local_provider_is_fresh_and_authenticated_after_explicit_restart(
     finally:
         await runtime.close()
     assert storage.validate_api_key(runtime.local_serving.key) is None
+
+
+@pytest.mark.asyncio
+async def test_non_posix_listener_can_start_coding_without_local_serving(coding_app, monkeypatch):
+    import core.coding_runtime as module
+
+    app, _ = coding_app
+    monkeypatch.setattr(module, "os", SimpleNamespace(name = "nt", environ = {}))
+    runtime = CodingRuntime()
+    await runtime.configure_local_serving(setup_request(app))
+    assert runtime.local_serving is None
 
 
 @pytest.mark.asyncio

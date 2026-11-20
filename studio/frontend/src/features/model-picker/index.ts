@@ -150,7 +150,7 @@ export {
   taskForMediaPick,
 } from "./components/model-selector/audio-picker-policy";
 
-export { RunSettingsPanel, RunSettingsToggle, RunSettingsSection } from "./components/run-settings-panel";
+export { RunSettingsBody, RunSettingsPanel, RunSettingsToggle, RunSettingsSection } from "./components/run-settings-panel";
 export { residentModelConfig } from "./model-config/resident-model-config";
 export { toApiOverride } from "./api/model-overrides";
 

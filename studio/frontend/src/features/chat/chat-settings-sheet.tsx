@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
-import { RunSettingsPanel, RunSettingsSection as CollapsibleSection } from "@/features/model-picker";
+import { RunSettingsBody, RunSettingsPanel, RunSettingsSection as CollapsibleSection } from "@/features/model-picker";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -908,64 +908,62 @@ export function ChatSettingsPanel({
 
   useEffect(() => () => promptObserverRef.current?.disconnect(), []);
 
+  const modelSection = (hasModelContent || modelConfig) && (
+    <>
+      {modelConfig}
+      {showSpecFallback && (
+        <div className="rounded-lg bg-amber-500/[0.08] px-3 py-2 text-ui-12 leading-[1.4] text-nav-fg/80">
+          <p>
+            {specFallbackMessage({
+              reason: specFallbackReason,
+              drafter: speculativeDrafterLabel,
+              isLocalGguf,
+              updateAvailable: Boolean(llamaUpdateStatus?.llama.update_available),
+            })}
+          </p>
+          {mtpUpdatable && llamaUpdateStatus?.llama.update_available && (
+            <Button
+              size="sm"
+              className="corner-squircle mt-2 text-ui-12"
+              onClick={handleMtpUpdate}
+              disabled={llamaUpdating}
+              data-test-id="mtp-update-button"
+            >
+              {llamaUpdating ? "Updating..." : "Update llama.cpp"}
+            </Button>
+          )}
+        </div>
+      )}
+      {mlxSpecFallback && (
+        <div className="rounded-lg bg-amber-500/[0.08] px-3 py-2 text-ui-12 leading-[1.4] text-nav-fg/80">
+          <p>{mlxSpecFallback}</p>
+        </div>
+      )}
+      {showContextVramWarning && (
+        <p className="text-ui-11 text-amber-500">
+          {isUnifiedMemory ? (
+            <>
+              Context window is above Unsloth&apos;s free-memory estimate
+              ({maxContextLength?.toLocaleString()} tokens). It may
+              still load, but macOS may have to compress or swap other
+              apps and generation may slow down. Lower the context,
+              leave it on Auto, or set the KV cache to q8_0.
+            </>
+          ) : (
+            <>
+              Context window exceeds the estimated VRAM capacity (
+              {maxContextLength?.toLocaleString()} tokens). The
+              model may use system RAM.
+            </>
+          )}
+        </p>
+      )}
+    </>
+  );
+
   const settingsContent = (
     <>
-      <div className="px-[calc(18px*var(--ui-space-scale,1))] pt-3">
-        {(hasModelContent || modelConfig) && (
-              <CollapsibleSection label="Model" defaultOpen={true} first={true}>
-            <div className="flex flex-col gap-5">
-              {modelConfig}
-              {showSpecFallback && (
-                <div className="rounded-lg bg-amber-500/[0.08] px-3 py-2 text-ui-12 leading-[1.4] text-nav-fg/80">
-                  <p>
-                    {specFallbackMessage({
-                      reason: specFallbackReason,
-                      drafter: speculativeDrafterLabel,
-                      isLocalGguf,
-                      updateAvailable: Boolean(llamaUpdateStatus?.llama.update_available),
-                    })}
-                  </p>
-                  {mtpUpdatable && llamaUpdateStatus?.llama.update_available && (
-                    <Button
-                      size="sm"
-                      className="corner-squircle mt-2 text-ui-12"
-                      onClick={handleMtpUpdate}
-                      disabled={llamaUpdating}
-                      data-test-id="mtp-update-button"
-                    >
-                      {llamaUpdating ? "Updating..." : "Update llama.cpp"}
-                    </Button>
-                  )}
-                </div>
-              )}
-              {mlxSpecFallback && (
-                <div className="rounded-lg bg-amber-500/[0.08] px-3 py-2 text-ui-12 leading-[1.4] text-nav-fg/80">
-                  <p>{mlxSpecFallback}</p>
-                </div>
-              )}
-              {showContextVramWarning && (
-                <p className="text-ui-11 text-amber-500">
-                  {isUnifiedMemory ? (
-                    <>
-                      Context window is above Unsloth&apos;s free-memory estimate
-                      ({maxContextLength?.toLocaleString()} tokens). It may
-                      still load, but macOS may have to compress or swap other
-                      apps and generation may slow down. Lower the context,
-                      leave it on Auto, or set the KV cache to q8_0.
-                    </>
-                  ) : (
-                    <>
-                      Context window exceeds the estimated VRAM capacity (
-                      {maxContextLength?.toLocaleString()} tokens). The
-                      model may use system RAM.
-                    </>
-                  )}
-                </p>
-              )}
-            </div>
-          </CollapsibleSection>
-        )}
-
+      <RunSettingsBody model={modelSection}>
         <CollapsibleSection
           label="Preset"
           headerAction={
@@ -1474,7 +1472,7 @@ export function ChatSettingsPanel({
           <CollapsibleSection label="Information">{modelInfo}</CollapsibleSection>
         )}
 
-      </div>
+      </RunSettingsBody>
       <Dialog
         open={systemPromptEditorOpen}
         onOpenChange={(nextOpen) => {

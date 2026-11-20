@@ -18,8 +18,9 @@ interface SidebarModelConfigProps {
   isDiffusion: boolean;
   nativeContextLength: number | null;
   loadedContextLength: number | null;
-  loadedConfig: PerModelConfig;
-  onReload: (config: PerModelConfig) => void;
+  loadedConfig: PerModelConfig | null;
+  runDisabled?: boolean;
+  onRun: (config: PerModelConfig) => void;
 }
 
 // Memoized: the chat page re-renders it on every event, even with the panel collapsed.
@@ -33,7 +34,8 @@ export const SidebarModelConfig = memo(function SidebarModelConfig({
   nativeContextLength,
   loadedContextLength,
   loadedConfig,
-  onReload,
+  runDisabled,
+  onRun,
 }: SidebarModelConfigProps) {
   const target = useMemo(
     () =>
@@ -52,7 +54,8 @@ export const SidebarModelConfig = memo(function SidebarModelConfig({
       key={modelConfigInstanceKey(modelId, target.ggufVariant, loadedConfig)}
       target={target}
       resident={resident}
-      onRun={onReload}
+      onRun={onRun}
+      runDisabled={runDisabled}
       loadedConfig={loadedConfig}
       loadedContextLength={loadedContextLength}
       variant="sidebar"

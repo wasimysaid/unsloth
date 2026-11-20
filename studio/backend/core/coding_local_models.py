@@ -11,6 +11,8 @@ import asyncio
 import functools
 import hashlib
 import os
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -160,7 +162,7 @@ async def resolve_local_choice(identifier: str):
 async def model_inventory() -> list[dict]:
     return [{"id": local_choice(row)["id"], "group": row.load_id or row.id,
              "quant": getattr(row, "format_variant", None), "name": row.display_name,
-             "is_lora": row.model_format == "adapter"}
+             "is_lora": row.model_format == "adapter", "is_gguf": row.model_format == "gguf"}
             for row in await downloaded_rows()]
 
 
@@ -212,15 +214,49 @@ async def _resident_status(requested: str, subject: str):
         routed_slot.reset(previous)
 
 
+@dataclass(frozen = True)
+class _StatusTarget:
+    epoch: int
+    expires_at: float
+    load_id: str
+    api_model: str
+
+
+_status_targets: OrderedDict[tuple[str, str], _StatusTarget] = OrderedDict()
+
+
+async def _status_target(identifier: str) -> _StatusTarget:
+    from hub.utils.inventory_scan import hf_cache_scans_epoch
+    from utils.account_context import current_account_id
+
+    key = (current_account_id(), identifier)
+    epoch = hf_cache_scans_epoch()
+    cached = _status_targets.get(key)
+    if cached and cached.epoch == epoch and cached.expires_at > time.monotonic():
+        _status_targets.move_to_end(key)
+        return cached
+
+    row = await resolve_local_choice(identifier)
+    target = _StatusTarget(epoch, time.monotonic() + 30, row.load_id or row.id, local_choice(row)["api_model"])
+    # Status is polled frequently. Cache only route identity, and let external
+    # filesystem changes that Studio didn't observe age out. Loads resolve fresh.
+    if epoch == hf_cache_scans_epoch():
+        _status_targets[key] = target
+        _status_targets.move_to_end(key)
+        if len(_status_targets) > 128:
+            _status_targets.popitem(last = False)
+    return target
+
+
 async def local_model_state(identifier: str, subject: str) -> dict:
     from routes.inference import model_load_pending
     from hub.services.models import account_access
 
-    row = await resolve_local_choice(identifier)
+    target = await _status_target(identifier)
     if account_access.managed_account():
-        await asyncio.to_thread(account_access.require_model_access, row.load_id or row.id)
+        await asyncio.to_thread(account_access.require_model_access, target.load_id)
     account_access.require_live_account()
-    requested = local_choice(row)["api_model"]
+    requested = target.api_model
     status = await _resident_status(requested, subject)
     return {"loaded": status is not None, "loading": model_load_pending(requested, subject),
             "status": status.model_dump() if status is not None else None}
@@ -251,6 +287,9 @@ class LocalOperation:
     task: asyncio.Task | None = None
     result: dict | None = None
     error: CodingRuntimeError | None = None
+
+
+LOCAL_RECEIPT_LIMIT = 4096
 
 
 class CodingLocalServing:
@@ -298,7 +337,7 @@ class CodingLocalServing:
             if operation.identity != identity:
                 raise CodingRuntimeError("conflict", "The preparation identity does not match its original request.")
         else:
-            if len(self.operations) >= 4096:
+            if len(self.operations) >= LOCAL_RECEIPT_LIMIT:
                 raise CodingRuntimeError("limit", "The serving incarnation has reached its receipt limit. Drain work before restarting the runtime.")
             operation = LocalOperation(identity)
             self.operations[identifier] = operation
@@ -312,14 +351,17 @@ class CodingLocalServing:
 
     def inspect(self, identifier: str) -> dict:
         operation = self.operations.get(identifier)
-        return {"state": operation.state, **(operation.result or {})} if operation else {"state": "missing"}
+        if operation is not None:
+            return {"state": operation.state, **(operation.result or {})}
+        # Receipts are never evicted. At capacity, an unknown ID cannot be admitted
+        # by a delayed acquire, so it is already fenced for this incarnation.
+        return {"state": "released" if len(self.operations) >= LOCAL_RECEIPT_LIMIT else "missing"}
 
     async def release(self, identifier: str) -> dict:
         operation = self.operations.get(identifier)
         if operation is None:
-            if len(self.operations) >= 4096:
-                raise CodingRuntimeError("limit", "The serving receipt limit prevents release reconciliation. Keep cleanup pending.")
-            self.operations[identifier] = LocalOperation((), state = "released")
+            if len(self.operations) < LOCAL_RECEIPT_LIMIT:
+                self.operations[identifier] = LocalOperation((), state = "released")
             return {"state": "released"}
         if operation.state == "released":
             return {"state": "released"}
