@@ -46,6 +46,7 @@ concurrency:
 
 jobs:
   prepare-version:
+    if: github.repository == 'wasimysaid/unsloth' && inputs.draft
     name: Prepare release versions
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -249,60 +250,6 @@ jobs:
           PY
 
       # Fail before building and notarizing a version publish-release will reject.
-      - name: Guard against republishing an existing version
-        shell: bash
-        env:
-          GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
-          DESKTOP_RELEASE_TAG: ${{ steps.prepare.outputs.desktop_release_tag }}
-        run: |
-          set -euo pipefail
-          # The v tag existing is normal; what must be absent is the desktop asset set.
-          if ! response="$(gh api --include "repos/${GH_REPO}/releases/tags/${DESKTOP_RELEASE_TAG}" 2>&1)"; then
-            if [[ "$response" =~ ^HTTP/[0-9.]+\ 404\  ]]; then
-              echo "Release ${DESKTOP_RELEASE_TAG} does not exist." >&2
-              echo "  Tag main and publish it first, then re-dispatch this workflow." >&2
-              exit 1
-            fi
-            echo "Could not read release ${DESKTOP_RELEASE_TAG}; refusing to publish." >&2
-            printf '%s\n' "$response" >&2
-            exit 1
-          fi
-          gh api "repos/${GH_REPO}/releases/tags/${DESKTOP_RELEASE_TAG}" > "$RUNNER_TEMP/target-release.json"
-          python3 <<'PY'
-          import json, os, pathlib, sys
-
-          runner = pathlib.Path(os.environ['RUNNER_TEMP'])
-          release = json.loads((runner / 'target-release.json').read_text())
-          tag = os.environ['DESKTOP_RELEASE_TAG']
-          # Checked here, not at promotion: GitHub refuses to mark a prerelease
-          # latest, and by then the bundles are already public.
-          if release.get('prerelease'):
-              sys.exit(f'Release {tag} is a prerelease; GitHub cannot mark it latest.')
-
-          prefix = 'Unsloth-Desktop-'
-          clashing = sorted(
-              asset['name']
-              for asset in release.get('assets', [])
-              if str(asset.get('name', '')).startswith(prefix)
-              or asset.get('name') == 'latest.json'
-          )
-
-          if clashing:
-              print(f'Refusing to republish {tag}: it already carries desktop assets.', file=sys.stderr)
-              for name in clashing:
-                  print(f'  gh release delete-asset {tag} {name} --yes', file=sys.stderr)
-              if 'latest.json' in clashing:
-                  # Deleting a manifest off whichever release is currently GitHub
-                  # latest 404s every update check until this workflow finishes.
-                  print(
-                      '  latest.json is the live updater manifest: only delete it once '
-                      f'{tag} is not the GitHub latest release.',
-                      file=sys.stderr,
-                  )
-              sys.exit(1)
-          PY
-
       - name: Verify PyPI package and Unsloth stamp
         shell: bash
         env:
@@ -1731,56 +1678,9 @@ jobs:
 
       # Validate before the scan so a used version is never disclosed to VirusTotal; create the
       # release after the scan so it is never public and empty.
-      - name: Validate versioned release state
-        id: versioned_release_state
+      - name: Write release notes for the build-only rehearsal
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          notes_file="$RUNNER_TEMP/desktop-release-notes.md"
-          printf '%s\n' "$DESKTOP_RELEASE_NOTES" > "$notes_file"
-
-          # Re-checked here: the prepare-version token cannot see drafts.
-          if ! gh api "repos/${GH_REPO}/releases/tags/${DESKTOP_RELEASE_TAG}" \
-            > "$RUNNER_TEMP/target-release-publish.json" 2>/dev/null; then
-            echo "Release ${DESKTOP_RELEASE_TAG} does not exist." >&2
-            echo "  Tag main and publish it first, then re-dispatch this workflow." >&2
-            exit 1
-          fi
-          python3 <<'PY'
-          import json, os, pathlib, sys
-
-          runner = pathlib.Path(os.environ['RUNNER_TEMP'])
-          release = json.loads((runner / 'target-release-publish.json').read_text())
-          tag = os.environ['DESKTOP_RELEASE_TAG']
-          # Checked here, not at promotion: GitHub refuses to mark a prerelease
-          # latest, and by then the bundles are already public.
-          if release.get('prerelease'):
-              sys.exit(f'Release {tag} is a prerelease; GitHub cannot mark it latest.')
-
-          prefix = 'Unsloth-Desktop-'
-          clashing = sorted(
-              asset['name']
-              for asset in release.get('assets', [])
-              if str(asset.get('name', '')).startswith(prefix)
-              or asset.get('name') == 'latest.json'
-          )
-
-          if clashing:
-              print(f'Refusing to republish {tag}: it already carries desktop assets.', file=sys.stderr)
-              for name in clashing:
-                  print(f'  gh release delete-asset {tag} {name} --yes', file=sys.stderr)
-              if 'latest.json' in clashing:
-                  # Deleting a manifest off whichever release is currently GitHub
-                  # latest 404s every update check until this workflow finishes.
-                  print(
-                      '  latest.json is the live updater manifest: only delete it once '
-                      f'{tag} is not the GitHub latest release.',
-                      file=sys.stderr,
-                  )
-              sys.exit(1)
-          PY
+        run: printf '%s\n' "$DESKTOP_RELEASE_NOTES" > "$RUNNER_TEMP/desktop-release-notes.md"
 
       - name: Generate versioned updater metadata
         shell: bash
@@ -1869,6 +1769,13 @@ jobs:
           output = pathlib.Path(os.environ['RUNNER_TEMP'], 'latest.json')
           output.write_text(json.dumps(metadata, indent=2) + '\n')
           PY
+
+      - name: Preserve generated updater manifest for verification
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rehearsal-updater-manifest
+          path: ${{ runner.temp }}/latest.json
+          if-no-files-found: error
 
       # Never rewrite the maintainer's release body.
       - name: Publish release assets
