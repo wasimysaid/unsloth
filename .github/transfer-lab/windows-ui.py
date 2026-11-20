@@ -31,8 +31,12 @@ def select(names,seconds,optional=False):
 verify('0.1.9100-beta',25)
 select(['Chat only (GGUF): smaller install, no training'],25,True)
 select(['Get Started'],110)
-button=select(['Settings','Unsloth account menu'],900)
-if button!='Settings': select(['Settings'],45)
+button=select(['Update now','Settings','Open sidebar','Expand sidebar','Unsloth account menu'],500)
+already_started=button=='Update now'
+if button in ('Open sidebar','Expand sidebar'):
+    button=select(['Settings','Unsloth account menu','Update now'],50)
+    already_started=button=='Update now'
+if button=='Unsloth account menu': select(['Settings'],45)
 url='https://github.com/wasimysaid/desktop-updater-transfer-lab/releases/latest/download/latest.json'
 for i in range(120):
     try:
@@ -41,6 +45,7 @@ for i in range(120):
     except OSError: pass
     time.sleep(15)
 else: raise RuntimeError('B not published')
-select(['Check for updates','Check again'],45,True)
-select(['Update now','Install update','Update Unsloth','Update','Update app'],100)
+if not already_started:
+    action=select(['Update now','Check for updates','Check again'],90)
+    if action!='Update now': select(['Update now','Install update','Update app'],90)
 verify('0.1.9101-beta',160)
