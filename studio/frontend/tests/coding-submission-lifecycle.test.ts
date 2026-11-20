@@ -648,6 +648,19 @@ for (const change of ["detach", "reconnect", "owner loss"] as const) {
   });
 }
 
+test("image submissions use the same durable identity on plain HTTP", async (t) => {
+  const extras = {
+    images: [{ mime_type: "image/png", data: btoa("image-a") }],
+  };
+  const expected = await pendingSubmission.imageManifest(extras.images);
+  t.mock.getter(globalThis.crypto, "subtle", () => undefined);
+  const h = await harness({ images: memoryImageStorage() });
+  assert.equal(await h.run.send("look at this", extras), true);
+  assert.deepEqual(h.calls[0]?.images, extras.images);
+  assert.deepEqual(await pendingSubmission.imageManifest(extras.images), expected);
+  h.run.detach();
+});
+
 test("without durable image storage an image send fails closed and keeps its input; text still sends", async () => {
   // Node has no IndexedDB and no store is injected: production defaults apply.
   assert.equal(typeof indexedDB, "undefined");

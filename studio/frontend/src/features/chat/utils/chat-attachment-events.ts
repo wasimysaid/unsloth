@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import { sha256Hex } from "../../../lib/sha256.ts";
+
 /** Notifies runtimes of Data tab deletions; otherwise a later sync writes the attachment back. */
 
 export type ChatAttachmentDeletedEvent = {
@@ -69,28 +71,7 @@ export function chatContentPartAttachmentSignature(
 export async function chatContentPartAttachmentIdFromSignature(
   signature: string,
 ): Promise<string> {
-  let hex: string | null = null;
-  const subtle = globalThis.crypto?.subtle;
-  if (subtle) {
-    try {
-      const digest = await subtle.digest(
-        "SHA-256",
-        new TextEncoder().encode(signature),
-      );
-      hex = Array.from(new Uint8Array(digest), (byte) =>
-        byte.toString(16).padStart(2, "0"),
-      ).join("");
-    } catch {
-      // Some embedded browsers expose crypto.subtle but reject it outside a secure context.
-    }
-  }
-  if (hex === null) {
-    const { default: forge } = await import("node-forge");
-    const digest = forge.md.sha256.create();
-    digest.update(signature, "utf8");
-    hex = digest.digest().toHex();
-  }
-  return `${CONTENT_PART_ID_PREFIX}${hex}`;
+  return `${CONTENT_PART_ID_PREFIX}${await sha256Hex(signature)}`;
 }
 
 /** Call before deleting: loads the hasher an open chat needs to drop this id, so a failed chunk load aborts the delete. */

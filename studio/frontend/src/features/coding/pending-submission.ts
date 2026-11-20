@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import { sha256Hex } from "../../lib/sha256.ts";
 import type { CodingImage, CodingInput } from "./input.ts";
 
 /** Digest of one exact image payload, so a retry can prove it resends the original. */
@@ -92,20 +93,12 @@ export const defaultPendingImageStore = (): PendingImageStore =>
 export async function imageManifest(
   images: readonly CodingImage[],
 ): Promise<ImageManifestEntry[]> {
-  return await Promise.all(
-    images.map(async (image) => {
-      const digest = await crypto.subtle.digest(
-        "SHA-256",
-        new TextEncoder().encode(image.data),
-      );
-      return {
-        mime_type: image.mime_type,
-        length: image.data.length,
-        sha256: Array.from(new Uint8Array(digest), (byte) =>
-          byte.toString(16).padStart(2, "0"),
-        ).join(""),
-      };
-    }),
+  return Promise.all(
+    images.map(async (image) => ({
+      mime_type: image.mime_type,
+      length: image.data.length,
+      sha256: await sha256Hex(image.data),
+    })),
   );
 }
 /** The exact text and mention identities of a pending submission, no bytes. */
