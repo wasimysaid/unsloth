@@ -70,14 +70,21 @@ while time.monotonic() < deadline:
         last = "welcome"
     button = user.GetDlgItem(hwnd,1)
     label = title(button).replace('&','').strip()
-    if label in ('Finish','Close') and (dest/'unsloth-studio.exe').is_file():
+    if user.IsWindowEnabled(button) and label in ('Finish','Close') and (dest/'unsloth-studio.exe').is_file():
         print("Finish:",controls,flush=True)
         for h,label in controls:
             if label.startswith(('Run ', 'Launch ')) and user.SendMessageW(h,0xf0,0,0) == 1:
                 user.SendMessageW(h,0xf1,0,0)
         screenshot(hwnd,"installed")
-        user.PostMessageW(button,0xf5,0,0)
-        if proc.wait(timeout=20): raise RuntimeError("Installer returned failure")
+        for _ in range(30):
+            if proc.poll() is not None:
+                break
+            if user.IsWindowVisible(hwnd) and user.IsWindowEnabled(hwnd):
+                user.PostMessageW(hwnd, 0x0111, 1, button)
+            time.sleep(1)
+        if proc.poll() is None:
+            print("Open windows:", [(h,title(h)) for h in windows() if user.IsWindowVisible(h)], flush=True)
+        if proc.wait(timeout=5): raise RuntimeError("Installer returned failure")
         break
     if label.startswith(('Next','Install','I Agree')) and user.IsWindowEnabled(button):
         print("Click",label,flush=True)
