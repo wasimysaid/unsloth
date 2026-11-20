@@ -1,0 +1,16 @@
+name: Prepare fork tag for Windows installer release test
+on:
+  push:
+    branches: [staging/prepare-windows-universal-release-tag]
+permissions:
+  contents: write
+jobs:
+  tag:
+    if: github.repository == 'wasimysaid/unsloth'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tag the PR commit with the workflow token to avoid triggering unrelated tag workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref=refs/tags/v0.1.9201-beta -f sha=85e936fdd6d68ec40999cecdc0a95ff28dcb38c8
