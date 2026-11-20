@@ -775,14 +775,14 @@ test("Load and Save refuse while a shared GGUF variant is unresolved", () => {
     if (handler === "handleRun") {
       const body = page.slice(page.indexOf("const handleRun = () => {"));
       assert.match(
-        body.slice(0, 80),
-        /^const \w+ = \(\) => \{ if \(sharedVariantUnresolved\) \{ return; \}/,
+        body.slice(0, body.indexOf("commitDraft()")),
+        /^const handleRun = \(\) => \{ if \([^)]*\bsharedVariantUnresolved\b[^)]*\) \{ return; \}/,
       );
     }
     const button = page.slice(0, page.indexOf(`onClick={${onClick}}`));
     assert.match(
       button.slice(button.lastIndexOf("disabled={")),
-      /^disabled=\{ sharedVariantUnresolved \|\|/,
+      /^disabled=\{ (?:runDisabled \|\| )?sharedVariantUnresolved \|\|/,
     );
   }
 });

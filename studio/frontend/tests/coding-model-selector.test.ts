@@ -57,7 +57,7 @@ function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency:
         },
       },
       "react-dom": { createPortal: () => null },
-      "@/features/model-picker": { SidebarModelConfig: "sidebar-config", RunSettingsPanel: "settings-panel", RunSettingsToggle: "settings-toggle", RunSettingsSection: "settings-section", residentModelConfig: () => null, useLoadAfterDownload: (...args: typeof download) => { download = args; } },
+      "@/features/model-picker": { SidebarModelConfig: "sidebar-config", RunSettingsBody: "settings-body", ModelInfo: "model-info", hubRepoIdFor: () => null, RunSettingsPanel: "settings-panel", RunSettingsToggle: "settings-toggle", RunSettingsSection: "settings-section", residentModelConfig: () => null, useLoadAfterDownload: (...args: typeof download) => { download = args; } },
       react: {
         useContext: (context: { initial: unknown }) => context.initial,
         useRef(initial: unknown) {

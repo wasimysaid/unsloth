@@ -2645,6 +2645,7 @@ interface ModelConfigPageProps {
   target: ModelPickTarget;
   onBack?: () => void;
   onRun: (config: PerModelConfig, isDiffusion?: boolean) => void;
+  runDisabled?: boolean;
   loadedConfig?: PerModelConfig | null;
   loadedContextLength?: number | null;
   initialConfig?: PerModelConfig | null;
@@ -2666,6 +2667,7 @@ function ModelConfigEditor({
   target,
   onBack,
   onRun,
+  runDisabled = false,
   loadedConfig = null,
   loadedContextLength = null,
   initialConfig = null,
@@ -4181,7 +4183,7 @@ function ModelConfigEditor({
   };
 
   const handleRun = () => {
-    if (sharedVariantUnresolved) {
+    if (runDisabled || sharedVariantUnresolved) {
       return;
     }
     if (budgetSettling) {
@@ -4632,6 +4634,7 @@ function ModelConfigEditor({
             size="sm"
             className="bg-control-accent text-control-accent-foreground hover:bg-control-accent/85"
             disabled={
+              runDisabled ||
               sharedVariantUnresolved ||
               ((config.engine ?? "auto") !== "auto" && !engineReady) ||
               stagedMetadataPending ||

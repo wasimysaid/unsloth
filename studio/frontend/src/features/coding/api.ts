@@ -398,6 +398,7 @@ export function createCodingRunApi(openingGeneration: number): RunApi {
 }
 
 export interface CodingLocalModel {
+  is_gguf: boolean;
   is_lora: boolean;
   id: string;
   group: string;

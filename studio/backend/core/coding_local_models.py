@@ -162,7 +162,7 @@ async def resolve_local_choice(identifier: str):
 async def model_inventory() -> list[dict]:
     return [{"id": local_choice(row)["id"], "group": row.load_id or row.id,
              "quant": getattr(row, "format_variant", None), "name": row.display_name,
-             "is_lora": row.model_format == "adapter"}
+             "is_lora": row.model_format == "adapter", "is_gguf": row.model_format == "gguf"}
             for row in await downloaded_rows()]
 
 

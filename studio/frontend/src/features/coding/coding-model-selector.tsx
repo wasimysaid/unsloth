@@ -4,7 +4,10 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  ModelInfo,
+  RunSettingsBody,
   SidebarModelConfig,
+  hubRepoIdFor,
   RunSettingsPanel,
   RunSettingsToggle,
   RunSettingsSection,
@@ -64,7 +67,8 @@ export function CodingModelSelector({
   configure: (change: CodingConfigurationChange) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState<"unopened" | "open" | "closed">("unopened");
+  const settingsOpen = settings === "open";
   const hosts = useContext(CodingLayoutHosts);
   const [discoverModels, setDiscoverModels] = useState<ModelOption[]>([]);
   const [pendingDownload, setPendingDownload] =
@@ -401,11 +405,12 @@ export function CodingModelSelector({
   }
   const notice =
     error ??
-    local.error ??
+    (settingsOpen ? null : local.error) ??
     result.error ??
     (missing
       ? "The selected model is unavailable. Choose another model."
       : null);
+  const modelInfoRepoId = localChoice ? hubRepoIdFor(localChoice.group) : null;
   const loadedConfig = useMemo(
     () => (local.status ? residentModelConfig(local.status) : null),
     [local.status],
@@ -505,65 +510,60 @@ export function CodingModelSelector({
       },
     },
   };
+  const settingsModel = localChoice ? (
+    <SidebarModelConfig
+      resident={resident}
+      modelId={localChoice.group}
+      ggufVariant={localChoice.quant}
+      isGguf={localChoice.is_gguf}
+      isLora={localChoice.is_lora}
+      isDiffusion={false}
+      nativeContextLength={local.status?.native_context_length ?? null}
+      loadedContextLength={local.status?.context_length ?? null}
+      loadedConfig={loadedConfig}
+      runDisabled={blocked || localLoading || local.unloading || local.residency.state === "checking"}
+      onRun={(config) =>
+        local.preload(localChoice.id, { config, forceReload: localLoaded })
+      }
+    />
+  ) : selected ? (
+    <div className="text-ui-13">
+      <div className="font-medium">{selected.model.name}</div>
+      <div className="text-muted-foreground">{selected.provider.name}</div>
+    </div>
+  ) : null;
   return (
     <div
       className="flex min-w-0 flex-wrap items-center gap-1"
       data-testid="coding-model-selector"
     >
-      {hosts.settingsTrigger &&
-        identity &&
-        localChoice &&
-        !settingsOpen &&
+      {hosts.settingsTrigger && !settingsOpen &&
         createPortal(
-          <RunSettingsToggle onOpen={() => setSettingsOpen(true)} />,
+          <RunSettingsToggle onOpen={() => setSettings("open")} />,
           hosts.settingsTrigger,
         )}
-      {hosts.settingsPanel &&
-        identity &&
-        localChoice &&
+      {hosts.settingsPanel && settings !== "unopened" &&
         createPortal(
-          <RunSettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen}>
-            <div className="px-[calc(18px*var(--ui-space-scale,1))] pt-3">
-              {loadedConfig && local.status ? (
-                <RunSettingsSection
-                  label="Model"
-                  defaultOpen={true}
-                  first={true}
-                >
-                  <SidebarModelConfig
-                    resident={resident}
-                    modelId={localChoice.group}
-                    ggufVariant={localChoice.quant}
-                    isGguf={local.status.is_gguf === true}
-                    isLora={localChoice.is_lora}
-                    isDiffusion={false}
-                    nativeContextLength={
-                      local.status.native_context_length ?? null
-                    }
-                    loadedContextLength={local.status.context_length ?? null}
-                    loadedConfig={loadedConfig}
-                    onReload={(config) => {
-                      if (!blocked)
-                        local.preload(localChoice.id, {
-                          config,
-                          forceReload: true,
-                        });
-                    }}
-                  />
-                </RunSettingsSection>
-              ) : (
-                <p className="py-3 text-sm text-muted-foreground">
-                  {local.residency.state === "loading"
-                    ? "Loading model…"
-                    : "Load the selected model to view its run settings."}
-                </p>
-              )}
-              {local.error && (
-                <p role="alert" className="py-3 text-sm text-destructive">
+          <RunSettingsPanel
+            open={settingsOpen}
+            onOpenChange={(open) => setSettings(open ? "open" : "closed")}
+          >
+            <RunSettingsBody model={settingsModel}>
+              {local.error ? (
+                <p role="alert" className="py-3 text-ui-13 text-destructive">
                   {local.error}
                 </p>
+              ) : !localChoice && !selected ? (
+                <p className="py-3 text-ui-13 text-muted-foreground">
+                  Choose a model to see its settings.
+                </p>
+              ) : null}
+              {modelInfoRepoId && (
+                <RunSettingsSection label="Information">
+                  <ModelInfo repoId={modelInfoRepoId} />
+                </RunSettingsSection>
               )}
-            </div>
+            </RunSettingsBody>
           </RunSettingsPanel>,
           hosts.settingsPanel,
         )}

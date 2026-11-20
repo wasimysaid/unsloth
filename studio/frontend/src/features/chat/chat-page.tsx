@@ -5245,7 +5245,7 @@ export function ChatPage({
               nativeContextLength={nativeContextLength}
               loadedContextLength={loadedContextLength}
               loadedConfig={activeModelConfig}
-              onReload={handleReloadActiveModel}
+              onRun={handleReloadActiveModel}
             />
           ) : null
         }
