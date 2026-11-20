@@ -5,6 +5,7 @@
 ; Verified bundler/template crate: tauri-bundler 2.8.1
 ; Copied: 2026-04-30
 ; Local patches:
+; - Reject the other Windows architecture before initializing the installer.
 ; - UNSLOTH_PATCH_START: non-WiX newer/unknown upgrades install in place.
 ; - UNSLOTH_PATCH_START: guard non-WiX upgrade leave routing.
 ; - Signed plugin directory, via both the pinned bundler's NSISPLUGINS env var
@@ -521,6 +522,23 @@ Function .onInit
   ${IfNot} ${Errors}
     StrCpy $PassiveMode 1
   ${EndIf}
+
+  !if "${ARCH}" == "x64"
+    !define MISMATCHED_HOST `${IsNativeARM64}`
+    !define REQUIRED_DOWNLOAD "ARM64 installer (Unsloth-Desktop-Windows-ARM64.exe)"
+  !else if "${ARCH}" == "arm64"
+    !define MISMATCHED_HOST `${IsNativeAMD64}`
+    !define REQUIRED_DOWNLOAD "x64 (AMD64) installer (Unsloth-Desktop-Windows.exe)"
+  !endif
+  !ifdef MISMATCHED_HOST
+    ${If} ${MISMATCHED_HOST}
+      ${If} $PassiveMode != 1
+        MessageBox MB_OK|MB_ICONSTOP "This installer is for a different processor. Download the ${REQUIRED_DOWNLOAD} from https://unsloth.ai/download/windows." /SD IDOK
+      ${EndIf}
+      SetErrorLevel 1633 ; ERROR_INSTALL_PLATFORM_UNSUPPORTED
+      Quit
+    ${EndIf}
+  !endif
 
   ${GetOptions} $CMDLINE "/NS" $NoShortcutMode
   ${IfNot} ${Errors}
