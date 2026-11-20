@@ -1,0 +1,54 @@
+name: Stage combined Windows installer
+on:
+  push:
+    branches: [staging/windows-universal-20261120]
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v0.1.920-beta -R unslothai/unsloth -p '*Windows*.exe' -D inputs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          foreach ($inputFile in Get-ChildItem inputs/*.exe) {
+            if ((Get-AuthenticodeSignature $inputFile).Status -ne 'Valid') { throw "Invalid signature: $inputFile" }
+          }
+          .github/scripts/prefetch-tauri-windows-tools.ps1 -TauriCliVersion 'tauri-cli 2.10.1'
+          .github/scripts/build-windows-universal.ps1 -X64 inputs/Unsloth-Desktop-Windows.exe -Arm64 inputs/Unsloth-Desktop-Windows-ARM64.exe -Output "$PWD/combined.exe" -Version 0.1.920-beta
+          Get-Item combined.exe | Select-Object Name,Length
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: combined
+          path: combined.exe
+          compression-level: 0
+  install:
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: combined
+      - shell: pwsh
+        run: |
+          $dest = Join-Path $env:RUNNER_TEMP 'Unsloth installation test'
+          $p = Start-Process -FilePath ./combined.exe -ArgumentList "/S /NS /D=$dest" -PassThru
+          if (-not $p.WaitForExit(120000)) { throw 'Silent installer timed out' }
+          if ($p.ExitCode -ne 0) { throw "Install exited $($p.ExitCode)" }
+          $exe = Get-Item "$dest/unsloth-studio.exe"
+          $sig = Get-AuthenticodeSignature $exe
+          if ($sig.Status -ne 'Valid') { throw "Invalid installed signature: $($sig.Status)" }
+          $bytes = [IO.File]::ReadAllBytes($exe.FullName)
+          $machine = [BitConverter]::ToUInt16($bytes,[BitConverter]::ToInt32($bytes,60)+4)
+          $arch = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+          Write-Host ("Installed {0} machine 0x{1:X4} on {2}" -f $exe.Name,$machine,$arch)
+          if ($machine -ne @{Arm64=0xaa64; X64=0x8664}[$arch.ToString()]) { throw 'Wrong machine type' }
