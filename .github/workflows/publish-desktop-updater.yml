@@ -211,8 +211,8 @@ jobs:
           bundle_tag = version if version.startswith('v') else f'v{version}'
           if bundle_tag != source_tag:
               sys.exit(f'{source_tag} latest.json names {bundle_tag}; refusing to restore a pointer release')
-          # Shipped Desktop builds only trust updater assets on unslothai/unsloth, so the renamed repo keeps pinning them there.
-          updater_repository = {'unsloth/unsloth': 'unslothai/unsloth'}.get(
+          # Shipped Desktop builds only trust updater assets on wasimysaid/desktop-updater-transfer-lab, so the renamed repo keeps pinning them there.
+          updater_repository = {'unsloth-test-rename/desktop-updater-transfer-lab': 'wasimysaid/desktop-updater-transfer-lab'}.get(
               os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_REPOSITORY']
           )
           expected_prefix = f'https://github.com/{updater_repository}/releases/download/{source_tag}/'
@@ -371,7 +371,7 @@ jobs:
           if not isinstance(platforms, dict) or not platforms:
               sys.exit('latest.json missing platforms')
           required = {'darwin-aarch64': False, 'linux-x86_64': False, 'windows-x86_64': False}
-          updater_repository = {'unsloth/unsloth': 'unslothai/unsloth'}.get(
+          updater_repository = {'unsloth-test-rename/desktop-updater-transfer-lab': 'wasimysaid/desktop-updater-transfer-lab'}.get(
               os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_REPOSITORY']
           )
           expected_prefix = f'https://github.com/{updater_repository}/releases/download/{release_tag}/'

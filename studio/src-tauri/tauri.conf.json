@@ -41,9 +41,9 @@
       }
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFBQzA4RjczODM0RjE1QjcKUldTM0ZVK0RjNC9BR2t4R0RVaFR5cTkyUlRVQ1FwaGV0Nk04eWNwWXBhZnlzalJydllmZm1QTS8K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENDQjFEQjRGMjBENUUzNQpSV1ExWGczeXRCM0xER0M3OEVJemJzY0RXTll0TDRmVXo2Rjc1RWthOWJadExTSjB3Qis4YlM1cAo=",
       "endpoints": [
-        "https://github.com/unslothai/unsloth/releases/latest/download/latest.json"
+        "https://github.com/wasimysaid/desktop-updater-transfer-lab/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

@@ -46,6 +46,7 @@ concurrency:
 
 jobs:
   prepare-version:
+    if: ${{ github.repository == 'wasimysaid/unsloth' && inputs.draft }}
     name: Prepare release versions
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -73,7 +74,7 @@ jobs:
           import urllib.request
 
           RELEASES_API_URL = (
-              'https://api.github.com/repos/unslothai/unsloth/releases?per_page=30'
+              'https://api.github.com/repos/wasimysaid/desktop-updater-transfer-lab/releases?per_page=30'
           )
 
           studio_version = os.environ['INPUT_STUDIO_VERSION'].strip()
@@ -252,7 +253,7 @@ jobs:
       - name: Guard against republishing an existing version
         shell: bash
         env:
-          GH_REPO: ${{ github.repository }}
+          GH_REPO: unsloth-test-rename/desktop-updater-transfer-lab
           GH_TOKEN: ${{ github.token }}
           DESKTOP_RELEASE_TAG: ${{ steps.prepare.outputs.desktop_release_tag }}
         run: |
@@ -378,7 +379,7 @@ jobs:
         if: ${{ !inputs.draft }}
         shell: bash
         env:
-          GH_REPO: ${{ github.repository }}
+          GH_REPO: unsloth-test-rename/desktop-updater-transfer-lab
           GH_TOKEN: ${{ github.token }}
           APP_VERSION: ${{ steps.prepare.outputs.app_version }}
         run: |
@@ -561,7 +562,7 @@ jobs:
           node <<'JS'
           const { readFileSync } = require('node:fs');
 
-          const expected = 'https://github.com/unslothai/unsloth/releases/latest/download/latest.json';
+          const expected = 'https://github.com/wasimysaid/desktop-updater-transfer-lab/releases/latest/download/latest.json';
           const config = JSON.parse(readFileSync('studio/src-tauri/tauri.conf.json', 'utf8'));
           const endpoints = config.plugins?.updater?.endpoints;
           if (!Array.isArray(endpoints) || endpoints.length !== 1) {
@@ -852,7 +853,7 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f  # v1.0.0
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.DESKTOP_RENAME_REHEARSAL_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
           XDG_CACHE_HOME: ${{ runner.temp }}/tauri-tools-cache
         with:
@@ -865,7 +866,7 @@ jobs:
         if: matrix.platform == 'ubuntu-24.04-arm'
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.DESKTOP_RENAME_REHEARSAL_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         with:
           projectPath: studio
@@ -895,7 +896,7 @@ jobs:
         if: matrix.platform == 'macos-latest'
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f  # v1.0.0
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.DESKTOP_RENAME_REHEARSAL_KEY }}
           # Must be the empty string, not unset: tauri prompts for a password when absent and hangs.
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -1038,7 +1039,7 @@ jobs:
         if: matrix.platform == 'windows-latest'
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f  # v1.0.0
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.DESKTOP_RENAME_REHEARSAL_KEY }}
           # Must be the empty string, not unset: tauri prompts for a password when absent and hangs.
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -1518,7 +1519,7 @@ jobs:
       contents: write  # create the versioned Release and replace updater-channel metadata
       actions: read    # the waiter reads this run's job list
     env:
-      GH_REPO: ${{ github.repository }}
+      GH_REPO: unsloth-test-rename/desktop-updater-transfer-lab
       APP_VERSION: ${{ needs.prepare-version.outputs.app_version }}
       PYPI_VERSION: ${{ needs.prepare-version.outputs.pypi_version }}
       STUDIO_VERSION: ${{ needs.prepare-version.outputs.studio_version }}
@@ -1717,9 +1718,9 @@ jobs:
           asset_dir = pathlib.Path(os.environ['RUNNER_TEMP'], 'desktop-release-assets')
           files = [path for path in asset_dir.iterdir() if path.is_file()]
 
-          # Shipped Desktop builds only trust updater assets on unslothai/unsloth, so the renamed repo keeps pinning them there.
-          updater_repository = {'unsloth/unsloth': 'unslothai/unsloth'}.get(
-              os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_REPOSITORY']
+          # Shipped Desktop builds only trust updater assets on wasimysaid/desktop-updater-transfer-lab, so the renamed repo keeps pinning them there.
+          updater_repository = {'unsloth-test-rename/desktop-updater-transfer-lab': 'wasimysaid/desktop-updater-transfer-lab'}.get(
+              os.environ['GH_REPO'], os.environ['GH_REPO']
           )
 
           def exactly_one(suffix: str) -> pathlib.Path:
@@ -1879,8 +1880,8 @@ jobs:
               'windows-x86_64': False,
               'windows-aarch64': False,
           }
-          updater_repository = {'unsloth/unsloth': 'unslothai/unsloth'}.get(
-              os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_REPOSITORY']
+          updater_repository = {'unsloth-test-rename/desktop-updater-transfer-lab': 'wasimysaid/desktop-updater-transfer-lab'}.get(
+              os.environ['GH_REPO'], os.environ['GH_REPO']
           )
           expected_prefix = f'https://github.com/{updater_repository}/releases/download/{release_tag}/'
           forbidden_fragments = ('/releases/latest/', '/releases/download/desktop-latest/')
