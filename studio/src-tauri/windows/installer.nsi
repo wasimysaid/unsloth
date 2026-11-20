@@ -525,17 +525,19 @@ Function .onInit
 
   !if "${ARCH}" == "x64"
     !define MISMATCHED_HOST `${IsNativeARM64}`
-    !define REQUIRED_ARCH "ARM64"
-    !define REQUIRED_DOWNLOAD "Unsloth-Desktop-Windows-ARM64.exe"
+    !define DOWNLOADED_ARCH "x64"
+    !define HOST_ARCH "ARM64"
+    !define DOWNLOAD_BUTTON "Windows (ARM64)"
   !else if "${ARCH}" == "arm64"
     !define MISMATCHED_HOST `${IsNativeAMD64}`
-    !define REQUIRED_ARCH "x64 (AMD64)"
-    !define REQUIRED_DOWNLOAD "Unsloth-Desktop-Windows.exe"
+    !define DOWNLOADED_ARCH "ARM64"
+    !define HOST_ARCH "x64"
+    !define DOWNLOAD_BUTTON "Download for Windows"
   !endif
   !ifdef MISMATCHED_HOST
     ${If} ${MISMATCHED_HOST}
       ${If} $PassiveMode != 1
-        MessageBox MB_OK "Use the ${REQUIRED_ARCH} installer for this PC.$\r$\n$\r$\nDownload ${REQUIRED_DOWNLOAD} from$\r$\nhttps://unsloth.ai/download/windows" /SD IDOK
+        MessageBox MB_OK 'You downloaded the ${DOWNLOADED_ARCH} version of Unsloth, but your machine is ${HOST_ARCH}.$\r$\n$\r$\nChoose "${DOWNLOAD_BUTTON}" instead on our download page:$\r$\nhttps://unsloth.ai/download/windows' /SD IDOK
       ${EndIf}
       SetErrorLevel 1633 ; ERROR_INSTALL_PLATFORM_UNSUPPORTED
       Quit

@@ -29,7 +29,7 @@ def dialog(process):
             return True
         user.EnumChildWindows(hwnd, child, 0)
         for control, label in labels:
-            if "installer for this PC" in label:
+            if "version of Unsloth" in label:
                 print("dialog controls", labels, flush=True)
                 time.sleep(0.3)
                 from PIL import ImageGrab
@@ -66,11 +66,12 @@ SectionEnd
         proc = subprocess.Popen([exe, *args])
         try:
             if target != host and not args:
-                expected = "Unsloth-Desktop-Windows-ARM64.exe" if host == "arm64" else "Unsloth-Desktop-Windows.exe"
+                expected = 'Choose "Windows (ARM64)"' if host == "arm64" else 'Choose "Download for Windows"' 
                 for _ in range(100):
                     msg = dialog(proc)
                     if msg:
                         print(msg, flush=True)
+                        assert f"You downloaded the {target.replace('arm64', 'ARM64')} version of Unsloth, but your machine is {host.replace('arm64', 'ARM64')}." in msg
                         assert expected in msg and "https://unsloth.ai/download/windows" in msg
                         break
                     time.sleep(0.1)
