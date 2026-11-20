@@ -29,7 +29,7 @@ def dialog(process):
             return True
         user.EnumChildWindows(hwnd, child, 0)
         for control, label in labels:
-            if "different processor" in label:
+            if "installer for this PC" in label:
                 print("dialog controls", labels, flush=True)
                 time.sleep(0.3)
                 from PIL import ImageGrab

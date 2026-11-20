@@ -525,15 +525,17 @@ Function .onInit
 
   !if "${ARCH}" == "x64"
     !define MISMATCHED_HOST `${IsNativeARM64}`
-    !define REQUIRED_DOWNLOAD "ARM64 installer (Unsloth-Desktop-Windows-ARM64.exe)"
+    !define REQUIRED_ARCH "ARM64"
+    !define REQUIRED_DOWNLOAD "Unsloth-Desktop-Windows-ARM64.exe"
   !else if "${ARCH}" == "arm64"
     !define MISMATCHED_HOST `${IsNativeAMD64}`
-    !define REQUIRED_DOWNLOAD "x64 (AMD64) installer (Unsloth-Desktop-Windows.exe)"
+    !define REQUIRED_ARCH "x64 (AMD64)"
+    !define REQUIRED_DOWNLOAD "Unsloth-Desktop-Windows.exe"
   !endif
   !ifdef MISMATCHED_HOST
     ${If} ${MISMATCHED_HOST}
       ${If} $PassiveMode != 1
-        MessageBox MB_OK|MB_ICONSTOP "This installer is for a different processor. Download the ${REQUIRED_DOWNLOAD} from https://unsloth.ai/download/windows." /SD IDOK
+        MessageBox MB_OK "Use the ${REQUIRED_ARCH} installer for this PC.$\r$\n$\r$\nDownload ${REQUIRED_DOWNLOAD} from$\r$\nhttps://unsloth.ai/download/windows" /SD IDOK
       ${EndIf}
       SetErrorLevel 1633 ; ERROR_INSTALL_PLATFORM_UNSUPPORTED
       Quit
