@@ -25,12 +25,16 @@ def dialog(process):
         def child(control, _):
             buf = ctypes.create_unicode_buffer(2048)
             user.SendMessageW(control, 13, len(buf), ctypes.byref(buf))
-            labels.append(buf.value)
+            labels.append((control, buf.value))
             return True
         user.EnumChildWindows(hwnd, child, 0)
-        for label in labels:
+        for control, label in labels:
             if "different processor" in label:
-                user.PostMessageW(hwnd, 0x111, 1, 0)
+                parent = user.GetParent(control)
+                ok = user.GetDlgItem(parent, 1)
+                print("dialog controls", labels, "OK", ok, flush=True)
+                assert ok
+                user.PostMessageW(ok, 0x00F5, 0, 0)  # BM_CLICK
                 return label
 
 source = Path("studio/src-tauri/windows/installer.nsi").read_text()
