@@ -87,6 +87,21 @@ async def test_disconnected_acquire_and_early_release_reconcile_exact_operation(
 
 
 @pytest.mark.asyncio
+async def test_receipt_capacity_fences_unadmitted_acquires_without_blocking_cleanup(monkeypatch):
+    monkeypatch.setattr("core.coding_local_models.LOCAL_RECEIPT_LIMIT", 1)
+    serving = CodingLocalServing("incarnation", "private-key", "unsloth")
+    await serving.release("original")
+    with pytest.raises(CodingRuntimeError, match = "receipt limit"):
+        await serving.acquire(body("fresh"), None)
+    assert serving.inspect("fresh") == {"state": "released"}
+    assert await serving.release("fresh") == {"state": "released"}
+    assert tuple(serving.operations) == ("original",)
+    with pytest.raises(CodingRuntimeError, match = "receipt limit"):
+        await serving.acquire(body("fresh"), None)
+    await serving.close(clean = True)
+
+
+@pytest.mark.asyncio
 async def test_failed_cleanup_never_marks_released_or_drops_another_request(monkeypatch):
     from core.inference import llama_keepwarm
     serving = CodingLocalServing("incarnation", "private-key", "unsloth")

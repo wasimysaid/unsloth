@@ -253,6 +253,9 @@ class LocalOperation:
     error: CodingRuntimeError | None = None
 
 
+LOCAL_RECEIPT_LIMIT = 4096
+
+
 class CodingLocalServing:
     """Incarnation-owned admission receipts; the lifecycle owner holds the models.
 
@@ -298,7 +301,7 @@ class CodingLocalServing:
             if operation.identity != identity:
                 raise CodingRuntimeError("conflict", "The preparation identity does not match its original request.")
         else:
-            if len(self.operations) >= 4096:
+            if len(self.operations) >= LOCAL_RECEIPT_LIMIT:
                 raise CodingRuntimeError("limit", "The serving incarnation has reached its receipt limit. Drain work before restarting the runtime.")
             operation = LocalOperation(identity)
             self.operations[identifier] = operation
@@ -312,14 +315,17 @@ class CodingLocalServing:
 
     def inspect(self, identifier: str) -> dict:
         operation = self.operations.get(identifier)
-        return {"state": operation.state, **(operation.result or {})} if operation else {"state": "missing"}
+        if operation is not None:
+            return {"state": operation.state, **(operation.result or {})}
+        # Receipts are never evicted. At capacity, an unknown ID cannot be admitted
+        # by a delayed acquire, so it is already fenced for this incarnation.
+        return {"state": "released" if len(self.operations) >= LOCAL_RECEIPT_LIMIT else "missing"}
 
     async def release(self, identifier: str) -> dict:
         operation = self.operations.get(identifier)
         if operation is None:
-            if len(self.operations) >= 4096:
-                raise CodingRuntimeError("limit", "The serving receipt limit prevents release reconciliation. Keep cleanup pending.")
-            self.operations[identifier] = LocalOperation((), state = "released")
+            if len(self.operations) < LOCAL_RECEIPT_LIMIT:
+                self.operations[identifier] = LocalOperation((), state = "released")
             return {"state": "released"}
         if operation.state == "released":
             return {"state": "released"}
