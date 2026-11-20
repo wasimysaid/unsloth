@@ -296,12 +296,15 @@ def main() -> None:
                 context.add_init_script(READING_VIEW_FAULT)
             page = context.new_page()
             page.on("pageerror", lambda error: report.setdefault("page_errors", []).append(str(error)))
-            ordinary_status_requests = []
-            ordinary_status_paths = {"/api/inference/status", "/api/inference/images/status",
-                                     "/api/inference/video/status", "/api/inference/audio/stt/status"}
+            model_mutations = []
             from urllib.parse import urlparse
-            page.on("request", lambda request: ordinary_status_requests.append(urlparse(request.url).path)
-                    if urlparse(request.url).path in ordinary_status_paths else None)
+
+            def observe_model_mutation(request):
+                path = urlparse(request.url).path
+                if request.method == "POST" and path.startswith("/api/inference/") and path.endswith(("/load", "/unload")):
+                    model_mutations.append(path)
+
+            page.on("request", observe_model_mutation)
             page.goto(base + "/coding")
             expect(page).to_have_url(base + "/login")
             scenario("A6-auth-route", "Unauthenticated coding navigation redirects to Studio login")
@@ -310,35 +313,38 @@ def main() -> None:
             assert login.ok, f"Login failed ({login.status})"
             tokens = login.json()
             page.evaluate("tokens => { localStorage.setItem('unsloth_auth_token', tokens.access_token); localStorage.setItem('unsloth_auth_refresh_token', tokens.refresh_token); localStorage.setItem('unsloth_auth_session_mark', 'coding-acceptance'); }", tokens)
-            ordinary_status_requests.clear()
+            model_mutations.clear()
             page.goto(base + "/coding")
             headers = {"Authorization": "Bearer " + tokens["access_token"]}
             expect(page.get_by_role("heading", name = "What should we build?")).to_be_visible()
             expect(page.get_by_test_id("coding-opened-conversation")).to_have_text("New conversation")
             expect(page.get_by_role("button", name = "Send", exact = True)).to_be_disabled()
             chooser = page.get_by_test_id("coding-project-chooser")
-            expect(chooser).to_have_text("Choose folder")
+            expect(chooser).to_have_text("No project")
             composer_box = page.locator('[aria-label="Coding composer"]').bounding_box()
             chooser_box = chooser.bounding_box()
             assert composer_box and chooser_box and chooser_box["y"] + chooser_box["height"] <= composer_box["y"]
             snapshot(page, "desktop-unopened")
-            scenario("A10-layout", "1440x1000: folder chip above the landing composer, Send disabled before a folder is chosen")
+            prompt(page).fill("A folder is optional.")
+            expect(page.get_by_role("button", name = "Send", exact = True)).to_be_enabled()
+            prompt(page).fill("")
+            scenario("A10-layout", "1440x1000: project chip above the landing composer; a draft can be sent without choosing a folder")
 
             def browse(path):
-                expect(page.get_by_role("button", name = "Browse", exact = True)).to_be_enabled(timeout = 60000)
-                page.get_by_label("Host folder path", exact = True).fill(str(path))
-                expect(page.get_by_label("Host folder path", exact = True)).to_have_value(str(path))
-                page.get_by_role("button", name = "Browse", exact = True).click()
+                field = page.get_by_role("combobox", name = "Folder path", exact = True)
+                field.fill(str(path))
+                expect(field).to_have_value(str(path))
+                expect(page.get_by_role("listbox", name = "Host folders")).to_have_attribute("aria-busy", "false", timeout = 60000)
             def choose_folder():
                 chooser.click()
-                page.get_by_role("menuitem", name = "Choose folder…", exact = True).click()
+                page.get_by_role("menuitem", name = "Open folder…", exact = True).click()
                 dialog = page.get_by_role("dialog")
                 expect(dialog).to_be_visible(timeout = 60000)
                 # The dialog starts an initial OS browse of the selected folder (which a
                 # previous step may have removed). Await its rendered outcome before
                 # filling so that initialization is not typing into the field.
-                expect(page.get_by_test_id("coding-browsed-path").or_(dialog.get_by_role("alert"))).to_be_visible(timeout = 60000)
-                expect(page.get_by_role("button", name = "Browse", exact = True)).to_be_enabled(timeout = 60000)
+                expect(dialog.get_by_role("combobox", name = "Folder path")).to_be_focused()
+                expect(dialog.get_by_role("listbox", name = "Host folders")).to_have_attribute("aria-busy", "false", timeout = 60000)
             def select_folder(path):
                 # Choosing only selects where the next conversation runs.
                 choose_folder()
@@ -354,7 +360,7 @@ def main() -> None:
                 return {item["id"] for item in listed.json()["conversations"]}
 
             choose_folder()
-            for name, path, message in (("missing", projects / "missing", "does not exist"),
+            for name, path, message in (("missing", projects / "missing" / "child", "does not exist"),
                                          ("file", file_path, "not a file"),
                                          ("denied", denied, "denies access")):
                 browse(path)
@@ -363,7 +369,7 @@ def main() -> None:
                 snapshot(page, "desktop-" + name)
                 scenario("A6-folder-" + name, "Real host OS failure shown with actionable error; folder selection disabled")
             page.get_by_role("button", name = "Cancel", exact = True).click()
-            expect(chooser).to_have_text("Choose folder")
+            expect(chooser).to_have_text("No project")
             # A conversation is created by the landing's Send together with its
             # first prompt. Without a prompt, create natively in the selected folder.
             selected = select_folder(alias)
@@ -502,19 +508,27 @@ def main() -> None:
                         report["browser_failure_details"] = page.locator("pre").all_inner_texts()
                     snapshot(page, "failed-workload")
                     raise
-            # Fault injection affects only one browser stream connection; reopening
-            # and the replacement subscription still use the real native process.
+            # The stream may recover before a disconnect banner can paint.
+            # Assert the aborted request and successful replacement directly.
             event_url = base + f"/api/coding/conversations/{first_id}/events"
-            page.route(event_url, lambda route: route.abort("connectionreset"), times = 1)
+            aborted_events = []
+
+            def abort_events(route):
+                aborted_events.append(route.request.url)
+                route.abort("connectionreset")
+
+            page.route(event_url, abort_events, times = 1)
             show_sidebar(page)
-            with page.expect_response(lambda response: response.url == base + f"/api/coding/conversations/{first_id}/open"
-                                      and response.request.method == "POST", timeout = 60000) as faulted:
-                original.click()
-            assert faulted.value.ok
-            expect(page.get_by_test_id("coding-disconnect-banner")).to_be_visible(timeout = 60000)
+            with page.expect_response(lambda response: response.url == event_url and response.ok, timeout = 60000):
+                with page.expect_response(lambda response: response.url == base + f"/api/coding/conversations/{first_id}/open"
+                                          and response.request.method == "POST", timeout = 60000) as faulted:
+                    original.click()
+                assert faulted.value.ok
+            assert aborted_events == [event_url]
+            expect_connected(page)
             open_saved(page, base, first_id, ready = False)
             expect_connected(page)
-            scenario("A6-same-id-view-reopen", "One browser SSE connection was fault-aborted; deliberate same-ID reopen obtained a fresh real native stream without changing identity")
+            scenario("A6-same-id-view-reopen", "After one browser SSE request was aborted, the view reconnected; deliberate same-ID reopen also acquired a fresh stream without changing identity")
             # A separate actual native process owns a third conversation. The Studio
             # process must refuse it, leave its current owner alone, then open only
             # after that other process confirms EOF cleanup.
@@ -579,9 +593,9 @@ def main() -> None:
             expect(chooser).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
             chooser.click()
-            page.get_by_role("menuitem", name = "Choose folder…", exact = True).click()
+            page.get_by_role("menuitem", name = "Open folder…", exact = True).click()
             expect(page.get_by_role("dialog")).to_be_visible()
-            expect(page.get_by_label("Host folder path", exact = True)).to_be_focused()
+            expect(page.get_by_role("combobox", name = "Folder path", exact = True)).to_be_focused()
             snapshot(page, "narrow-picker")
             page.keyboard.press("Escape")
             expect(page.get_by_role("dialog")).not_to_be_visible()
@@ -633,15 +647,16 @@ def main() -> None:
                 provider.assert_no_request()
             report["unauthenticated_requests"] = denied_requests
             scenario("A6-known-id-auth", f"All {len(denied_requests)} checked coding surfaces, including exact native identities and workload-specific controls, refused unauthenticated requests")
-            # Measure over more than two ordinary indicator polling intervals.
-            # No ordinary-model status response is mocked and no model is loaded.
+            # The global loaded-model card polls text and media when enabled.
+            # Give it more than two poll intervals and verify it didn't start
+            # or cancel any ordinary workload from Coding.
             page.wait_for_timeout(11000)
-            assert not ordinary_status_requests, ordinary_status_requests
+            assert not model_mutations, model_mutations
             expect(page.get_by_role("button", name = "Close loaded models", exact = True)).to_have_count(0)
             report["ordinary_model_observer"] = {"preference_enabled": True,
                                                   "minimum_observation_ms": 11000,
-                                                  "status_requests": ordinary_status_requests}
-            scenario("A9-ordinary-observer-isolation", "Direct coding route with loaded-model preference enabled issued no ordinary inference/media status polls; no ordinary workload was loaded or cancelled")
+                                                  "mutation_requests": model_mutations}
+            scenario("A9-ordinary-observer-isolation", "No ordinary model was loaded or unloaded while observing residency from Coding")
             if args.workload == "maintenance":
                 verify_shutdown(page, context, base, provider, report, scenario)
             browser.close()

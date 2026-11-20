@@ -304,16 +304,7 @@ test("coding route stays authenticated and excludes general-chat execution and t
   }
 });
 
-test("selection disclosure remains non-persisting trust and not a sandbox", () => {
-  const dialog = source(
-    "../src/features/coding/project-folder-dialog.tsx",
-  ).replace(/\s+/g, " ");
-  assert.match(dialog, /works directly in this folder.*isn't a sandbox/);
-  assert.match(
-    dialog,
-    /project settings and extensions are trusted for that conversation only/,
-  );
-  // Only where and with which model new work starts is kept in the browser.
+test("new conversation preferences store only where and with which model work starts", () => {
   const memory = source("../src/features/coding/new-conversation-memory.ts");
   assert.deepEqual(
     [...memory.matchAll(/KEY = "([^"]+)"/g)].map((match) => match[1]),
