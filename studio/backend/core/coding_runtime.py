@@ -211,9 +211,9 @@ class CodingRuntime:
         """Point Mimir's Studio-local provider at this server's listening socket.
 
         The origin comes from the socket (or UNSLOTH_MIMIR_STUDIO_URL), never the
-        Host header. Without a server tuple, as in ASGI unit tests, nothing is set up.
+        Host header. The pipe bootstrap is POSIX-only; other hosts still run Coding.
         """
-        if os.environ.get("UNSLOTH_MIMIR_LOCAL_SERVING") == "0":
+        if os.name != "posix" or os.environ.get("UNSLOTH_MIMIR_LOCAL_SERVING") == "0":
             return
         from urllib.parse import urlsplit
 
@@ -334,8 +334,6 @@ class CodingRuntime:
                 read_fd = write_fd = None
                 try:
                     if self.local_serving is not None:
-                        if os.name != "posix":
-                            raise CodingRuntimeError("unavailable", "Studio local models in Coding need a Linux or macOS host.")
                         bootstrap = json.dumps({
                             "origin": self._local_origin,
                             "key": self.local_serving.key,

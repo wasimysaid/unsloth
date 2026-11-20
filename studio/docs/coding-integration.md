@@ -16,6 +16,9 @@ viewer. Native history and files remain available when the conversation reopens.
 This is a workspace default, not a sandbox or a different tool policy; execution,
 tools, model loading, and cancellation retain their existing owners.
 
+Studio's local model bridge uses a Linux or macOS pipe bootstrap. On Windows,
+Coding can still open native history and use Mimir's configured providers.
+
 ## Process recovery and whole-runtime maintenance (#249)
 
 Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`
