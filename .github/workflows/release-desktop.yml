@@ -10,7 +10,6 @@ jobs:
     timeout-minutes: 100
     env:
       CHANNEL: https://github.com/wasimysaid/desktop-updater-transfer-lab/releases
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: --remote-debugging-port=19424
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -24,61 +23,8 @@ jobs:
           curl.exe -fsSL "$env:CHANNEL/download/v0.1.9100-beta/Unsloth-Desktop-Windows.exe" -o $installer
           if ($LASTEXITCODE -or (Get-AuthenticodeSignature $installer).Status -ne 'Valid') { throw 'Failed to fetch a signed Build A' }
           $dest=Join-Path $env:LOCALAPPDATA 'Unsloth'
-          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=19424 --disable-gpu"
           $p=Start-Process $installer -ArgumentList "/S /D=$dest" -PassThru -Wait
-          if ($p.ExitCode) { throw "Installer exit $($p.ExitCode)" }
-          $app=(Get-ChildItem $dest -File | Where-Object { $_.Extension -eq '.exe' -and $_.Name -notmatch 'uninstall' } | Select-Object -First 1).FullName
-          "CLIENT_PATH=$app" >> $env:GITHUB_ENV
-          Write-Output "Launching $app"
-          Get-ChildItem $dest -File | Select-Object Name
-          node --version
-          Get-Process unsloth-studio -ErrorAction SilentlyContinue | Stop-Process -Force
-          $policy='HKCU:\Software\Policies\Microsoft\Edge\WebView2\additionalBrowserArguments'
-          New-Item $policy -Force | Out-Null
-          foreach ($id in @('unsloth-studio.exe','ai.unsloth.studio')) { New-ItemProperty $policy -Name $id -Value $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -Force | Out-Null }
-          $env:WEBVIEW2_USER_DATA_FOLDER=Join-Path $env:TEMP 'transfer-webview'
-          $start=[Diagnostics.ProcessStartInfo]::new($app)
-          $start.UseShellExecute=$false
-          $child=[Diagnostics.Process]::Start($start)
-          Write-Output "Launched $($child.Id)"
-          for ($i=0;$i -lt 60;$i++) {
-            $v=node .github/transfer-lab/check.mjs 'plugin:app|version' 2>$null
-            if ($LASTEXITCODE -eq 0 -and $v -eq '"0.1.9100-beta"') { break }
-            Start-Sleep 2
-          }
-          if ($v -ne '"0.1.9100-beta"') {
-            Get-Process unsloth-studio,msedgewebview2 -ErrorAction SilentlyContinue | Select-Object Name,Id,Path
-            Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -notlike '*--type=*' } | Select-Object -ExpandProperty CommandLine
-            Get-NetTCPConnection -State Listen | Where-Object { $_.OwningProcess -in (Get-Process msedgewebview2).Id } | Select-Object LocalAddress,LocalPort
-            curl.exe -sS http://127.0.0.1:19424/json/list
-            node .github/transfer-lab/check.mjs 'plugin:app|version'
-            throw "Could not confirm A version: $v"
-          }
-          $update=node .github/transfer-lab/check.mjs check_desktop_update
-          if ($LASTEXITCODE -or $update -ne 'null') { throw "A expected current: $update" }
-          Write-Output "Running A. No update offered before B was published."
-      - name: Wait for B through the original URL and let A install it
-        shell: pwsh
-        run: |
-          $ErrorActionPreference='Stop'
-          for ($i=0;$i -lt 100;$i++) {
-            try {$latest=Invoke-RestMethod "$env:CHANNEL/latest/download/latest.json"} catch { $latest=$null }
-            if ($latest.version -eq '0.1.9101-beta') { break }
-            Start-Sleep 30
-          }
-          if ($latest.version -ne '0.1.9101-beta') { throw 'B not published in time' }
-          $update=node .github/transfer-lab/check.mjs check_desktop_update | ConvertFrom-Json
-          if ($LASTEXITCODE -or $update.version -ne $latest.version) { throw "Check failed: $update" }
-          node .github/transfer-lab/check.mjs download_desktop_update
-          if ($LASTEXITCODE) { throw 'Download failed' }
-          $s=node .github/transfer-lab/check.mjs desktop_update_bundle_status | ConvertFrom-Json
-          if (-not $s.downloaded) { throw 'Signed bundle not ready' }
-          node .github/transfer-lab/check.mjs install_desktop_update
-          # NSIS takes over and exits the old webview.
-          for ($i=0;$i -lt 120;$i++) {
-            $v=node .github/transfer-lab/check.mjs 'plugin:app|version' 2>$null
-            if ($v -eq '"0.1.9101-beta"') { break }
-            Start-Sleep 2
-          }
-          if ($v -ne '"0.1.9101-beta"') { throw "Updated client did not relaunch as B: $v" }
-          Write-Output "Reopened client reports $v"
+          if ($p.ExitCode) { throw "Installer failed: $($p.ExitCode)" }
+          Start-Process (Join-Path $dest 'unsloth-studio.exe')
+          python -m pip install pywinauto
+          python -u .github/transfer-lab/windows-ui.py
