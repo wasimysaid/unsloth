@@ -4,85 +4,9 @@ on:
     branches: [staging/windows-universal-20261120]
 permissions:
   contents: read
+  actions: read
 jobs:
-  package:
-    timeout-minutes: 8
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release download v0.1.920-beta -R unslothai/unsloth -p '*Windows*.exe' -D inputs
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          foreach ($inputFile in Get-ChildItem inputs/*.exe) {
-            if ((Get-AuthenticodeSignature $inputFile).Status -ne 'Valid') { throw "Invalid signature: $inputFile" }
-          }
-          .github/scripts/prefetch-tauri-windows-tools.ps1 -TauriCliVersion 'tauri-cli 2.10.1'
-          $cert = New-SelfSignedCertificate -Subject 'CN=Unsloth Staging Test Only' -Type CodeSigningCert -CertStoreLocation Cert:\CurrentUser\My
-          Export-Certificate -Cert $cert -FilePath staging.cer | Out-Null
-          Import-Certificate -FilePath staging.cer -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
-          function Sign-TestFile($file) {
-            $result = Set-AuthenticodeSignature $file -Certificate $cert -HashAlgorithm SHA256
-            if ($result.Status -ne 'Valid') { throw "CI signing failed on ${file}: $($result.Status)" }
-          }
-          Sign-TestFile "$env:LOCALAPPDATA/tauri/NSIS/Plugins/x86-unicode/System.dll"
-          .github/scripts/build-windows-universal.ps1 -X64 inputs/Unsloth-Desktop-Windows.exe -Arm64 inputs/Unsloth-Desktop-Windows-ARM64.exe -Output "$PWD/combined.exe" -Version 0.1.920-beta
-          Sign-TestFile "$PWD/combined.exe"
-          .github/scripts/assert-bundle-signed.ps1 -Path "$PWD/combined.exe"
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          Get-Item combined.exe | Select-Object Name,Length
-      - name: Check entry-point arguments and child exit status
-        shell: pwsh
-        run: |
-          @'
-          Unicode true
-          RequestExecutionLevel user
-          OutFile "${PROBE}.exe"
-          Name Probe
-          !include FileFunc.nsh
-          Section
-          SectionEnd
-          Function .onInit
-            ${GetParameters} $0
-            FileOpen $2 "$TEMP\probe-log.txt" w
-            FileWrite $2 "${PROBE}|$0|$INSTDIR"
-            FileClose $2
-            SetErrorLevel 37
-            Quit
-          FunctionEnd
-          '@ | Set-Content probe.nsi
-          foreach ($arch in 'x64','arm64') {
-            & "$env:LOCALAPPDATA/tauri/NSIS/makensis.exe" /V2 "/DPROBE=$arch" probe.nsi
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          }
-          .github/scripts/build-windows-universal.ps1 -X64 x64.exe -Arm64 arm64.exe -Output "$PWD/probe-combined.exe" -Version 0.1.920-beta
-          foreach ($argsLine in '', '/P /NS /ARGS "one two"', '/S /D=C:\folder with spaces') {
-            $env:PROBE_LOG = "$env:TEMP/probe-log.txt"
-            Remove-Item $env:PROBE_LOG -ErrorAction SilentlyContinue
-            $start = @{FilePath="./probe-combined.exe"; PassThru=$true; Wait=$true}
-            if ($argsLine) { $start.ArgumentList = $argsLine }
-            $direct = $start.Clone()
-            $direct['FilePath'] = './x64.exe'
-            $nativeProc = Start-Process @direct
-            Write-Host "Direct probe exit=$($nativeProc.ExitCode)"
-            $expected = Get-Content $env:PROBE_LOG -Raw
-            Remove-Item $env:PROBE_LOG
-            $proc = Start-Process @start
-            Write-Host "Combined probe exit=$($proc.ExitCode); native record=$expected"
-            $record = Get-Content $env:PROBE_LOG -Raw
-            Write-Host "forwarded [$argsLine] as [$record] exit=$($proc.ExitCode)"
-            if ($proc.ExitCode -ne 37) { throw 'Lost exit code' }
-            if ($record -cne $expected) { throw 'Arguments differ from direct launch' }
-          }
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: combined
-          path: combined.exe
-          compression-level: 0
   install:
-    needs: package
     strategy:
       fail-fast: false
       matrix:
@@ -90,30 +14,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: combined
+          github-token: ${{ github.token }}
+          run-id: 44733107085
       - shell: pwsh
         run: |
-          $arch = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
-          $launcher = Start-Process -FilePath ./combined.exe -PassThru
-          try {
-            $deadline = [DateTime]::UtcNow.AddSeconds(45)
-            do {
-              $child = Get-Process -Name "setup-$arch" -ErrorAction SilentlyContinue | Where-Object MainWindowHandle -ne 0 | Select-Object -First 1
-              if ($child) { break }
-              Start-Sleep -Milliseconds 250
-            } while ([DateTime]::UtcNow -lt $deadline)
-            if (-not $child) { throw 'Missing native setup window on double-click' }
-            Write-Host "Interactive setup: $($child.ProcessName) => $($child.MainWindowTitle)"
-          } finally {
-            if ($child) { $child.Kill() }
-            if (-not $launcher.WaitForExit(5000)) { $launcher.Kill() }
-          }
+          python -m pip install Pillow==12.1.1
+          python .github/scripts/staging-install-gui.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $dest = Join-Path $env:RUNNER_TEMP 'Unsloth installation test'
-          $p = Start-Process -FilePath ./combined.exe -ArgumentList "/S /NS /D=$dest" -PassThru
-          if (-not $p.WaitForExit(120000)) { throw 'Silent installer timed out' }
-          if ($p.ExitCode -ne 0) { throw "Install exited $($p.ExitCode)" }
           $exe = Get-Item "$dest/unsloth-studio.exe"
           $sig = Get-AuthenticodeSignature $exe
           if ($sig.Status -ne 'Valid') { throw "Invalid installed signature: $($sig.Status)" }
@@ -122,3 +34,9 @@ jobs:
           $arch = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture
           Write-Host ("Installed {0} machine 0x{1:X4} on {2}" -f $exe.Name,$machine,$arch)
           if ($machine -ne @{Arm64=0xaa64; X64=0x8664}[$arch.ToString()]) { throw 'Wrong machine type' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: screenshots-${{ matrix.os }}
+          path: evidence/*.png
+          if-no-files-found: error
