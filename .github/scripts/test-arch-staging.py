@@ -30,11 +30,8 @@ def dialog(process):
         user.EnumChildWindows(hwnd, child, 0)
         for control, label in labels:
             if "different processor" in label:
-                parent = user.GetParent(control)
-                ok = user.GetDlgItem(parent, 1)
-                print("dialog controls", labels, "OK", ok, flush=True)
-                assert ok
-                user.PostMessageW(ok, 0x00F5, 0, 0)  # BM_CLICK
+                print("dialog controls", labels, flush=True)
+                user.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
                 return label
 
 source = Path("studio/src-tauri/windows/installer.nsi").read_text()
@@ -60,8 +57,9 @@ Section
 SectionEnd
 """)
     subprocess.run([compiler, "/V2", script], check=True)
-    for args in [[], ["/S"], ["/P"]]:
-        with subprocess.Popen([exe, *args]) as proc:
+    for args in [["/S"], ["/P"], []]:
+        proc = subprocess.Popen([exe, *args])
+        try:
             if target != host and not args:
                 expected = "Unsloth-Desktop-Windows-ARM64.exe" if host == "arm64" else "Unsloth-Desktop-Windows.exe"
                 for _ in range(100):
@@ -81,3 +79,6 @@ SectionEnd
                 raise
             print(host, target, args, result, flush=True)
             assert result == (42 if host == target else 1633)
+        finally:
+            proc.kill()
+            proc.wait()
