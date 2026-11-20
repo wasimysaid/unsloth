@@ -46,8 +46,7 @@ jobs:
           SectionEnd
           Function .onInit
             ${GetParameters} $0
-            ReadEnvStr $1 PROBE_LOG
-            FileOpen $2 "$1" w
+            FileOpen $2 "$TEMP\probe-log.txt" w
             FileWrite $2 "${PROBE}|$0|$INSTDIR"
             FileClose $2
             SetErrorLevel 37
@@ -64,14 +63,18 @@ jobs:
             Remove-Item $env:PROBE_LOG -ErrorAction SilentlyContinue
             $start = @{FilePath="./probe-combined.exe"; PassThru=$true; Wait=$true}
             if ($argsLine) { $start.ArgumentList = $argsLine }
+            $direct = $start.Clone()
+            $direct['FilePath'] = './x64.exe'
+            $nativeProc = Start-Process @direct
+            Write-Host "Direct probe exit=$($nativeProc.ExitCode)"
+            $expected = Get-Content $env:PROBE_LOG -Raw
+            Remove-Item $env:PROBE_LOG
             $proc = Start-Process @start
+            Write-Host "Combined probe exit=$($proc.ExitCode); native record=$expected"
             $record = Get-Content $env:PROBE_LOG -Raw
             Write-Host "forwarded [$argsLine] as [$record] exit=$($proc.ExitCode)"
             if ($proc.ExitCode -ne 37) { throw 'Lost exit code' }
-            $direct = $start.Clone()
-            $direct['FilePath'] = './x64.exe'
-            $null = Start-Process @direct
-            if ($record -cne (Get-Content $env:PROBE_LOG -Raw)) { throw 'Arguments differ from direct launch' }
+            if ($record -cne $expected) { throw 'Arguments differ from direct launch' }
           }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
