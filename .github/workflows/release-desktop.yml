@@ -24,20 +24,29 @@ jobs:
           curl.exe -fsSL "$env:CHANNEL/download/v0.1.9100-beta/Unsloth-Desktop-Windows.exe" -o $installer
           if ($LASTEXITCODE -or (Get-AuthenticodeSignature $installer).Status -ne 'Valid') { throw 'Failed to fetch a signed Build A' }
           $dest=Join-Path $env:LOCALAPPDATA 'Unsloth'
+          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=19424 --disable-gpu"
           $p=Start-Process $installer -ArgumentList "/S /D=$dest" -PassThru -Wait
           if ($p.ExitCode) { throw "Installer exit $($p.ExitCode)" }
           $app=(Get-ChildItem $dest -File | Where-Object { $_.Extension -eq '.exe' -and $_.Name -notmatch 'uninstall' } | Select-Object -First 1).FullName
           "CLIENT_PATH=$app" >> $env:GITHUB_ENV
+          Write-Output "Launching $app"
+          Get-ChildItem $dest -File | Select-Object Name
+          node --version
           Start-Process $app
           for ($i=0;$i -lt 60;$i++) {
             $v=node .github/transfer-lab/check.mjs 'plugin:app|version' 2>$null
             if ($LASTEXITCODE -eq 0 -and $v -eq '"0.1.9100-beta"') { break }
             Start-Sleep 2
           }
-          if ($v -ne '"0.1.9100-beta"') { throw "Could not confirm A version: $v" }
+          if ($v -ne '"0.1.9100-beta"') {
+            Get-Process unsloth-studio,msedgewebview2 -ErrorAction SilentlyContinue | Select-Object Name,Id,Path
+            curl.exe -sS http://127.0.0.1:19424/json/list
+            node .github/transfer-lab/check.mjs 'plugin:app|version'
+            throw "Could not confirm A version: $v"
+          }
           $update=node .github/transfer-lab/check.mjs check_desktop_update
           if ($LASTEXITCODE -or $update -ne 'null') { throw "A expected current: $update" }
-          Write-Output "Running A. No update offered before transfer."
+          Write-Output "Running A. No update offered before B was published."
       - name: Wait for B through the original URL and let A install it
         shell: pwsh
         run: |

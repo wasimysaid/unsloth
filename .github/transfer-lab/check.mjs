@@ -1,9 +1,9 @@
 const invoke = (name) => `window.__TAURI__.core.invoke(${JSON.stringify(name)})`;
 const cmd = process.argv[2];
-const targets = await fetch("http://localhost:19424/json/list").then(r=>r.json());
-const page = targets.find(t=>t.type==="page" && /tauri\.localhost/.test(t.url));
+const targets = await fetch("http://127.0.0.1:19424/json/list").then(r=>r.json());
+const page = targets.find(t=>["page","webview"].includes(t.type) && /(?:tauri\.localhost|tauri:\/\/localhost)/.test(t.url));
 if(!page) throw Error("No desktop webview: "+JSON.stringify(targets.map(t=>[t.type,t.url])));
-const ws=new WebSocket(page.webSocketDebuggerUrl);
+const ws=new WebSocket(page.webSocketDebuggerUrl.replace("localhost:", "127.0.0.1:"));
 await new Promise((resolve,reject)=>{ws.onopen=resolve;ws.onerror=reject;});
 const response = new Promise((resolve,reject)=>{
  ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.id===1)resolve(m);};
