@@ -81,6 +81,34 @@ def test_invalid_or_destructive_settings_are_rejected_at_boundary(config):
 
 
 @pytest.mark.asyncio
+async def test_status_poll_reuses_inventory_identity_until_inventory_changes(monkeypatch):
+    from hub.utils import inventory_scan
+
+    model = row("status-cache-fixture", load_id = "org/A", format_variant = "Q4_K_M")
+    scans, epoch = 0, 0
+
+    async def downloaded():
+        nonlocal scans
+        scans += 1
+        return [model]
+
+    async def resident(requested, subject):
+        assert requested == "org/A:Q4_K_M" and subject == "subject"
+        return None
+
+    monkeypatch.setattr(inventory_scan, "hf_cache_scans_epoch", lambda: epoch)
+    monkeypatch.setattr(local, "downloaded_rows", downloaded)
+    monkeypatch.setattr(local, "_resident_status", resident)
+    identifier = local.local_choice(model)["id"]
+    await local.local_model_state(identifier, "subject")
+    await local.local_model_state(identifier, "subject")
+    assert scans == 1
+    epoch += 1
+    await local.local_model_state(identifier, "subject")
+    assert scans == 2
+
+
+@pytest.mark.asyncio
 async def test_state_reports_exact_kept_quant_and_restores_routing(monkeypatch, admission, selected):
     primary, _, _ = admission
     primary.hf_variant = "Q8_0"

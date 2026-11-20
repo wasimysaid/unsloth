@@ -11,6 +11,8 @@ import asyncio
 import functools
 import hashlib
 import os
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -212,15 +214,49 @@ async def _resident_status(requested: str, subject: str):
         routed_slot.reset(previous)
 
 
+@dataclass(frozen = True)
+class _StatusTarget:
+    epoch: int
+    expires_at: float
+    load_id: str
+    api_model: str
+
+
+_status_targets: OrderedDict[tuple[str, str], _StatusTarget] = OrderedDict()
+
+
+async def _status_target(identifier: str) -> _StatusTarget:
+    from hub.utils.inventory_scan import hf_cache_scans_epoch
+    from utils.account_context import current_account_id
+
+    key = (current_account_id(), identifier)
+    epoch = hf_cache_scans_epoch()
+    cached = _status_targets.get(key)
+    if cached and cached.epoch == epoch and cached.expires_at > time.monotonic():
+        _status_targets.move_to_end(key)
+        return cached
+
+    row = await resolve_local_choice(identifier)
+    target = _StatusTarget(epoch, time.monotonic() + 30, row.load_id or row.id, local_choice(row)["api_model"])
+    # Status is polled frequently. Cache only route identity, and let external
+    # filesystem changes that Studio didn't observe age out. Loads resolve fresh.
+    if epoch == hf_cache_scans_epoch():
+        _status_targets[key] = target
+        _status_targets.move_to_end(key)
+        if len(_status_targets) > 128:
+            _status_targets.popitem(last = False)
+    return target
+
+
 async def local_model_state(identifier: str, subject: str) -> dict:
     from routes.inference import model_load_pending
     from hub.services.models import account_access
 
-    row = await resolve_local_choice(identifier)
+    target = await _status_target(identifier)
     if account_access.managed_account():
-        await asyncio.to_thread(account_access.require_model_access, row.load_id or row.id)
+        await asyncio.to_thread(account_access.require_model_access, target.load_id)
     account_access.require_live_account()
-    requested = local_choice(row)["api_model"]
+    requested = target.api_model
     status = await _resident_status(requested, subject)
     return {"loaded": status is not None, "loading": model_load_pending(requested, subject),
             "status": status.model_dump() if status is not None else None}
