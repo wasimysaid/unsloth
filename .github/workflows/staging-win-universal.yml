@@ -19,8 +19,59 @@ jobs:
             if ((Get-AuthenticodeSignature $inputFile).Status -ne 'Valid') { throw "Invalid signature: $inputFile" }
           }
           .github/scripts/prefetch-tauri-windows-tools.ps1 -TauriCliVersion 'tauri-cli 2.10.1'
+          $cert = New-SelfSignedCertificate -Subject 'CN=Unsloth Staging Test Only' -Type CodeSigningCert -CertStoreLocation Cert:\CurrentUser\My
+          Export-Certificate -Cert $cert -FilePath staging.cer | Out-Null
+          Import-Certificate -FilePath staging.cer -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
+          function Sign-TestFile($file) {
+            $result = Set-AuthenticodeSignature $file -Certificate $cert -HashAlgorithm SHA256
+            if ($result.Status -ne 'Valid') { throw "CI signing failed on ${file}: $($result.Status)" }
+          }
+          Sign-TestFile "$env:LOCALAPPDATA/tauri/NSIS/Plugins/x86-unicode/System.dll"
           .github/scripts/build-windows-universal.ps1 -X64 inputs/Unsloth-Desktop-Windows.exe -Arm64 inputs/Unsloth-Desktop-Windows-ARM64.exe -Output "$PWD/combined.exe" -Version 0.1.920-beta
+          Sign-TestFile "$PWD/combined.exe"
+          .github/scripts/assert-bundle-signed.ps1 -Path "$PWD/combined.exe"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           Get-Item combined.exe | Select-Object Name,Length
+      - name: Check entry-point arguments and child exit status
+        shell: pwsh
+        run: |
+          @'
+          Unicode true
+          RequestExecutionLevel user
+          OutFile "${PROBE}.exe"
+          Name Probe
+          !include FileFunc.nsh
+          Section
+          SectionEnd
+          Function .onInit
+            ${GetParameters} $0
+            ReadEnvStr $1 PROBE_LOG
+            FileOpen $2 "$1" w
+            FileWrite $2 "${PROBE}|$0|$INSTDIR"
+            FileClose $2
+            SetErrorLevel 37
+            Quit
+          FunctionEnd
+          '@ | Set-Content probe.nsi
+          foreach ($arch in 'x64','arm64') {
+            & "$env:LOCALAPPDATA/tauri/NSIS/makensis.exe" /V2 "/DPROBE=$arch" probe.nsi
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          .github/scripts/build-windows-universal.ps1 -X64 x64.exe -Arm64 arm64.exe -Output "$PWD/probe-combined.exe" -Version 0.1.920-beta
+          foreach ($argsLine in '', '/P /NS /ARGS "one two"', '/S /D=C:\folder with spaces') {
+            $env:PROBE_LOG = "$env:TEMP/probe-log.txt"
+            Remove-Item $env:PROBE_LOG -ErrorAction SilentlyContinue
+            $start = @{FilePath="./probe-combined.exe"; PassThru=$true; Wait=$true}
+            if ($argsLine) { $start.ArgumentList = $argsLine }
+            $proc = Start-Process @start
+            $record = Get-Content $env:PROBE_LOG -Raw
+            Write-Host "forwarded [$argsLine] as [$record] exit=$($proc.ExitCode)"
+            if ($proc.ExitCode -ne 37) { throw 'Lost exit code' }
+            $direct = $start.Clone()
+            $direct['FilePath'] = './x64.exe'
+            $null = Start-Process @direct
+            if ($record -cne (Get-Content $env:PROBE_LOG -Raw)) { throw 'Arguments differ from direct launch' }
+          }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: combined
