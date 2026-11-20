@@ -28,6 +28,21 @@ def selected(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_browser_load_opts_into_shared_placement_without_forcing_cancellation(monkeypatch, selected):
+    async def load(request, fastapi_request, subject):
+        assert subject == "subject"
+        assert request.alongside and not request.force_alongside
+        assert not request.force_cancel_active
+        return {"loaded": request.model_path}
+
+    monkeypatch.setattr(inference, "load_model", load)
+    request = Request({"type": "http", "state": {"coding_subject": "subject"}})
+    result = await coding.browser_load_model(local.local_choice(selected)["id"],
+        coding.LocalModelLoad(load_request_id = "attempt"), request)
+    assert result == {"loaded": "org/A"}
+
+
+@pytest.mark.asyncio
 async def test_explicit_load_settings_replace_saved_preset_without_saving(monkeypatch, selected):
     def saved(*args):
         raise AssertionError("An explicit load must not read or write the saved preset")
