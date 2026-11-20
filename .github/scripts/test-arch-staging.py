@@ -31,6 +31,11 @@ def dialog(process):
         for control, label in labels:
             if "different processor" in label:
                 print("dialog controls", labels, flush=True)
+                time.sleep(0.3)
+                from PIL import ImageGrab
+                screenshot = ImageGrab.grab(window=hwnd)
+                assert screenshot.convert("L").getextrema()[0] < 100
+                screenshot.save(f"windows-{host}.png")
                 user.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
                 return label
 
@@ -43,7 +48,7 @@ for target in ["x64", "arm64"]:
     script = Path("probe.nsi")
     script.write_text(f"""Unicode true
 RequestExecutionLevel user
-Name Probe
+Name "Unsloth"
 OutFile "{exe}"
 !include FileFunc.nsh
 !include x64.nsh

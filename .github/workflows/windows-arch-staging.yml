@@ -24,4 +24,10 @@ jobs:
           $arch = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
           if ($arch -ne '${{ matrix.host }}') { throw "Unexpected runner: $arch" }
           .github/scripts/prefetch-tauri-windows-tools.ps1 -TauriCliVersion 'tauri-cli 2.10.1'
+          python -m pip install 'Pillow==12.1.1'
           python .github/scripts/test-arch-staging.py $arch
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: windows-${{ matrix.host }}
+          path: windows-${{ matrix.host }}.png
+          if-no-files-found: error
