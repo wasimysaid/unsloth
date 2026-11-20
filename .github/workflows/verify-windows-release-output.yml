@@ -1,0 +1,86 @@
+name: Verify installers from the Windows release build
+on:
+  push:
+    branches: [staging/verify-windows-release-output]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            artifact: windows-x64
+            family: windows-x86_64
+            machine: 0x8664
+          - runner: windows-11-arm
+            artifact: windows-arm64
+            family: windows-aarch64
+            machine: 0xaa64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          github-token: ${{ github.token }}
+          run-id: 44733107085
+          name: combined
+          path: previous
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          github-token: ${{ github.token }}
+          run-id: 44735893237
+          name: rehearsal-updater-manifest
+          path: current
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          github-token: ${{ github.token }}
+          run-id: 44735893237
+          name: desktop-release-${{ matrix.artifact }}
+          path: current
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          github-token: ${{ github.token }}
+          run-id: 44735893237
+          name: desktop-release-windows-universal
+          path: current
+      - shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dest = Join-Path $env:RUNNER_TEMP 'Unsloth Desktop'
+          $app = Join-Path $dest 'unsloth-studio.exe'
+          function Run-Installer($path, $flags) {
+            $proc = Start-Process $path -ArgumentList $flags -PassThru
+            if (-not $proc.WaitForExit(120000)) { throw "$path timed out" }
+            if ($proc.ExitCode -ne 0) { throw "$path returned $($proc.ExitCode)" }
+          }
+          function Check-App($expectedVersion) {
+            $sig = Get-AuthenticodeSignature $app
+            if ($sig.Status -ne 'Valid') { throw "Installed signature: $($sig.Status)" }
+            $version = (Get-Item $app).VersionInfo.ProductVersion
+            if (($version -split '[-+]', 2)[0] -notin $expectedVersion,"$expectedVersion.0") { throw "Installed $version, expected $expectedVersion" }
+            $data = [IO.File]::ReadAllBytes($app)
+            $machine = [BitConverter]::ToUInt16($data, [BitConverter]::ToInt32($data,60)+4)
+            if ($machine -ne ${{ matrix.machine }}) { throw "Unexpected installed PE machine $machine" }
+            Write-Host ("Installed {0}, machine 0x{1:X4}, signer {2}" -f $version,$machine,$sig.SignerCertificate.Subject)
+          }
+          $manifest = Get-Content current/latest.json -Raw | ConvertFrom-Json -AsHashtable
+          $entry = $manifest.platforms['${{ matrix.family }}-nsis']
+          $native = Join-Path current ([IO.Path]::GetFileName(([Uri]$entry.url).AbsolutePath))
+          $universal = 'current/Unsloth-Desktop-Windows.exe'
+          foreach ($installer in $native,$universal) {
+            if ((Get-AuthenticodeSignature $installer).Status -ne 'Valid') { throw "Invalid signature on $installer" }
+          }
+          if ($entry.signature -cne (Get-Content "$native.sig" -Raw).Trim()) { throw "Manifest signature mismatch" }
+          Run-Installer ./previous/combined.exe "/S /NS /D=$dest"
+          Check-App '0.1.920'
+          $before = (Get-FileHash $app).Hash
+          Run-Installer $native '/P /UPDATE /NS'
+          Check-App '0.1.9201'
+          $after = (Get-FileHash $app).Hash
+          if ($before -eq $after) { throw 'Update did not replace the previous app' }
+          Run-Installer $universal "/S /NS /D=$dest"
+          Check-App '0.1.9201'
+          if ((Get-FileHash $app).Hash -ne $after) { throw 'Universal and updater installed different binaries' }
