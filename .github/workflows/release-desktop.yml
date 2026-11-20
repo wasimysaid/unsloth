@@ -32,7 +32,15 @@ jobs:
           Write-Output "Launching $app"
           Get-ChildItem $dest -File | Select-Object Name
           node --version
-          Start-Process $app
+          Get-Process unsloth-studio -ErrorAction SilentlyContinue | Stop-Process -Force
+          $policy='HKCU:\Software\Policies\Microsoft\Edge\WebView2\additionalBrowserArguments'
+          New-Item $policy -Force | Out-Null
+          foreach ($id in @('unsloth-studio.exe','ai.unsloth.studio')) { New-ItemProperty $policy -Name $id -Value $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -Force | Out-Null }
+          $env:WEBVIEW2_USER_DATA_FOLDER=Join-Path $env:TEMP 'transfer-webview'
+          $start=[Diagnostics.ProcessStartInfo]::new($app)
+          $start.UseShellExecute=$false
+          $child=[Diagnostics.Process]::Start($start)
+          Write-Output "Launched $($child.Id)"
           for ($i=0;$i -lt 60;$i++) {
             $v=node .github/transfer-lab/check.mjs 'plugin:app|version' 2>$null
             if ($LASTEXITCODE -eq 0 -and $v -eq '"0.1.9100-beta"') { break }
@@ -40,6 +48,8 @@ jobs:
           }
           if ($v -ne '"0.1.9100-beta"') {
             Get-Process unsloth-studio,msedgewebview2 -ErrorAction SilentlyContinue | Select-Object Name,Id,Path
+            Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -notlike '*--type=*' } | Select-Object -ExpandProperty CommandLine
+            Get-NetTCPConnection -State Listen | Where-Object { $_.OwningProcess -in (Get-Process msedgewebview2).Id } | Select-Object LocalAddress,LocalPort
             curl.exe -sS http://127.0.0.1:19424/json/list
             node .github/transfer-lab/check.mjs 'plugin:app|version'
             throw "Could not confirm A version: $v"
