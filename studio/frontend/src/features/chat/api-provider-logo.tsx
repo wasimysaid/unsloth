@@ -23,24 +23,20 @@ interface ApiProviderLogoProps {
   name?: string;
 }
 
-// Mid-tone hues that hold white text in light and dark themes alike.
-const LETTER_TILE_COLORS = [
-  "#e5484d",
-  "#f76b15",
-  "#d6a800",
-  "#30a46c",
-  "#12a594",
-  "#0090ff",
-  "#6e56cf",
-  "#d6409f",
-];
-
-function letterTileColor(name: string): string {
-  let hash = 0;
-  for (const ch of name) {
-    hash = (hash * 31 + ch.charCodeAt(0)) | 0;
+export function letterTileColor(name: string): string {
+  let hash = 0x811c9dc5;
+  for (const ch of name.toLowerCase()) {
+    hash = Math.imul(hash ^ ch.charCodeAt(0), 0x01000193);
   }
-  return LETTER_TILE_COLORS[Math.abs(hash) % LETTER_TILE_COLORS.length];
+  // murmur3 finalizer, or names sharing "-GGUF" cluster on one hue.
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x85ebca6b);
+  hash ^= hash >>> 13;
+  hash = Math.imul(hash, 0xc2b2ae35);
+  hash ^= hash >>> 16;
+  const h = hash >>> 0;
+  const lightness = 0.52 + ((h >>> 20) % 4) * 0.04;
+  return `oklch(${lightness.toFixed(2)} 0.15 ${h % 360})`;
 }
 
 const DARK_INVERT_LOGOS = new Set(["openai", "openai_codex", "ollama", "liquid", "typesafe", "vercel", "xai", "zai", "kimi", "opencode", "opencode_go"]);
@@ -93,10 +89,22 @@ function LetterTile({
   useLayoutEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
-    const scheduled = pendingLetters.size > 0;
-    pendingLetters.set(canvas, { letter, color });
-    if (!scheduled) queueMicrotask(paintLetters);
-    return () => { pendingLetters.delete(canvas); };
+    let live = true;
+    const schedule = () => {
+      if (!live) return;
+      const scheduled = pendingLetters.size > 0;
+      pendingLetters.set(canvas, { letter, color });
+      if (!scheduled) queueMicrotask(paintLetters);
+    };
+    schedule();
+    void document.fonts?.ready.then(schedule);
+    const observer = new ResizeObserver(schedule);
+    observer.observe(canvas);
+    return () => {
+      live = false;
+      observer.disconnect();
+      pendingLetters.delete(canvas);
+    };
   }, [letter, color]);
   return (
     <canvas

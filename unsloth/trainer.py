@@ -41,7 +41,9 @@ from unsloth.utils import (
     enable_sample_packing,
 )
 from unsloth.utils.packing import (
+    _HYBRID_PACKING_ENV_VAR,
     _stateful_mixer_kind,
+    hybrid_packing_opt_in_device,
     packing_boundary_blocker,
     patch_hybrid_linear_attention_varlen,
 )
@@ -78,7 +80,7 @@ class UnslothVisionDataCollator(_UnslothVisionDataCollatorBase):
     of silently training on empty video tensors (issue #5085).
     """
 
-    __slots__ = ("_checked_video_paths", "_padding_free", "_deferring_check")
+    __slots__ = ("_checked_video_paths", "_padding_free", "_deferring_check", "_mm_rope_index")
 
     def __init__(
         self,
@@ -89,9 +91,12 @@ class UnslothVisionDataCollator(_UnslothVisionDataCollatorBase):
         super().__init__(*args, **kwargs)
         self._checked_video_paths = set()
         self._padding_free = bool(padding_free)
+        self._mm_rope_index = None
         if self._padding_free:
             from unsloth.utils.mm_packing import prepare_packed_multimodal_model
-            prepare_packed_multimodal_model(args[0] if args else kwargs.get("model"))
+            self._mm_rope_index = prepare_packed_multimodal_model(
+                args[0] if args else kwargs.get("model")
+            )
 
     @property
     def padding_free(self):
@@ -111,7 +116,11 @@ class UnslothVisionDataCollator(_UnslothVisionDataCollatorBase):
                 _UnslothVisionDataCollatorBase, "_check_supervised"
             ):
                 self._check_supervised(*_stack_rows(docs))
-            return pack_multimodal_documents(docs, ignore_index = self.ignore_index)
+            return pack_multimodal_documents(
+                docs,
+                ignore_index = self.ignore_index,
+                rope_index = getattr(self, "_mm_rope_index", None),
+            )
         return self._collate_unpacked(examples)
 
     def _check_supervised(
@@ -482,6 +491,81 @@ def _is_vision_eval_dataset(dataset, *, unknown_is_vision = False) -> bool:
             for split in dataset.values()
         )
     return _is_vision_dataset(dataset, unknown_is_vision = unknown_is_vision)
+
+
+def _route_vision_assistant_only_loss(
+    args,
+    data_collator,
+    model,
+    processing_class,
+    train_dataset,
+    eval_dataset = None,
+):
+    """SFT `assistant_only_loss = True` on a vision run masks with Unsloth's train_on_responses_only.
+
+    TRL refuses vision assistant-only loss below transformers 5.18 and above it relies on processor
+    assistant masks; UnslothVisionDataCollator never read the flag. Called before TRL's __init__:
+    returns the collator to use and turns the flag off so TRL neither refuses nor masks again.
+    When the chat template's markers cannot be detected, nothing changes and TRL behaves as before.
+    Text runs are left to unsloth_zoo's dataset preparation."""
+    requested = getattr(args, "assistant_only_loss", False) or getattr(
+        args, "_unsloth_assistant_only_loss", False
+    )
+    if not requested:
+        return data_collator
+    user_collator = data_collator
+    if not isinstance(user_collator, _UnslothVisionDataCollatorBase):
+        is_vision = (
+            user_collator is None
+            and hasattr(processing_class, "image_processor")
+            and not isinstance(model, str)
+            and (_is_vision_dataset(train_dataset) or _is_vision_eval_dataset(eval_dataset))
+        )
+        if not is_vision:
+            # Text run (or a foreign collator): keep the flag for unsloth_zoo / TRL, even when an
+            # earlier vision trainer built on these args turned it off.
+            args.assistant_only_loss = True
+            return user_collator
+    # A collator that already masks (user built, or routed by an earlier trainer) is not masked twice.
+    if not getattr(user_collator, "train_on_responses_only", None):
+        from unsloth_zoo.dataset_utils import get_chat_template_parts, train_on_responses_only
+
+        processor = getattr(user_collator, "processor", None) or processing_class
+        inner = getattr(processor, "tokenizer", processor)
+        preset = hasattr(inner, "_unsloth_input_part") and hasattr(inner, "_unsloth_output_part")
+        try:
+            if preset:
+                parts = (inner._unsloth_input_part, inner._unsloth_output_part)
+            else:
+                parts = get_chat_template_parts(processor)
+            masker = train_on_responses_only(
+                None,
+                tokenizer = processor,
+                return_function = True,
+                **({} if preset else dict(instruction_part = parts[0], response_part = parts[1])),
+            )
+        except Exception as e:
+            # Same cases TRL cannot mask either (no template, no user / assistant exchange,
+            # unstable marker tokens): change nothing and let TRL behave as it always has.
+            args.assistant_only_loss = True
+            print(
+                "Unsloth: assistant_only_loss = True could not auto-detect the chat template's "
+                f"user / assistant markers ({e}), so it is left to TRL. To mask with Unsloth, pass "
+                "UnslothVisionDataCollator(model, tokenizer, train_on_responses_only = True, "
+                "instruction_part = ..., response_part = ...) as data_collator."
+            )
+            return user_collator
+        data_collator = user_collator
+        if data_collator is None:
+            data_collator = UnslothVisionDataCollator(model, processing_class)
+        data_collator.train_on_responses_only = masker
+        print(
+            "Unsloth: assistant_only_loss = True -> using Unsloth's train_on_responses_only "
+            f"(instruction_part = {parts[0]!r}, response_part = {parts[1]!r})"
+        )
+    args._unsloth_assistant_only_loss = True
+    args.assistant_only_loss = False
+    return data_collator
 
 
 _MULTIMODAL_DATASET_KEYS = _VISION_DATASET_KEYS | frozenset(
@@ -1952,6 +2036,18 @@ def _backwards_compatible_trainer(trainer_class, config_class):
                 add_mfu_callback(self)
             except Exception as exc:
                 logger.warning(f"Unsloth: could not enable MFU logging ({exc}).")
+        if os.environ.get("UNSLOTH_MEMORY_REPORT", "0") != "0":
+            try:
+                from .utils.run_report import install_memory_report
+                install_memory_report(self)
+            except Exception as exc:
+                logger.warning(f"Unsloth: could not enable the memory report ({exc}).")
+        if os.environ.get("UNSLOTH_SYNC_REPORT", "0") != "0":
+            try:
+                from .utils.run_report import install_sync_report
+                install_sync_report(self)
+            except Exception as exc:
+                logger.warning(f"Unsloth: could not enable the sync report ({exc}).")
 
     return new_init
 
@@ -2002,6 +2098,7 @@ def _patch_sft_trainer_auto_packing(trl_module):
         is_hybrid = False
         is_encoder_decoder = False
         hybrid_varlen_active = False
+        hybrid_opt_in_device = None
         if model is not None:
             model_config = getattr(model, "config", None)
             if model_config is None and isinstance(model, str):
@@ -2031,6 +2128,8 @@ def _patch_sft_trainer_auto_packing(trl_module):
                     hybrid_varlen_active = patch_hybrid_linear_attention_varlen(model)
                 except Exception:
                     hybrid_varlen_active = False
+                if hybrid_varlen_active:
+                    hybrid_opt_in_device = hybrid_packing_opt_in_device(model)
 
         processing_class = (
             args[5] if len(args) >= 6 else kwargs.get("processing_class") or kwargs.get("tokenizer")
@@ -2084,9 +2183,8 @@ def _patch_sft_trainer_auto_packing(trl_module):
             )
             # Ring cannot keep packed rows apart: packing goes off below, as before 'auto' existed.
             is_ring_context_parallel = cp_backend == "ring"
-            # Kimi delta, Lightning and DeepSeek V3.2 / V4 Ulysses forwards refuse packed batches: an
-            # automatic padding-free choice would fail the first CP step.
-            # A deferred (string) model is classified by its resolved config's model types.
+            # Kimi delta, Lightning and DeepSeek V3.2 / V4 Ulysses refuse packed batches (auto
+            # padding-free would fail); string models are classified by their config's model types.
             if cp_backend == "ulysses":
                 from .context_parallel import ulysses_packing_blocker as _ulysses_packing_blocker
                 ulysses_packing_blocker = _ulysses_packing_blocker(
@@ -2365,7 +2463,14 @@ def _patch_sft_trainer_auto_packing(trl_module):
             _install_text_prepended_position_ids(self.model)
         if not blocked and trainer_packing and (packing_active or _should_pack(trainer_args)):
             enable_sample_packing(self.model, self)
-            if default_packing:
+            if is_hybrid and hybrid_opt_in_device is not None:
+                print(
+                    f"🦥 Unsloth: Packing enabled on {hybrid_opt_in_device} through "
+                    f"{_HYBRID_PACKING_ENV_VAR}=1 (not on by default on this device). The speedup "
+                    "depends on this device's attention kernels, so compare seconds per step "
+                    "against packing = False."
+                )
+            elif default_packing:
                 print(_DEFAULT_PACKING_NOTE)
             else:
                 print("🦥 Unsloth: Packing enabled - training is >2x faster and uses less VRAM!")
@@ -2379,6 +2484,13 @@ def _patch_sft_trainer_auto_packing(trl_module):
             print(message)
 
         install_token_budget(self)
+        # Outermost wrapper, so it sees each micro-batch before UNSLOTH_TOKEN_BUDGET splits it.
+        if os.environ.get("UNSLOTH_BATCH_REPORT", "0") != "0":
+            try:
+                from .utils.run_report import install_batch_report
+                install_batch_report(self)
+            except Exception as exc:
+                logger.warning(f"Unsloth: could not enable the batch report ({exc}).")
 
         # get_peft_model installs a pre-train forward detector for plain LoRA/vision models, but only RL
         # trainers run the reset via prepare_for_training_mode, so wire it into the SFT train() path too,
@@ -2395,7 +2507,11 @@ def _patch_sft_trainer_auto_packing(trl_module):
                         _unsloth_reset_stray_compile_cache(self)
                     except Exception:
                         pass
-                    return _orig_train(*train_args, **train_kwargs)
+                    try:
+                        return _orig_train(*train_args, **train_kwargs)
+                    finally:
+                        # Inference / saving after training get the memory the NF4 dequant cache held.
+                        _release_dequant_cache()
 
                 self.train = _train_with_reset
                 self._unsloth_train_reset_wrapped = True
@@ -2404,6 +2520,13 @@ def _patch_sft_trainer_auto_packing(trl_module):
 
     sft_trainer.__init__ = new_init
     sft_trainer._unsloth_auto_packing_wrapped = True
+
+
+def _release_dequant_cache():
+    import sys
+    module = sys.modules.get("unsloth.kernels.dequant_cache")
+    if module is not None:
+        module.clear_dequant_cache()
 
 
 def _patch_trl_trainer():

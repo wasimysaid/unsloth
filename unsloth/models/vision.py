@@ -283,6 +283,7 @@ from ._utils import (
 )
 from ._utils import *
 from ._utils import _ignore_block_swap_params_for_ddp
+from ._frozen_prefix import install_frozen_prefix_skip
 from .float8_training import enable_fp8_lora, restore_fp8_lora_for_inference
 from ._utils import _tensor_parallel_for_inference, _tensor_parallel_for_training
 from ._uma_safetensors import is_integrated_unified_memory_gpu
@@ -296,6 +297,8 @@ from .grouped_linear_lora import register_grouped_linear_lora
 from . import _decode_graphs, _generic_decode_graphs, _flex_decode
 from .loader_utils import (
     _bnb_bits_requested,
+    _kwargs_with_resolved_revision,
+    _resolved_revision,
     vlm_gradient_checkpointing_reentrant,
     set_deepspeed_moe_leaf_modules,
     fsdp2_requested,
@@ -737,6 +740,23 @@ def _hook_no_placement_ancestors(model):
     return hooked
 
 
+def _host_read_tensor_names(model):
+    """Names of CPU input embedding tensors TP sharded loading read into host (tp_native._mark_host_loaded)."""
+    names = set()
+    try:
+        marked_model = bool(model.__dict__.get("_unsloth_tp_host_load_model", False))
+        embed = model.get_input_embeddings() if marked_model else None
+        for name, p in model.named_parameters(remove_duplicate = False):
+            if p.device.type == "cpu" and (
+                p.__dict__.get("_unsloth_tp_host_loaded", False)
+                or (embed is not None and any(p is q for q in embed.parameters()))
+            ):
+                names.add(name)
+    except Exception:
+        return set()
+    return names
+
+
 def _attach_bnb_multidevice_hooks(
     model, load_in_4bit, load_in_8bit, offload_embedding, fast_inference
 ):
@@ -771,6 +791,8 @@ def _attach_bnb_multidevice_hooks(
         _unplaced = no_placement_tensor_names(model)
     except Exception:
         _unplaced = set()
+    # Host-read TP embeddings are served from host: dispatch would meta-offload them.
+    _unplaced = set(_unplaced) | _host_read_tensor_names(model)
     try:
         all_devs = {p.device for n, p in model.named_parameters() if n not in _unplaced}
     except Exception as exc:
@@ -1090,7 +1112,7 @@ def _pin_device_to_decoder(model):
         def _unsloth_device(self):
             if getattr(self, "_unsloth_embedding_offloaded", False):
                 for param in self.parameters():
-                    if param.device.type != "cpu":
+                    if param.device.type not in ("cpu", "meta"):
                         return param.device
             return original.fget(self)
 
@@ -2508,6 +2530,13 @@ def unsloth_base_fast_generate(self, *args, **kwargs):
                 cache_implementation = "static"
     if do_bfloat16_mixed_precision:
         cache_implementation = None
+    # transformers refuses a static cache beside the caller's cache or assisted decoding (kwarg or generation config) (#4232).
+    generation_config = kwargs.get("generation_config") or getattr(self, "generation_config", None)
+    if kwargs.get("past_key_values") is not None or any(
+        (kwargs[k] if k in kwargs else getattr(generation_config, k, None)) is not None
+        for k in ("assistant_model", "prompt_lookup_num_tokens", "assistant_early_exit")
+    ):
+        cache_implementation = None
     # A static cache drops the media block mask at prefill (#6028); None would be refilled from default.
     force_dynamic_cache = kwargs.get(
         "past_key_values"
@@ -2523,7 +2552,6 @@ def unsloth_base_fast_generate(self, *args, **kwargs):
         cache_implementation = None
         force_dynamic_cache = False
 
-    generation_config = kwargs.get("generation_config") or getattr(self, "generation_config", None)
     compile_decode = (
         cache_implementation == "static"
         and not force_dynamic_cache
@@ -3335,6 +3363,14 @@ def _architecture_skip_modules(model_types):
     # for a plain Linear4bit whose forward multiplies every group by the whole weight.
     if any(mt.startswith("deepseek_v41") for mt in model_types):
         skip.append("o_a_proj")
+    # Inkling 2 Mini's loop message gates cast their input to `down_proj.weight.dtype` (uint8 once packed, which
+    # truncates the activations to integers) and declare both gate projections fp32-strict; all three are rank 64.
+    if any(mt.startswith("inkling2_loop") for mt in model_types):
+        skip.extend(
+            f"{gate}_message_gate.{proj}"
+            for gate in ("q", "k", "v", "mlp")
+            for proj in ("down_proj", "forget_gate_proj", "message_gate_proj")
+        )
     # Gemma 3n AltUp clamps prediction_coefs.weight.data in place every training step, which fails on packed
     # uint8 weights; the same four modules unsloth/gemma-3n-*-unsloth-bnb-4bit keeps in 16-bit.
     # transformers 5 matches a skip key as a suffix of each Linear's name, so the ModuleList children are listed too.
@@ -4086,7 +4122,7 @@ class FastBaseModel:
                 token = token,
                 trust_remote_code = trust_remote_code,
                 local_files_only = local_files_only,
-                revision = _revision,
+                revision = _resolved_revision(model_name, _revision, token, local_files_only),
             )
         _text_key_mapping = None
         if text_only and hasattr(auto_config, "vision_config"):
@@ -4363,7 +4399,7 @@ class FastBaseModel:
                 token = token,
                 trust_remote_code = trust_remote_code,
                 local_files_only = local_files_only,
-                revision = _revision,
+                revision = _resolved_revision(model_name, _revision, token, local_files_only),
             )
         backfill_fp8_modules_to_convert(
             auto_config,
@@ -4752,7 +4788,7 @@ class FastBaseModel:
                     token = token,
                     trust_remote_code = trust_remote_code,
                     local_files_only = local_files_only,
-                    revision = _revision,
+                    revision = _resolved_revision(model_name, _revision, token, local_files_only),
                 )
             if hasattr(auto_config, "quantization_config"):
                 from transformers.quantizers.auto import (
@@ -4842,7 +4878,7 @@ class FastBaseModel:
                 token = token,
                 trust_remote_code = trust_remote_code,
                 local_files_only = local_files_only,
-                revision = _revision,
+                revision = _resolved_revision(model_name, _revision, token, local_files_only),
             )
         _set_attn_impl(auto_config, config_attn_impl)
         model_config = auto_config
@@ -4915,7 +4951,7 @@ class FastBaseModel:
                                 device_map = device_map,
                                 token = token,
                                 trust_remote_code = trust_remote_code,
-                                **kwargs,
+                                **_kwargs_with_resolved_revision(model_name, kwargs, token),
                             )
                     finally:
                         # The load deep-copied the config; give the caller's object its fp8 block back.
@@ -5135,6 +5171,9 @@ class FastBaseModel:
                     )
 
                 llm = load_vllm(**load_vllm_kwargs)
+                if os.environ.get("UNSLOTH_MEMORY_REPORT", "0") != "0":
+                    from unsloth.utils.run_report import report_memory
+                    report_memory("vLLM init", llm)
 
                 _, quant_state_dict = get_vllm_state_dict(
                     llm,
@@ -5231,6 +5270,10 @@ class FastBaseModel:
         # Functional load chain (AutoProcessor -> get_auto_processor -> manual VLM fallback); offline is already forced upstream, and the error is surfaced for the retry.
         def _acquire_processor(lfo):
             _err = None  # underlying load failure (used by the entry-point retry)
+            # For the transformers loads only; get_auto_processor and the fallback keep the plain ref.
+            _tok_rev = _resolved_revision(
+                tokenizer_name, _tokenizer_revision, token, lfo, kwargs.get("cache_dir")
+            )
             if (whisper_language and whisper_task) or auto_model.__name__.endswith(
                 "ForConditionalGeneration"
             ):
@@ -5244,7 +5287,7 @@ class FastBaseModel:
                         trust_remote_code = trust_remote_code,
                         cache_dir = kwargs.get("cache_dir"),
                         local_files_only = lfo,
-                        revision = _tokenizer_revision,
+                        revision = _tok_rev,
                     )
                 except Exception as _e:
                     _tok = None
@@ -5260,7 +5303,7 @@ class FastBaseModel:
                             trust_remote_code = trust_remote_code,
                             cache_dir = kwargs.get("cache_dir"),
                             local_files_only = lfo,
-                            revision = _tokenizer_revision,
+                            revision = _tok_rev,
                         )
                     except Exception:
                         _tok = None
@@ -5275,7 +5318,7 @@ class FastBaseModel:
                             trust_remote_code = trust_remote_code,
                             cache_dir = kwargs.get("cache_dir"),
                             local_files_only = lfo,
-                            revision = _tokenizer_revision,
+                            revision = _tok_rev,
                         )
                 except Exception as _e:
                     _err = _e
@@ -5383,6 +5426,11 @@ class FastBaseModel:
             if patch_medias_processor is not None:
                 patch_medias_processor(tokenizer)
         # FSDP2 packs 4-bit weights in a float dtype, which the dtype passes in here would cast.
+        try:
+            from .tp_native import cast_host_read_tables
+            cast_host_read_tables(model, do_forced_float32, correct_dtype)
+        except Exception:
+            pass
         with packed_4bit_as_uint8(model, enabled = fsdp2_requested()):
             model, tokenizer = patch_model_and_tokenizer(
                 model,
@@ -5427,6 +5475,14 @@ class FastBaseModel:
                     raise
                 raise _patch_err
         model = post_patch_loss_function(model)
+
+        # Inkling 2 wraps its attention Linears: map the usual LoRA names onto them.
+        from .inkling2 import patch_inkling2_model
+
+        if patch_inkling2_model(model):
+            # Its language attention is eager only upstream; route it through flex (UNSLOTH_INKLING2_FLEX=0 keeps eager).
+            from .inkling2_flex import enable_inkling2_flex
+            enable_inkling2_flex(model)
 
         if hasattr(model, "config"):
             model.config.update({"unsloth_version": __version__})
@@ -5649,26 +5705,57 @@ class FastBaseModel:
         # PEFT < 0.21 drops a scalar layer 0 with layers_pattern.
         if isinstance(layers_to_transform, int) and not isinstance(layers_to_transform, bool):
             layers_to_transform = [layers_to_transform]
-        if os.environ.get("UNSLOTH_ENABLE_FULL_FINETUNING", "0") == "1":
+        if _is_full_finetuning(model):
             print("Unsloth: Full finetuning is enabled, so .get_peft_model has no effect")
             # Full finetuning still compiles, so a stray pre-train forward can poison the cache; install the detector here too (idempotent).
             _unsloth_install_pretrain_detector(model)
+            install_frozen_prefix_skip(model)
             # checkpoint_skip_layers / UNSLOTH_GC_KEEP_LAYERS apply to full finetuning too.
             skip_checkpointing(model, checkpoint_skip_layers)
             return model
         transformers_set_seed(random_state)
 
+        # Remember whether the CALLER explicitly opted into audio: "all-linear" turns the flag on implicitly below, but an old unsloth_zoo without audio must not fail a plain all-linear run.
+        _audio_explicitly_requested = bool(finetune_audio_layers)
+
         # Models with their own projection names (native DeepSeek-V4.1) map the standard aliases to real Linears.
         _remap_targets = getattr(model, "unsloth_lora_target_modules", None)
+        # Multimodal models with their own projection names (Inkling 2) also map the vision tower's leaves.
+        try:
+            _remap_takes_vision = (
+                callable(_remap_targets)
+                and "vision" in inspect.signature(_remap_targets).parameters
+            )
+        except (TypeError, ValueError):
+            _remap_takes_vision = False
+        # "all-linear" means every family, and a multimodal remap reads these flags, so set them before it runs. Every
+        # other model keeps the caller's flags until the all-linear block below (T5 / BART turn all-linear into leaf names
+        # first; forcing finetune_audio_layers here sent those through get_peft_regex, which knows neither).
+        if target_modules == "all-linear" and _remap_takes_vision:
+            finetune_vision_layers = True
+            finetune_language_layers = True
+            finetune_attention_modules = True
+            finetune_mlp_modules = True
+            finetune_audio_layers = True
         _targets_remapped = False
         _remapped_moe_targets = None
-        if callable(_remap_targets) and finetune_language_layers:
+        # A multimodal remap also serves vision-only requests (the vision tower has its own leaf names).
+        if callable(_remap_targets) and (
+            finetune_language_layers or (_remap_takes_vision and finetune_vision_layers)
+        ):
             _requested_targets = target_modules
-            _remapped = _remap_targets(
-                target_modules,
+            _remap_kwargs = dict(
                 attention = finetune_attention_modules,
                 mlp = finetune_mlp_modules,
             )
+            if _remap_takes_vision:
+                _remap_kwargs["vision"] = finetune_vision_layers
+                try:
+                    if "language" in inspect.signature(_remap_targets).parameters:
+                        _remap_kwargs["language"] = finetune_language_layers
+                except (TypeError, ValueError):
+                    pass
+            _remapped = _remap_targets(target_modules, **_remap_kwargs)
             if _remapped is not target_modules:
                 # Routed-expert intent comes from the caller's bare aliases; remapped MLP names are shared-expert only.
                 if _requested_targets is None or _requested_targets == "all-linear":
@@ -5677,6 +5764,7 @@ class FastBaseModel:
                     name
                     for name in _requested_targets
                     if finetune_mlp_modules
+                    and finetune_language_layers
                     and name in ("gate_proj", "up_proj", "down_proj", "gate_up_proj")
                 ]
                 target_modules = _remapped
@@ -5735,8 +5823,6 @@ class FastBaseModel:
                     # Full paths carry the family choice; get_peft_regex would reject them.
                     finetune_attention_modules = finetune_mlp_modules = True
 
-        # Remember whether the CALLER explicitly opted into audio: "all-linear" turns the flag on implicitly below, but an old unsloth_zoo without audio must not fail a plain all-linear run.
-        _audio_explicitly_requested = bool(finetune_audio_layers)
         if target_modules == "all-linear":
             finetune_vision_layers = True
             finetune_language_layers = True
@@ -6147,6 +6233,7 @@ class FastBaseModel:
         enable_fp8_lora(model)
         # Detect a stray pre-train forward so train() can drop the torch.compile graph cache it would otherwise poison (see prepare_for_training_mode).
         _unsloth_install_pretrain_detector(model)
+        install_frozen_prefix_skip(model)
         model = _exclude_rope_inv_freq_from_ddp(model)
         # Not at load: the frozen set matches across ranks only after PEFT; custom loops skip Trainer.
         _ignore_block_swap_params_for_ddp(model)
@@ -6168,7 +6255,7 @@ class FastBaseModel:
         from ..import_fixes import fix_transformers_voxtral_realtime_inplace_audio_add
 
         fix_transformers_voxtral_realtime_inplace_audio_add()
-        full_finetuning = os.environ.get("UNSLOTH_ENABLE_FULL_FINETUNING", "0") == "1"
+        full_finetuning = _is_full_finetuning(model)
 
         if type(float32_mixed_precision) is bool:
             pass
@@ -6202,17 +6289,14 @@ class FastBaseModel:
             )
             _offload = use_gradient_checkpointing == "unsloth"
             _register_gc_offload_root(model, _offload)
+            from .non_reentrant_checkpoint import non_reentrant_checkpoint
 
-            def _nonre_checkpoint(function, *args, **kwargs):
-                kwargs["use_reentrant"] = False
-                if not _offload:
-                    return _orig_checkpoint(function, *args, **kwargs)
-                with _offload_activation_hooks(_gc_checkpoint_owner(function)):
-                    return _orig_checkpoint(function, *args, **kwargs)
-
-            _nonre_checkpoint._unsloth_original = _orig_checkpoint
-            # Already offloads through _offload_activation_hooks: transformers' offload=True would nest it.
-            _nonre_checkpoint._unsloth_offloads = _offload
+            _nonre_checkpoint = non_reentrant_checkpoint(
+                _orig_checkpoint,
+                (lambda function: _offload_activation_hooks(_gc_checkpoint_owner(function)))
+                if _offload
+                else None,
+            )
             torch_checkpoint.checkpoint = _nonre_checkpoint
             hf_modeling_utils.checkpoint = _nonre_checkpoint
         else:
@@ -6344,6 +6428,10 @@ class FastBaseModel:
             )
         _tensor_parallel_for_inference(model)
         restore_fp8_lora_for_inference(model)
+        # Training's NF4 dequant cache (kernels/dequant_cache.py) would hold memory generation may need.
+        from ..kernels.dequant_cache import clear_dequant_cache
+
+        clear_dequant_cache()
 
         def _for_inference(m):
             if hasattr(m, "gradient_checkpointing"):

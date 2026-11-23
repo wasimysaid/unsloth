@@ -51,12 +51,27 @@ def test_the_expanded_picker_marker_is_the_one_the_picker_renders():
     assert robust.PICKER_SOURCES_TABLIST == '[role="tablist"][aria-label="Model sources"]'
 
 
+STORE = (FRONTEND / "features/chat/stores/chat-runtime-store.ts").read_text(encoding = "utf-8")
+
+
 def test_a_loaded_model_still_opens_the_picker_collapsed():
-    # Why the drivers need the expand click at all: a settled load sets expanded to false.
-    assert re.search(
-        r"setExpanded\(\s*\([^;]*\)\s*\?\?\s*false,?\s*\)", PICKER
+    # Why the drivers need the expand click at all: a settled load sets expanded to false, either
+    # directly or through the "Show full model list" setting, whose default (a fresh browser, as in
+    # CI) is off.
+    literal = re.search(r"setExpanded\(\s*\([^;]*\)\s*\?\?\s*false,?\s*\)", PICKER)
+    setting = re.search(
+        r"setExpanded\(\s*useChatRuntimeStore\.getState\(\)\.pickerExpandLoaded,?\s*\)", PICKER
+    )
+    assert (
+        literal or setting
     ), "the load effect no longer collapses the picker; the drivers' expand click may be dead code"
-    assert "const isExpanded = expanded || !chosenName;" in PICKER
+    if setting:
+        assert re.search(
+            r"pickerExpandLoaded: loadBool\(\s*PICKER_EXPAND_LOADED_KEY,\s*false,?\s*\)", STORE
+        ), "the full-list setting no longer defaults to off, so a fresh browser opens the picker expanded"
+    # Collapsed unless the user expanded it or nothing is chosen; more reasons to open expanded (a model with no
+    # thinking toggle, #18128) are fine, since expand_collapsed_model_picker clicks nothing on an expanded picker.
+    assert re.search(r"const isExpanded = expanded \|\| !chosenName(?: \|\| \w+)*;", PICKER)
 
 
 def test_every_picker_driver_imports_the_expand_helper():
@@ -69,6 +84,9 @@ def test_the_chat_search_step_expands_before_it_waits_for_the_search():
     start = src.index('step("model picker: open + drive search bar")')
     body = src[start : src.index("\n    step(", start + 1)]
     click = body.index("picker_btn.click()")
+    # Opened before the selector names the loaded model, the picker collapses under the typing.
+    settled = body.index('"select model" not in')
+    assert settled < click
     expand = body.index("expand_collapsed_model_picker(page)", click)
     wait = body.index("search = wait_for_first(", expand)
     assert click < expand < wait

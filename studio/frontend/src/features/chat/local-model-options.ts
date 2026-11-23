@@ -50,8 +50,10 @@ export function chatLocalModelOptions(
       continue;
     }
     seen.add(model.id);
+    // An Ollama tag is one GGUF file unless it is in Ollama's MLX format.
     const isDirectGguf =
-      model.source === "ollama" || model.path.toLowerCase().endsWith(".gguf");
+      (model.source === "ollama" && model.model_format !== "safetensors") ||
+      model.path.toLowerCase().endsWith(".gguf");
     options.push({
       id: model.id,
       name: model.display_name,
@@ -61,6 +63,8 @@ export function chatLocalModelOptions(
       // A GGUF directory needs no `gguf` in its name: the scan's format says so.
       isGguf: isDirectGguf || model.model_format === "gguf" ? true : undefined,
       isDirectGguf: isDirectGguf ? true : undefined,
+      // An oMLX folder can have a plain name; its source is what marks it MLX.
+      localSource: model.source,
       audioType: model.audio_type ?? undefined,
     });
   }

@@ -1021,8 +1021,7 @@ def exercise_floating_monitor_geometry(page):
     wait_for_settled(monitor)
     wait_for_box("viewport restore", lambda box: is_inside(box, viewport))
 
-    # Width is the one user-set size: the text stays its size and the height follows the content,
-    # so a corner drag never adds empty space below it.
+    # Only width is user-set; height follows the content, so a corner drag adds no space.
     resize_start = drag_monitor_to(0, 0)
     _, resized_box = resize_monitor_by(40, 40)
     expect_close(resized_box["width"], resize_start["width"] + 40, "resize width")
@@ -1418,6 +1417,18 @@ with sync_playwright() as p:
     if picker_btn.count() == 0:
         soft_fail("model picker button not found")
     else:
+        # Open only once the selector names the loaded model: opened before the reload's residency check
+        # lands, the picker shows its search, then collapses under the typing and fill() times out.
+        try:
+            wait_until(
+                lambda: "select model" not in (picker_btn.inner_text() or "select model").lower(),
+                timeout_s = 30,
+                what = "the model selector to name the loaded model",
+                interval_s = 0.25,
+                page = page,
+            )
+        except TimeoutError as exc:
+            info(f"WARN {exc}")
         picker_btn.click()
         # The model loaded above opens the picker collapsed to its own row.
         if expand_collapsed_model_picker(page):

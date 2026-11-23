@@ -56,6 +56,8 @@ _BLOCKS = {
     "details",
     "summary",
 }
+# Never displayed by a reader supporting the element. Not <canvas>: its fallback shows without scripting.
+_UNRENDERED = {"template", "annotation", "annotation-xml", "audio", "video"}
 _VOID = {
     "area",
     "base",
@@ -74,6 +76,16 @@ _VOID = {
 }
 # Ruby annotations (<rt>, <rtc>) and their fallback parentheses (<rp>) are not prose.
 _IGNORE = {"head", "script", "style", "nav", "svg", "rt", "rp", "rtc"}
+# Layout hints inside words (soft hyphen, ZWSP, word joiner, BOM), as in TextPreprocessor.clean_text.
+_INVISIBLE = "\u00ad\u200b\u2060\ufeff"
+
+
+def _drop_invisible(text):
+    # str.replace, not str.translate: translate costs ~0.5 s per 7 MB of non-ASCII text.
+    for char in _INVISIBLE:
+        if char in text:
+            text = text.replace(char, "")
+    return text
 
 
 class _BookTextParser(HTMLParser):
@@ -103,6 +115,7 @@ class _BookTextParser(HTMLParser):
         hidden = (
             bool(self.stack and self.stack[-1][1])
             or tag in _IGNORE
+            or tag in _UNRENDERED
             or "hidden" in attrs
             or attrs.get("aria-hidden", "").lower() == "true"
         )
@@ -165,13 +178,13 @@ def _html_text(data):
     # A declared UTF-8 encoding keeps a leading BOM, which str.strip() leaves in place.
     parser.feed(data.decode(encoding).lstrip("\ufeff"))
     parser.close()
-    text = unicodedata.normalize("NFC", "".join(parser.parts))
+    text = _drop_invisible(unicodedata.normalize("NFC", "".join(parser.parts)))
     text = re.sub(r"[^\S\n]+", " ", text)
     text = re.sub(r" *\n *", "\n", text)
     text = _BLANK_LINE_RUN.sub("\n\n", text).strip()
     return re.sub(
         "\ue000(\\d+)\ue001",
-        lambda m: unicodedata.normalize("NFC", parser.preformatted[int(m[1])]),
+        lambda m: _drop_invisible(unicodedata.normalize("NFC", parser.preformatted[int(m[1])])),
         text,
     )
 
@@ -224,9 +237,19 @@ def _read_epub(path, chapter_markers):
             item = items.get(ref.get("idref"))
             if item is None:
                 raise ValueError("EPUB reading order references a missing manifest item")
-            if "nav" in item.get("properties", "").split():
-                continue
-            if item.get("media-type") not in {"application/xhtml+xml", "text/html"}:
+            # A foreign spine item can point to a text version through manifest fallback IDs.
+            seen = set()
+            while item is not None and item.get("media-type") not in {
+                "application/xhtml+xml",
+                "text/html",
+            }:
+                fallback = item.get("fallback")
+                if not fallback or fallback in seen:
+                    item = None
+                    break
+                seen.add(fallback)
+                item = items.get(fallback)
+            if item is None or "nav" in item.get("properties", "").split():
                 continue
             name = _archive_path(base, item.get("href", ""))
             if name in encrypted:

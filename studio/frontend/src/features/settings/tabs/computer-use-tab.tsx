@@ -11,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -30,6 +31,7 @@ import {
 } from "@/features/computer-use/api";
 import { refreshComputerUseStatus, useComputerUseStore } from "@/features/computer-use/store";
 import { useT } from "@/i18n";
+import { isTauri } from "@/lib/api-base";
 import { CursorInWindowIcon } from "@/lib/browser-use-icon";
 import { Cursor02Icon, PlusSignIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -131,15 +133,30 @@ export function ComputerUseTab() {
   return (
     <div className="settings-page">
       <header className="flex min-w-0 flex-col gap-1">
-        <h1 data-settings-label={t("computerUse.settings.title")} className="text-xl font-semibold font-heading">
-          {t("computerUse.settings.title")}
-        </h1>
+        <div className="flex min-w-0 items-center gap-2">
+          <h1 data-settings-label={t("computerUse.settings.title")} className="text-xl font-semibold font-heading">
+            {t("computerUse.settings.title")}
+          </h1>
+          <Badge variant="secondary" className="h-4 px-1.5 text-ui-10 text-muted-foreground">
+            {t("shell.beta")}
+          </Badge>
+        </div>
         <p data-settings-label={t("computerUse.settings.description")} className="text-xs text-muted-foreground">
           {t("computerUse.settings.description")}
         </p>
       </header>
       <SettingsSection title={t("computerUse.settings.control")}>
-        {status ? (
+        {!isTauri && !status?.available ? (
+          <SettingsRow
+            icon={<HugeiconsIcon icon={Cursor02Icon} strokeWidth={1.75} className={ROW_ICON_CLASS} />}
+            label={t("computerUse.settings.anyApp")}
+            description={t("computerUse.settings.desktopOnlyDescription")}
+          >
+            <span className="shrink-0 text-sm text-muted-foreground">
+              {t("settings.keyboardShortcuts.desktopOnly")}
+            </span>
+          </SettingsRow>
+        ) : status ? (
           <SettingsRow
             icon={<HugeiconsIcon icon={Cursor02Icon} strokeWidth={1.75} className={ROW_ICON_CLASS} />}
             label={t("computerUse.settings.anyApp")}

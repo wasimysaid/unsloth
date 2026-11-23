@@ -116,7 +116,16 @@ import {
   resolveDiffusionTrainingBase,
 } from "./diffusion-train-deploy";
 import { resolveDiffusionTrainingFacts } from "./diffusion-train-family-facts";
+import {
+  type DiffusionBlockSwapMode,
+  diffusionBlockSwapApplies,
+  diffusionBlockSwapPayload,
+  diffusionBlockSwapSummary,
+} from "./diffusion-block-swap";
+import { useSystemInfo } from "@/hooks/use-system";
+import { diffusionTrainGuideUrl } from "./diffusion-train-guides";
 import { diffusionTrainingProgress } from "./diffusion-train-progress";
+import { runningTrainingSelection } from "./diffusion-train-restore";
 import { type LrScheduler, lrSchedulePreset } from "./diffusion-train-lr-schedule";
 import {
   MediaGenerationPresetControl,
@@ -404,6 +413,7 @@ export function DiffusionTrainPanel({
   loadedBaseRepo,
   onTrainingComplete,
   onDeploy,
+  onDeployVideo,
   familyName,
   onFamilyNameChange,
   baseChoice,
@@ -423,6 +433,14 @@ export function DiffusionTrainPanel({
   savedPresets?: boolean;
   onTrainingComplete?: () => void;
   onDeploy?: (args: {
+    baseRepo: string;
+    family: string;
+    families?: string[];
+    catalogPath: string;
+    trigger: string;
+  }) => void;
+  // Video-family adapters bake into the video loader instead; absent = no Deploy for them.
+  onDeployVideo?: (args: {
     baseRepo: string;
     family: string;
     families?: string[];
@@ -476,6 +494,7 @@ export function DiffusionTrainPanel({
     return ["auto", "nf4", "bf16", "int8", "fp8"];
   }, [reportedFamily?.precision_modes, familyUntrainable]);
   const supportsCompile = reportedFamily?.supports_compile ?? isDiT;
+  const system = useSystemInfo();
   // MiniMax-H3 rejects nonzero save_steps, so the field is hidden for it.
   const supportsCheckpoints = reportedFamily?.supports_checkpoints ?? true;
   // Video families render no previews and REFUSE a nonzero sample_every; an older backend has none at all.
@@ -550,6 +569,14 @@ export function DiffusionTrainPanel({
   const [compileTransformer, setCompileTransformer] = useState<"off" | "on" | "auto">(
     "auto",
   );
+  const [blockSwapMode, setBlockSwapMode] = useState<DiffusionBlockSwapMode>("off");
+  const [blockSwapCount, setBlockSwapCount] = useState(8);
+  const blockSwapApplies = diffusionBlockSwapApplies({
+    supportsBlockSwap: reportedFamily?.supports_block_swap,
+    basePrecision,
+    gradientCheckpointing: gradCheckpoint,
+    system,
+  });
   const settingsDirty = useRef(false);
   // Tracked separately: warmup's control is hidden under "constant", so a stale value is invisible.
   const lrScheduleDirty = useRef(false);
@@ -917,6 +944,25 @@ export function DiffusionTrainPanel({
     return () => window.clearInterval(id);
   }, [active, poll]);
 
+  // After a reload the page defaults to FLUX.1-dev; show the running job's family and base instead, once per job.
+  const seededRunJob = useRef<string | null>(null);
+  useEffect(() => {
+    const jobKey = status?.job_id ?? "";
+    if (seededRunJob.current === jobKey) return;
+    const run = runningTrainingSelection(status, families);
+    if (!run) return;
+    seededRunJob.current = jobKey;
+    seededFromLoaded.current = true;
+    seededBaseFamily.current = run.familyName;
+    setFamilyName(run.familyName);
+    if (run.baseModel) {
+      baseDirty.current = true;
+      const known = families.find((f) => f.name === run.familyName)?.base_repos.includes(run.baseModel);
+      setBaseChoice(known ? run.baseModel : CUSTOM_BASE);
+      if (!known) setCustomBase(run.baseModel);
+    }
+  }, [status, families, setFamilyName, setBaseChoice]);
+
   // The backend keeps the terminal status until the next start, so dismissal is local.
   const [dismissedJobId, setDismissedJobId] = useState<string | null>(null);
   const running = Boolean(status?.active) || status?.status === "running";
@@ -927,6 +973,7 @@ export function DiffusionTrainPanel({
     Boolean(status?.lora_path) &&
     status.job_id !== dismissedJobId;
   const runProgress = diffusionTrainingProgress(status);
+  const blockSwapSummary = diffusionBlockSwapSummary(status?.block_swap);
 
   const stopRequested = running && stopRequestedLocal;
 
@@ -1357,6 +1404,7 @@ export function DiffusionTrainPanel({
         mixed_precision: precision,
         base_precision: isDiT ? basePrecision : undefined,
         compile_transformer: supportsCompile ? compileTransformer : undefined,
+        block_swap: diffusionBlockSwapPayload(blockSwapApplies, blockSwapMode, blockSwapCount),
         hf_token: hfApiToken(getHfToken()) || undefined,
       });
       toast.success("Preparing training…");
@@ -1408,6 +1456,9 @@ export function DiffusionTrainPanel({
     supportsCheckpoints,
     effectiveBatchSize,
     compileTransformer,
+    blockSwapApplies,
+    blockSwapMode,
+    blockSwapCount,
     poll,
   ]);
 
@@ -1474,11 +1525,17 @@ export function DiffusionTrainPanel({
       info?.families?.find((f) => f.name === famName)?.lora_families ?? [famName],
     [info?.families],
   );
-  // The images loader refuses video bases, so their adapters get no Deploy to Create.
+  // The images loader refuses video bases, so their adapters deploy to the Video page instead.
   const isVideoFamily = useCallback(
     (famName: string) => info?.families?.find((f) => f.name === famName)?.is_video === true,
     [info?.families],
   );
+  const canDeployFamily = useCallback(
+    (famName: string) => !isVideoFamily(famName) || Boolean(onDeployVideo),
+    [isVideoFamily, onDeployVideo],
+  );
+  const deployLabel = (famName: string) =>
+    isVideoFamily(famName) ? "Deploy to Video" : "Deploy to Create";
 
   const navigate = useNavigate();
   const exportAdapter = useCallback(
@@ -1496,7 +1553,7 @@ export function DiffusionTrainPanel({
       return;
     }
     const famName = status.family || family?.name || "";
-    onDeploy?.({
+    (isVideoFamily(famName) ? onDeployVideo : onDeploy)?.({
       baseRepo: deployBaseFor(trainedBase, famName),
       family: famName,
       families: loraFamiliesFor(famName),
@@ -1510,6 +1567,8 @@ export function DiffusionTrainPanel({
     family,
     instancePrompt,
     onDeploy,
+    onDeployVideo,
+    isVideoFamily,
     deployBaseFor,
     loraFamiliesFor,
   ]);
@@ -1878,6 +1937,33 @@ export function DiffusionTrainPanel({
             </Select>
           </div>
         )}
+        {blockSwapApplies && (
+          <div className={fieldClass}>
+            <FieldLabel hint="Keeps some transformer blocks in system RAM and streams them to the GPU each step, so a bf16 base bigger than your VRAM trains at full bf16 accuracy. Slower than fitting on the card; Auto swaps only as many blocks as needed.">
+              Block swap
+            </FieldLabel>
+            <Select
+              value={blockSwapMode}
+              onValueChange={(v) => setBlockSwapMode(v as DiffusionBlockSwapMode)}
+            >
+              <SelectTrigger className={selectClass} aria-label="Block swap">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="off">Off</SelectItem>
+                <SelectItem value="auto">Auto (as few as fit)</SelectItem>
+                <SelectItem value="count">Fixed number of blocks</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+        {blockSwapApplies &&
+          blockSwapMode === "count" &&
+          numberField("Blocks to swap", blockSwapCount, setBlockSwapCount, 8, {
+            min: 1,
+            step: 1,
+            hint: "Blocks kept in system RAM. More blocks free more VRAM but each step is slower.",
+          })}
       </div>
     </div>
   );
@@ -1905,7 +1991,16 @@ export function DiffusionTrainPanel({
                 Train a LoRA
               </h2>
               <p className="text-xs leading-snug text-muted-foreground">
-                Teach a model a new style or subject.
+                Teach a model a new style or subject.{" "}
+                <a
+                  href={diffusionTrainGuideUrl(familyName, info?.families)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Open the LoRA training guide in a new tab"
+                  className="text-primary underline"
+                >
+                  Guide
+                </a>
               </p>
             </div>
             {savedPresets ? (
@@ -2325,12 +2420,12 @@ export function DiffusionTrainPanel({
                   : ""}
               </p>
               <div className="flex flex-wrap items-center gap-2">
-                {viewRun.saved && viewRun.catalog_path && !isVideoFamily(viewRun.family || "") && (
+                {viewRun.saved && viewRun.catalog_path && canDeployFamily(viewRun.family || "") && (
                   <Button
                     type="button"
                     size="sm"
                     onClick={() =>
-                      onDeploy?.({
+                      (isVideoFamily(viewRun.family || "") ? onDeployVideo : onDeploy)?.({
                         baseRepo: deployBaseFor(viewRun.base_model || "", viewRun.family || ""),
                         family: viewRun.family || "",
                         families: loraFamiliesFor(viewRun.family || ""),
@@ -2339,7 +2434,7 @@ export function DiffusionTrainPanel({
                       })
                     }
                   >
-                    Deploy to Create
+                    {deployLabel(viewRun.family || "")}
                   </Button>
                 )}
                 {viewRun.saved && viewRun.catalog_path && (
@@ -2476,6 +2571,11 @@ export function DiffusionTrainPanel({
                 />
                 </div>
               )}
+              {blockSwapSummary && (
+                <p className="text-ui-11 leading-snug text-muted-foreground">
+                  Block swap: {blockSwapSummary}
+                </p>
+              )}
               {running && (
                 <Button
                   type="button"
@@ -2539,9 +2639,9 @@ export function DiffusionTrainPanel({
                   )}
                 </p>
                 <div className="mt-1 flex flex-wrap gap-2">
-                  {status?.catalog_path && !isVideoFamily(status.family || family?.name || "") && (
+                  {status?.catalog_path && canDeployFamily(status.family || family?.name || "") && (
                     <Button type="button" size="sm" onClick={onDeployClick}>
-                      Deploy to Create
+                      {deployLabel(status.family || family?.name || "")}
                     </Button>
                   )}
                   {status?.catalog_path && (

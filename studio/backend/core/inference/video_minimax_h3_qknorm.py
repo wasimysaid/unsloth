@@ -22,6 +22,7 @@ from functools import lru_cache
 from typing import Any, Optional
 
 from .rocm_bf16 import is_rocm_torch
+from .triton_closure_globals import publishes_closure_globals
 
 QK_ROPE_ENV = "UNSLOTH_H3_QK_ROPE"
 QK_ROPE_MODE_ENV = "UNSLOTH_H3_QK_ROPE_MODE"
@@ -115,6 +116,7 @@ def _reference_rope_once(
 
 
 @lru_cache(maxsize = None)
+@publishes_closure_globals
 def _kernel() -> Any:
     import triton
     import triton.language as tl
@@ -468,8 +470,10 @@ def verdict(
     found = _VERDICTS.get(key)
     if found is not None:
         return found
-    if torch.cuda.is_current_stream_capturing():
-        return None
+    # capture query reads the current device: ask on the operand's card
+    with torch.cuda.device(x.device):
+        if torch.cuda.is_current_stream_capturing():
+            return None
     with _LOCK:
         if key not in _VERDICTS:
             with torch.cuda.device(x.device):
