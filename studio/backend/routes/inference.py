@@ -17027,32 +17027,35 @@ async def _unload_llama_before_standard_load(llama_backend) -> None:
     the epoch, so a cleanup still pending sees this load replaced the retired server, and one
     already past its check finishes first."""
 
-    def handoff() -> Optional[float]:
+    def handoff():
         # getattr: a stand-in backend has no load to order against.
         lock = getattr(llama_backend, "_serial_load_lock", None)
         if lock is not None:
             # As the unload would: a recovery reload holding the lock stops instead of finishing.
             llama_backend._cancel_event.set()
         with lock or nullcontext():
-            if not llama_backend.is_loaded:
-                if lock is None:
-                    return None
-                kill_started = time.monotonic()
-                llama_backend.unload_model()
-                # A starting or recovering server was killed: wait for it like a loaded one.
-                last_kill = getattr(llama_backend, "_last_kill_monotonic", 0.0) or 0.0
-                return kill_started if last_kill >= kill_started else None
-            logger.info("Unloading GGUF model before loading Unsloth model")
+            was_loaded = llama_backend.is_loaded
+            if not was_loaded and lock is None:
+                return None, None
+            if was_loaded:
+                logger.info("Unloading GGUF model before loading Unsloth model")
             kill_started = time.monotonic()
             llama_backend.unload_model()
-            return kill_started
+            # Read under the lock: a baseline from an older kill is stale.
+            killed = (getattr(llama_backend, "_last_kill_monotonic", 0.0) or 0.0) >= kill_started
+            if not killed:
+                # A starting or recovering server that was killed is waited for like a loaded one.
+                return (kill_started, None) if was_loaded else (None, None)
+            return kill_started, getattr(llama_backend, "_last_kill_vram_baseline", None)
 
-    kill_started = await asyncio.to_thread(handoff)
+    kill_started, baseline = await asyncio.to_thread(handoff)
     if kill_started is None:
         return
+    # Baseline: wait for the server's VRAM to show freed, not two equal pre-release samples.
     await asyncio.to_thread(
         llama_backend._wait_for_vram_settle,
         since_kill = kill_started,
+        baseline = baseline,
     )
 
 
@@ -27291,6 +27294,8 @@ async def _transcribe_audio_result(
     )
     if serving_engine == "mtmd":
         transcribe = functools.partial(transcribe, context_length = context_length, prompt = prompt)
+    elif serving_engine == "gguf" and timestamps:
+        transcribe = functools.partial(transcribe, timestamps = True)
     cancel_event = threading.Event() if request is not None or on_progress is not None else None
     disconnect_watcher = (
         asyncio.create_task(_await_stt_disconnect_then_cancel(request, sidecar, cancel_event))
@@ -27471,8 +27476,10 @@ async def transcribe_audio_raw(
     stream: bool = False,
     title: str = Query("Recording", max_length = 255),
     context_length: Annotated[int, BeforeValidator(_parse_stt_context_length_query)] = 0,
+    timestamps: bool = False,
 ):
-    """Transcribe a raw audio body without base64 or JSON conversion overhead."""
+    """Transcribe a raw audio body without base64 or JSON conversion overhead; ``timestamps``
+    adds whisper.cpp's segments (audio.cpp models that always time their text return them anyway)."""
     chunks: list[bytes] = []
     size = 0
     async for chunk in request.stream():
@@ -27511,6 +27518,7 @@ async def transcribe_audio_raw(
             request,
             device,
             context_length = context_length,
+            timestamps = timestamps,
         )
     )
 
