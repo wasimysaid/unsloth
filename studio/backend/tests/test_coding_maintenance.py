@@ -425,3 +425,26 @@ async def test_owner_http_calls_are_fenced_before_delivery_even_after_other_tab_
         assert not (tmp_path / "native-command-trace").exists(), "No stale prompt, configuration, native command, Stop, view, or history command reached the new owner"
     finally:
         await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("started,confirm", [(False, True), (True, True), (True, False)])
+async def test_concurrent_close_retries_transient_key_revocation(tmp_path, monkeypatch, started, confirm):
+    runtime = await child_runtime(tmp_path, confirm = confirm) if started else CodingRuntime()
+    runtime._local_key_id = 42
+    attempts = []
+
+    def revoke(key):
+        attempts.append(key)
+        if len(attempts) == 1:
+            raise OSError("temporary database error")
+
+    monkeypatch.setattr(storage, "revoke_internal_api_key", revoke)
+    await runtime.close()
+    assert runtime.status()["state"] == "cleanup_failed"
+    await asyncio.gather(runtime.close(), runtime.close())
+    assert attempts == [42, 42]
+    assert runtime.status()["state"] == ("stopped" if confirm else "cleanup_failed")
+    if started:
+        assert runtime.status()["cleanup"]["confirmed"] is confirm
+        assert (tmp_path / "native-command-trace").read_text().splitlines() == ["shutdown"]

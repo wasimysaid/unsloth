@@ -142,6 +142,7 @@ class CodingRuntime:
         self._next_generation = secrets.randbelow(1 << 50) + 1
         self._cleanup: dict[str, Any] | None = None
         self._cleanup_failed = False
+        self._local_cleanup_pending = False
         self._restart_uncertain = False
         self._restart_prepared = False
         self._prewarm_task: asyncio.Task | None = None
@@ -752,17 +753,7 @@ class CodingRuntime:
                     with contextlib.suppress(asyncio.CancelledError):
                         await task
         exit_code = process.returncode if process else None
-        local_confirmed = True
-        try:
-            # A clean helper exit alone is not native tool/child drain evidence.
-            # Always retire the key, but only confirmed drain can release holds.
-            await self._close_local_serving(clean = native_confirmed and not forced and exit_code == 0)
-            if self.local_serving is not None:
-                local_confirmed = all(operation.state in ("failed", "released")
-                                      for operation in self.local_serving.operations.values())
-        except Exception:
-            local_confirmed = False
-            log.error("Mimir local serving cleanup was not confirmed")
+        local_confirmed = await self._finish_local_cleanup(clean = native_confirmed and not forced and exit_code == 0)
         if not local_confirmed:
             self._cleanup_failed = True
         if self._cleanup_tasks:
@@ -895,6 +886,8 @@ class CodingRuntime:
     async def close(self) -> None:
         if self._close_task is None:
             self._close_task = asyncio.create_task(self._close())
+        elif self._close_task.done() and self._local_cleanup_pending:
+            self._close_task = asyncio.create_task(self._retry_local_cleanup())
         with anyio.CancelScope(shield = True):
             await asyncio.shield(self._close_task)
 
@@ -914,14 +907,35 @@ class CodingRuntime:
                 else:
                     # Setup may have minted a credential before any native process
                     # was published, including a failed or cancelled startup.
-                    try:
-                        await self._close_local_serving(clean = True)
-                    except Exception:
+                    if not await self._finish_local_cleanup(clean = True):
                         self._cleanup_failed = True
                         self._record_cleanup(False, False, None, local_confirmed = False)
-                        log.error("Mimir local serving cleanup was not confirmed")
             finally:
                 self._maintaining = False
+
+    async def _retry_local_cleanup(self) -> None:
+        cleanup = self._cleanup
+        clean = self.process is None or (
+            cleanup["native_drain_confirmed"] and not cleanup["forced"] and cleanup["exit_code"] == 0
+        )
+        if await self._finish_local_cleanup(clean = clean) and clean:
+            self._cleanup_failed = False
+            if self.process is None:
+                self._cleanup = None
+            else:
+                cleanup.update(confirmed = True, message = "Coding stopped cleanly.")
+
+    async def _finish_local_cleanup(self, *, clean: bool) -> bool:
+        try:
+            await self._close_local_serving(clean = clean)
+        except Exception:
+            self._local_cleanup_pending = True
+            log.error("Mimir local serving cleanup was not confirmed")
+            return False
+        self._local_cleanup_pending = False
+        return self.local_serving is None or all(
+            operation.state in ("failed", "released") for operation in self.local_serving.operations.values()
+        )
 
     async def _close_local_serving(self, *, clean: bool) -> None:
         try:
