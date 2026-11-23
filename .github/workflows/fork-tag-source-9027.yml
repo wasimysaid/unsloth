@@ -1,0 +1,18 @@
+name: Tag the source-backed fork desktop release v0.1.9027-beta
+on:
+  push:
+    branches: [staging/tag-source-backend-9027]
+permissions:
+  contents: write
+jobs:
+  tag:
+    if: github.repository == 'wasimysaid/unsloth'
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha=910c5d49e790e39e0906c1afce0d349065aebb2d
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/release/desktop-source-backend" --jq .object.sha)" = "$sha"
+          gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref=refs/tags/v0.1.9027-beta -f sha="$sha"
