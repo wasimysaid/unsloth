@@ -1,0 +1,29 @@
+name: Repair wrong-architecture v0.1.9027-beta installation
+on:
+  push:
+    branches: [staging/windows-repair-9027]
+permissions:
+  contents: read
+jobs:
+  repair:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v0.1.9027-beta -R wasimysaid/unsloth -p 'Unsloth-Desktop-Windows.exe' -p 'Unsloth-Desktop-Windows-ARM64.exe'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $dest = Join-Path $env:LOCALAPPDATA 'Unsloth Studio (Desktop)'
+          function Install-And-Check($installer, $machine) {
+            $p = Start-Process "./$installer" -ArgumentList '/S /NS' -Wait -PassThru
+            if ($p.ExitCode) { throw "Setup returned $($p.ExitCode)" }
+            $exe = Get-Item "$dest/unsloth-studio.exe"
+            $data = [IO.File]::ReadAllBytes($exe.FullName)
+            $type = [BitConverter]::ToUInt16($data,[BitConverter]::ToInt32($data,60)+4)
+            Write-Host ("{0} installed machine 0x{1:X4}" -f $installer,$type)
+            if ($type -ne $machine) { throw 'Unexpected architecture' }
+          }
+          Install-And-Check 'Unsloth-Desktop-Windows-ARM64.exe' 0xaa64
+          Install-And-Check 'Unsloth-Desktop-Windows.exe' 0x8664
