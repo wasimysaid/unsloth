@@ -20,7 +20,7 @@ import { applyTextDelta, type TextDelta } from "./live-rows.ts";
 import { createViewNotifications } from "./view-notifications.ts";
 import { codingRowSize } from "./file-changes.ts";
 import type { CodingImage, CodingInput, CodingInputExtras } from "./input.ts";
-import type { CodingConfigurationChange } from "./model-selection.ts";
+import { type CodingConfigurationChange, studioConnectionBlockedReason } from "./model-selection.ts";
 import { type PendingCommand, pendingCommandStore } from "./pending-command.ts";
 import {
   type PendingImageStore,
@@ -142,6 +142,7 @@ export function createCodingRun(
     /** Bound on waiting for ordered native state after a mode command. */
     modeSettleDelay?: number;
     onRuntimeLost?: () => void;
+    connectionsEnabled?: () => boolean;
   } = {},
 ) {
   const pendingStore = pendingSubmissionStore(
@@ -1095,6 +1096,14 @@ export function createCodingRun(
       throw new Error(
         "Wait for a connected, reconstructed native view and confirmed cleanup before sending.",
       );
+    const connectionBlocked = studioConnectionBlockedReason(
+      state.native?.configuration.provider,
+      options.connectionsEnabled?.() ?? true,
+    );
+    if (connectionBlocked) {
+      update({ error: connectionBlocked, unsentDraft: input.text, rejectedSubmission: input });
+      return false;
+    }
     // Image persistence is asynchronous: hold the send gate meanwhile, and
     // deliver only through the same view lifetime that admitted this send.
     const lifetime = { attachment, incarnation };

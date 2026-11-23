@@ -40,6 +40,8 @@ function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency:
     }
   }
   let inventoryChanged: (() => void) | undefined;
+  let enabled = true;
+  let connectionsChanged: (() => void) | undefined;
   let download!: Parameters<typeof import("../src/features/model-picker/use-load-after-download.ts").useLoadAfterDownload>;
   const { CodingModelSelector } = loadWithStubs<typeof Selector>(
     new URL(
@@ -98,7 +100,15 @@ function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency:
       "./coding-layout-context": { CodingLayoutHosts: { initial: { settingsPanel: null, settingsTrigger: null, contextUsage: null } } },
       "./model-selection": selection,
       "./use-local-model": { useLocalModel: () => ({ loadedModels: [], unloading: false, unloadAll: async () => {}, ...local, refresh: local.refresh ?? (async () => local.models) }) },
-      "@/features/chat": { ...downloadStaging, listModels: async () => ({ models: [{ id: "org/fallback", name: "Fallback", is_gguf: true }] }) },
+      "@/features/chat": { ...downloadStaging,
+        useExternalProvidersStore: Object.assign(() => enabled, {
+          getState: () => ({ connectionsEnabled: enabled }),
+          subscribe(callback: (state: { providers: unknown[] }, previous: { providers: unknown[] }) => void) {
+            connectionsChanged = () => callback({ providers: [] }, { providers: [] });
+            return () => { connectionsChanged = undefined; };
+          },
+        }),
+        listModels: async () => ({ models: [{ id: "org/fallback", name: "Fallback", is_gguf: true }] }) },
     },
   );
   return {
@@ -113,6 +123,8 @@ function mount(inventoryVersion = 0, local: LocalStub = { models: [], residency:
       };
     },
     download: () => download,
+    connectionsChanged() { connectionsChanged?.(); },
+    setConnectionsEnabled(value: boolean) { enabled = value; },
     inventoryChanged() {
       inventoryChanged?.();
     },
@@ -180,6 +192,49 @@ test("shared composer selection keeps exact native IDs, default effort, and fail
   });
   assert.equal(calls.length, 1);
   if (typeof cleanup === "function") cleanup();
+});
+
+test("opening Coding and editing Studio connections reread the session catalog without rediscovery", async () => {
+  const view = mount();
+  let connections = ["Work", "native"];
+  const reads: boolean[] = [];
+  const props = {
+    readCatalog: async (refresh: boolean) => {
+      reads.push(refresh);
+      return connections.map((name) => ({
+        id: name === "native" ? name : "studio-connection-" + name,
+        name,
+        models: [{ id: "shared-model", name: "Shared model", api_model: "shared-model",
+          reasoning: "unsupported" as const, default_reasoning: null }],
+      }));
+    },
+    configuration: { provider: "studio-connection-Work", model: "shared-model", reasoning: null },
+    disabled: false,
+    configuring: false,
+    configure: async () => { throw new Error("Refreshing must preserve the selection"); },
+  };
+  view.render(props);
+  const cleanup = view.start();
+  await tick();
+  connections = ["Work", "Personal", "native"];
+  view.render(props).source.onOpenChange(true);
+  await tick();
+  assert.deepEqual(view.render(props).source.externalModels.map((row) => row.providerName), connections);
+  view.setConnectionsEnabled(false);
+  const disabled = view.render(props);
+  assert.deepEqual(disabled.source.externalModels.map((row) => row.providerName), ["native"]);
+  assert.match(JSON.stringify(disabled.notice), /Studio connections are disabled/);
+  view.setConnectionsEnabled(true);
+  connections = ["Personal"];
+  view.connectionsChanged();
+  await tick();
+  const after = view.render(props);
+  assert.deepEqual(after.source.externalModels.map((row) => row.providerName), connections);
+  assert.match(JSON.stringify(after.notice), /selected model is unavailable/i);
+  assert.deepEqual(reads, [false, false, false]);
+  cleanup();
+  view.connectionsChanged();
+  assert.equal(reads.length, 3);
 });
 
 test("a late catalog response after disposal cannot populate the next folder", async () => {

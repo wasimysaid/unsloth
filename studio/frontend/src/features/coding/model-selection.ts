@@ -37,6 +37,15 @@ export interface CodingModelApi {
 export const modelIdentity = (provider: string, model: string) =>
   JSON.stringify([provider, model]);
 
+export function studioConnectionBlockedReason(
+  provider: string | null | undefined,
+  connectionsEnabled: boolean,
+): string | null {
+  return !connectionsEnabled && provider?.startsWith("studio-connection-")
+    ? "Studio connections are disabled. Enable connections in Settings or choose another model."
+    : null;
+}
+
 export function findCodingModel(
   catalog: CodingProviderChoice[],
   selection: Pick<CodingConfiguration, "provider" | "model"> | null,

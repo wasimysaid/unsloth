@@ -764,6 +764,23 @@ navigation never cancels an accepted preload. Rapid selections coalesce behind t
 submitted browser load. Studio owns model residency and loading; Mimir owns the
 conversation's selected model and per-request settings.
 
+### Saved Studio connections
+
+A saved OpenAI-compatible Chat Completions connection appears in Coding under
+its Studio display name. The provider ID includes the saved connection ID, so
+two endpoints can offer the same model. Mimir also lists its native providers,
+including Codex subscriptions. Turning off **Enable connections** in the browser
+hides Studio connections in Coding and keeps a draft addressed to one from being
+sent. Mimir-native providers remain available.
+
+Studio registers the signed-in account’s visible models through the
+`studio.frontend` plugin. The registration holds a loopback proxy URL and a
+temporary runtime credential. On each inference request, Studio checks the
+account, the connection and its permitted models, then reads the current key
+and forwards the Chat Completions stream. Rotating an upstream key takes effect
+on the next request. The browser and Mimir need only the provider and model IDs
+to select the model. Mimir owns the tool loop.
+
 The local model picker follows Unsloth residency, not the remembered Mimir
 configuration: an unloaded selection shows “Select model” with no selected row,
 quantization, or model-specific controls. A loading selection shows progress;
@@ -804,8 +821,8 @@ uses the same chip layout and Thinking/effort controls. Load and unload operatio
 are distinct, so an unload refusal preserves the expanded list. Unloads remain
 guarded and stop on the first refusal;
 active Chat/Coding work is preserved. Inventory changes refresh automatically;
-there is no separate Coding refresh button. Native provider administration stays
-with Mimir rather than opening Chat's unrelated connection editor. The previous Coding picker and its separate favorite store are removed.
+there is no separate Coding refresh button. The Connected models tab opens Studio
+settings for saved Studio connections. Mimir-native providers use Mimir’s settings. The previous Coding picker and its separate favorite store are removed.
 Existing browser favorites remain stored but are not imported into shared pins. Model-switch patches omit reasoning so Mimir chooses the new default.
 Uncertain configuration delivery is not replayed: a view opened before that
 operation's outcome cannot clear its uncertainty. A later reconstruction is
@@ -854,16 +871,20 @@ Production inherits normal Mimir configuration/history; Studio never creates an
 agent profile, copies credentials, edits trust records, or supplies a coding
 folder allowlist. Test runs alone override `MIMIR_CODING_AGENT_DIR`.
 
-`core/coding_runtime.py` retains one process, multiplexes bounded framed responses
-and ordered lifecycle views, and awaits shutdown. Browser disconnection does not
+`core/coding_runtime.py` retains a live process per Studio account and sign-in
+type. An interactive login can use that account’s saved connections. API-key
+callers have separate processes. Each process opens the existing native history
+and settings, and Mimir’s session lease protects an active conversation across
+processes. The supervisor multiplexes framed responses and awaits shutdown. Browser disconnection does not
 replay commands or release conversation owners. Fatal private-transport failures
 initiate supervised EOF and await process cleanup without restart/replay. Slow SSE readers receive an explicit
 reconstruction error, not a silently truncated suffix. Disconnecting a browser
 closes only its view. Continuous idle retirement is described above; whole-runtime
 maintenance remains #249.
 
-All `/api/coding` routes use Studio's existing `get_current_subject`; conversation
-IDs, history, catalogs, folder browsing, and SSE have no auth bypass. This slice
+Browser-facing Coding routes authenticate the Studio account. The private
+`/api/coding/connections/{id}/v1/chat/completions` route authenticates the
+supervised runtime and rechecks the login generation before using saved keys. This slice
 adds no new owner-only policy. Existing model-folder browsing safeguards remain
 untouched. The coding folder browser lists OS-readable directories only; native
 Session Control validates canonical read/search access again at opening. A folder

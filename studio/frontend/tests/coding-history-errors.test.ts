@@ -7,6 +7,7 @@ import { CodingHttpError } from "../src/features/coding/errors.ts";
 import type * as HistoryEdge from "../src/features/coding/history-edge.tsx";
 import * as historyScroll from "../src/features/coding/history-scroll.ts";
 import { createInputDraft } from "../src/features/coding/input.ts";
+import * as modelSelection from "../src/features/coding/model-selection.ts";
 import * as runSession from "../src/features/coding/run-session.ts";
 import type { NativeState, RunApi } from "../src/features/coding/run-types.ts";
 import * as transcriptModel from "../src/features/coding/transcript-model.ts";
@@ -183,7 +184,8 @@ test("main history ignores unrelated run errors and retains paging recovery afte
     {
       "react/jsx-runtime": stubJsxRuntime(),
       "react-dom": { createPortal: () => null },
-      "@/features/chat": { ContextUsageBar: "context-usage" },
+      "@/features/chat": { ContextUsageBar: "context-usage", useExternalProvidersStore: () => true },
+      "./model-selection": modelSelection,
       "./coding-layout-context": { CodingLayoutHosts: { current: { contextUsage: null } } },
       "./context-usage": { codingContextUsage: () => ({}) },
       react: {

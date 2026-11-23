@@ -294,7 +294,7 @@ test("coding route stays authenticated and excludes general-chat execution and t
       compilerOptions: { module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.ReactJSX },
     }).outputText;
     assert.doesNotMatch(
-      executable.replace('import { ContextUsageBar } from "@/features/chat";', ""),
+      executable.replace('import { ContextUsageBar, useExternalProvidersStore } from "@/features/chat";', ""),
       /from ["'][^"']*(?:features\/chat|app-sidebar|assistant-ui\/thread|chat-history|sandbox|model-picker)/,
     );
     assert.doesNotMatch(

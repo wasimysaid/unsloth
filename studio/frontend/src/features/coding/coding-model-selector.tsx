@@ -23,7 +23,11 @@ import {
 } from "@/components/assistant-ui/composer-model-picker/context";
 import { getInventoryVersion, subscribeInventory } from "@/features/hub";
 import { Button } from "@/components/ui/button";
-import { listModels, wantsDownloadManagerStaging } from "@/features/chat";
+import {
+  listModels,
+  useExternalProvidersStore,
+  wantsDownloadManagerStaging,
+} from "@/features/chat";
 import type {
   ModelOption,
   ModelSelectorChangeMeta,
@@ -36,6 +40,7 @@ import {
   findLocalPickerChoice,
   findResidentLocalChoice,
   modelIdentity,
+  studioConnectionBlockedReason,
 } from "./model-selection";
 import type {
   CodingConfiguration,
@@ -143,15 +148,23 @@ export function CodingModelSelector({
     };
     requestCatalog.current = request;
     const unsubscribe = subscribeInventory(() => request(true));
+    const unsubscribeConnections = useExternalProvidersStore.subscribe((state, previous) => {
+      if (state.providers !== previous.providers) request(false);
+    });
     request(getInventoryVersion() > 0);
     return () => {
       controller.abort();
       unsubscribe();
+      unsubscribeConnections();
     };
   }, []);
+  const connectionsEnabled = useExternalProvidersStore((state) => state.connectionsEnabled);
+  const connectionBlocked = studioConnectionBlockedReason(configuration?.provider, connectionsEnabled);
   const selectionCatalog = useMemo(
-    () => codingSelectionCatalog(result.catalog),
-    [result.catalog],
+    () => codingSelectionCatalog(result.catalog.filter(
+      (provider) => !studioConnectionBlockedReason(provider.id, connectionsEnabled),
+    )),
+    [result.catalog, connectionsEnabled],
   );
   const models = useMemo(
     () =>
@@ -405,6 +418,7 @@ export function CodingModelSelector({
   }
   const notice =
     error ??
+    connectionBlocked ??
     (settingsOpen ? null : local.error) ??
     result.error ??
     (missing
@@ -439,7 +453,7 @@ export function CodingModelSelector({
     open: open && !disabled,
     onOpenChange: (next) => {
       setOpen(next && !blocked);
-      if (next && result.error && !blocked) requestCatalog.current(false);
+      if (next && !open && !blocked) requestCatalog.current(false);
     },
     configRequest: null,
     onConfigRequestAdopted: () => undefined,

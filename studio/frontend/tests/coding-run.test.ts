@@ -55,6 +55,7 @@ const native = (active: string | null = null): NativeState => ({
 function harness(
   storage: SubmissionStorage = memorySubmissionStorage(),
   reconnectDelay?: (attempt: number) => number,
+  connectionsEnabled?: () => boolean,
 ) {
   let deliver!: (value: unknown) => Promise<void>;
   let connection: AbortSignal | null = null;
@@ -139,6 +140,7 @@ function harness(
     storage: () => storage,
     imageStorage: () => images,
     reconnectDelay,
+    connectionsEnabled,
   });
   run.connect();
   const event = (event: unknown) =>
@@ -191,6 +193,21 @@ function harness(
     failWatch: (reason: unknown) => failWatch(reason),
   };
 }
+
+test("turning off Studio connections preserves an unsent prompt in an open session", async () => {
+  let enabled = false;
+  const h = harness(undefined, undefined, () => enabled);
+  const state = native();
+  state.configuration.provider = "studio-connection-example";
+  await h.start(state);
+  assert.equal(await h.run.send("hello"), false);
+  assert.deepEqual(h.submissions, []);
+  assert.equal(h.run.getSnapshot().unsentDraft, "hello");
+  enabled = true;
+  assert.equal(await h.run.send("hello"), true);
+  assert.equal(h.submissions.length, 1);
+  h.run.detach();
+});
 
 test("5000 exact Unicode deltas notify once per render budget while Stop stays immediate", async (t) => {
   const h = harness();
