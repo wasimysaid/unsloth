@@ -3789,6 +3789,7 @@ from core.inference.passthrough_healing import (
     response_has_promotable_calls,
 )
 from core.inference.providers import (
+    external_model_accepts_images as _external_takes_mcp_images,
     HOSTED_TOOL_NAMES,
     answers_decisions_only,
     get_base_url,
@@ -10248,76 +10249,6 @@ def _names_a_non_mcp_tool(message) -> bool:
     """An absent name is not evidence of a non-MCP tool: older stored turns carry none."""
     name = message.get("name") if isinstance(message, dict) else getattr(message, "name", None)
     return isinstance(name, str) and bool(name) and not is_image_tool(name)
-
-
-# Mirrors NON_VISION_PROVIDER_TYPES in frontend external-providers.ts: the registry marks these vision-capable, but their chat endpoint is text-only.
-_TEXT_ONLY_PROVIDER_TYPES = frozenset({"cohere", "deepseek", "mistral"})
-
-
-# Mixed catalogs require model-level vision capability; family flags do not
-# identify which models accept images. Qwen has unrestricted text defaults;
-# its vision models use separate qwen-vl-* or Qwen2.5-VL IDs. Z.ai lists text
-# GLMs beside the -v / flash vision ones. Kimi is excluded
-# because its allowlist permits only multimodal kimi-k3/k2.5/k2.6.
-# Single-endpoint types (custom, vllm, ollama, llamacpp, lmstudio) retain the
-# registry default: no model catalog exists to check the configured endpoint.
-_MIXED_CATALOG_PROVIDER_TYPES = frozenset(
-    {
-        "huggingface",
-        "openrouter",
-        "qwen",
-        "qwencloud",
-        "zai",
-        "opencode",
-        "opencode_go",
-        "xai",
-        "nvidia",
-        "vercel",
-        "azure",
-        "bedrock",
-    }
-)
-
-# Mixed catalogs whose models.dev namespace answers vision per model.
-# Mirrors CATALOG_VISION_PROVIDER_TYPES in external-providers.ts.
-_CATALOG_VISION_NAMESPACES = {
-    "qwencloud": "qwen",
-    "zai": "zai",
-    "opencode": "opencode",
-    "opencode_go": "opencode_go",
-    "xai": "xai",
-    "nvidia": "nvidia",
-    "vercel": "vercel",
-    "azure": "azure",
-    "bedrock": "bedrock",
-}
-
-
-def _external_takes_mcp_images(
-    provider_type,
-    supports_vision: bool,
-    model: "str | None" = None,
-    info: "dict | None" = None,
-) -> bool:
-    """Stricter than the provider flag: an unsupported image fails the run, so unknown models answer no."""
-    if provider_type in _TEXT_ONLY_PROVIDER_TYPES:
-        return False
-    if not supports_vision:
-        return False
-    capabilities = ((info or {}).get("model_capabilities") or {}) if info else {}
-    if model and model in capabilities:
-        return bool(capabilities[model].get("vision"))
-    if provider_type in _MIXED_CATALOG_PROVIDER_TYPES:
-        namespace = _CATALOG_VISION_NAMESPACES.get(provider_type)
-        if namespace and model:
-            from routes.providers import cached_catalog_model_inputs
-            inputs = cached_catalog_model_inputs(namespace, model)
-            if inputs is not None:
-                return "image" in inputs
-        # Vision for the family, unknown for this model: an image would be sent to
-        # something that may not take one, and the failure lands mid-run.
-        return False
-    return True
 
 
 def _messages_mention_mcp_images(messages) -> bool:

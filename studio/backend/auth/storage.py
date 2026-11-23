@@ -1068,13 +1068,16 @@ def account_model_allowlist(account_id: str) -> Optional[tuple[str, ...]]:
     return None if allowlist is None else tuple(allowlist)
 
 
-def delete_account(account_id: str, retire) -> None:
+def delete_account(account_id: str, retire, *, after_disable = None) -> None:
     """Revoke, retire files, then drop the identity under a write lock. ``retire()`` must not write
     auth.db under that lock; a failed retire leaves the account disabled for a retry."""
     from auth.policy import account_mutation
     from utils.account_context import AccountContext
 
     set_account_active(account_id, False)
+    # A hosted runtime releases its internal credentials through a separate auth.db writer.
+    if after_disable is not None:
+        after_disable(account_id)
     with account_mutation():
         conn = get_connection()
         restore_roots = None

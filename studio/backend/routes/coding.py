@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from auth.authentication import get_current_credential
-from core.coding_runtime import CodingRuntimeError, runtime_for
+from core.coding_runtime import CodingRuntimeError, active_runtimes, runtime_for
 from models.model_load_config import ModelLoadConfig
 from utils.paths import studio_root
 
@@ -338,15 +338,14 @@ class LocalPreparation(LocalOperationIdentity):
 def _local_serving(request: Request, incarnation: str | None = None):
     import secrets
 
-    runtime = getattr(request.app.state, "coding_runtime", None)
-    serving = getattr(runtime, "local_serving", None)
     header = request.headers.get("authorization", "")
     token = header[7:] if header.lower().startswith("bearer ") else ""
-    if (serving is None or serving.closing or not secrets.compare_digest(token.encode(), serving.key.encode())
-            or (incarnation is not None and incarnation != serving.incarnation)):
-        # A browser token or an earlier process's key must not reach model holds.
-        raise HTTPException(403, "This operation requires the current native serving incarnation.")
-    return serving
+    for runtime in active_runtimes(request.app):
+        serving = runtime.local_serving
+        if (serving is not None and not serving.closing and secrets.compare_digest(token.encode(), serving.key.encode())
+                and (incarnation is None or incarnation == serving.incarnation)):
+            return serving
+    raise HTTPException(403, "This operation requires the current native serving incarnation.")
 
 
 class LocalModelLoad(BaseModel):
@@ -494,7 +493,10 @@ def _browse(path: str | None, complete: bool = False, hidden: bool = False) -> d
 
 @router.get("/runtime")
 async def runtime_status(request: Request):
-    return await runtime_for(request.app).inspect_status()
+    try:
+        return await runtime_for(request.app).inspect_status()
+    except CodingRuntimeError as exc:
+        raise _http_error(exc) from exc
 
 
 @router.post("/runtime/restart")

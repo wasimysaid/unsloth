@@ -3752,14 +3752,17 @@ export function ComposerModelPicker({
       run: () => void;
     }[];
   } => {
-    if (runtimeControls && (viewed === CONNECTED_TAB || viewed.startsWith(EXT_PREFIX))) {
-      return { title: "No models found", hint: "Configure a provider for this project." };
-    }
     if (
       viewed === CONNECTED_TAB &&
       !query &&
       (externalModels?.length ?? 0) === 0
     ) {
+      if (runtimeControls) {
+        return {
+          title: "No connected models",
+          hint: "Add an OpenAI-compatible connection in Settings or configure a Mimir provider.",
+        };
+      }
       return {
         title: "No connected models",
         hint: "Connect a provider to use its models here.",
@@ -5771,7 +5774,7 @@ export function ComposerModelPicker({
                   {formatGroup}
                 </NonModalDropdownMenu>
               ) : null}
-              {source && !runtimeControls && viewed === CONNECTED_TAB ? (
+              {source && viewed === CONNECTED_TAB ? (
                 <Hint label="Connections">
                   <button
                     type="button"

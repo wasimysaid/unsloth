@@ -3,13 +3,17 @@
 
 """Owner-managed account lifecycle. Private roots are retired, never erased."""
 
+import asyncio
 import json
 import sqlite3
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from weakref import WeakValueDictionary
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+import anyio
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from auth import policy, storage
 from auth.authentication import authenticated_via_api_key, get_current_subject
@@ -204,9 +208,31 @@ def regenerate_setup_code(account_id: str):
         return storage.issue_account_setup_code(account_id = account_id)
 
 
-@router.patch("/{account_id}", response_model = AccountResponse)
-def set_account_active(account_id: str, payload: AccountActiveRequest):
+async def _account_transition(account_id: str, request: Request):
+    # Reactivation must wait for this account's drain and retirement to finish.
+    locks = getattr(request.app.state, "account_transition_locks", None)
+    if locks is None:
+        locks = request.app.state.account_transition_locks = WeakValueDictionary()
+    lock = locks.setdefault(account_id, asyncio.Lock())
+    async with lock:
+        yield
+
+
+def _stop_account_coding(app, account_id: str) -> None:
+    from core.coding_runtime import CodingRuntimeError, close_account_coding_runtimes
+
+    active_generations.fence(account_id)
+    try:
+        anyio.from_thread.run(close_account_coding_runtimes, app, account_id)
+    except CodingRuntimeError as exc:
+        raise HTTPException(409, "Account disabled. Coding could not confirm its work stopped.") from exc
+
+
+@router.patch("/{account_id}", response_model = AccountResponse, dependencies = [Depends(_account_transition)])
+def set_account_active(account_id: str, payload: AccountActiveRequest, request: Request):
     with _account_errors():
+        if payload.is_active and active_generations.fenced(account_id):
+            _stop_account_coding(request.app, account_id)
         result = storage.set_account_active(account_id, payload.is_active)
         if payload.is_active:
             # A delete that failed after retiring the jobs left the id tombstoned in-process.
@@ -230,6 +256,7 @@ def set_account_active(account_id: str, payload: AccountActiveRequest):
             cancel_account_runs(account_id)
             retire_account_loads(account_id)
             account_access.retire_resident_shares(account_id)
+            _stop_account_coding(request.app, account_id)
         return result
 
 
@@ -248,12 +275,12 @@ def set_account_model_access(account_id: str, payload: AccountModelAccessRequest
     return result
 
 
-@router.delete("/{account_id}", status_code = status.HTTP_204_NO_CONTENT)
-def delete_account(account_id: str):
+@router.delete("/{account_id}", status_code = status.HTTP_204_NO_CONTENT, dependencies = [Depends(_account_transition)])
+def delete_account(account_id: str, request: Request):
     from core.training.account_jobs import AccountRetirementError
     with _account_errors():
         try:
-            storage.delete_account(account_id, retire_account_roots)
+            storage.delete_account(account_id, retire_account_roots, after_disable = lambda account: _stop_account_coding(request.app, account))
         except (OSError, AccountRetirementError) as exc:
             detail = "Could not retire account files. The account is disabled; retry deletion."
             if isinstance(exc, AccountRetirementError):

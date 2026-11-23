@@ -2246,6 +2246,10 @@ app.add_middleware(XApiKeyMiddleware)
 
 app.include_router(auth_router, prefix = "/api/auth", tags = ["auth"])
 app.include_router(
+    __import__("routes.coding_connections", fromlist = ["router"]).router,
+    prefix = "/api/coding/connections", tags = ["coding"],
+)
+app.include_router(
     __import__("routes.coding", fromlist = ["router"]).router,
     prefix = "/api/coding", tags = ["coding"],
 )

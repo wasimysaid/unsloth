@@ -9,6 +9,7 @@ import * as codingInput from "../src/features/coding/input.ts";
 import * as mentionMenu from "../src/features/coding/mention-menu.ts";
 import * as pendingSubmission from "../src/features/coding/pending-submission.ts";
 import * as runRuntime from "../src/features/coding/run-runtime.ts";
+import * as modelSelection from "../src/features/coding/model-selection.ts";
 import * as runSession from "../src/features/coding/run-session.ts";
 import * as transcriptModel from "../src/features/coding/transcript-model.ts";
 import * as answerFocus from "../src/features/coding/answer-focus.ts";
@@ -537,7 +538,8 @@ for (const ownerGeneration of [1, 2, 100]) {
       }) => StubElement;
     }>(new URL("../src/features/coding/coding-surface.tsx", import.meta.url), {
       "react-dom": { createPortal: () => null },
-      "@/features/chat": { ContextUsageBar: "context-usage" },
+      "@/features/chat": { ContextUsageBar: "context-usage", useExternalProvidersStore: () => true },
+      "./model-selection": modelSelection,
       "./coding-layout-context": { CodingLayoutHosts: { current: { contextUsage: null } } },
       "./context-usage": { codingContextUsage: () => ({}) },
       "react/jsx-runtime": stubJsxRuntime(),

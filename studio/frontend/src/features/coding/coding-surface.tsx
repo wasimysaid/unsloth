@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
-import { ContextUsageBar } from "@/features/chat";
+import { ContextUsageBar, useExternalProvidersStore } from "@/features/chat";
 import { createPortal } from "react-dom";
 import { CodingLayoutHosts } from "./coding-layout-context";
 import { codingContextUsage } from "./context-usage";
@@ -34,7 +34,7 @@ import {
 } from "./history-scroll";
 import type { CodingInputDraft } from "./input";
 import { CodingModelSelector } from "./coding-model-selector";
-import type { CodingConfiguration } from "./model-selection";
+import { type CodingConfiguration, studioConnectionBlockedReason } from "./model-selection";
 import { PlanCard } from "./plan-card";
 import { ProjectOverlapDialog } from "./project-overlap-dialog";
 import { QuestionCard } from "./question-card";
@@ -234,6 +234,7 @@ function StatusNotices({
 }
 
 export interface CodingLanding {
+  provider?: string;
   /** Folder chip above the composer. */
   project: React.ReactNode;
   /** Model chip for the first request. */
@@ -284,7 +285,7 @@ export function CodingSurface({
       conversationId,
       createCodingRunApi(conversationGeneration),
       undefined,
-      { onRuntimeLost },
+      { onRuntimeLost, connectionsEnabled: () => useExternalProvidersStore.getState().connectionsEnabled },
     );
   });
   useEffect(() => {
@@ -299,9 +300,13 @@ export function CodingSurface({
   const [disclosures] = useState(() => new Map<string, boolean>());
   const isLanding = !conversationId && Boolean(landing);
   const canEdit = isLanding ? !landing?.starting : codingCanEdit(state, run);
-  const sendBlocked = isLanding
-    ? (landing?.blocked ?? null)
-    : codingSendBlockedReason(state);
+  const connectionsEnabled = useExternalProvidersStore((store) => store.connectionsEnabled);
+  const sendBlocked =
+    (isLanding ? landing?.blocked : codingSendBlockedReason(state)) ??
+    studioConnectionBlockedReason(
+      isLanding ? landing?.provider : state?.native?.configuration.provider,
+      connectionsEnabled,
+    );
   const runtime = useExternalStoreRuntime(
     codingRunAdapter(state, run, draft, projection, canEdit),
   );

@@ -198,6 +198,7 @@ export function CodingPage() {
                   state.active
                     ? null
                     : {
+                        provider: state.selection?.provider,
                         project: (
                           <ProjectPicker
                             triggerRef={projectTrigger}
