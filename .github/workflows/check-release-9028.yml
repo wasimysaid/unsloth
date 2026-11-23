@@ -21,6 +21,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 12
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -30,6 +31,10 @@ jobs:
           if ($cpu -ne '${{ matrix.cpu }}') { throw "Unexpected host $cpu" }
           $dest = Join-Path $env:RUNNER_TEMP 'Unsloth Test Install'
           gh release download v0.1.9028-beta -R wasimysaid/unsloth -p '${{ matrix.wrong }}' -p Unsloth-Desktop-Windows.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pip install Pillow==12.1.1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python .github/scripts/check-published-warning.py '${{ matrix.wrong }}'
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           function Run-Setup($name,$expected) {
             $file = Get-Item $name
@@ -48,3 +53,8 @@ jobs:
           $machine = [BitConverter]::ToUInt16($bytes,[BitConverter]::ToInt32($bytes,60)+4)
           Write-Host ("Installed {0}, PE 0x{1:X4}" -f $exe.VersionInfo.ProductVersion,$machine)
           if ($machine -ne ${{ matrix.machine }} -or $exe.VersionInfo.ProductVersion -ne '0.1.9028-beta') { throw 'Wrong installed app' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: warning-${{ matrix.cpu }}
+          path: windows-*.png
+          if-no-files-found: error
