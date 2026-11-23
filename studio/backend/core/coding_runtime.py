@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Supervises one `mimir plugin run studio.frontend` process per Studio backend.
+"""Supervises an account’s live `mimir plugin run studio.frontend` process.
 
 Browser connections never own the process. Production inherits the ordinary
 Mimir configuration; MIMIR_CODING_AGENT_DIR is set only by isolated acceptance runs.
@@ -17,6 +17,9 @@ import struct
 import tempfile
 import uuid
 from typing import Any
+
+from state import active_generations
+from utils.account_context import AccountContext, OWNER_ACCOUNT_ID, current_account
 
 log = logging.getLogger(__name__)
 MAX_FRAME = 32 * 1024 * 1024
@@ -70,6 +73,36 @@ class CodingRuntimeError(Exception):
         self.requires_reopen = requires_reopen
 
 
+def _studio_origin(request) -> str | None:
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    origin = os.environ.get("UNSLOTH_MIMIR_STUDIO_URL")
+    if not origin:
+        server = request.scope.get("server")
+        if not server:
+            return
+        port = server[1]
+        if not isinstance(port, int) or not 1 <= port <= 65535:
+            return
+        origin = f"http://127.0.0.1:{port}"
+
+    try:
+        parsed = urlsplit(origin)
+        loopback = ipaddress.ip_address(parsed.hostname or "").is_loopback
+        port = parsed.port  # Validate malformed/out-of-range ports before minting.
+        valid = (loopback and parsed.scheme == "http"
+                 and (port is None or 1 <= port <= 65535)
+                 and not parsed.username and not parsed.password
+                 and parsed.path in ("", "/") and not parsed.query and not parsed.fragment)
+    except ValueError:
+        valid = False
+    if not valid:
+        # Match native's numeric-loopback HTTP contract, not browser Host/DNS.
+        raise CodingRuntimeError("invalid", "UNSLOTH_MIMIR_STUDIO_URL must be a plain loopback address such as http://127.0.0.1:8888.")
+    return origin.rstrip("/")
+
+
 class CodingRuntime:
     def __init__(self, executable: str | None = None):
         # Native positions are comparable only within one process incarnation.
@@ -113,6 +146,12 @@ class CodingRuntime:
         self._restart_prepared = False
         self._prewarm_task: asyncio.Task | None = None
         self._preinstalled = False
+        self._account_id = current_account().account_id
+        self._connection_origin: str | None = None
+        self._connection_account: AccountContext | None = None
+        self._connection_token: str | None = None
+        self._connection_snapshot: list | None = []
+        self._connection_lock = asyncio.Lock()
 
     def prewarm(self) -> None:
         # A cold Wasm compile of the package takes up to a minute; do it before
@@ -213,34 +252,18 @@ class CodingRuntime:
         The origin comes from the socket (or UNSLOTH_MIMIR_STUDIO_URL), never the
         Host header. The pipe bootstrap is POSIX-only; other hosts still run Coding.
         """
-        if os.name != "posix" or os.environ.get("UNSLOTH_MIMIR_LOCAL_SERVING") == "0":
+        local_enabled = os.name == "posix" and os.environ.get("UNSLOTH_MIMIR_LOCAL_SERVING") != "0"
+        account = current_account()
+        interactive = not account.via_api_key and account.credential_gen is not None
+        if not (local_enabled or interactive):
             return
-        from urllib.parse import urlsplit
-
-        origin = os.environ.get("UNSLOTH_MIMIR_STUDIO_URL")
+        origin = _studio_origin(request)
         if not origin:
-            server = request.scope.get("server")
-            if not server:
-                return
-            port = server[1]
-            if not isinstance(port, int) or not 1 <= port <= 65535:
-                return
-            origin = f"http://127.0.0.1:{port}"
-        import ipaddress
-
-        try:
-            parsed = urlsplit(origin)
-            loopback = ipaddress.ip_address(parsed.hostname or "").is_loopback
-            port = parsed.port  # Validate malformed/out-of-range ports before minting.
-            valid = (loopback and parsed.scheme == "http"
-                     and (port is None or 1 <= port <= 65535)
-                     and not parsed.username and not parsed.password
-                     and parsed.path in ("", "/") and not parsed.query and not parsed.fragment)
-        except ValueError:
-            valid = False
-        if not valid:
-            # Match native's numeric-loopback HTTP contract, not browser Host/DNS.
-            raise CodingRuntimeError("invalid", "UNSLOTH_MIMIR_STUDIO_URL must be a plain loopback address such as http://127.0.0.1:8888.")
+            return
+        if interactive:
+            self._connection_origin = origin
+        if not local_enabled:
+            return
         # Setup, process publication and shutdown share one linearization lock.
         async with self._start_lock:
             if self._maintaining:
@@ -316,6 +339,8 @@ class CodingRuntime:
 
     async def start(self, *, maintenance: bool = False) -> None:
         async with self._start_lock:
+            if active_generations.fenced(self._account_id):
+                raise CodingRuntimeError("denied", "This Studio account is disabled.")
             if self._maintaining and not maintenance:
                 raise CodingRuntimeError("busy", "Coding is restarting. Try again in a moment.")
             if self._closing:
@@ -370,6 +395,9 @@ class CodingRuntime:
                     "Coding could not start Mimir. Check that Mimir is installed on the Studio host "
                     "and that UNSLOTH_MIMIR_EXECUTABLE points to it.",
                 ) from exc
+            self._connection_account = None
+            self._connection_token = None
+            self._connection_snapshot = []
             if self._generation:
                 self.observation_epoch = uuid.uuid4().hex
             self._generation = self._next_generation
@@ -507,7 +535,31 @@ class CodingRuntime:
         if expected_generation is not None and expected_generation != self._generation:
             raise CodingRuntimeError("runtime_changed", "Coding was restarted. Reopen this conversation to continue.", requires_reopen = True)
         await self.start()
+        if self._connection_origin and method in {"catalog", "models", "models.refresh", "create", "open", "configure"}:
+            if expected_generation is None:
+                expected_generation = self._generation
+            await self._sync_connections(expected_generation)
         return await self._request(method, params, expected_generation = expected_generation)
+
+    async def _sync_connections(self, generation: int) -> None:
+        from core.coding_connections import provider_snapshot
+
+        account = current_account()
+        if account.via_api_key or not account.credential_gen:
+            return
+        async with self._connection_lock:
+            if generation != self._generation:
+                raise CodingRuntimeError("runtime_changed", "Coding restarted. Reopen the conversation.", requires_reopen = True)
+            if self._connection_account != account or self._connection_account.credential_gen != account.credential_gen:
+                self._connection_account = account
+                self._connection_token = secrets.token_urlsafe(32)
+            snapshot = await asyncio.to_thread(provider_snapshot, self._connection_origin, self._connection_token)
+            if snapshot == self._connection_snapshot:
+                return
+            # If the ACK is lost, even a change back to the previous snapshot must be replayed.
+            self._connection_snapshot = None
+            await self._request("sync_providers", {"providers": snapshot}, expected_generation = generation)
+            self._connection_snapshot = snapshot
 
     async def _request(self, method: str, params: dict[str, Any] | None = None, *, maintenance: bool = False, expected_generation: int | None = None) -> Any:
         assert self.process and self.process.stdin
@@ -883,14 +935,60 @@ class CodingRuntime:
 
 
 def runtime_for(app) -> CodingRuntime:
-    runtime = getattr(app.state, "coding_runtime", None)
-    if runtime is None:
-        runtime = CodingRuntime()
-        app.state.coding_runtime = runtime
-    return runtime
+    account = current_account()
+    if active_generations.fenced(account.account_id):
+        raise CodingRuntimeError("denied", "This Studio account is disabled.")
+    if account.account_id == OWNER_ACCOUNT_ID and not account.via_api_key:
+        # The primary interactive runtime is also the one prewarmed during startup.
+        runtime = getattr(app.state, "coding_runtime", None)
+        if runtime is None:
+            runtime = app.state.coding_runtime = CodingRuntime()
+        return runtime
+    runtimes = getattr(app.state, "coding_account_runtimes", None)
+    if runtimes is None:
+        runtimes = app.state.coding_account_runtimes = {}
+    scope = (account.account_id, account.via_api_key)
+    if scope not in runtimes:
+        runtimes[scope] = CodingRuntime()
+    return runtimes[scope]
+
+
+def active_runtimes(app):
+    primary = getattr(app.state, "coding_runtime", None)
+    if primary is not None:
+        yield primary
+    yield from getattr(app.state, "coding_account_runtimes", {}).values()
+
+
+def connection_account_for(app, bearer: str) -> AccountContext | None:
+    if not bearer or not bearer.isascii():
+        return None
+    for runtime in active_runtimes(app):
+        if (runtime._connection_token and secrets.compare_digest(bearer, runtime._connection_token)
+                and runtime.process is not None and runtime.process.returncode is None
+                and not runtime._failure and not runtime._closing
+                and not active_generations.fenced(runtime._account_id)):
+            return runtime._connection_account
+    return None
+
+
+async def close_account_coding_runtimes(app, account_id: str) -> None:
+    # Account retirement already fenced new admissions. Keep an unconfirmed
+    # supervisor reachable so an unsuccessful cleanup cannot masquerade as success.
+    runtimes = getattr(app.state, "coding_account_runtimes", {})
+    owned = [(scope, runtime) for scope, runtime in runtimes.items() if scope[0] == account_id]
+    outcomes = await asyncio.gather(*(runtime.close() for _, runtime in owned), return_exceptions = True)
+    unconfirmed = False
+    for (scope, runtime), outcome in zip(owned, outcomes, strict = True):
+        if isinstance(outcome, BaseException) or runtime._cleanup_failed:
+            unconfirmed = True
+        else:
+            runtimes.pop(scope, None)
+    if unconfirmed:
+        raise CodingRuntimeError("cleanup_failed", "Coding could not confirm that this account’s work stopped. Check the Studio host before restarting it.")
 
 
 async def close_coding_runtime(app) -> None:
-    runtime = getattr(app.state, "coding_runtime", None)
-    if runtime is not None:
-        await runtime.close()
+    async with asyncio.TaskGroup() as tasks:
+        for runtime in active_runtimes(app):
+            tasks.create_task(runtime.close())

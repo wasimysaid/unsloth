@@ -1733,6 +1733,16 @@ class ExternalProviderClient:
                 return True
         return info.get("openai_compatible", True)
 
+    def open_chat_completions(self, body: dict[str, Any], *, thread_id: Optional[str] = None):
+        """Open the provider's OpenAI-compatible response, with Studio's routing and headers."""
+        return _stream_post_with_compat_fallbacks(
+            _loopback_http_client if getattr(self, "_managed_loopback", False) else _client(),
+            _append_provider_path(self.base_url, "/chat/completions"),
+            body,
+            headers = self._chat_headers(thread_id),
+            timeout = self._stream_timeout,
+        )
+
     async def stream_chat_completion(
         self,
         messages: list[dict[str, Any]],
@@ -2067,13 +2077,7 @@ class ExternalProviderClient:
         )
 
         try:
-            async with _stream_post_with_compat_fallbacks(
-                _loopback_http_client if getattr(self, "_managed_loopback", False) else _client(),
-                url,
-                body,
-                headers = self._chat_headers(thread_id),
-                timeout = self._stream_timeout,
-            ) as response:
+            async with self.open_chat_completions(body, thread_id = thread_id) as response:
                 if response.status_code != 200:
                     error_body = await response.aread()
                     error_text = error_body.decode("utf-8", errors = "replace")

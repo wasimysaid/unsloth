@@ -54,7 +54,7 @@ class NativeCodingBoundary:
         self.operations.append(method)
         if method == "open":
             assert params == {"conversation_id": CONVERSATION_ID}
-            return {"info": {"conversation_id": CONVERSATION_ID, "title": SENTINEL}}
+            return {"info": {"id": CONVERSATION_ID, "title": SENTINEL, "cwd": "/project"}}
         assert method in NATIVE_OPERATIONS.values()
         # Authorization-only response, not a claim about native execution.
         # Full native result shapes are asserted in the focused coding tests.
@@ -86,6 +86,11 @@ class NativeCodingBoundary:
 
 
 FACTORIES = {
+    "routes.coding_connections:POST:/{connection_id}/v1/chat/completions": Factory(
+        "coding-conversation", {"model": "my-model", "messages": [], "stream": True},
+        extra_params = {"connection_id": "hosted"}, success = 403, owner = (403,), wrong = (403,),
+        deactivated = (403,), reason = "Only a live Coding runtime capability admits a connection request.",
+    ),
     "routes.coding:POST:/conversations/{conversation_id}/open": Factory(
         "coding-conversation", fragment = SENTINEL,
         owner = (200,), wrong = (200,), reason = _SHARED_HISTORY_REASON,
