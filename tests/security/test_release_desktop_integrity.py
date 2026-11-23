@@ -176,7 +176,8 @@ def _stage_assets(tmp_path: Path) -> None:
         ("Unsloth-Desktop-Linux.AppImage", b"linux updater"),
         ("Unsloth-Desktop-Linux.AppImage.sig", signature),
         ("Unsloth-Desktop-Windows.exe", b"installer"),
-        ("Unsloth-Desktop-Windows.exe.sig", signature),
+        ("Unsloth-Desktop-Windows-x64.exe", b"x64 installer"),
+        ("Unsloth-Desktop-Windows-x64.exe.sig", signature),
         ("Unsloth-Desktop-Windows-ARM64.exe", b"arm64 installer"),
         ("Unsloth-Desktop-Windows-ARM64.exe.sig", signature),
     ):
@@ -498,12 +499,12 @@ def _stage_windows_leg(workflow, tmp_path: Path, artifact: str) -> list[str]:
 
 
 def test_the_two_windows_legs_never_stage_the_same_asset_name(tmp_path):
-    """Windows legs need distinct names: merge-multiple overwrites; the x64 name is the download link."""
+    """Windows legs need distinct names: merge-multiple overwrites; the universal download has its own name."""
     workflow = _workflow()
     x64 = _stage_windows_leg(workflow, tmp_path, "windows-x64")
     arm64 = _stage_windows_leg(workflow, tmp_path, "windows-arm64")
 
-    assert x64 == ["Unsloth-Desktop-Windows.exe", "Unsloth-Desktop-Windows.exe.sig"]
+    assert x64 == ["Unsloth-Desktop-Windows-x64.exe", "Unsloth-Desktop-Windows-x64.exe.sig"]
     assert arm64 == [
         "Unsloth-Desktop-Windows-ARM64.exe",
         "Unsloth-Desktop-Windows-ARM64.exe.sig",
@@ -546,7 +547,7 @@ def test_the_updater_manifest_points_windows_arm64_at_its_own_bundle(tmp_path):
     arm64_url = platforms["windows-aarch64"]["url"]
     x64_url = platforms["windows-x86_64"]["url"]
     assert arm64_url.endswith("Unsloth-Desktop-Windows-ARM64.exe"), arm64_url
-    assert x64_url.endswith("Unsloth-Desktop-Windows.exe"), x64_url
+    assert x64_url.endswith("Unsloth-Desktop-Windows-x64.exe"), x64_url
     assert "ARM64" not in x64_url, "the x64 entry picked up the ARM64 bundle"
     assert arm64_url != x64_url
     # The -nsis aliases exist because Tauri appends the installer kind; they must
@@ -613,6 +614,9 @@ def test_release_tag_remains_default_and_source_backend_is_fork_guarded():
     assert checkout["with"]["ref"] == (
         "${{ inputs.source_backend && github.sha || needs.prepare-version.outputs.desktop_release_tag }}"
     )
+    package_steps = workflow["jobs"]["windows-installer"]["steps"]
+    package_checkout = next(s for s in package_steps if "actions/checkout" in str(s.get("uses", "")))
+    assert package_checkout["with"]["ref"] == checkout["with"]["ref"]
     backend = _step(workflow, "build", "Checkout backend tag for source wheel")
     assert backend["if"] == "${{ inputs.source_backend }}"
     assert backend["with"]["ref"] == "${{ needs.prepare-version.outputs.desktop_release_tag }}"

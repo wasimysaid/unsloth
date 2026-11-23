@@ -123,6 +123,8 @@ INDEX_DIGEST = (
     "else:\n"
     "    digest = hashlib.sha256()\n"
     "    for name in sorted(index):\n"
+    "        if name in ('usearch', 'numkong'):\n"
+    "            continue\n"
     "        digest.update(f'{name}=={index[name][0]}\\n'.encode('utf-8'))\n"
     "    print(digest.hexdigest())\n"
 )
@@ -349,6 +351,8 @@ def run_update(
     # Inherited, not replaced: a hand-built environment fails in ways that look like the product.
     env = dict(os.environ)
     env.pop("UNSLOTH_IDEMPOTENCY_E2E", None)
+    # tests/conftest.py turns the HNSW download off for unit tests; the update under test must run it.
+    env.pop("RAG_VEC_ANN_AUTO_INSTALL", None)
     # The pytest venv is not the venv under test.
     for leaked in (
         "VIRTUAL_ENV",
@@ -527,6 +531,11 @@ def snapshot(venv_python: pathlib.Path) -> dict:
 
     state["uv_cache_marker"] = _digest(studio_home / "cache" / "uv-cache-dir")
     state["no_torch_marker"] = (venv / ".unsloth-no-torch").is_file()
+    # A no-op update must not rewrite the HNSW probe marker.
+    hnsw_marker = venv / ".unsloth-hnsw.json"
+    state["hnsw_marker"] = (
+        (_digest(hnsw_marker), hnsw_marker.stat().st_mtime_ns) if hnsw_marker.is_file() else None
+    )
     for name in (".venv_t5_530", ".venv_t5_550", ".venv_t5_510"):
         state[name] = _tree_state(studio_home / name)
 
@@ -643,6 +652,14 @@ def test_the_desktop_update_path_keeps_a_verified_install_offline(install, settl
         or UPGRADE_MARKER in run.log
     ), run.log[-8000:]
     assert run.connections == run.refused, run.report()
+    if UPGRADE_MARKER in run.log:
+        # Windows reached PyPI and moved to its release (the checkout's version is not PyPI's, as between
+        # a version bump and its publish), so the disk moved by design. Restore the checkout first: the
+        # fault tests after this one expect the code under test.
+        restore = run_update(directory, "run6-restore", local = True)
+        assert restore.rc == 0, restore.log[-8000:]
+        _assert_install_working(install, before, same_distributions = False)
+        pytest.skip("installed version is not PyPI's latest; the offline keep path was not taken")
     assert diff(before, snapshot(install)) == []
 
 
