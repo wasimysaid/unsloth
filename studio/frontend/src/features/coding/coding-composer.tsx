@@ -208,7 +208,13 @@ export function CodingComposer({
   useEffect(() => {
     const { text } = draft.getSnapshot();
     if (text && !composer.getState().text) composer.setText(text);
-  }, [composer, draft]);
+    return draft.subscribe((insertedText) => {
+      if (insertedText !== undefined) {
+        composer.setText(insertedText);
+        input.current?.focus();
+      }
+    });
+  }, [composer, draft, input]);
   // The first message typed before the conversation existed is sent exactly
   // once, through the ordinary Send path, when this owner can accept it.
   const autoSent = useRef(false);

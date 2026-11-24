@@ -3,8 +3,6 @@
 import { MarkdownPreview } from "@/components/markdown/markdown-preview";
 import {
   PanelIconButton,
-  PanelTabStrip,
-  PanelWindowControls,
   PANEL_STRIP_BUTTON,
 } from "@/components/panel-tabs";
 import { useWorkspacePaneControls } from "@/components/workspace-pane";
@@ -24,7 +22,6 @@ import {
   LoaderCircle,
   PanelRightClose,
   PanelRightOpen,
-  Plus,
   RefreshCw,
   Search,
 } from "lucide-react";
@@ -64,7 +61,6 @@ export function ProjectFilesButton() {
     </PanelIconButton>
   );
 }
-const fileName = (path: string) => path.split("/").at(-1) || path;
 const sizeText = (size: number) =>
   size < 1024
     ? `${size} B`
@@ -327,7 +323,6 @@ function ProjectTree({
 }
 
 export function ProjectFilesPanel({ files }: { files: ProjectFiles }) {
-  const controls = useWorkspacePaneControls();
   const state = useSyncExternalStore(files.subscribe, files.getSnapshot);
   const [query, setQuery] = useState(state.query);
   const [treeVisible, setTreeVisible] = useState(true);
@@ -373,44 +368,6 @@ export function ProjectFilesPanel({ files }: { files: ProjectFiles }) {
         }
       }}
     >
-      <PanelTabStrip
-        tabs={state.tabs.map((tab) => ({
-          id: tab.path,
-          title: tab.path,
-          label: (
-            <span className="min-w-0 flex-1 truncate">
-              {fileName(tab.path)}
-            </span>
-          ),
-          icon: <ProjectFileIcon path={tab.path} />,
-        }))}
-        activeTabId={state.selected}
-        label="File tabs"
-        closeTabLabel="Close file tab"
-        onActivate={(path) => void files.open(path)}
-        onClose={(path) => void files.close(path)}
-        onMove={files.move}
-        actions={
-          <>
-            <PanelIconButton
-              label="Find a file"
-              className={PANEL_STRIP_BUTTON}
-              onClick={focusFilter}
-            >
-              <Plus className="size-icon" />
-            </PanelIconButton>
-            <PanelWindowControls
-              fullView={controls.fullView}
-              fullViewLabel={
-                controls.fullView ? "Exit full view" : "Enter full view"
-              }
-              onToggleFullView={controls.toggleFullView}
-              closeLabel="Close files"
-              onClose={controls.close}
-            />
-          </>
-        }
-      />
       <div className="panel-document-surface flex min-h-0 flex-1 overflow-hidden">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border/60 px-3">
@@ -438,6 +395,9 @@ export function ProjectFilesPanel({ files }: { files: ProjectFiles }) {
                 </>
               )}
             </button>
+            <PanelIconButton label="Find a file" onClick={focusFilter} className="size-6">
+              <Search className="size-3.5" />
+            </PanelIconButton>
             {markdown && (
               <PanelIconButton
                 label={preview ? "Show Markdown source" : "Preview Markdown"}

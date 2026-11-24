@@ -15,7 +15,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { readCodingCatalog } from "./api";
-import { CodingWorkspace } from "./coding-workspace";
+import { BranchChangesButton, CodingWorkspace } from "./coding-workspace";
 import { ProjectFilesButton } from "./project-files-panel";
 import type { ChildView } from "./child-view";
 import { CodingSurface } from "./coding-surface";
@@ -91,9 +91,9 @@ export function CodingPage() {
     >
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <CodingWorkspace
-          key={workspace ?? "no-project"}
+          key={JSON.stringify([workspace, conversationKey])}
           project={workspace}
-          conversationKey={conversationKey}
+          conversation={state.active}
           view={childView?.key === conversationKey ? childView.view : null}
         >
           <div
@@ -143,6 +143,7 @@ export function CodingPage() {
                   className="flex shrink-0 items-center"
                 />
                 <ProjectFilesButton />
+                <BranchChangesButton />
               </div>
             </header>
             <RuntimeNotice maintenance={maintenance} runtime={runtime} />

@@ -112,7 +112,7 @@ def run_child_scenarios(page, context, base, provider, first, second_id, report,
     prompt_url = base + f"/api/coding/conversations/{conversation}/prompts"
     event_url = base + f"/api/coding/conversations/{conversation}/events"
     child_url = lambda handle, attempt: base + f"/api/coding/conversations/{conversation}/children/{handle}/attempts/{attempt}"
-    inspector = page.get_by_role("dialog", name="Subagent", exact=True)
+    inspector = page.get_by_role("region", name="Subagent", exact=True)
     status = page.get_by_test_id("coding-run-status")
 
     def reopen_same():
@@ -162,9 +162,9 @@ def run_child_scenarios(page, context, base, provider, first, second_id, report,
         expect(inspector.get_by_role("button", name=forbidden)).to_have_count(0)
 
     def dismiss(trigger):
-        inspector.get_by_role("button", name="Close subagent", exact=True).focus()
+        page.get_by_role("button", name="Close workspace panel", exact=True).focus()
         page.keyboard.press("Escape")
-        expect(inspector).to_have_count(0)
+        expect(inspector).to_be_hidden()
         expect(trigger).to_be_focused()
 
     def capture_events():
@@ -350,7 +350,7 @@ def run_child_scenarios(page, context, base, provider, first, second_id, report,
     expect(inspector).to_contain_text(FIRST_RESULT, timeout=60000)
     assert assert_outcome(read_detail(handle, 1), handle, 1, "completed") == first_outcome
     snapshot(page, "children-narrow-reopened-historical")
-    inspector.get_by_role("button", name="Close subagent", exact=True).click()
+    page.get_by_role("button", name="Close workspace panel", exact=True).click()
     expect(trigger).to_be_focused()
     trigger = open_inspector(handle, 2, "failed")
     assert assert_outcome(read_detail(handle, 2), handle, 2, "failed") == second_outcome

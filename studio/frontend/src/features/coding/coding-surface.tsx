@@ -3,6 +3,7 @@
 
 import { ContextUsageBar, useExternalProvidersStore } from "@/features/chat";
 import { createPortal } from "react-dom";
+import { CodingPanels } from "./coding-panels-context";
 import { CodingLayoutHosts } from "./coding-layout-context";
 import { codingContextUsage } from "./context-usage";
 import { Button } from "@/components/ui/button";
@@ -296,6 +297,13 @@ export function CodingSurface({
     run?.subscribe ?? (() => () => {}),
     run?.getSnapshot ?? (() => null),
   );
+  const { refreshGit } = useContext(CodingPanels);
+  const requestId = state?.native?.active_request;
+  const priorRequest = useRef(requestId);
+  useEffect(() => {
+    if (priorRequest.current && requestId === null) refreshGit();
+    priorRequest.current = requestId;
+  }, [requestId, refreshGit]);
   const [projection] = useState(createTranscriptProjection);
   const [disclosures] = useState(() => new Map<string, boolean>());
   const isLanding = !conversationId && Boolean(landing);

@@ -1,15 +1,33 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
-import { PanelTabStrip, PanelWindowControls } from "@/components/panel-tabs";
+import {
+  PanelTabStrip,
+  PanelWindowControls,
+  type PanelTab,
+} from "@/components/panel-tabs";
 import {
   WorkspacePane,
-  type WorkspacePaneContent,
   useWorkspacePaneControls,
 } from "@/components/workspace-pane";
-import { Bot, LoaderCircle } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+import {
+  Bot,
+  FileDiff,
+  FolderCode,
+  GitBranch,
+  LoaderCircle,
+} from "lucide-react";
 import {
   type ReactNode,
+  useCallback,
+  useContext,
   useEffect,
+  useMemo,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -22,88 +40,90 @@ import {
 } from "./child-types";
 import type { ChildView } from "./child-view";
 import { CodingPanels } from "./coding-panels-context";
+import {
+  gitWorkspace,
+  type GitComparison,
+  type GitWorkspace,
+} from "./git-workspace-api";
+import { GitReviewPanel } from "./git-review-panel";
+import { ProjectFileIcon } from "./project-file-icons";
 import { createProjectFiles } from "./project-files";
 import { projectFilesApi } from "./project-files-api";
 import { ProjectFilesPanel } from "./project-files-panel";
+import type { CodingConversation } from "./types";
 
-function SubagentPanel({ view }: { view: ChildView }) {
-  const controls = useWorkspacePaneControls();
-  const state = useSyncExternalStore(view.subscribe, view.getSnapshot);
-  const tabs = state.tabs.flatMap((identity) => {
-    const child = state.attempts.find((item) => sameChild(item, identity));
-    if (!child) return [];
-    const sameHandle =
-      state.tabs.filter((tab) => tab.handle === child.handle).length > 1;
-    return [
-      {
-        id: childKey(child),
-        title: `${childDescription(child)}${sameHandle ? ` · Attempt ${child.attempt}` : ""}`,
-        icon:
-          !child.historical && !terminalChild(child) ? (
-            <LoaderCircle
-              className="mx-px size-3.5 shrink-0 animate-spin"
-              aria-hidden="true"
-            />
-          ) : (
-            <Bot className="mx-px size-3.5 shrink-0" aria-hidden="true" />
-          ),
-      },
-    ];
-  });
-  const identityFor = (id: string) =>
-    state.tabs.find((tab) => childKey(tab) === id);
+export function BranchChangesButton() {
+  const { branch, changedFiles, openChanges, changesOpen } =
+    useContext(CodingPanels);
+  if (!branch) return null;
   return (
-    <>
-      <PanelTabStrip
-        tabs={tabs}
-        activeTabId={state.inspection ? childKey(state.inspection) : null}
-        label="Subagent tabs"
-        closeTabLabel="Close subagent tab"
-        onActivate={(id) => {
-          const identity = identityFor(id);
-          if (
-            identity &&
-            (!state.inspection || !sameChild(identity, state.inspection))
-          )
-            void view.open(identity);
-        }}
-        onClose={(id) => {
-          const identity = identityFor(id);
-          if (identity) {
-            if (state.tabs.length === 1) controls.close();
-            else void view.closeTab(identity);
-          }
-        }}
-        onMove={(id, index) => {
-          const identity = identityFor(id);
-          if (identity) view.moveTab(identity, index);
-        }}
-        actions={
-          <PanelWindowControls
-            fullView={controls.fullView}
-            fullViewLabel={
-              controls.fullView ? "Exit full view" : "Enter full view"
-            }
-            onToggleFullView={controls.toggleFullView}
-            closeLabel="Close subagents"
-            onClose={controls.close}
-          />
-        }
-      />
-      <ChildInspector view={view} />
-    </>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={openChanges}
+          aria-label={`Review changes on ${branch}`}
+          aria-expanded={changesOpen}
+          className={cn(
+            "flex h-7 max-w-[8.75rem] sm:max-w-[clamp(8.75rem,15vw,14rem)] shrink-0 items-center gap-1.5 rounded-full bg-muted/60 px-2.5 text-xs font-medium text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            changesOpen && "bg-accent text-foreground",
+          )}
+        >
+          <GitBranch className="size-3.5 shrink-0" aria-hidden />
+          <span className="min-w-0 truncate sm:hidden">
+            {branch.split("/").at(-1)}
+          </span>
+          <span className="hidden min-w-0 truncate sm:inline">{branch}</span>
+          {changedFiles !== null && changedFiles > 0 && (
+            <span
+              className="inline-flex shrink-0 items-center gap-1 text-muted-foreground tabular-nums"
+              aria-hidden
+            >
+              <FileDiff className="hidden size-3 sm:inline-block" />
+              {changedFiles}
+            </span>
+          )}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="tooltip-compact">
+        {branch}
+        {changedFiles === null
+          ? ""
+          : ` · ${changedFiles} changed ${changedFiles === 1 ? "file" : "files"}`}
+      </TooltipContent>
+    </Tooltip>
   );
+}
+
+function WindowControls() {
+  const controls = useWorkspacePaneControls();
+  return (
+    <PanelWindowControls
+      fullView={controls.fullView}
+      fullViewLabel={controls.fullView ? "Exit full view" : "Enter full view"}
+      onToggleFullView={controls.toggleFullView}
+      closeLabel="Close workspace panel"
+      onClose={controls.close}
+    />
+  );
+}
+
+type TabKind = "files" | "subagents" | "changes";
+interface WorkspaceTab extends PanelTab {
+  kind: TabKind;
+  activate: () => void;
+  close: () => void;
 }
 
 export function CodingWorkspace({
   view,
   project,
-  conversationKey,
+  conversation,
   children,
 }: {
   view: ChildView | null;
   project: string | null;
-  conversationKey: string;
+  conversation: CodingConversation | null;
   children: ReactNode;
 }) {
   const state = useSyncExternalStore(
@@ -117,51 +137,240 @@ export function CodingWorkspace({
     files?.subscribe ?? (() => () => {}),
     files?.getSnapshot ?? (() => null),
   );
-  const [selection, setSelection] = useState<
-    "files" | { child: string } | null
-  >(null);
   useEffect(() => () => files?.cancelRequests(), [files]);
-  let pane: WorkspacePaneContent | null = null;
-  if (selection === "files" && files) {
-    pane = {
-      id: `files:${project}`,
-      testId: "coding-files-panel",
-      label: "Files",
-      focusKey: fileState?.selected ?? null,
-      onClose: () => setSelection(null),
-      content: <ProjectFilesPanel files={files} />,
+
+  const git = useMemo(
+    () =>
+      conversation?.cwd && conversation.runtime_generation
+        ? gitWorkspace(conversation)
+        : null,
+    [conversation],
+  );
+  const [workspace, setWorkspace] = useState<GitWorkspace | null>(null);
+  const [changedFiles, setChangedFiles] = useState<number | null>(null);
+  const taskBase = workspace?.base;
+  const updateChangeCount = useCallback(
+    (count: number, comparison: GitComparison) => {
+      if (comparison === (taskBase ? "task" : "uncommitted"))
+        setChangedFiles(count);
+    },
+    [taskBase],
+  );
+  const [refreshKey, setRefreshKey] = useState(0);
+  const refreshGit = useCallback(() => setRefreshKey((key) => key + 1), []);
+  useEffect(() => {
+    if (!git) return;
+    let current = true;
+    async function inspect() {
+      if (!git || !(await git.available()) || !current) return;
+      const info = await git.inspect();
+      if (!current) return;
+      setWorkspace(info);
+      const changes = await git.changes(info.base ? "task" : "uncommitted");
+      if (current) setChangedFiles(changes.total);
+    }
+    void inspect().catch(() => {
+      if (current) setChangedFiles(null);
+    });
+    return () => {
+      current = false;
     };
-  } else if (
-    selection &&
-    selection !== "files" &&
-    selection.child === conversationKey &&
-    view &&
-    state?.inspection &&
-    state.tabs.length
-  ) {
-    pane = {
-      id: `subagents:${conversationKey}`,
-      testId: "coding-subagent-panel",
-      label: "Subagents",
-      focusKey: childKey(state.inspection),
-      onClose: () => {
-        setSelection(null);
-        view.close();
-      },
-      content: <SubagentPanel view={view} />,
-    };
+  }, [git, refreshKey]);
+
+  const [kind, setKind] = useState<TabKind>("files");
+  const [visible, setVisible] = useState(false);
+  const [filesOpened, setFilesOpened] = useState(false);
+  const [changesOpened, setChangesOpened] = useState(false);
+  const [order, setOrder] = useState<string[]>([]);
+  function open(kind: TabKind) {
+    if (kind === "files") setFilesOpened(true);
+    if (kind === "changes") setChangesOpened(true);
+    setKind(kind);
+    setVisible(true);
   }
+  const tabs: WorkspaceTab[] = [];
+  if (filesOpened && files && fileState) {
+    if (fileState.tabs.length === 0) {
+      tabs.push({
+        id: "files",
+        kind: "files",
+        title: "Files",
+        icon: <FolderCode className="size-3.5 shrink-0" />,
+        activate: () => open("files"),
+        close: () => setFilesOpened(false),
+      });
+    }
+    for (const tab of fileState.tabs) {
+      tabs.push({
+        id: `file:${tab.path}`,
+        kind: "files",
+        title: tab.path,
+        label: (
+          <span className="min-w-0 flex-1 truncate">
+            {tab.path.split("/").at(-1)}
+          </span>
+        ),
+        icon: <ProjectFileIcon path={tab.path} />,
+        activate: () => {
+          open("files");
+          if (fileState.selected !== tab.path) void files.open(tab.path);
+        },
+        close: () => {
+          if (fileState.tabs.length === 1) setFilesOpened(false);
+          void files.close(tab.path);
+        },
+      });
+    }
+  }
+  if (changesOpened && workspace) {
+    tabs.push({
+      id: "changes",
+      kind: "changes",
+      title: "Changes",
+      icon: <FileDiff className="size-3.5 shrink-0" />,
+      activate: () => open("changes"),
+      close: () => setChangesOpened(false),
+    });
+  }
+  if (view && state)
+    for (const identity of state.tabs) {
+      const child = state.attempts.find((item) => sameChild(item, identity));
+      if (!child) continue;
+      const duplicate = state.tabs.some(
+        (other) =>
+          other.handle === identity.handle &&
+          other.attempt !== identity.attempt,
+      );
+      tabs.push({
+        id: childKey(identity),
+        kind: "subagents",
+        title:
+          childDescription(child) +
+          (duplicate ? ` · Attempt ${child.attempt}` : ""),
+        icon:
+          !child.historical && !terminalChild(child) ? (
+            <LoaderCircle className="size-3.5 shrink-0 animate-spin" />
+          ) : (
+            <Bot className="size-3.5 shrink-0" />
+          ),
+        activate: () => {
+          open("subagents");
+          if (!state.inspection || !sameChild(state.inspection, child))
+            void view.open(identity);
+        },
+        close: () => void view.closeTab(identity),
+      });
+    }
+
+  const position = (id: string) => {
+    const index = order.indexOf(id);
+    return index < 0 ? Infinity : index;
+  };
+  tabs.sort((left, right) => position(left.id) - position(right.id));
+  const active =
+    kind === "changes"
+      ? "changes"
+      : kind === "files"
+        ? fileState?.selected
+          ? `file:${fileState.selected}`
+          : "files"
+        : state?.inspection
+          ? childKey(state.inspection)
+          : null;
+  const selected = tabs.find((tab) => tab.id === active);
+  const pane = tabs.length
+    ? {
+        id: "coding-tools",
+        testId:
+          kind === "files"
+            ? "coding-files-panel"
+            : kind === "changes"
+              ? "coding-git-panel"
+              : "coding-subagent-panel",
+        label: "Workspace tools",
+        focusKey: active,
+        onClose: () => setVisible(false),
+        content: (
+          <>
+            <PanelTabStrip
+              tabs={tabs}
+              activeTabId={active}
+              label="Workspace tabs"
+              closeTabLabel="Close tab"
+              onActivate={(id) => tabs.find((tab) => tab.id === id)?.activate()}
+              onClose={(id) => {
+                const tab = tabs.find((item) => item.id === id);
+                if (!tab) return;
+                tab.close();
+                if (id === active) {
+                  const neighbor =
+                    tabs[tabs.indexOf(tab) + 1] ?? tabs[tabs.indexOf(tab) - 1];
+                  if (neighbor) neighbor.activate();
+                  else setVisible(false);
+                }
+              }}
+              onMove={(id, index) => {
+                const next = tabs
+                  .map((tab) => tab.id)
+                  .filter((tab) => tab !== id);
+                next.splice(index, 0, id);
+                setOrder(next);
+              }}
+              actions={<WindowControls />}
+            />
+            {filesOpened && files && (
+              <div
+                className={
+                  kind === "files" ? "flex min-h-0 flex-1 flex-col" : "hidden"
+                }
+              >
+                <ProjectFilesPanel files={files} />
+              </div>
+            )}
+            {changesOpened && conversation && workspace && (
+              <div
+                className={
+                  kind === "changes" ? "flex min-h-0 flex-1 flex-col" : "hidden"
+                }
+              >
+                <GitReviewPanel
+                  conversation={conversation}
+                  workspace={workspace}
+                  visible={visible && kind === "changes"}
+                  refreshKey={refreshKey}
+                  onChangeCount={updateChangeCount}
+                />
+              </div>
+            )}
+            {kind === "subagents" && view && <ChildInspector view={view} />}
+          </>
+        ),
+      }
+    : null;
   return (
     <CodingPanels.Provider
       value={{
-        openFiles: () => setSelection("files"),
-        openSubagents: () => setSelection({ child: conversationKey }),
-        hasProject: files !== null,
-        filesOpen: selection === "files",
+        openFiles: () => open("files"),
+        openSubagents: () => open("subagents"),
+        openChanges: () => {
+          if (visible && kind === "changes") setVisible(false);
+          else open("changes");
+        },
+        refreshGit,
+        hasProject: Boolean(files),
+        filesOpen: visible && kind === "files",
+        subagentsOpen: visible && kind === "subagents",
+        changesOpen: visible && kind === "changes",
+        branch:
+          workspace?.branch ??
+          workspace?.head?.slice(0, 8) ??
+          (workspace ? "HEAD" : null),
+        changedFiles,
       }}
     >
       <WorkspacePane
         pane={pane}
+        visible={visible && Boolean(selected)}
         focusFallback={'[aria-label="Coding prompt"]'}
         testId="coding-workspace"
       >
