@@ -8,6 +8,7 @@ import base64
 import binascii
 import json
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Annotated, Literal
@@ -514,6 +515,61 @@ async def browse_projects(
     hidden: bool = False,
 ):
     return await asyncio.to_thread(_browse, path, complete, hidden)
+
+
+def _local_checkouts(path: str):
+    project = Path(path).expanduser().resolve()
+    try:
+        listing = subprocess.run(
+            ["git", "-C", str(project), "worktree", "list", "--porcelain", "-z"],
+            capture_output = True, timeout = 3, check = False,
+        )
+    except FileNotFoundError:
+        return []
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(503, "Git took too long to list the local checkouts.") from exc
+    if listing.returncode:
+        return []
+    checkouts = []
+    for record in listing.stdout.split(b"\0\0"):
+        fields = {}
+        for field in record.split(b"\0"):
+            name, _, value = field.partition(b" ")
+            fields[name] = value
+        if b"worktree" not in fields or b"bare" in fields or b"prunable" in fields:
+            continue
+        cwd = Path(os.fsdecode(fields[b"worktree"]))
+        if not cwd.is_dir():
+            continue
+        branch = fields.get(b"branch", b"").removeprefix(b"refs/heads/")
+        checkouts.append({"cwd": str(cwd), "branch": os.fsdecode(branch) or None,
+                          "head": fields.get(b"HEAD", b"")[:8].decode("ascii"), "current": False})
+    # A selected subdirectory belongs to its innermost checkout.
+    current = max((item for item in checkouts if project.is_relative_to(item["cwd"])),
+                  key = lambda item: len(item["cwd"]), default = None)
+    if current:
+        current["current"] = True
+    return sorted(checkouts, key = lambda item: (not item["current"], item["branch"] or item["cwd"]))
+
+
+@router.get("/projects/checkouts")
+async def local_checkouts(path: str = Query(min_length = 1, max_length = 32768)):
+    _project_text(path, 32768)
+    return await asyncio.to_thread(_local_checkouts, path)
+
+
+@router.get("/projects/branches")
+async def local_branches(path: str = Query(min_length = 1, max_length = 32768)):
+    _project_text(path, 32768)
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["git", "-C", path, "for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads/"],
+            capture_output = True, timeout = 5, check = True,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(503, "Could not read local branches.") from exc
+    return os.fsdecode(result.stdout).splitlines()
 
 
 @router.get("/catalog")

@@ -203,10 +203,6 @@ export function CodingPage() {
                           <ProjectPicker
                             triggerRef={projectTrigger}
                             project={project}
-                            projects={recentProjects(
-                              state.conversations,
-                              project,
-                            )}
                             onSelect={session.selectProject}
                             disabled={creating}
                             onBrowse={chooseFolder}
