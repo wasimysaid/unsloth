@@ -505,3 +505,23 @@ test("native rejection retains actionable rich input for restoration; adapter ne
   });
   h.run.detach();
 });
+
+test("appending review feedback preserves text and mentions and publishes an external edit", () => {
+  const draft = createInputDraft();
+  draft.syncText("Use ");
+  selectSkill(draft, skill, 4, 4);
+  const previous = draft.getSnapshot();
+  const originalMentions = draft.input(previous.text).skill_mentions;
+  const insertions: string[] = [];
+  const unsubscribe = draft.subscribe(text => {
+    if (text !== undefined) insertions.push(text);
+  });
+  draft.appendText("Please keep the original fallback.");
+  const expected = previous.text + "\n\nPlease keep the original fallback.";
+  assert.deepEqual(insertions, [expected]);
+  const input = draft.input(expected);
+  assert.equal(draft.getSnapshot().text, expected);
+  assert.deepEqual(input.skill_mentions, originalMentions);
+  assert.equal(input.skill_mentions?.length, 1);
+  unsubscribe();
+});

@@ -267,18 +267,22 @@ export function createInputDraft() {
     reading: [],
     attachmentErrors: [],
   };
-  const listeners = new Set<() => void>();
-  const publish = (next: InputDraft) => {
+  const listeners = new Set<(insertedText?: string) => void>();
+  const publish = (next: InputDraft, insertedText?: string) => {
     state = next;
-    for (const listener of listeners) listener();
+    for (const listener of listeners) listener(insertedText);
   };
   return {
     getSnapshot: () => state,
-    subscribe(listener: () => void) {
+    subscribe(listener: (insertedText?: string) => void) {
       listeners.add(listener);
       return () => {
         listeners.delete(listener);
       };
+    },
+    appendText(addition: string) {
+      const text = state.text ? state.text + "\n\n" + addition : addition;
+      publish({ ...state, text }, text);
     },
     syncText(text: string, edit?: { start: number; end: number }) {
       publish({
