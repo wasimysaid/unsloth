@@ -26,6 +26,7 @@ from pydantic import (
     model_validator,
 )
 
+from core.inference.audio_cpp_models import FILE_OPTIONS
 from core.inference.audio_workflows import status_audio_workflows
 from core.inference.diffusion_conditioning import MAX_REQUEST_SIDE
 from core.inference.llama_server_args import (
@@ -3494,7 +3495,7 @@ class ChatCompletionRequest(BaseModel):
             "summarise the oldest turns, keeps the recent ones verbatim and "
             "reuses the summary on later turns of a saved thread, so the prompt "
             "and the reply fit within it before forwarding. If the summary call "
-            "fails the oldest turns are dropped instead. "
+            "fails the oldest turns are evicted instead, archived for recall on a saved thread. "
             "Per-provider floors are enforced in the corresponding stream helpers."
         ),
     )
@@ -3505,6 +3506,16 @@ class ChatCompletionRequest(BaseModel):
             'after" setting rather than the default. Anthropic and OpenAI server-side '
             "compaction then use it as given instead of capping it at 200k: it is still "
             "raised to the provider's floor and never exceeds context_window."
+        ),
+    )
+    compaction_percent: Optional[int] = Field(
+        None,
+        ge = 10,
+        le = 100,
+        description = (
+            "[x-unsloth] The connection's \"Auto-compact at\" share of the model's window, in "
+            "percent. Where Unsloth reads the window from a self-hosted server (no "
+            "compaction_threshold, or Ollama's loaded num_ctx), it replaces the 75% default."
         ),
     )
     compaction_mode: Optional[Literal["summary", "rolling", "checkpoint"]] = Field(
@@ -5074,6 +5085,7 @@ class DiffusionLoadRequest(BaseModel):
             "xformers",
             "aiter",
             "unsloth_int8",
+            "flash_sdpa",
         ]
     ] = Field(
         None,
@@ -5084,8 +5096,10 @@ class DiffusionLoadRequest(BaseModel):
         "(kernel/arch-gated); sage is INT8 attention (a small quality cost, consumer "
         "friendly); unsloth_int8 is Studio's own INT8 attention kernel on the families with "
         "strided attention processors; xformers/aiter are memory-efficient (NVIDIA) / AMD ROCm (aiter needs "
-        "diffusers' local AITER backend, gone in 0.41+; without it ROCm runs the auto pick). An "
-        "unavailable kernel falls back to the default.",
+        "diffusers' local AITER backend, gone in 0.41+; without it ROCm runs the auto pick); flash_sdpa "
+        "pins torch SDPA's flash kernel. diffusers dispatcher names (_native_flash, _native_cudnn, _flash_3_hub, "
+        "flash_4_hub, sage_hub) are accepted as the matching alias. An unavailable kernel falls back to the auto "
+        "pick (native SDPA when speed=off).",
     )
     int8_attention: Optional[Literal["auto", "on", "off"]] = Field(
         None,
@@ -5138,7 +5152,8 @@ class DiffusionLoadRequest(BaseModel):
     @classmethod
     def _normalize_attention_backend(cls, value):
         # The dispatcher accepts case/whitespace variants, but the Literal above is validated before any normaliser runs, so fold it here.
-        return value.strip().lower() if isinstance(value, str) else value
+        from core.inference.diffusion_attention import canonical_attention_request
+        return canonical_attention_request(value)
 
     @field_validator("text_encoder_file")
     @classmethod
@@ -6985,8 +7000,8 @@ _AUDIO_CLIP_OPTION_ENDINGS = frozenset({"audio", "wav", "ref", "video", "image",
 
 def _names_a_file(name: str, value: Any) -> bool:
     words = re.split(r"[^a-z0-9]+", name.lower())
-    # Vevo2's target_voice is a file, but neither of its words gives that away.
-    if name.lower() == "target_voice" or any(word in _AUDIO_FILE_OPTION_WORDS for word in words):
+    # Vevo2's target_voice, VibeVoice's voice_samples: files, but no word of theirs gives that away.
+    if name.lower() in FILE_OPTIONS or any(word in _AUDIO_FILE_OPTION_WORDS for word in words):
         return True
     return isinstance(value, str) and words[-1] in _AUDIO_CLIP_OPTION_ENDINGS
 
@@ -7694,6 +7709,7 @@ class VideoLoadRequest(BaseModel):
             "xformers",
             "aiter",
             "unsloth_int8",
+            "flash_sdpa",
         ]
     ] = Field(
         None,
@@ -7703,8 +7719,10 @@ class VideoLoadRequest(BaseModel):
         "default SDPA; cudnn/flash/flash3/flash4 are exact (kernel/arch-gated); sage is INT8 "
         "attention; unsloth_int8 is Studio's own INT8 attention kernel on the families with strided "
         "attention processors; xformers/aiter are memory-efficient (NVIDIA) / AMD ROCm (aiter needs diffusers' "
-        "local AITER backend, gone in 0.41+; without it ROCm runs the auto pick). An unavailable "
-        "kernel falls back to the default.",
+        "local AITER backend, gone in 0.41+; without it ROCm runs the auto pick); flash_sdpa pins torch "
+        "SDPA's flash kernel. diffusers dispatcher names (_native_flash, _native_cudnn, _flash_3_hub, "
+        "flash_4_hub, sage_hub) are accepted as the matching alias. An unavailable kernel falls back to the "
+        "auto pick (native SDPA when speed=off).",
     )
     int8_attention: Optional[Literal["auto", "on", "off"]] = Field(
         None,
@@ -7812,7 +7830,8 @@ class VideoLoadRequest(BaseModel):
     @classmethod
     def _normalize_attention_backend(cls, value):
         # The dispatcher accepts case/whitespace variants, but the Literal above is validated before any normaliser runs, so fold it here.
-        return value.strip().lower() if isinstance(value, str) else value
+        from core.inference.diffusion_attention import canonical_attention_request
+        return canonical_attention_request(value)
 
 
 class VideoReferenceVideo(BaseModel):
