@@ -71,3 +71,43 @@ async def test_slash_prompt_bypass_and_invalid_commands_never_reach_native_execu
             assert response.status_code == 400 and "command menu" in response.json()["detail"]
         for body in ({"name": ""}, {"name": "/compress"}, {"name": "two names"}, {"name": "inspect", "tail": "x" * 16385}, {"name": "inspect", "api_key": "must-not-pass"}):
             assert (await client.post("/api/coding/conversations/exact-id/commands", json = {"operation_id": "validation-op", **body})).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_terminal_permissions_are_generation_fenced_and_skip_command_receipts(coding_app, monkeypatch):
+    app, headers = coding_app
+    path = "/api/coding/conversations/exact-id/terminal-permissions"
+    calls = []
+
+    class Runtime(RuntimeDouble):
+        async def command(self, method, params, *, expected_generation = None):
+            assert method == "terminal_permissions" and params["conversation_id"] == "exact-id"
+            if expected_generation != 1:
+                raise CodingRuntimeError("runtime_changed", "Reopen this conversation.")
+            calls.append(params)
+            return {"conversation_id": "exact-id", "mode": params.get("mode")}
+
+    app.state.coding_runtime = Runtime()
+    async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
+        read = await client.get(path)
+        assert read.json() == {"conversation_id": "exact-id", "mode": None}
+        assert read.headers["cache-control"] == "no-store"
+        assert (await client.get(path, headers = {"X-Mimir-Runtime-Generation": "2"})).status_code == 409
+        for mode in ("ask", "auto", "off", "full"):
+            changed = await client.put(path, json = {"mode": mode})
+            assert changed.json() == {"conversation_id": "exact-id", "mode": mode}
+        for invalid in ({}, {"mode": None}, {"mode": "unknown"}, {"mode": "full", "force": True}):
+            assert (await client.put(path, json = invalid)).status_code == 422
+        from auth import policy, storage
+
+        monkeypatch.delenv("UNSLOTH_STUDIO_ALLOW_API_FULL_ACCESS", raising = False)
+        key, _ = storage.create_api_key("unsloth", name = "coding-test")
+        denied = await client.put(path, json = {"mode": "full"}, headers = {"Authorization": "Bearer " + key})
+        assert denied.status_code == 400 and "API keys" in denied.json()["detail"]
+        monkeypatch.setattr(policy, "full_access_permitted", lambda: False)
+        denied = await client.put(path, json = {"mode": "full"})
+        assert denied.status_code == 400 and "owner" in denied.json()["detail"]
+    assert calls == [
+        {"conversation_id": "exact-id"},
+        *({"conversation_id": "exact-id", "mode": m} for m in ("ask", "auto", "off", "full")),
+    ]

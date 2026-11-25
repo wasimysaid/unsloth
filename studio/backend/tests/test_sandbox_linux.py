@@ -633,6 +633,24 @@ def test_the_model_cache_shares_its_data_subdirectories_and_nothing_else(
         launch.cleanup()
 
 
+def test_coding_checkout_does_not_mount_model_storage_or_create_cache_directories(
+    bwrap, tmp_path, cache, monkeypatch
+):
+    project = tmp_path / "project"
+    project.mkdir()
+    library = tmp_path / "library"
+    library.mkdir()
+    monkeypatch.setattr(sandbox_linux, "model_library_roots", lambda: (str(library),))
+
+    launch = sandbox_linux.prepare(_plan(project, share_model_storage = False))
+    try:
+        assert all(source != str(library) for source, _ in _pairs(launch.argv, "--ro-bind-try"))
+        assert not _pairs(launch.argv, "--bind-try")
+        assert list(project.iterdir()) == []
+    finally:
+        launch.cleanup()
+
+
 def test_the_cache_mount_points_are_made_here_and_left(bwrap, tmp_path, cache):
     workdir = tmp_path / "session"
     workdir.mkdir()

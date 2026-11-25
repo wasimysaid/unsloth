@@ -14,6 +14,8 @@ import logging
 import os
 import secrets
 import struct
+import sys
+from pathlib import Path
 import tempfile
 import uuid
 from typing import Any
@@ -147,7 +149,11 @@ class CodingRuntime:
         self._restart_prepared = False
         self._prewarm_task: asyncio.Task | None = None
         self._preinstalled = False
-        self._account_id = current_account().account_id
+        self._terminal_catalog: asyncio.Task[bool] | None = None
+        self._terminal_catalog_generation: int | None = None
+        account = current_account()
+        self._account_id = account.account_id
+        self._owner_session = account.account_id == OWNER_ACCOUNT_ID and not account.via_api_key
         self._connection_origin: str | None = None
         self._connection_account: AccountContext | None = None
         self._connection_token: str | None = None
@@ -171,15 +177,26 @@ class CodingRuntime:
                 # The first start installs again and reports the failure there.
                 log.warning("Mimir frontend prewarm failed: %s", getattr(exc, "message", exc))
 
-    @staticmethod
-    def _environment() -> dict[str, str]:
+    def _terminal_runner_allowed(self) -> bool:
+        if not self._owner_session or sys.platform != "linux":
+            return False
+        from auth.policy import installation_has_managed_accounts
+        return not installation_has_managed_accounts()
+
+    def _environment(self) -> dict[str, str]:
         environment = dict(os.environ)
         # Neither installer nor native guests inherit an old incarnation's descriptor.
         environment.pop("MIMIR_STUDIO_LOCAL_FD", None)
+        for key in ("UNSLOTH_CODING_SANDBOX_PYTHON", "UNSLOTH_CODING_SANDBOX_RUNNER"):
+            environment.pop(key, None)
+        if self._terminal_runner_allowed():
+            environment["UNSLOTH_CODING_SANDBOX_PYTHON"] = sys.executable
+            environment["UNSLOTH_CODING_SANDBOX_RUNNER"] = str(
+                Path(__file__).resolve().parents[1] / "coding_sandbox_terminal.py"
+            )
         return environment
 
     async def _install(self, environment: dict[str, str]) -> None:
-        from pathlib import Path
         import tomllib
         try:
             manifest = tomllib.loads((Path(self.package) / "mimir-plugin.toml").read_text(encoding = "utf-8"))
@@ -227,6 +244,44 @@ class CodingRuntime:
             state = "running"
         return {"state": state, "generation": self._generation, "cleanup": self._cleanup}
 
+    async def _inspect_terminal_package(self) -> bool:
+        from packaging.version import Version
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                self.executable, "plugin", "list", "--json",
+                stdin = asyncio.subprocess.DEVNULL, stdout = asyncio.subprocess.PIPE,
+                stderr = asyncio.subprocess.DEVNULL, env = self._environment(),
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout = 60)
+            if proc.returncode != 0:
+                return False
+            return any(
+                package["id"] == "studio.sandbox-terminal" and package["compatible"] is True
+                and package["lifetime"] == "session" and "headless" in package["enabled_frontends"]
+                and Version(package["version"]) >= Version("0.2.0")
+                for package in json.loads(stdout)["packages"]
+            )
+        except (OSError, TimeoutError, ValueError, TypeError, KeyError):
+            return False
+        finally:
+            if proc is not None and proc.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+                await proc.communicate()
+
+    def _terminal_permissions_hint(self) -> bool | None:
+        if self._closing or self._failure or self._maintaining or not self._terminal_runner_allowed():
+            return False
+        task = self._terminal_catalog
+        if task is not None and not task.done():
+            return None
+        if task is None or self._terminal_catalog_generation != self._generation:
+            self._terminal_catalog_generation = self._generation
+            self._terminal_catalog = asyncio.create_task(self._inspect_terminal_package())
+            return None
+        return task.result()
+
     async def inspect_status(self) -> dict[str, Any]:
         # A lost restart ACK is reconciled by asking, never by stopping the process.
         if self._restart_uncertain and not self._maintaining and not self._failure and not self._closing:
@@ -245,7 +300,11 @@ class CodingRuntime:
             except CodingRuntimeError:
                 # A failed inspection leaves the process and the unknown state as they are.
                 pass
-        return self.status()
+        status = self.status()
+        available = self._terminal_permissions_hint()
+        if available is not None:
+            status["terminal_permissions_available"] = available
+        return status
 
     async def configure_local_serving(self, request) -> None:
         """Point Mimir's Studio-local provider at this server's listening socket.
@@ -893,6 +952,9 @@ class CodingRuntime:
 
     async def _close(self) -> None:
         self._closing = True
+        if self._terminal_catalog is not None:
+            self._terminal_catalog.cancel()
+            await asyncio.gather(self._terminal_catalog, return_exceptions = True)
         if self._prewarm_task is not None:
             self._prewarm_task.cancel()
         async with self._maintenance_lock:

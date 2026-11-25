@@ -61,6 +61,8 @@ def coding_app(monkeypatch, tmp_path):
         "subscription": "live-view", "answers": [{"question_id": "choice", "selected_options": ["One"], "freeform_text": None}]}),
     ("POST", "/conversations/known-id/entries", {"cut": {"journal": "root", "leaf": None}}),
     ("POST", "/conversations/known-id/mode", {"mode": "plan"}),
+    ("GET", "/conversations/known-id/terminal-permissions", None),
+    ("PUT", "/conversations/known-id/terminal-permissions", {"mode": "ask"}),
     ("POST", "/conversations/known-id/plan-actions", {"plan_id": "exact-plan", "revision": "native-revision", "decision": "implement"}),
     ("POST", "/conversations/known-id/goal", {"revision": "native-revision", "action": "pause"}),
     ("GET", "/conversations/known-id/commands", None),

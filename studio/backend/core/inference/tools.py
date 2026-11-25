@@ -9860,11 +9860,11 @@ def _safe_path(shell: "str | None" = None) -> "tuple[str, str]":
     return os.pathsep.join(deduped), git_ext
 
 
-def _build_safe_env(workdir: str, shell: "str | None" = None) -> dict[str, str]:
+def _build_safe_env(workdir: str, shell: "str | None" = None, *, temp_dir: str | None = None) -> dict[str, str]:
     """Env is built from a whitelist, not inherited; user-writable PATH entries could shadow commands."""
     path, git_ext = _safe_path(shell)
     venv = os.environ.get("VIRTUAL_ENV")
-    temp_dir = _sandbox_temp_dir(workdir)
+    temp_dir = temp_dir or _sandbox_temp_dir(workdir)
     env = {
         "PATH": path,
         "HOME": workdir,
