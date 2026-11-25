@@ -674,7 +674,7 @@ export function CodingComposer({
             placeholder="Do anything…"
             submitMode={landing ? "none" : "enter"}
             disabled={!canEdit}
-            minRows={landing ? 2 : 1}
+            minRows={1}
             maxRows={10}
             addAttachmentOnPaste={false}
             cancelOnEscape={false}
