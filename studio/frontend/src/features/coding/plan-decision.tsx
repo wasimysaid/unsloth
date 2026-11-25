@@ -56,7 +56,7 @@ export function PlanDecisionPrompt({
       <div className="-mx-2 grid gap-0.5" aria-label={plan.name} role="group">
         {choices
           .filter(({ decision }) => !saved || decision !== "save_and_stop")
-          .map(({ decision, label, description }) => (
+          .map(({ decision, label, description }, index) => (
             <Button
               key={decision}
               type="button"
@@ -69,14 +69,22 @@ export function PlanDecisionPrompt({
                 codingPlanDecisionReason(state, plan, decision),
               )}
               onClick={() => void run.decidePlan(plan, decision)}
-              className="h-auto min-h-8 w-full flex-wrap justify-start gap-x-2 gap-y-0 rounded-md border-0 px-2 py-1 text-left whitespace-normal focus-visible:ring-1 focus-visible:ring-ring"
+              className="h-auto min-h-8 w-full justify-start gap-2 rounded-md border-0 px-2 py-1 text-left whitespace-normal focus-visible:ring-1 focus-visible:ring-ring"
             >
-              <span>{label}</span>
               <span
-                id={`${descriptionId}-${decision}`}
-                className="text-xs font-normal text-muted-foreground"
+                aria-hidden="true"
+                className="grid size-5 shrink-0 place-items-center rounded-full bg-muted text-xs leading-none font-semibold text-muted-foreground tabular-nums"
               >
-                {description}
+                {index + 1}
+              </span>
+              <span className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                <span>{label}</span>
+                <span
+                  id={`${descriptionId}-${decision}`}
+                  className="text-xs font-normal text-muted-foreground"
+                >
+                  {description}
+                </span>
               </span>
             </Button>
           ))}
