@@ -13,6 +13,7 @@ export interface CodingRuntimeStatus {
     | "stopped"
     | "cleanup_failed";
   generation: number;
+  terminal_permissions_available?: boolean;
   cleanup: {
     confirmed: boolean;
     exit_code: number | null;

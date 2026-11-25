@@ -433,3 +433,51 @@ test("unusable remembered values are ignored", () => {
     null,
   );
 });
+test("a project draft waits for its terminal mode before the first send", async () => {
+  const changed = deferred<void>();
+  const session = createCodingSession(nativeApi(), {
+    setTerminalMode: async (conversation, mode) => {
+      assert.equal(conversation.id, "native-new");
+      assert.equal(mode, "ask");
+      await changed.promise;
+    },
+  });
+  session.selectProject("/checkout");
+  session.selectDraftTerminalMode("ask");
+  session.getSnapshot().draft.syncText("List the files");
+  const opening = session.startConversation();
+  await Promise.resolve();
+  assert.equal(session.getSnapshot().autoSend, false);
+  assert.equal(session.getSnapshot().pending?.operation, "create");
+  changed.resolve();
+  await opening;
+  assert.equal(session.getSnapshot().autoSend, true);
+  session.startNew();
+  assert.equal(session.getSnapshot().terminalMode, "auto");
+});
+
+test("a failed terminal mode change keeps the confirmed conversation and unsent draft", async () => {
+  const session = createCodingSession(nativeApi(), {
+    setTerminalMode: async () => { throw new Error("Plugin unavailable"); },
+  });
+  session.selectProject("/checkout");
+  session.selectDraftTerminalMode("full");
+  session.getSnapshot().draft.syncText("Run the tests");
+  await session.startConversation();
+  assert.equal(session.getSnapshot().active?.id, "native-new");
+  assert.equal(session.getSnapshot().draft.getSnapshot().text, "Run the tests");
+  assert.equal(session.getSnapshot().autoSend, false);
+  assert.equal(session.getSnapshot().openingUncertainty, null);
+  assert.match(session.getSnapshot().openingError ?? "", /Plugin unavailable/);
+});
+
+test("switching the draft project drops its Full access selection", () => {
+  const session = createCodingSession(nativeApi());
+  session.selectProject("/one");
+  session.selectDraftTerminalMode("full");
+  session.selectProject("/two");
+  assert.equal(session.getSnapshot().terminalMode, "auto");
+  session.selectProject(null);
+  session.selectDraftTerminalMode("full");
+  assert.equal(session.getSnapshot().terminalMode, "auto");
+});

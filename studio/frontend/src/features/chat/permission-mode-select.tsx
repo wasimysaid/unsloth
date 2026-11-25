@@ -355,20 +355,25 @@ export function PermissionModeMenuItems({
   const { permissionMode, fullAccessAllowed } = useAccountPermissionMode();
   const setPermissionMode = useChatRuntimeStore((s) => s.setPermissionMode);
 
+  return permissionRows(permissionMode, fullAccessAllowed, (mode) => {
+    if (mode === "full") onRequestFullAccess();
+    else setPermissionMode(mode);
+  });
+}
+
+function permissionRows(
+  permissionMode: PermissionMode,
+  fullAccessAllowed: boolean,
+  choose: (mode: PermissionMode) => void,
+  descriptions?: Partial<Record<PermissionMode, string>>,
+) {
   return (
     <>
       {PERMISSION_MODE_OPTIONS.filter((option) => fullAccessAllowed || option.value !== "full").map((option) => (
         <DropdownMenuItem
           key={option.value}
           onSelect={() => {
-            if (option.value === permissionMode) return;
-            // Run automatically applies at once: without an OS sandbox the switch reads Low and
-            // risky Python and Terminal calls still ask.
-            if (option.value === "full") {
-              onRequestFullAccess();
-            } else {
-              setPermissionMode(option.value);
-            }
+            if (option.value !== permissionMode) choose(option.value);
           }}
           className={cn(
             "items-start gap-2 py-2",
@@ -386,7 +391,7 @@ export function PermissionModeMenuItems({
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="text-ui-13 leading-tight">{option.label}</span>
             <span className="text-xs font-normal leading-snug text-muted-foreground">
-              {option.description}
+              {descriptions?.[option.value] ?? option.description}
             </span>
           </span>
           {permissionMode === option.value ? (
@@ -439,9 +444,11 @@ function lastFocusOutsideMenus(): HTMLElement | null {
 }
 
 export function FullAccessConfirmContent({
+  terminal = false,
   onConfirm,
   onClose,
 }: {
+  terminal?: boolean;
   onConfirm: () => void;
   onClose: () => void;
 }) {
@@ -464,10 +471,12 @@ export function FullAccessConfirmContent({
           Turn on Full access?
         </AlertDialogTitle>
         <AlertDialogDescription className="text-pretty leading-relaxed">
-          Tools will run without asking and outside the sandbox, including:
+          {terminal
+            ? "Terminal commands in this conversation will run without asking, outside the sandbox. They can read or change files outside this project and use the network."
+            : "Tools will run without asking and outside the sandbox, including:"}
         </AlertDialogDescription>
       </AlertDialogHeader>
-      <ul className="flex flex-col rounded-xl bg-muted/50 px-5 py-1.5">
+      {!terminal && <ul className="flex flex-col rounded-xl bg-muted/50 px-5 py-1.5">
         {FULL_ACCESS_SCOPES.map((scope) => (
           <li key={scope.title} className="flex items-center gap-4 py-3">
             <HugeiconsIcon
@@ -483,7 +492,7 @@ export function FullAccessConfirmContent({
             </span>
           </li>
         ))}
-      </ul>
+      </ul>}
       <p className="text-pretty text-xs leading-relaxed text-muted-foreground">
         Risks include data loss or exposure and prompt injection. You can turn this off
         anytime.{" "}
@@ -549,7 +558,7 @@ export function PermissionModeDropdown({
   /** Off in Settings, which shows the level and the setup in their own rows. */
   sandboxControls?: boolean;
 } = {}) {
-  const { permissionMode, fullAccessAllowed } = useAccountPermissionMode();
+  const { permissionMode } = useAccountPermissionMode();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [sandboxSetupOpen, setSandboxSetupOpen] = useState(false);
   const active = permissionModeOption(permissionMode);
@@ -612,18 +621,50 @@ export function PermissionModeComposerPill({
   const setBypassConfirmOpen = useChatRuntimeStore(
     (s) => s.setBypassConfirmOpen,
   );
-  const active = permissionModeOption(permissionMode);
+  const setPermissionMode = useChatRuntimeStore((s) => s.setPermissionMode);
+  return (
+    <PermissionComposerMenu
+      mode={permissionMode}
+      fullAccessAllowed={fullAccessAllowed}
+      side={side}
+      onChoose={(mode) => {
+        if (mode === "full") setTimeout(() => setBypassConfirmOpen(true), 0);
+        else setPermissionMode(mode);
+      }}
+    />
+  );
+}
+
+const TERMINAL_DESCRIPTIONS = {
+  ask: "Ask before every terminal command",
+  off: "Run commands inside the project sandbox without asking",
+  full: "Run commands outside the project sandbox",
+} satisfies Partial<Record<PermissionMode, string>>;
+
+export function PermissionComposerMenu({
+  mode, fullAccessAllowed, onChoose, onOpenChange, disabled, terminal = false, side = "top",
+}: {
+  mode: PermissionMode;
+  fullAccessAllowed: boolean;
+  onChoose: (mode: PermissionMode) => void;
+  onOpenChange?: (open: boolean) => void;
+  disabled?: boolean;
+  terminal?: boolean;
+  side?: "top" | "bottom";
+}) {
+  const active = permissionModeOption(mode);
   const ActiveIcon = active.icon;
 
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild={true}>
         <button
           type="button"
           className="composer-pill-btn composer-pill-permissions"
           data-pill-label={active.label}
-          aria-label="Permission level for tool calls"
-          title={`${active.label}: ${active.description}`}
+          disabled={disabled}
+          aria-label={terminal ? `Terminal permissions: ${active.label}` : "Permission level for tool calls"}
+          title={terminal ? `Terminal permissions: ${active.label}` : `${active.label}: ${active.description}`}
         >
           <span className="composer-pill-glyph">
             <ActiveIcon className="size-[calc(15px*var(--ui-space-scale,1))]" strokeWidth={2} />
@@ -643,12 +684,10 @@ export function PermissionModeComposerPill({
         avoidCollisions={true}
         className="unsloth-plus-menu w-[calc(330px*var(--ui-space-scale,1))]"
       >
-        <PermissionMenuLabel sandboxControls={true} />
-        <PermissionModeMenuItems
-          onRequestFullAccess={() =>
-            setTimeout(() => setBypassConfirmOpen(true), 0)
-          }
-        />
+        {terminal
+          ? <DropdownMenuLabel>Terminal permissions</DropdownMenuLabel>
+          : <PermissionMenuLabel sandboxControls={true} />}
+        {permissionRows(mode, fullAccessAllowed, onChoose, terminal ? TERMINAL_DESCRIPTIONS : undefined)}
       </DropdownMenuContent>
     </DropdownMenu>
   );

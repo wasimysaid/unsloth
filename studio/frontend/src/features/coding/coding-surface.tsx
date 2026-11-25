@@ -237,6 +237,7 @@ export interface CodingLanding {
   provider?: string;
   /** Folder chip above the composer. */
   project: React.ReactNode;
+  terminalPermissions?: React.ReactNode;
   /** Model chip for the first request. */
   modelPicker: React.ReactNode;
   onStart: () => void;
@@ -481,6 +482,8 @@ export function CodingSurface({
       sendBlocked={sendBlocked}
       inputRef={promptInput}
       modelPicker={modelPicker}
+      projectTerminal={Boolean(cwd)}
+      draftTerminalMenu={landing?.terminalPermissions}
       onStart={isLanding ? landing?.onStart : undefined}
       starting={Boolean(landing?.starting)}
       autoSend={autoSend}
@@ -602,6 +605,7 @@ export function CodingSurface({
                         state?.answerForms
                           .filter(
                             (form) =>
+                              !form.question.approval &&
                               !(
                                 state.viewingEarlier &&
                                 form.status === "accepted"

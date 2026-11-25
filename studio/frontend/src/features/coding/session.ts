@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import type { PermissionMode } from "../chat/stores/chat-runtime-store";
 import { type CodingInputDraft, createInputDraft } from "./input.ts";
 import type { CodingConfigurationChange } from "./model-selection.ts";
 import {
@@ -45,6 +46,8 @@ export interface CodingSessionState {
   project: string | null;
   /** The new conversation's first model, remembered likewise. */
   selection: CodingConfigurationChange | null;
+  /** Applies only to the first turn of this draft project. */
+  terminalMode: PermissionMode;
   /** The just-created conversation sends the carried draft once it can. */
   autoSend: boolean;
 }
@@ -60,6 +63,7 @@ export function createCodingSession(
   options: {
     onOpened?: (conversation: CodingConversation) => void;
     memory?: Memory | null;
+    setTerminalMode?: (conversation: CodingConversation, mode: PermissionMode) => Promise<void>;
   } = {},
 ) {
   const memory = options.memory === undefined ? browserMemory() : options.memory;
@@ -84,6 +88,7 @@ export function createCodingSession(
     project: recall(memory, PROJECT_KEY, isProject),
     selection: recall(memory, MODEL_KEY, isSelection),
     autoSend: false,
+    terminalMode: "auto",
   };
   const listeners = new Set<() => void>();
   let historyRevision = 0;
@@ -135,6 +140,7 @@ export function createCodingSession(
     operation: (signal: AbortSignal) => Promise<CodingConversation>,
     kind: "create" | "open",
     id: string | null,
+    terminalMode: PermissionMode = "auto",
   ): Promise<boolean> {
     // Uncertain creation is never blindly repeated. Inspect the shared catalog,
     // then deliberately reopen a saved identity; folder equality is not identity.
@@ -157,6 +163,17 @@ export function createCodingSession(
         if (kind === "create") void refreshConversations();
         return false;
       }
+      let permissionError: string | null = null;
+      if (terminalMode !== "auto") {
+        try {
+          if (!active.cwd || !options.setTerminalMode)
+            throw new Error("Terminal permissions are unavailable.");
+          await options.setTerminalMode(active, terminalMode);
+        } catch (error) {
+          // Creation succeeded. Keep the draft attached to its real conversation.
+          permissionError = `Your message is still a draft. Check terminal permissions before sending. ${errorText(error)}`;
+        }
+      }
       current = null;
       // Synchronous lifecycle boundary: retire old runtime observations before
       // publishing this owner, including deliberate same-ID reopenings.
@@ -172,7 +189,9 @@ export function createCodingSession(
         openingGeneration: state.openingGeneration + 1,
         reopened: kind === "open",
         draft: fromLanding ? state.draft : createInputDraft(),
-        autoSend: fromLanding && Boolean(state.draft.getSnapshot().text.trim()),
+        autoSend: fromLanding && !permissionError && Boolean(state.draft.getSnapshot().text.trim()),
+        terminalMode: "auto",
+        openingError: permissionError,
         ...(kind === "create" ? { project: active.cwd } : {}),
       });
       void refreshConversations();
@@ -218,6 +237,7 @@ export function createCodingSession(
         () => api.createConversation(cwd, state.selection),
         "create",
         null,
+        !state.active && state.project ? state.terminalMode : "auto",
       );
     },
     openConversation: (id: string) =>
@@ -237,13 +257,22 @@ export function createCodingSession(
         openingGeneration: state.openingGeneration + 1,
         draft: createInputDraft(),
         autoSend: false,
+        terminalMode: "auto",
         project,
       });
       return true;
     },
+    selectDraftTerminalMode(mode: PermissionMode) {
+      if (state.project && !state.active && !state.pending) update({ terminalMode: mode });
+    },
     selectProject(cwd: string | null) {
+      if (state.pending?.operation === "create") return;
       remember(PROJECT_KEY, cwd);
-      update({ project: cwd, openingError: null });
+      update({
+        project: cwd,
+        openingError: null,
+        terminalMode: cwd === state.project ? state.terminalMode : "auto",
+      });
     },
     /** A partial change keeps the rest of the remembered selection. */
     selectModel(change: CodingConfigurationChange) {
