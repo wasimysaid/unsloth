@@ -15,6 +15,7 @@ import { restoreAnswerFocus } from "./answer-focus";
 import { boundedContentKeyDown } from "./bounded-content";
 import type { ChildView } from "./child-view";
 import { EntryContentStatus } from "./entry-content-status";
+import type { NativePlan } from "./plan-types";
 import { PlanCard } from "./plan-card";
 import type { CodingRow } from "./run-types";
 import { SubagentRow } from "./subagent-card";
@@ -161,7 +162,7 @@ function ProseBlock({
 }: {
   block: Extract<TranscriptBlock, { kind: "prose" }>;
 }) {
-  const text = block.row.text ?? "";
+  const text = block.text;
   return (
     <div
       className="min-w-0"
@@ -370,7 +371,7 @@ const BlockView = memo(function BlockView({
     case "plan":
       return block.row.plan ? (
         <div className="min-w-0" data-reading-key={block.key}>
-          <PlanCard plan={block.row.plan} historical={true} />
+          <PlanCard plan={block.row.plan} />
         </div>
       ) : null;
     case "content_ref":
@@ -404,15 +405,29 @@ const BlockView = memo(function BlockView({
 export function TranscriptBlocks({
   blocks,
   childView,
+  currentPlan,
 }: {
   blocks: readonly TranscriptBlock[];
   childView: ChildView | null;
+  currentPlan?: NativePlan | null;
 }) {
+  let currentKey: string | undefined;
+  if (currentPlan) {
+    for (const block of blocks) {
+      if (block.kind === "plan" && block.row.plan?.id === currentPlan.id)
+        currentKey = block.key;
+    }
+  }
   return (
     <>
-      {blocks.map((block) => (
+      {blocks.map((block) => currentPlan && block.key === currentKey ? (
+        <div key={block.key} className="min-w-0" data-reading-key={block.key}>
+          <PlanCard plan={currentPlan} current />
+        </div>
+      ) : (
         <BlockView key={block.key} block={block} childView={childView} />
       ))}
+      {currentPlan && !currentKey && <PlanCard key={currentPlan.id} plan={currentPlan} current />}
     </>
   );
 }

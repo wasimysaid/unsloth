@@ -70,6 +70,7 @@ export type TranscriptBlock =
       kind: "prose";
       key: string;
       row: CodingRow;
+      text: string;
       turnEnd: boolean;
       /** The streaming tail of the active request. */
       live: boolean;
@@ -225,6 +226,7 @@ function reusable(prior: TranscriptBlock | undefined, next: TranscriptBlock) {
     prior.row === next.row &&
     (next.kind !== "prose" ||
       (prior.kind === "prose" &&
+        prior.text === next.text &&
         prior.turnEnd === next.turnEnd &&
         prior.live === next.live))
   );
@@ -308,6 +310,17 @@ export function projectTranscript(
     } else if (row.answer) {
       blocks.push({ kind: "answer", key: readingRowKey(row), row });
     } else if (row.plan) {
+      // The provider reply and the saved proposal are adjacent records. Keep any
+      // lead-in, and let the plan card render the confirmed proposal once.
+      const reply = blocks.at(-1);
+      if (row.plan.status === "review_pending" && !row.plan.clipped &&
+          reply?.kind === "prose" && !reply.row.clipped) {
+        const text = reply.text.trimEnd().replaceAll("\r\n", "\n");
+        const proposal = `<proposed_plan>\n${row.plan.markdown.trim().replaceAll("\r\n", "\n")}\n</proposed_plan>`;
+        if (text === proposal) blocks.pop();
+        else if (text.endsWith("\n" + proposal))
+          reply.text = text.slice(0, -proposal.length).trimEnd();
+      }
       blocks.push({ kind: "plan", key: readingRowKey(row), row });
     } else if (row.kind === "user") {
       // Native-only inputs (such as delivered agent results) have no public text.
@@ -319,6 +332,7 @@ export function projectTranscript(
         kind: "prose",
         key: readingRowKey(row),
         row,
+        text: row.text ?? "",
         turnEnd: false,
         live: tailLive && row === lastRow,
       });

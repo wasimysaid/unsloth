@@ -35,7 +35,6 @@ import {
 import type { CodingInputDraft } from "./input";
 import { CodingModelSelector } from "./coding-model-selector";
 import { type CodingConfiguration, studioConnectionBlockedReason } from "./model-selection";
-import { PlanCard } from "./plan-card";
 import { ProjectOverlapDialog } from "./project-overlap-dialog";
 import { QuestionCard } from "./question-card";
 import { CodingRecoveryControls } from "./recovery-controls";
@@ -162,7 +161,7 @@ function StatusNotices({
             {completion.error}
           </p>
         )}
-      {state.error && (
+      {state.error && state.error !== state.planControlError && (
         <p role="alert" className={`${alert} break-words`}>
           {state.error}
         </p>
@@ -596,6 +595,7 @@ export function CodingSurface({
                     <AnswerFocus.Provider value={answerFocus}>
                       <TranscriptBlocks
                         blocks={blocks}
+                        currentPlan={state?.viewingEarlier ? null : state?.native?.plan}
                         childView={run?.childView ?? null}
                       />
                       {pendingUser && (
@@ -738,14 +738,6 @@ export function CodingSurface({
                       canAct={!sendBlocked}
                     />
                   </div>
-                )}
-                {state?.native?.plan && (
-                  <PlanCard
-                    key={state.native.plan.id}
-                    plan={state.native.plan}
-                    state={state}
-                    run={run}
-                  />
                 )}
                 {showGoal && state && run && (
                   <GoalSummary state={state} run={run} />
