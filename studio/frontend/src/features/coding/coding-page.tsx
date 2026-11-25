@@ -15,7 +15,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { readCodingCatalog } from "./api";
-import { BranchChangesButton, CodingWorkspace } from "./coding-workspace";
+import { CodingWorkspace } from "./coding-workspace";
 import { ProjectFilesButton } from "./project-files-panel";
 import type { ChildView } from "./child-view";
 import { CodingSurface } from "./coding-surface";
@@ -143,7 +143,6 @@ export function CodingPage() {
                   className="flex shrink-0 items-center"
                 />
                 <ProjectFilesButton />
-                <BranchChangesButton />
               </div>
             </header>
             <RuntimeNotice maintenance={maintenance} runtime={runtime} />

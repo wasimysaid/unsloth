@@ -494,9 +494,7 @@ export function CodingSurface({
       autoSend={autoSend}
       onAutoSent={onAutoSent}
       footer={
-        isLanding ? null : (
-          <ComposerFooter cwd={cwd ?? null} state={state} run={run} />
-        )
+        <ComposerFooter cwd={cwd ?? null} picker={landing?.project} state={state} run={run} />
       }
     />
   );
@@ -546,9 +544,6 @@ export function CodingSurface({
               <h1 className="mb-4 text-center font-heading text-2xl font-semibold tracking-tight sm:text-3xl">
                 What should we build?
               </h1>
-              <div className="flex min-w-0 justify-end px-1">
-                {landing?.project}
-              </div>
               {composer}
             </div>
           </div>

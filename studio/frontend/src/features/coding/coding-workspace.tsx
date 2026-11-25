@@ -10,22 +10,14 @@ import {
   useWorkspacePaneControls,
 } from "@/components/workspace-pane";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
-import {
   Bot,
   FileDiff,
   FolderCode,
-  GitBranch,
   LoaderCircle,
 } from "lucide-react";
 import {
   type ReactNode,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
@@ -51,49 +43,6 @@ import { createProjectFiles } from "./project-files";
 import { projectFilesApi } from "./project-files-api";
 import { ProjectFilesPanel } from "./project-files-panel";
 import type { CodingConversation } from "./types";
-
-export function BranchChangesButton() {
-  const { branch, changedFiles, openChanges, changesOpen } =
-    useContext(CodingPanels);
-  if (!branch) return null;
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          onClick={openChanges}
-          aria-label={`Review changes on ${branch}`}
-          aria-expanded={changesOpen}
-          className={cn(
-            "flex h-7 max-w-[8.75rem] sm:max-w-[clamp(8.75rem,15vw,14rem)] shrink-0 items-center gap-1.5 rounded-full bg-muted/60 px-2.5 text-xs font-medium text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            changesOpen && "bg-accent text-foreground",
-          )}
-        >
-          <GitBranch className="size-3.5 shrink-0" aria-hidden />
-          <span className="min-w-0 truncate sm:hidden">
-            {branch.split("/").at(-1)}
-          </span>
-          <span className="hidden min-w-0 truncate sm:inline">{branch}</span>
-          {changedFiles !== null && changedFiles > 0 && (
-            <span
-              className="inline-flex shrink-0 items-center gap-1 text-muted-foreground tabular-nums"
-              aria-hidden
-            >
-              <FileDiff className="hidden size-3 sm:inline-block" />
-              {changedFiles}
-            </span>
-          )}
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom" className="tooltip-compact">
-        {branch}
-        {changedFiles === null
-          ? ""
-          : ` · ${changedFiles} changed ${changedFiles === 1 ? "file" : "files"}`}
-      </TooltipContent>
-    </Tooltip>
-  );
-}
 
 function WindowControls() {
   const controls = useWorkspacePaneControls();

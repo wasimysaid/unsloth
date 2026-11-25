@@ -1,17 +1,76 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
-import { Folder, LoaderCircle, Map as MapIcon, X } from "lucide-react";
+import { ChevronRight, FileDiff, LoaderCircle, Map as MapIcon, Monitor, X } from "lucide-react";
+import { useContext, type ReactNode } from "react";
+import { CodingPanels } from "./coding-panels-context";
 import { projectName } from "./project-name";
 import type { CodingRun, CodingRunState } from "./run-session";
 import { codingModeControlReason } from "./run-session";
 
-/** The row under an open conversation's composer. */
+function WorkspaceBreadcrumb({ cwd, picker }: { cwd: string | null; picker?: ReactNode }) {
+  const { hasProject, filesOpen, openFiles, branch, changedFiles, changesOpen, openChanges } =
+    useContext(CodingPanels);
+  const changeCount = changedFiles === null
+    ? undefined
+    : `${changedFiles} changed ${changedFiles === 1 ? "file" : "files"}`;
+  return (
+    <div role="group" aria-label="Workspace" className="flex min-w-0 max-w-full items-center gap-0.5">
+      {hasProject && (
+        <>
+          <span className="flex shrink-0 items-center gap-1.5" title="The machine running Studio">
+            <Monitor className="size-3.5" aria-hidden />
+            Studio host
+          </span>
+          <ChevronRight className="size-3 shrink-0 opacity-60" aria-hidden />
+        </>
+      )}
+      {picker ?? (cwd && (
+        <button
+          type="button"
+          title={cwd}
+          aria-label={`Browse files in ${cwd}`}
+          aria-expanded={filesOpen}
+          data-testid="coding-canonical-cwd"
+          className="h-7 min-w-0 truncate rounded-md px-1 font-medium hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={openFiles}
+        >
+          {projectName(cwd)}
+        </button>
+      ))}
+      {branch && (
+        <>
+          <ChevronRight className="size-3 shrink-0 opacity-60" aria-hidden />
+          <button
+            type="button"
+            aria-label={`Review changes on ${branch}`}
+            aria-description={changeCount}
+            aria-expanded={changesOpen}
+            title={changeCount ? `${branch} · ${changeCount}` : branch}
+            className="flex h-7 min-w-0 items-center gap-1.5 rounded-md px-1 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={openChanges}
+          >
+            <span className="truncate">{branch}</span>
+            {changedFiles !== null && changedFiles > 0 && (
+              <span className="flex shrink-0 items-center gap-1 tabular-nums" aria-hidden>
+                <FileDiff className="size-3" />
+                {changedFiles}
+              </span>
+            )}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function ComposerFooter({
   cwd,
+  picker,
   state,
   run,
 }: {
   cwd: string | null;
+  picker?: ReactNode;
   state: CodingRunState | null;
   run: CodingRun | null;
 }) {
@@ -19,17 +78,8 @@ export function ComposerFooter({
   const leaving = state?.planControl?.kind === "mode";
   const compression = state?.native?.compression;
   return (
-    <div className="flex h-7 min-w-0 items-center gap-1 px-2 text-xs text-muted-foreground/80">
-      {cwd && (
-        <span
-          className="flex min-w-0 items-center gap-1.5 truncate"
-          title={cwd}
-          data-testid="coding-canonical-cwd"
-        >
-          <Folder className="size-3.5 shrink-0" aria-hidden="true" />
-          <span className="truncate">{projectName(cwd)}</span>
-        </span>
-      )}
+    <div className="flex min-h-7 min-w-0 flex-wrap items-center gap-x-2 px-2 text-xs text-muted-foreground">
+      {(picker || cwd) && <WorkspaceBreadcrumb cwd={cwd} picker={picker} />}
       {mode === "plan" && (
         <span
           className="flex h-7 shrink-0 items-center gap-1 pl-2 text-muted-foreground"

@@ -16,10 +16,12 @@ export function NonModalDropdownMenu({
   trigger,
   children,
   onCloseAutoFocus,
+  onOpen,
   ...contentProps
 }: {
   trigger: (ref: RefObject<HTMLButtonElement | null>) => ReactNode;
   children: ReactNode;
+  onOpen?: () => void;
 } & ComponentProps<typeof DropdownMenuContent>) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   // Gates the guard: the content outlives the close, and a lingering guard swallows the next click.
@@ -39,7 +41,14 @@ export function NonModalDropdownMenu({
     return () => document.removeEventListener("scroll", onScroll, { capture: true });
   }, [open]);
   return (
-    <DropdownMenu modal={false} open={open} onOpenChange={setOpen}>
+    <DropdownMenu
+      modal={false}
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) onOpen?.();
+      }}
+    >
       <DropdownMenuTrigger asChild={true}>
         {trigger(triggerRef)}
       </DropdownMenuTrigger>

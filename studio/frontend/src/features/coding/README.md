@@ -614,8 +614,10 @@ conversation's folder — otherwise the remembered one — and the remembered mo
 already chosen; no folder dialog opens. While a create is pending it is disabled
 and `startNew()` refuses (returns false), so the create is neither orphaned nor
 repeated; it opens what it created. An uncertain create keeps its reconciliation on
-the landing, which cannot create another copy. The folder chip above the composer
-lists recent folders and **Choose folder…**; choosing only selects. Send (or Enter)
+the landing, which cannot create another copy. The workspace row below the composer
+shows the Studio host, selected folder and current Git branch when available. The
+draft picker offers local checkouts and **Open folder…**. In an open conversation
+the folder opens Files and the branch opens Changes. Send (or Enter)
 creates the conversation with the native canonical-folder authority, and the new
 owner sends the carried draft exactly once when it can accept it. `@` and `/` open
 nothing until a conversation exists.
