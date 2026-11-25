@@ -12,6 +12,7 @@ import { codingRunAdapter } from "../src/features/coding/run-runtime.ts";
 import {
   codingCanEdit,
   codingPlanControlReason,
+  codingPlanDecisionReason,
   codingSendBlockedReason,
   createCodingRun,
 } from "../src/features/coding/run-session.ts";
@@ -137,6 +138,39 @@ function harness(modeSettleDelay = 5000) {
     },
   };
 }
+
+test("plan decisions require returning to the current plan after loading earlier messages", async () => {
+  const h = harness();
+  h.api.readEntries = async (_id, cut, anchor) => {
+    const latest = anchor === "latest";
+    const id = latest ? "current" : "previous";
+    return {
+      cut,
+      rows: [{ id, kind: "plan", plan: latest ? plan : { ...plan, id: "old-plan" } }],
+      older: latest,
+      newer: !latest,
+      first_id: id,
+      last_id: id,
+    };
+  };
+  try {
+    await h.start();
+    assert.equal(await h.run.loadEarlier(), "loaded");
+    for (const decision of ["implement", "implement_fresh", "save_and_stop"] as const) {
+      assert.match(codingPlanDecisionReason(h.run.getSnapshot(), plan, decision) ?? "", /Jump to latest/);
+      await h.run.decidePlan(plan, decision);
+    }
+    assert.deepEqual(h.calls, []);
+    h.run.showLatest();
+    assert.equal(codingPlanDecisionReason(h.run.getSnapshot(), plan), null);
+    await h.run.decidePlan(plan, "implement");
+    assert.deepEqual(h.calls, [{
+      id: "conversation", plan_id: plan.id, revision: plan.revision, decision: "implement",
+    }]);
+  } finally {
+    h.run.detach();
+  }
+});
 
 for (const operation of ["mode", "plan"] as const) {
   for (const status of [409, 503]) {

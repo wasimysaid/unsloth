@@ -2222,6 +2222,8 @@ export function codingPlanDecisionReason(
   plan: NativePlan,
   decision?: PlanDecision,
 ): string | null {
+  if (state?.viewingEarlier)
+    return "Jump to latest to review the current plan before choosing an action.";
   if (plan.status === "saved_stopped" && decision === "save_and_stop")
     return "This plan is already saved and stopped. Choose implementation explicitly when ready.";
   return (
