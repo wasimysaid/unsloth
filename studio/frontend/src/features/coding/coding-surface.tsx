@@ -286,7 +286,7 @@ export function CodingSurface({
       conversationId,
       createCodingRunApi(conversationGeneration),
       undefined,
-      { onRuntimeLost, connectionsEnabled: () => useExternalProvidersStore.getState().connectionsEnabled },
+      { onRuntimeLost, projectTerminal: Boolean(cwd), connectionsEnabled: () => useExternalProvidersStore.getState().connectionsEnabled },
     );
   });
   useEffect(() => {
@@ -486,7 +486,7 @@ export function CodingSurface({
       draftTerminalMenu={landing?.terminalPermissions}
       onStart={isLanding ? landing?.onStart : undefined}
       starting={Boolean(landing?.starting)}
-      autoSend={autoSend}
+      autoSend={autoSend && (!cwd || Boolean(state?.terminalPermissions))}
       onAutoSent={onAutoSent}
       footer={
         isLanding ? null : (

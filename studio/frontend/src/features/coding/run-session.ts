@@ -147,6 +147,7 @@ export function createCodingRun(
     modeSettleDelay?: number;
     onRuntimeLost?: () => void;
     connectionsEnabled?: () => boolean;
+    projectTerminal?: boolean;
   } = {},
 ) {
   const pendingStore = pendingSubmissionStore(
@@ -1912,7 +1913,7 @@ export function createCodingRun(
           api.checkOverlap(id).catch((error) => {
             throw new Error(`Project overlap check failed. ${errorText(error)}`);
           }),
-          terminal.verifyBeforeSend(),
+          options.projectTerminal === false ? undefined : terminal.verifyBeforeSend(),
         ]);
       } catch (reason) {
         update({

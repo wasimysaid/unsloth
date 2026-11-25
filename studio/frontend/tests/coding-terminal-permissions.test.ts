@@ -17,7 +17,7 @@ function harness(terminalPermissions: NonNullable<RunApi["terminalPermissions"]>
 test("a missing plugin contributes no picker and cannot accept a landing choice", async () => {
   const h = harness(async (id) => ({ conversation_id: id, mode: null }));
   await h.client.refresh();
-  assert.deepEqual(h.history, []);
+  assert.deepEqual(h.history, [{ kind: "unavailable" }]);
   await assert.rejects(setTerminalPermissionMode("this-project", h.api, "ask"), /unavailable/);
 });
 
@@ -70,4 +70,36 @@ test("an unseen change to Full access is shown before the next prompt can run", 
   await assert.rejects(h.client.verifyBeforeSend(), /changed in another view/);
   assert.deepEqual(h.history.at(-1), { kind: "ready", mode: "full" });
   await h.client.verifyBeforeSend();
+});
+
+test("Send waits for the first read and surfaces previously unseen Full access", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  let reads = 0;
+  const h = harness(async id => {
+    reads++;
+    await pending;
+    return { conversation_id: id, mode: "full" };
+  });
+  const loading = h.client.refresh();
+  const sending = h.client.verifyBeforeSend();
+  release();
+  await loading;
+  await assert.rejects(sending, /Full access is enabled/);
+  assert.equal(reads, 1);
+  assert.deepEqual(h.history.at(-1), { kind: "ready", mode: "full" });
+});
+
+test("an initial failed read stays unverified until a successful read", async () => {
+  let failed = true;
+  const h = harness(async id => {
+    if (failed) throw new Error("connection lost");
+    return { conversation_id: id, mode: null };
+  });
+  await h.client.refresh();
+  await assert.rejects(h.client.verifyBeforeSend(), /Check terminal permissions/);
+  assert.deepEqual(h.history.at(-1), { kind: "unknown" });
+  failed = false;
+  await h.client.verifyBeforeSend();
+  assert.deepEqual(h.history.at(-1), { kind: "unavailable" });
 });

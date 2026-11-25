@@ -44,7 +44,7 @@ export function createTerminalPermissions(
 ) {
   let revision = 0;
   let pendingRead: Promise<void> | null = null;
-  let state: TerminalPermissions = { kind: "unavailable" };
+  let state: TerminalPermissions = { kind: "unknown" };
   const set = (next: TerminalPermissions) => {
     state = next;
     publish(next);
@@ -61,7 +61,7 @@ export function createTerminalPermissions(
         set({ kind: "ready", mode });
       }
     }).catch(() => {
-      if (current === revision && state.kind !== "unavailable") set({ kind: "unknown" });
+      if (current === revision) set({ kind: "unknown" });
     }).finally(() => {
       if (current === revision) pendingRead = null;
     });
@@ -70,11 +70,14 @@ export function createTerminalPermissions(
   return {
     refresh,
     async verifyBeforeSend() {
-      if (state.kind !== "ready") return;
-      const displayed = state.mode;
+      if (!api.terminalPermissions) return;
+      const displayed = state.kind === "ready" ? state.mode : null;
       await refresh();
+      if (state.kind === "unavailable") return;
       if (state.kind !== "ready") throw new Error("Check terminal permissions before sending.");
-      if (state.mode !== displayed)
+      if (displayed === null && state.mode === "full")
+        throw new Error("Full access is enabled. Review terminal permissions and send again.");
+      if (displayed !== null && state.mode !== displayed)
         throw new Error("Terminal permissions changed in another view. Review the level and send again.");
     },
     async change(mode: PermissionMode) {
