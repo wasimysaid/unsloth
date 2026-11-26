@@ -2,6 +2,7 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 import { Folder01Icon, Folder02Icon } from "@/lib/folder-icons";
+import { cn } from "@/lib/utils";
 import {
   CProgrammingIcon,
   Css3Icon,
@@ -161,21 +162,26 @@ const FILE_ICONS: readonly FileIcon[] = [
   },
 ];
 
+export function fileIconFor(path: string, kind: ProjectEntry["kind"]) {
+  const name = path.split("/").at(-1)?.toLowerCase() ?? "";
+  const extension = name.includes(".") ? name.split(".").at(-1) : "";
+  return kind === "file"
+      ? FILE_ICONS.find((entry) => entry.extensions.includes(extension ?? ""))
+      : undefined;
+}
+
 export function ProjectFileIcon({
   path,
   kind = "file",
   expanded = false,
+  className,
 }: {
   path: string;
   kind?: ProjectEntry["kind"];
   expanded?: boolean;
+  className?: string;
 }) {
-  const name = path.split("/").at(-1)?.toLowerCase() ?? "";
-  const extension = name.includes(".") ? name.split(".").at(-1) : "";
-  const match =
-    kind === "file"
-      ? FILE_ICONS.find((entry) => entry.extensions.includes(extension ?? ""))
-      : undefined;
+  const match = fileIconFor(path, kind);
   const icon =
     kind === "directory"
       ? expanded
@@ -189,7 +195,11 @@ export function ProjectFileIcon({
     <HugeiconsIcon
       icon={icon}
       aria-hidden="true"
-      className={`size-4 shrink-0 ${match?.color ?? "text-muted-foreground"}`}
+      className={cn(
+        "size-4 shrink-0",
+        match?.color ?? "text-muted-foreground",
+        className,
+      )}
       strokeWidth={1.75}
     />
   );

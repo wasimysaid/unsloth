@@ -3432,6 +3432,40 @@ html[data-chat-font] .aui-root {
 		@apply min-h-[calc(40px*var(--ui-space-scale,1))] min-w-0 flex-1 resize-none overflow-y-auto bg-transparent pl-0.5 pr-2 py-2 text-ui-15 font-[450] leading-6 outline-none placeholder:text-muted-foreground focus-visible:ring-0;
 	}
 
+	.coding-prompt-editor {
+		position: relative;
+		order: 1;
+		flex: 0 0 100%;
+		min-width: 0;
+	}
+
+	.coding-prompt-editor textarea {
+		display: block;
+	}
+
+	/* The native input owns selection, undo and IME. Its decoration layer uses
+	   the same text metrics and scroll viewport, including wrapped paths. */
+	.coding-prompt-editor .coding-mention-mirror {
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		user-select: none;
+		white-space: pre-wrap;
+		overflow-wrap: break-word;
+		overflow-y: auto;
+	}
+
+	.coding-prompt-editor[data-decorated] textarea {
+		position: relative;
+		color: transparent;
+		caret-color: var(--foreground);
+	}
+
+	@media (forced-colors: active) {
+		.coding-prompt-editor .coding-mention-mirror { display: none; }
+		.coding-prompt-editor[data-decorated] textarea { color: CanvasText; }
+	}
+
 	/* Animate the frame so the textarea stays mounted and keeps selection/undo. */
 	.unsloth-composer-editor {
 		position: relative;
