@@ -3015,6 +3015,50 @@ test("failed or superseded preflight never sends a prompt and keeps a known-unse
   }
 });
 
+test("a follow-up retains its rich input, delivery choice and identity across a lost reply and reload", async () => {
+  for (const delivery of ["steer", "queue"] as const) {
+    const h = harness();
+    const active = native("previous");
+    active.requests[0].submission_key = "previous-key";
+    await h.start(active);
+    h.api.checkOverlap = async () => overlap;
+    const text = "@lib inspect";
+    const extras = { file_mentions: [{ path: "lib", kind: "file" as const, start: 0, end: 4 }] };
+    assert.equal(await h.run.send(text, extras, delivery), false);
+    h.setSubmitError(new Error("lost acknowledgement"));
+    assert.equal(await h.run.continueOverlap(), false);
+    h.run.detach();
+    const reopened = harness(h.storage);
+    await reopened.start(active);
+    assert.equal(await reopened.run.retrySubmission(), true);
+    assert.equal(reopened.run.getSnapshot().acceptedSubmission, null);
+    const submission = { id: "conversation", key: "key", text, delivery, ...extras };
+    assert.deepEqual(h.submissions, [{ ...submission, overlapConfirmed: true }]);
+    assert.deepEqual(reopened.submissions, [submission]);
+    reopened.run.detach();
+  }
+});
+
+test("withdrawal uses only a pending follow-up id and leaves the active run running", async () => {
+  const h = harness();
+  const active = native("ongoing");
+  const queued = { id: "later", status: "queued" as const, submission_key: "other",
+    pending_follow_up: { delivery: "queue" as const, preview: "Run the tests" } };
+  active.requests.push(queued);
+  await h.start(active);
+  const withdrawals: string[] = [];
+  h.api.withdraw = async (_id, requestId) => {
+    withdrawals.push(requestId);
+    return { withdrawn: false };
+  };
+  assert.equal(await h.run.withdrawFollowUp("ongoing"), false);
+  assert.equal(await h.run.withdrawFollowUp("later"), false);
+  assert.deepEqual(withdrawals, ["later"]);
+  assert.deepEqual(h.cancellations, []);
+  assert.equal(h.run.getSnapshot().native?.active_request, "ongoing");
+  h.run.detach();
+});
+
 test("uncertain prompt retries preserve deduplication without a fresh preflight or persisted overlap authority", async () => {
   const h = harness();
   await h.start();

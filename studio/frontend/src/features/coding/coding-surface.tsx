@@ -35,6 +35,7 @@ import {
 } from "./history-scroll";
 import type { CodingInputDraft } from "./input";
 import { CodingModelSelector } from "./coding-model-selector";
+import { ReplyMenu } from "./model-handoff-dialog";
 import { type CodingConfiguration, studioConnectionBlockedReason } from "./model-selection";
 import { ProjectOverlapDialog } from "./project-overlap-dialog";
 import { QuestionCard } from "./question-card";
@@ -448,6 +449,7 @@ export function CodingSurface({
   ) : conversationId ? (
     <CodingModelSelector
       key={conversationId}
+      adoptResident={false}
       readCatalog={(refresh, signal) =>
         refresh
           ? codingModelApi.refresh(conversationId, signal)
@@ -600,6 +602,11 @@ export function CodingSurface({
                         blocks={blocks}
                         currentPlan={state?.viewingEarlier ? null : state?.native?.plan}
                         childView={run?.childView ?? null}
+                        turnActions={
+                          state?.native && !state.viewingEarlier ? (
+                            <ReplyMenu state={state} />
+                          ) : undefined
+                        }
                       />
                       {pendingUser && (
                         <PendingUserBlock message={pendingUser} />

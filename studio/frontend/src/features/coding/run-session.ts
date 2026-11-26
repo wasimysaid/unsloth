@@ -21,7 +21,7 @@ import { trimEntryPage, trimSavedEntries } from "./entry-window.ts";
 import { applyTextDelta, type TextDelta } from "./live-rows.ts";
 import { createViewNotifications } from "./view-notifications.ts";
 import { codingRowSize } from "./file-changes.ts";
-import type { CodingImage, CodingInput, CodingInputExtras } from "./input.ts";
+import type { CodingImage, CodingInput, CodingInputExtras, FollowUpDelivery } from "./input.ts";
 import { type CodingConfigurationChange, studioConnectionBlockedReason } from "./model-selection.ts";
 import { type PendingCommand, pendingCommandStore } from "./pending-command.ts";
 import {
@@ -385,7 +385,7 @@ export function createCodingRun(
       acceptedSubmissionKey: key,
       error: null,
       ...(input?.key === key
-        ? { acceptedSubmission: { requestId, input } }
+        ? { acceptedSubmission: input.delivery ? null : { requestId, input } }
         : {}),
     });
     clearPending(key, true);
@@ -1125,6 +1125,7 @@ export function createCodingRun(
         existing &&
         (existing.key !== key ||
           existing.text !== input.text ||
+          existing.delivery !== input.delivery ||
           JSON.stringify(existing.skill_mentions ?? []) !==
             JSON.stringify(input.skill_mentions ?? []) ||
           JSON.stringify(existing.subagent_mentions ?? []) !==
@@ -1872,7 +1873,7 @@ export function createCodingRun(
         return false;
       }
     },
-    async send(text: string, extras: CodingInputExtras = {}) {
+    async send(text: string, extras: CodingInputExtras = {}, delivery?: FollowUpDelivery) {
       if (!text.trim()) return false;
       const command = parseCodingCommand(text);
       if (command) return executeCommand(command.name, command.tail);
@@ -1903,7 +1904,7 @@ export function createCodingRun(
           "Wait for a connected, reconstructed native view and resolve the current warning before sending.",
         );
       // Freeze rich input before preflight and retain it through confirmation/retry.
-      const input = structuredClone({ text, ...extras });
+      const input = structuredClone({ text, ...extras, ...(delivery ? { delivery } : {}) });
       const key = makeKey();
       const current = incarnation;
       update({ submitting: true, error: null, unsentDraft: null });
@@ -2008,6 +2009,26 @@ export function createCodingRun(
         unsentDraft: input.text,
         rejectedSubmission: structuredClone(input),
       });
+    },
+    async withdrawFollowUp(requestId: string): Promise<boolean> {
+      if (!api.withdraw || state.connection !== "connected")
+        throw new Error("Reconnect to withdraw a follow-up.");
+      const pending = state.native?.requests.some(
+        (request) => request.id === requestId && request.pending_follow_up,
+      );
+      if (!pending) return false;
+      const current = incarnation;
+      try {
+        const { withdrawn } = await api.withdraw(id, requestId);
+        if (typeof withdrawn !== "boolean") throw new Error("Mimir did not confirm the withdrawal.");
+        return withdrawn;
+      } catch (reason) {
+        if (current === incarnation) {
+          if (needsReopen(reason)) requireRuntimeReopen();
+          update({ error: errorText(reason) });
+        }
+        throw reason;
+      }
     },
     async stop() {
       const request = codingStopTarget(state);

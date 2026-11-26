@@ -52,8 +52,8 @@ async def test_effective_skill_discovery_is_authenticated_and_exact_conversation
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("overlap_confirmed", [None, False, True])
-async def test_rich_input_crosses_transport_without_rewriting_exact_key_ranges_or_bytes(coding_app, overlap_confirmed):
+@pytest.mark.parametrize(("overlap_confirmed", "delivery"), [(None, None), (False, "queue"), (True, "steer")])
+async def test_rich_input_crosses_transport_without_rewriting_exact_key_ranges_or_bytes(coding_app, overlap_confirmed, delivery):
     app, headers = coding_app
     calls = []
     class Runtime(RuntimeDouble):
@@ -63,6 +63,8 @@ async def test_rich_input_crosses_transport_without_rewriting_exact_key_ranges_o
             return {"conversation_id": params["conversation_id"], "submission_key": params["submission_key"], "request_id": "native"}
     app.state.coding_runtime = Runtime()
     payload = {"submission_key": "same-key", "text": "😀 @plugin:alpha:review inspect", "skill_mentions": [{"name": "plugin:alpha:review", "path": "/effective/project/review/SKILL.md", "start": 5, "end": 25}], "images": [{"mime_type": "image/png", "data": PNG}]}
+    if delivery:
+        payload["delivery"] = delivery
     if overlap_confirmed is not None:
         payload["overlap_confirmed"] = overlap_confirmed
     async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
@@ -75,6 +77,7 @@ async def test_rich_input_crosses_transport_without_rewriting_exact_key_ranges_o
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("extra", [
+    {"delivery": "unsupported"},
     {"images": [{"mime_type": "image/svg+xml", "data": PNG}]},
     {"images": [{"mime_type": "image/png", "data": "https://host/image.png"}]},
     {"images": [{"mime_type": "image/png", "data": base64.b64encode(b"not an image").decode()}]},

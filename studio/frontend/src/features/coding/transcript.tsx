@@ -159,8 +159,10 @@ export function PendingUserBlock({ message }: { message: PendingUserMessage }) {
 
 function ProseBlock({
   block,
+  actions,
 }: {
   block: Extract<TranscriptBlock, { kind: "prose" }>;
+  actions?: React.ReactNode;
 }) {
   const text = block.text;
   return (
@@ -180,7 +182,12 @@ function ProseBlock({
         </Bounded>
       )}
       <Clipped row={block.row} />
-      {block.turnEnd && text.trim() && <CopyText text={text} />}
+      {block.turnEnd && text.trim() && (
+        <div className="flex items-center gap-0.5">
+          <CopyText text={text} />
+          {actions}
+        </div>
+      )}
     </div>
   );
 }
@@ -347,15 +354,17 @@ function ActivityBlock({
 const BlockView = memo(function BlockView({
   block,
   childView,
+  actions,
 }: {
   block: TranscriptBlock;
   childView: ChildView | null;
+  actions?: React.ReactNode;
 }) {
   switch (block.kind) {
     case "user":
       return <UserBlock block={block} />;
     case "prose":
-      return <ProseBlock block={block} />;
+      return <ProseBlock block={block} actions={actions} />;
     case "answer":
       return <AnswerBlock block={block} />;
     case "semantic":
@@ -372,6 +381,7 @@ const BlockView = memo(function BlockView({
       return block.row.plan ? (
         <div className="min-w-0" data-reading-key={block.key}>
           <PlanCard plan={block.row.plan} />
+          <PlanActions>{actions}</PlanActions>
         </div>
       ) : null;
     case "content_ref":
@@ -406,31 +416,52 @@ export function TranscriptBlocks({
   blocks,
   childView,
   currentPlan,
+  turnActions,
 }: {
   blocks: readonly TranscriptBlock[];
   childView: ChildView | null;
   currentPlan?: NativePlan | null;
+  /** Actions under the latest finished reply or plan only. */
+  turnActions?: React.ReactNode;
 }) {
   let currentKey: string | undefined;
-  if (currentPlan) {
-    for (const block of blocks) {
-      if (block.kind === "plan" && block.row.plan?.id === currentPlan.id)
-        currentKey = block.key;
-    }
+  let latestTurn: string | undefined;
+  for (const block of blocks) {
+    if (block.kind === "plan" && currentPlan && block.row.plan?.id === currentPlan.id)
+      currentKey = block.key;
+    if ((block.kind === "prose" && block.turnEnd) || block.kind === "plan")
+      latestTurn = block.key;
   }
+  const tailPlan = currentPlan && !currentKey ? currentPlan : null;
+  const actionsAt = (key: string) =>
+    turnActions && key === latestTurn && !tailPlan ? turnActions : undefined;
   return (
     <>
       {blocks.map((block) => currentPlan && block.key === currentKey ? (
         <div key={block.key} className="min-w-0" data-reading-key={block.key}>
           <PlanCard plan={currentPlan} current />
+          <PlanActions>{actionsAt(block.key)}</PlanActions>
         </div>
       ) : (
-        <BlockView key={block.key} block={block} childView={childView} />
+        <BlockView
+          key={block.key}
+          block={block}
+          childView={childView}
+          actions={actionsAt(block.key)}
+        />
       ))}
-      {currentPlan && !currentKey && <PlanCard key={currentPlan.id} plan={currentPlan} current />}
+      {tailPlan && (
+        <div key={tailPlan.id} className="min-w-0">
+          <PlanCard plan={tailPlan} current />
+          <PlanActions>{turnActions}</PlanActions>
+        </div>
+      )}
     </>
   );
 }
+
+const PlanActions = ({ children }: { children: React.ReactNode }) =>
+  children ? <div className="flex items-center gap-0.5">{children}</div> : null;
 
 const elapsed = (ms: number) => {
   const seconds = Math.floor(ms / 1000);

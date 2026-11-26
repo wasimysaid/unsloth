@@ -50,6 +50,7 @@ import type {
 
 export function CodingModelSelector({
   readCatalog,
+  adoptResident = true,
   configuration,
   unavailable,
   preparing,
@@ -61,6 +62,7 @@ export function CodingModelSelector({
     refresh: boolean,
     signal: AbortSignal,
   ) => Promise<CodingProviderChoice[]>;
+  adoptResident?: boolean;
   configuration: Pick<
     CodingConfiguration,
     "provider" | "model" | "reasoning" | "preserve_thinking"
@@ -232,6 +234,7 @@ export function CodingModelSelector({
   }, [configuration?.provider, configuration?.model]);
   useEffect(() => {
     if (
+      !adoptResident ||
       blocked ||
       !result.ready ||
       local.residency.state !== "unloaded" ||
@@ -266,6 +269,7 @@ export function CodingModelSelector({
       },
     );
   }, [
+    adoptResident,
     blocked,
     result.ready,
     result.catalog,

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import { followUpControls } from "./fixtures/coding-follow-up-controls.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CodingHttpError } from "../src/features/coding/errors.ts";
@@ -106,6 +107,7 @@ const composer = loadWithStubs<typeof Composer>(
     "./mention-menu": mentionMenu,
     "@/hooks/use-composer-pill-fit": { useComposerPillFit: () => ({}) },
     "./terminal-permission-pill": { TerminalPermissionPill: () => null },
+    ...followUpControls,
     "./pending-approval": { PendingApproval: () => null },
     "./plan-decision": { PlanDecisionPrompt: () => null },
     "./pending-submission": pendingSubmission,
@@ -636,6 +638,7 @@ for (const ownerGeneration of [1, 2, 100]) {
       "./composer-footer": { CommandFeedback: "command-feedback", ComposerFooter: "footer" },
       "./input": codingInput,
       "./coding-model-selector": { CodingModelSelector: "model-picker" },
+      "./model-handoff-dialog": { ReplyMenu: () => null },
       "./project-overlap-dialog": { ProjectOverlapDialog: "overlap" },
     });
     const render = (runtimeStatus: CodingRuntimeStatus | null) => {

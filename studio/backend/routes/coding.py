@@ -102,11 +102,24 @@ class ModelConfiguration(BaseModel):
     preserve_thinking: bool | None = Field(default = None, strict = True)
 
 
+class InitialConfiguration(ModelConfiguration):
+    mode: Literal["build", "plan"] | None = None
+
+
+class ReviewedPlanSource(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    conversation_id: str = Field(min_length = 1, max_length = 128)
+    plan_id: str = Field(min_length = 1, max_length = 128)
+    revision: str = Field(min_length = 1, max_length = 256)
+    runtime_generation: int = Field(ge = 1, le = 9007199254740991, strict = True)
+
+
 class ProjectSelection(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     cwd: str | None = Field(default = None, min_length = 1, max_length = 32768)
     # The first request's selection, chosen before the conversation existed.
-    configuration: ModelConfiguration | None = None
+    configuration: InitialConfiguration | None = None
+    plan_source: ReviewedPlanSource | None = None
 
 
 class RuntimeRestart(BaseModel):
@@ -150,6 +163,7 @@ class PromptImage(BaseModel):
 class PromptSubmission(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     submission_key: str = Field(min_length = 1, max_length = 128)
+    delivery: Literal["start", "queue", "steer"] = "start"
     text: str = Field(min_length = 1, max_length = 65536)
     overlap_confirmed: bool = Field(default = False, strict = True)
     skill_mentions: list[SkillMention] = Field(default_factory = list, max_length = 64)
@@ -667,6 +681,17 @@ def _conversation_info(info: dict) -> dict:
 @router.post("/conversations", status_code = 201)
 async def create_conversation(body: ProjectSelection, request: Request):
     cwd = body.cwd
+    generation = None
+    if source := body.plan_source:
+        generation = source.runtime_generation
+        state = await _command(request, "state", {"conversation_id": source.conversation_id}, generation = generation)
+        plan = state.get("plan") or {}
+        if (plan.get("id") != source.plan_id or plan.get("revision") != source.revision or
+                plan.get("status") not in {"review_pending", "saved_stopped"} or
+                plan.get("clipped") or plan.get("action_disabled_reason") or state.get("action_disabled_reason")):
+            raise HTTPException(409, "The plan changed or is busy. Review its latest version before implementing it.")
+        if cwd != _conversation_info(state["info"])["cwd"] or not body.configuration or body.configuration.mode != "build":
+            raise HTTPException(422, "Plan implementation requires Build mode in the source project.")
     if cwd is None:
         root = _chat_workspaces()
         root.mkdir(parents = True, exist_ok = True)
@@ -674,7 +699,7 @@ async def create_conversation(body: ProjectSelection, request: Request):
     params = {"cwd": cwd}
     if body.configuration is not None:
         params["configuration"] = body.configuration.model_dump(exclude_none = True)
-    state = await _command(request, "create", params)
+    state = await _command(request, "create", params, generation = generation)
     return _conversation_info(state["info"])
 
 
@@ -723,6 +748,12 @@ async def submit_prompt(conversation_id: str, body: PromptSubmission, request: R
     if body.text.lstrip().startswith("/"):
         raise HTTPException(400, "Run slash commands from the command menu.")
     return await _command(request, "prompt", {"conversation_id": conversation_id, **body.model_dump(exclude_unset = True), "overlap_confirmed": body.overlap_confirmed}, generation = generation)
+
+
+@router.post("/conversations/{conversation_id}/requests/{request_id}/withdraw")
+async def withdraw_follow_up(conversation_id: str, request_id: str, request: Request,
+                             generation: Generation):
+    return await _command(request, "withdraw", {"conversation_id": conversation_id, "request_id": request_id}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/requests/{request_id}/cancel")
