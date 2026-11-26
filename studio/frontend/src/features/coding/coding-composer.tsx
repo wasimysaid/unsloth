@@ -23,7 +23,7 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import {
   discoverCodingFiles,
@@ -37,17 +37,19 @@ import {
   type CodingSkill,
   type CodingSubagent,
   type DraftImage,
-  type DraftMention,
   type FollowUpDelivery,
   IMAGE_LIMITS,
   IMAGE_TYPES,
 } from "./input";
+import { InlineMention } from "./inline-mention";
 import { type CompletionItem, CompletionList, mentionOptionId } from "./mention-list";
 import {
   type CommandOption,
   type MentionOption,
   commandItems,
   commandQuery,
+  mentionCategories,
+  type MentionCategory,
   mentionGroups,
   mentionItems,
   mentionQuery,
@@ -100,6 +102,8 @@ function mentionItem(option: MentionOption): CompletionItem {
     return {
       id: option.id,
       kind: "file",
+      path: choice.file.path,
+      fileKind: choice.file.kind,
       icon: choice.file.kind === "directory" ? Folder : FileText,
       label: leaf(choice.file.path),
       detail: parent(choice.file.path),
@@ -162,6 +166,7 @@ export function CodingComposer({
   const composer = useComposerRuntime();
   const { pillRowRef, pillCompact } = useComposerPillFit(false);
   const input = inputRef;
+  const mirror = useRef<HTMLDivElement>(null);
   const files = useRef<HTMLInputElement>(null);
   const model = useSyncExternalStore(draft.subscribe, draft.getSnapshot);
   const [catalog, setCatalog] = useState<Catalog>({
@@ -173,14 +178,16 @@ export function CodingComposer({
   const [found, setFound] = useState<{
     query: string;
     files: CodingFile[];
+    truncated?: boolean;
     error: string | null;
   } | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const [category, setCategory] = useState<MentionCategory>("all");
   const [menu, setMenu] = useState<Menu | null>(null);
   // Escape/selection close synchronously; a late selection event must not reopen.
   const menuOpen = useRef(false);
   const dismissed = useRef<number | null>(null);
-  const [active, setActive] = useState<number | null>(null);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [preview, setPreview] = useState<DraftImage | null>(null);
   const connected = state?.connection === "connected";
@@ -201,6 +208,15 @@ export function CodingComposer({
     // Capture only: publishing here would render the old controlled value before
     // assistant-ui's React onChange has accepted the browser edit.
     const before = (event: InputEvent) => {
+      if (!event.isComposing && node.selectionStart === node.selectionEnd &&
+          (event.inputType === "deleteContentBackward" || event.inputType === "deleteContentForward")) {
+        const caret = node.selectionStart;
+        const backward = event.inputType === "deleteContentBackward";
+        const mention = draft.getSnapshot().mentions.find((m) =>
+          backward ? m.end === caret : m.start === caret,
+        );
+        if (mention) node.setSelectionRange(mention.start, mention.end);
+      }
       pendingEdit.current = {
         text: node.value,
         start: node.selectionStart,
@@ -213,7 +229,7 @@ export function CodingComposer({
       node.removeEventListener("beforeinput", before);
       pendingEdit.current = null;
     };
-  }, [draft]);
+  }, [draft, input]);
   // The draft can outlive a composer (a conversation created from the landing
   // takes the landing's draft over). A new, empty composer shows its text; a
   // composer that already has text is never overwritten.
@@ -278,7 +294,7 @@ export function CodingComposer({
       void discoverCodingFiles(conversationId, fileQuery, abort.signal)
         .then((result) => {
           if (abort.signal.aborted) return;
-          setFound({ query: fileQuery, files: result.files, error: null });
+          setFound({ query: fileQuery, files: result.files, truncated: result.truncated, error: null });
         })
         .catch((reason: unknown) => {
           if (abort.signal.aborted) return;
@@ -306,10 +322,10 @@ export function CodingComposer({
         ),
     ),
   ];
-  // Earlier results stay visible while the next query is searched.
+  // Only the result for the current query may be selected.
   const fileCatalog = {
     ...catalog,
-    files: found?.files ?? [],
+    files: found && found.query === fileQuery ? found.files : [],
     fileStatus:
       found?.query === fileQuery && found
         ? found.error
@@ -321,7 +337,14 @@ export function CodingComposer({
     menu?.kind === "mention"
       ? mentionGroups(fileCatalog, menu.query, mode)
       : [];
-  const mentions = menu?.kind === "mention" ? mentionItems(groups, menu.query) : [];
+  const filteredGroups = category === "all" ? groups : groups.filter((group) => group.kind === category);
+  const mentions = !menu?.query && category === "all"
+    ? mentionCategories.flatMap((kind) => groups.find((group) => group.kind === kind)?.options.slice(0, 4) ?? [])
+    : mentionItems(filteredGroups, menu?.query ?? "");
+  const switchCategory = (next: MentionCategory) => {
+    setCategory(next);
+    setHighlightedId(null);
+  };
   const commandOptions =
     menu?.kind === "command" ? commandItems(commands, menu.query, busy) : [];
   const items: CompletionItem[] =
@@ -330,15 +353,19 @@ export function CodingComposer({
       : commandOptions.map(commandItem);
   const status =
     menu?.kind === "mention"
-      ? mentionStatus(groups, menu.query)
+      ? mentionStatus(filteredGroups, menu.query)
       : state?.discoveringCommands && !state.commands
         ? "Loading commands…"
         : (state?.commandError ?? "No matching commands");
+  const highlighted = items.findIndex((item) => item.id === highlightedId && !item.disabled);
+  const active = highlighted >= 0 ? highlighted : stepMention(items, null, 1);
+  const setActive = (index: number | null) => setHighlightedId(index === null ? null : items[index]?.id ?? null);
   const current = active !== null ? items[active] : undefined;
   const close = (dismiss = false) => {
     menuOpen.current = false;
     dismissed.current = dismiss ? (menu?.start ?? null) : null;
     setMenu(null);
+    setCategory("all");
     setActive(null);
   };
   const focus = () => requestAnimationFrame(() => input.current?.focus());
@@ -389,23 +416,38 @@ export function CodingComposer({
     else if (menu?.kind === "command" && commandOptions[index])
       selectCommand(commandOptions[index]);
   };
+  function mentionKey(event: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
+    if (menu?.kind !== "mention" || event.nativeEvent.isComposing) return false;
+    switch (event.key) {
+      case "Tab": {
+        const next = mentionCategories.indexOf(category) + (event.shiftKey ? -1 : 1);
+        switchCategory(mentionCategories[(next + mentionCategories.length) % mentionCategories.length]);
+        break;
+      }
+      case "ArrowUp":
+      case "ArrowDown":
+        setActive(stepMention(items, active, event.key === "ArrowDown" ? 1 : -1));
+        break;
+      case "Enter":
+        if (event.shiftKey && event.currentTarget === input.current) return false;
+        if (current && !current.disabled) select(active ?? 0);
+        break;
+      case "Escape":
+        close(true);
+        input.current?.focus();
+        break;
+      default:
+        return false;
+    }
+    event.preventDefault();
+    return true;
+  }
   const openAt = (next: Menu) => {
     menuOpen.current = true;
     setMenu(next);
     if (next.kind === "command" && run && !state?.commands)
       void run.discoverCommands();
-    setActive(
-      stepMention(
-        next.kind === "mention"
-          ? mentionItems(
-              mentionGroups(fileCatalog, next.query, mode),
-              next.query,
-            )
-          : commandItems(commands, next.query, busy),
-        null,
-        1,
-      ),
-    );
+    setHighlightedId(null);
   };
   const changed = (node: HTMLTextAreaElement, syncText = true) => {
     // Selection notifications can observe the previous DOM value while the
@@ -514,7 +556,27 @@ export function CodingComposer({
         <CompletionList
           id={LIST_ID}
           label={menu.kind === "mention" ? "Mentions" : "Commands"}
+          filter={menu.kind === "mention" ? {
+            value: category,
+            search: (query) => {
+              setMenu({ ...menu, query });
+              setHighlightedId(null);
+            },
+            onSearchKey: mentionKey,
+            leaveSearch: (next) => {
+              if (next !== input.current) close();
+            },
+            select: switchCategory,
+            tabs: mentionCategories.map((kind) => ({
+              kind,
+              count: kind === "all"
+                ? groups.reduce((sum, group) => sum + group.options.length, 0)
+                : groups.find((group) => group.kind === kind)?.options.length ?? 0,
+              more: (kind === "all" || kind === "file") && found?.query === fileQuery && Boolean(found?.truncated),
+            })),
+          } : undefined}
           items={items}
+          query={menu.query.replace(/^"/, "")}
           active={active}
           status={status}
           onSelect={select}
@@ -576,8 +638,7 @@ export function CodingComposer({
           </div>
         )}
         {(model.images.length > 0 ||
-          model.reading.length > 0 ||
-          model.mentions.length > 0) && (
+          model.reading.length > 0) && (
           <div className="mx-1 mb-1 flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
             {model.images.length > 0 && (
               <ul aria-label="Attached images" className="contents">
@@ -634,30 +695,6 @@ export function CodingComposer({
                 Reading {item.filename}
               </output>
             ))}
-            {model.mentions.length > 0 && (
-              <ul aria-label="Selected mentions" className="contents">
-                {model.mentions.map((mention) => (
-                  <MentionChip
-                    key={`${mention.kind}:${mention.start}`}
-                    mention={mention}
-                    ineligible={
-                      mention.kind === "subagent" &&
-                      mode === "plan" &&
-                      catalog.subagents.some(
-                        (agent) =>
-                          agent.name === mention.name && !agent.plan_eligible,
-                      )
-                    }
-                    disabled={!canEdit}
-                    onRemove={() => {
-                      const next = draft.removeMention(mention);
-                      if (!next) return;
-                      commitText(next.text, next.cursor);
-                    }}
-                  />
-                ))}
-              </ul>
-            )}
           </div>
         )}
         {(errors.length > 0 || model.attachmentErrors.length > 0) && (
@@ -687,122 +724,155 @@ export function CodingComposer({
           className="unsloth-composer-line"
           data-expanded="true"
         >
-          <ComposerPrimitive.Input
-            ref={input}
-            className="aui-composer-input unsloth-composer-input disabled:cursor-not-allowed"
-            aria-label="Coding prompt"
-            role={menu ? "combobox" : undefined}
-            aria-autocomplete={menu ? "list" : undefined}
-            aria-haspopup={menu ? "listbox" : undefined}
-            aria-describedby="coding-send-explanation coding-image-support"
-            aria-controls={menu ? LIST_ID : undefined}
-            aria-expanded={menu ? true : undefined}
-            aria-activedescendant={
-              menu && current ? mentionOptionId(LIST_ID, active ?? 0) : undefined
-            }
-            placeholder="Do anything…"
-            submitMode={landing ? "none" : "enter"}
-            disabled={!canEdit}
-            minRows={1}
-            maxRows={10}
-            addAttachmentOnPaste={false}
-            cancelOnEscape={false}
-            unstable_focusOnThreadSwitched={false}
-            unstable_focusOnRunStart={false}
-            unstable_focusOnScrollToBottom={false}
-            {...(compositionText === null ? {} : { value: compositionText })}
-            onChange={(event) => {
-              if (
-                composing.current ||
-                (event.nativeEvent as InputEvent).isComposing
-              ) {
-                setCompositionText(event.currentTarget.value);
-              } else {
-                changed(event.currentTarget);
+          <div className="coding-prompt-editor" data-decorated={(compositionText === null && model.mentions.length > 0) || undefined}>
+            {compositionText === null && model.mentions.length > 0 && (
+              <div
+                ref={(layer) => {
+                  mirror.current = layer;
+                  if (layer && input.current) layer.scrollTop = input.current.scrollTop;
+                }}
+                className="unsloth-composer-input coding-mention-mirror"
+                data-testid="coding-inline-mentions"
+                aria-hidden="true"
+              >
+                {model.mentions.map((mention, index) => (
+                  <Fragment key={mention.start}>
+                    {model.text.slice(index ? model.mentions[index - 1].end : 0, mention.start)}
+                    <InlineMention
+                      mention={mention}
+                      ineligible={mention.kind === "subagent" && mode === "plan" &&
+                        catalog.subagents.some((a) => a.name === mention.name && !a.plan_eligible)}
+                    />
+                  </Fragment>
+                ))}
+                {model.text.slice(model.mentions[model.mentions.length - 1].end)}
+                {"\u200b"}
+              </div>
+            )}
+            <ComposerPrimitive.Input
+              ref={input}
+              className="aui-composer-input unsloth-composer-input disabled:cursor-not-allowed"
+              aria-label="Coding prompt"
+              role={menu ? "combobox" : undefined}
+              aria-autocomplete={menu ? "list" : undefined}
+              aria-haspopup={menu ? "listbox" : undefined}
+              aria-describedby="coding-send-explanation coding-image-support"
+              aria-controls={menu ? LIST_ID : undefined}
+              aria-expanded={menu ? true : undefined}
+              aria-activedescendant={
+                menu && current ? mentionOptionId(LIST_ID, active ?? 0) : undefined
               }
-            }}
-            onCompositionStart={(event) => {
-              composing.current = true;
-              setCompositionText(event.currentTarget.value);
-            }}
-            onCompositionEnd={(event) => {
-              composing.current = false;
-              setCompositionText(null);
-              changed(event.currentTarget);
-            }}
-            onSelect={(event) => {
-              if (menuOpen.current) changed(event.currentTarget, false);
-            }}
-            onKeyDown={(event) => {
-              if (event.nativeEvent.isComposing) return;
-              if (menuOpen.current) {
-                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                  event.preventDefault();
-                  setActive(
-                    stepMention(
-                      items,
-                      active,
-                      event.key === "ArrowDown" ? 1 : -1,
-                    ),
-                  );
-                  return;
-                }
-                // An incomplete catalog cannot tell a full command from a prefix.
-                // Enter preserves that intent; Tab still completes explicitly.
-                const command =
-                  menu?.kind === "command"
-                    ? parseCodingCommand(event.currentTarget.value)
-                    : null;
-                const typed =
-                  event.key === "Enter" &&
-                  command !== null &&
-                  command.name.length > 0 &&
-                  (!state?.commands ||
-                    commands.some(
-                      ({ name, aliases }) =>
-                        name === command.name || aliases.includes(command.name),
-                    ));
+              placeholder="Do anything…"
+              submitMode={landing ? "none" : "enter"}
+              disabled={!canEdit}
+              minRows={1}
+              maxRows={10}
+              addAttachmentOnPaste={false}
+              cancelOnEscape={false}
+              unstable_focusOnThreadSwitched={false}
+              unstable_focusOnRunStart={false}
+              unstable_focusOnScrollToBottom={false}
+              {...(compositionText === null ? {} : { value: compositionText })}
+              onScroll={(event) => {
+                if (mirror.current) mirror.current.scrollTop = event.currentTarget.scrollTop;
+              }}
+              onChange={(event) => {
                 if (
-                  ((event.key === "Enter" && !event.shiftKey) ||
-                    event.key === "Tab") &&
-                  current &&
-                  !current.disabled &&
-                  !typed
+                  composing.current ||
+                  (event.nativeEvent as InputEvent).isComposing
                 ) {
-                  event.preventDefault();
-                  select(active ?? 0);
-                  return;
+                  setCompositionText(event.currentTarget.value);
+                } else {
+                  changed(event.currentTarget);
                 }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  close(true);
-                  return;
+              }}
+              onCompositionStart={(event) => {
+                composing.current = true;
+                setCompositionText(event.currentTarget.value);
+              }}
+              onCompositionEnd={(event) => {
+                composing.current = false;
+                setCompositionText(null);
+                changed(event.currentTarget);
+              }}
+              onBlur={(event) => {
+                if (menuOpen.current && event.relatedTarget?.id !== LIST_ID + "-search") close();
+              }}
+              onSelect={(event) => {
+                if (menuOpen.current) changed(event.currentTarget, false);
+              }}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return;
+                if (menuOpen.current) {
+                  if (mentionKey(event)) return;
+                  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setActive(
+                      stepMention(
+                        items,
+                        active,
+                        event.key === "ArrowDown" ? 1 : -1,
+                      ),
+                    );
+                    return;
+                  }
+                  // An incomplete catalog cannot tell a full command from a prefix.
+                  // Enter preserves that intent; Tab still completes explicitly.
+                  const command =
+                    menu?.kind === "command"
+                      ? parseCodingCommand(event.currentTarget.value)
+                      : null;
+                  const typed =
+                    event.key === "Enter" &&
+                    command !== null &&
+                    command.name.length > 0 &&
+                    (!state?.commands ||
+                      commands.some(
+                        ({ name, aliases }) =>
+                          name === command.name || aliases.includes(command.name),
+                      ));
+                  if (
+                    ((event.key === "Enter" && !event.shiftKey) ||
+                      event.key === "Tab") &&
+                    current &&
+                    !current.disabled &&
+                    !typed
+                  ) {
+                    event.preventDefault();
+                    select(active ?? 0);
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    close(true);
+                    return;
+                  }
                 }
-              }
-              if (event.key === "Enter" && !event.shiftKey) {
-                if (blocked) event.preventDefault();
-                else if (commandWhileBusy()) event.preventDefault();
-                else if (busy) {
-                  event.preventDefault();
-                  followUp(
-                    event.metaKey || event.ctrlKey
-                      ? followUps.opposite
-                      : followUps.delivery,
-                  );
-                } else if (landing) {
-                  event.preventDefault();
-                  if (!starting && model.text.trim()) onStart?.();
+                if (event.key === "Enter" && !event.shiftKey) {
+                  if (blocked) event.preventDefault();
+                  else if (commandWhileBusy()) event.preventDefault();
+                  else if (busy) {
+                    event.preventDefault();
+                    followUp(
+                      event.metaKey || event.ctrlKey
+                        ? followUps.opposite
+                        : followUps.delivery,
+                    );
+                  } else if (landing) {
+                    event.preventDefault();
+                    if (!starting && model.text.trim()) onStart?.();
+                  }
                 }
-              }
-            }}
-            onPaste={(event) => {
-              const selected = Array.from(event.clipboardData.files);
-              if (selected.length) {
-                event.preventDefault();
-                if (canEdit) attach(selected);
-              }
-            }}
-          />
+              }}
+              onPaste={(event) => {
+                const selected = Array.from(event.clipboardData.files);
+                if (selected.length) {
+                  event.preventDefault();
+                  if (canEdit) attach(selected);
+                }
+              }}
+            />
+          </div>
           <div className="unsloth-composer-left" ref={pillRowRef} data-pill-compact={pillCompact}>
             <button
               type="button"
@@ -966,46 +1036,5 @@ export function CodingComposer({
         </DialogContent>
       </Dialog>
     </ComposerPrimitive.Root>
-  );
-}
-
-function MentionChip({
-  mention,
-  ineligible,
-  disabled,
-  onRemove,
-}: {
-  mention: DraftMention;
-  ineligible: boolean;
-  disabled: boolean;
-  onRemove: () => void;
-}) {
-  const [Icon, label] =
-    mention.kind === "skill"
-      ? [Sparkles, "Skill"]
-      : mention.kind === "subagent"
-        ? [Bot, "Agent"]
-        : mention.fileKind === "directory"
-          ? [Folder, "Folder"]
-          : [FileText, "File"];
-  return (
-    <li
-      className={`flex min-w-0 max-w-full items-center gap-1.5 rounded-lg py-1 pl-2 pr-1 text-xs ${ineligible ? "bg-destructive/10 text-destructive" : "bg-muted/70 dark:bg-accent"}`}
-      title={ineligible ? "Not available in plan mode" : label}
-      data-mention-kind={mention.kind}
-    >
-      <Icon className="size-3.5 shrink-0" aria-hidden="true" />
-      <span className="min-w-0 truncate">{mention.token}</span>
-      {ineligible && <span className="shrink-0">· not in plan mode</span>}
-      <button
-        type="button"
-        className="shrink-0 rounded-full p-0.5 hover:bg-accent disabled:opacity-50"
-        aria-label={`Remove mention ${mention.token}`}
-        disabled={disabled}
-        onClick={onRemove}
-      >
-        <X className="size-3" aria-hidden="true" />
-      </button>
-    </li>
   );
 }

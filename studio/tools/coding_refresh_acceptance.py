@@ -312,7 +312,7 @@ def main() -> int:
                 prompt.press("End")
                 prompt.type("Inspect the image, then write and read refresh-result.txt.")
                 expect(prompt).to_have_value(expected_text)
-                expect(page.get_by_label("Selected mentions", exact=True)).to_contain_text("@explore")
+                expect(page.get_by_test_id("coding-inline-mentions")).to_contain_text("@explore")
                 provider.assert_no_request()
                 scenario("real-mention-menu", {"kinds": ["skill", "subagent"], "selected": [SKILL, "explore"], "utf8_prefix": "é 😀 "})
 

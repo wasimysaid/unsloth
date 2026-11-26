@@ -641,7 +641,10 @@ draft picker offers local checkouts and **Open folder…**. In an open conversat
 the folder opens Files and the branch opens Changes. Send (or Enter)
 creates the conversation with the native canonical-folder authority, and the new
 owner sends the carried draft exactly once when it can accept it. `@` and `/` open
-nothing until a conversation exists.
+nothing until a conversation exists. In the mention picker, Tab and Shift+Tab cycle
+through All, Files, Skills and Agents. Enter inserts the highlighted result. Selected files, skills and agents appear inline
+at their original text ranges. Backspace immediately after a mention, or Delete
+immediately before it, removes the selected token in one edit.
 
 The session owns the composer draft of the current view (`state.draft`: text,
 selected mentions, images, images still being read and attachment errors). The
