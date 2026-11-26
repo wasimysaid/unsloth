@@ -309,11 +309,30 @@ they are not ordinary-chat tool-selection pills.
 
 ## Delivery and lifetime
 
-Before project selection or complete capture, the composer is disabled. Enter and
-Send forward text; queued requests remain native. Before **any** prompt HTTP send,
+Queue holds a follow-up for the next turn. Steer delivers it at the next available
+model or tool boundary. If the active run finishes first, Mimir runs the steer
+as a follow-up. Both actions accept the same mentions and images as Send.
+The native view lists pending messages. Withdraw removes a pending message by
+request ID and leaves it running if Mimir already started it.
+
+The reply menu’s model handoff opens a fresh conversation in the same project with the chosen
+provider, model and coding mode. The first message contains exactly the text the
+user reviewed. Its editable preview includes the current plan and excerpts of
+the six most recent user or assistant messages. Attachments, tool output and
+reasoning stay in the source. Studio restores the source project’s terminal
+permission level before sending. A failure leaves the reviewed message as a
+draft in the new conversation.
+
+In the plan decision, **Implement with fresh context** uses Mimir’s existing
+plan decision for the current model. Selecting another model starts a separate
+Build conversation from the complete reviewed plan in the same project. Studio
+checks the source runtime generation and plan revision before creating it. The
+planning conversation retains its plan for reference or another handoff.
+
+Before **any** prompt HTTP send,
 `pending-submission.ts` writes and verifies one conversation-scoped delivery record
 in localStorage under `unsloth:coding:pending-submission:${encodeURIComponent(id)}`:
-`{version:2, conversation_id:id, key, text, skill_mentions?, subagent_mentions?,
+`{version:2, conversation_id:id, key, text, delivery?, skill_mentions?, subagent_mentions?,
 file_mentions?}`. That is the only record schema; with images it carries an
 `image_manifest` of `{mime_type,length,sha256}` and the exact bytes are written first
 to IndexedDB under the same name, because megabyte images exceed localStorage quota.
@@ -333,7 +352,7 @@ nothing is sent or retried automatically.
 
 Reload/reopen restores pending metadata, never automatically replays the prompt,
 and blocks new input. Only after a reconstructed, non-recovering native view may
-**Retry same submission** send the original key/text. A matching native request
+**Retry same submission** send the original key, text and delivery choice. A matching native request
 clears pending metadata even after frontend/plugin restart and lost acknowledgement.
 An interrupted accepted request is delivery-confirmed, not continued: continuation
 requires deliberate new input, never reuse of delivery recovery as a process restart.

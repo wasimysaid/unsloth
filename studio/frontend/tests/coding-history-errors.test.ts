@@ -235,6 +235,7 @@ test("main history ignores unrelated run errors and retains paging recovery afte
       "./history-edge": edge,
       "./history-scroll": historyScroll,
       "./coding-model-selector": { CodingModelSelector: "model-picker" },
+      "./model-handoff-dialog": { ReplyMenu: () => null },
       "./plan-card": { PlanCard: "plan" },
       "./project-overlap-dialog": { ProjectOverlapDialog: "overlap" },
       "./question-card": { QuestionCard: "question" },

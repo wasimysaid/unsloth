@@ -638,6 +638,7 @@ for (const ownerGeneration of [1, 2, 100]) {
       "./composer-footer": { CommandFeedback: "command-feedback", ComposerFooter: "footer" },
       "./input": codingInput,
       "./coding-model-selector": { CodingModelSelector: "model-picker" },
+      "./model-handoff-dialog": { ReplyMenu: () => null },
       "./project-overlap-dialog": { ProjectOverlapDialog: "overlap" },
     });
     const render = (runtimeStatus: CodingRuntimeStatus | null) => {
