@@ -638,3 +638,24 @@ test("accepted input is a transient user presentation until its native row arriv
   assert.equal(pendingUserMessage({ ...state, rows: [native] }), null);
   assert.equal(state.rows.length, 0);
 });
+
+test("a saved proposal takes the place of its tagged reply and preserves the lead-in", () => {
+  const markdown = "# Search\n## Delivery Plan\n### Filter\nMatch the title.";
+  const tagged = `<proposed_plan>\n${markdown}\n</proposed_plan>`;
+  const proposal: CodingRow = {
+    id: "proposal",
+    kind: "plan",
+    plan: {
+      id: "search", name: "Search", path: "search.md", revision: "rev",
+      status: "review_pending", markdown,
+    },
+  };
+  const project = (answer: string) =>
+    projectTranscript([text("answer", answer), proposal], latestWindow(null));
+  assert.deepEqual(project(tagged).map((block) => block.kind), ["plan"]);
+  const lead = project("Here is the plan.\n\n" + tagged);
+  assert.equal(lead[0]?.kind === "prose" && lead[0].text, "Here is the plan.");
+  const different = tagged.replace("Match the title.", "Match only tags.");
+  const kept = project(different);
+  assert.equal(kept[0]?.kind === "prose" && kept[0].text, different);
+});

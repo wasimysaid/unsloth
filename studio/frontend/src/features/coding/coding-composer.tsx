@@ -55,6 +55,7 @@ import {
 } from "./mention-menu";
 import { useComposerPillFit } from "@/hooks/use-composer-pill-fit";
 import { TerminalPermissionPill } from "./terminal-permission-pill";
+import { PlanDecisionPrompt } from "./plan-decision";
 import { PendingApproval } from "./pending-approval";
 import { pendingImageCount } from "./pending-submission";
 import { runLocalCommand } from "./run-runtime";
@@ -509,7 +510,9 @@ export function CodingComposer({
         data-testid="coding-composer-surface"
         {...dragHandlers}
       >
-        {state && run && <PendingApproval state={state} run={run} />}
+        {state && run && (state.native?.user_request?.approval
+          ? <PendingApproval state={state} run={run} />
+          : <PlanDecisionPrompt state={state} run={run} />)}
         {recovery && (
           <div
             className="mx-1 mb-2 space-y-1 rounded-2xl bg-muted/60 p-3 text-xs"

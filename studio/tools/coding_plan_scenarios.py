@@ -75,6 +75,7 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
     transcript = page.get_by_test_id("coding-transcript")
     status = page.get_by_test_id("coding-run-status")
     card = page.get_by_test_id("coding-current-plan")
+    decisions = page.get_by_test_id("coding-plan-decision")
     # The footer chip exists only while native configuration reports Plan mode.
     plan_chip = page.get_by_test_id("coding-plan-mode")
     notices = page.get_by_test_id("coding-event-status")
@@ -178,8 +179,7 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
 
     def act(plan, decision):
         nonlocal current_request
-        expand()
-        button = page.get_by_role("button", name=ACTION_LABELS[decision], exact=True)
+        button = decisions.get_by_role("button", name=ACTION_LABELS[decision], exact=True)
         expect(button).to_be_enabled(timeout=60000)
         with page.expect_response(lambda response: response.url == action_url and response.request.method == "POST", timeout=60000) as waiting:
             button.focus()
@@ -277,25 +277,25 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
     provider.assert_no_request()
     scenario("A2-mode-is-not-plan-acceptance", "Keyboard Leave plan mode control and typed /plan command matched authoritative native configuration without accepting, revising, or implementing the pending plan")
 
-    # Expand/collapse with native summary keyboard behavior at both viewports;
-    # controls and full plan text must stay reachable without horizontal overflow.
+    # Read the rendered plan in the transcript and decide within the composer.
     for width, height, label in ((1440, 1000, "desktop"), (390, 844, "narrow")):
         page.set_viewport_size({"width": width, "height": height})
         summary = expand()
-        assert transcript.evaluate("el => el.clientHeight >= 128"), "Expanded plan collapsed the transcript viewport"
-        expect(card.locator("pre")).to_contain_text("PLAN_KEEP_239")
-        summary.press("Tab")
-        content = card.get_by_role("region", name="Current native plan content", exact=True)
-        expect(content).to_be_focused()
-        content.press("End")
-        page.wait_for_function("el => el.scrollTop + el.clientHeight >= el.scrollHeight - 1",
-                               arg=content.element_handle(), timeout=10000)
-        content.press("Tab")
+        expect(card.get_by_role("heading", name="Delivery Plan")).to_be_visible()
+        expect(card.get_by_test_id("coding-plan-content")).to_contain_text("PLAN_KEEP_239")
+        expect(card.get_by_role("button", name="Implement", exact=True)).to_have_count(0)
+        assert transcript.evaluate("el => el.clientHeight >= 128")
+        expect(page.get_by_test_id("coding-composer-surface").get_by_test_id("coding-plan-decision")).to_be_visible()
+        previous_bottom = 0
+        decisions.get_by_role("button").first.focus()
         for name in ACTION_LABELS.values():
-            button = page.get_by_role("button", name=name, exact=True)
+            button = decisions.get_by_role("button", name=name, exact=True)
             expect(button).to_be_enabled()
             expect(button).to_be_focused()
-            assert button.evaluate("el => { const r=el.getBoundingClientRect(); return r.left>=0 && r.right<=innerWidth; }")
+            box = button.bounding_box()
+            assert box and box["x"] >= 0 and box["x"] + box["width"] <= width
+            assert box["y"] >= previous_bottom
+            previous_bottom = box["y"] + box["height"]
             button.press("Tab")
         summary.focus()
         summary.press("Space")
@@ -334,7 +334,7 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
     expand()
     for name in ACTION_LABELS.values():
         expect(page.get_by_role("button", name=name, exact=True)).to_be_disabled()
-    expect(card).to_contain_text(re.compile("busy|running|wait|active", re.I))
+    expect(decisions).to_contain_text(re.compile("busy|running|wait|active", re.I))
     for decision in ACTION_LABELS:
         reject(original_plan, decision, "native-busy")
     assert state()["active_request"] == busy_ack["request_id"]
@@ -407,11 +407,12 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
     page.reload()
     reopen()
     assert plan_capture("PLAN_SAVE_239", "saved_stopped") == saved
-    expand()
+    expect(decisions).to_be_hidden()
+    page.get_by_text("Resume saved plan", exact=False).click()
     expect(transcript).to_contain_text(save_prompt)
     expect(page.get_by_role("button", name=ACTION_LABELS["implement"], exact=True)).to_be_enabled()
     expect(page.get_by_role("button", name=ACTION_LABELS["implement_fresh"], exact=True)).to_be_enabled()
-    expect(page.get_by_role("button", name=ACTION_LABELS["save_and_stop"], exact=True)).to_be_disabled()
+    expect(page.get_by_role("button", name=ACTION_LABELS["save_and_stop"], exact=True)).to_have_count(0)
     provider.assert_no_request()
     snapshot(page, "plan-saved-stopped-reopened")
     evidence["context_outcomes"].append({"decision": "save_and_stop", "request_id": None, "mode": "build",
@@ -511,7 +512,7 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
     expand()
     expect(card).to_contain_text("PLAN_LOST_ACK_239")
     for name in ACTION_LABELS.values():
-        expect(page.get_by_role("button", name=name, exact=True)).to_be_disabled()
+        expect(page.get_by_role("button", name=name, exact=True)).to_have_count(0)
     card.locator("summary").press("Space")
     expect(card).not_to_have_attribute("open", "")
     for old_plan, marker, lifecycle_label in ((original_plan, "PLAN_KEEP_239", "Implemented"),

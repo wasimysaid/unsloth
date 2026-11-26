@@ -3,7 +3,7 @@
 
 import { Button } from "@/components/ui/button";
 import { ShieldQuestion } from "lucide-react";
-import { useId } from "react";
+import { ComposerDecision } from "./composer-decision";
 import type { CodingRun, CodingRunState } from "./run-session";
 
 function presentInput(input: unknown): string {
@@ -27,7 +27,6 @@ export function PendingApproval({
   state,
   run,
 }: { state: CodingRunState; run: CodingRun }) {
-  const heading = useId();
   const pending = state.native?.user_request;
   const details = pending?.approval;
   if (!details) return null;
@@ -63,20 +62,11 @@ export function PendingApproval({
     void run.answer(form.target);
   }
   return (
-    <section
-      aria-labelledby={heading}
-      data-testid="coding-tool-approval"
-      className="mx-1 mb-2 min-w-0 space-y-2 px-2 pt-1 text-sm"
+    <ComposerDecision
+      icon={ShieldQuestion}
+      question={details.tool === "shell" ? "Run this command?" : `Allow ${details.tool}?`}
+      testId="coding-tool-approval"
     >
-      <h3 id={heading} className="flex items-center gap-2 font-medium">
-        <ShieldQuestion
-          aria-hidden
-          className="size-4 shrink-0 text-muted-foreground"
-        />
-        {details.tool === "shell"
-          ? "Run this command?"
-          : `Allow ${details.tool}?`}
-      </h3>
       {details.input === null ? (
         <p role="status" className="text-xs text-muted-foreground">
           This input is too large to display in full.
@@ -121,6 +111,6 @@ export function PendingApproval({
           ))
           .reverse()}
       </div>
-    </section>
+    </ComposerDecision>
   );
 }
