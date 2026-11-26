@@ -111,11 +111,11 @@ export const codingApi: CodingApi = {
       "The native conversation catalog exceeded 100 pages. The full history could not be loaded.",
     );
   },
-  async createConversation(cwd, configuration) {
+  async createConversation(cwd, configuration, planSource) {
     const response = await codingRequest("/conversations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(configuration ? { cwd, configuration } : { cwd }),
+      body: JSON.stringify({ cwd, configuration: configuration ?? undefined, plan_source: planSource }),
     });
     return openedConversation((await response.json()) as CodingConversation);
   },

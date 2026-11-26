@@ -3,6 +3,9 @@
 
 import type { PermissionMode } from "../chat/stores/chat-runtime-store";
 import { type CodingInputDraft, createInputDraft } from "./input.ts";
+import { handoffBlockedReason, handoffContextError } from "./model-handoff.ts";
+import { codingPlanDecisionReason, type CodingRunState } from "./run-session.ts";
+import type { NativePlan } from "./plan-types.ts";
 import type { CodingConfigurationChange } from "./model-selection.ts";
 import {
   MODEL_KEY,
@@ -16,6 +19,7 @@ import {
 import type {
   CodingApi,
   CodingConversation,
+  ReviewedPlanSource,
 } from "./types.ts";
 
 /** A navigation the page is waiting on. A pending open is superseded by any
@@ -141,6 +145,7 @@ export function createCodingSession(
     kind: "create" | "open",
     id: string | null,
     terminalMode: PermissionMode = "auto",
+    firstMessage?: string,
   ): Promise<boolean> {
     // Uncertain creation is never blindly repeated. Inspect the shared catalog,
     // then deliberately reopen a saved identity; folder equality is not identity.
@@ -182,14 +187,16 @@ export function createCodingSession(
       // A deliberate same-ID reopening also needs a fresh native view after
       // disconnect/closure; identity alone is not a subscription incarnation.
       if (kind === "create") remember(PROJECT_KEY, active.cwd);
+      const draft = fromLanding ? state.draft : createInputDraft();
+      if (firstMessage) draft.syncText(firstMessage);
       update({
         active,
         pending: null,
         openingUncertainty: null,
         openingGeneration: state.openingGeneration + 1,
         reopened: kind === "open",
-        draft: fromLanding ? state.draft : createInputDraft(),
-        autoSend: fromLanding && !permissionError && Boolean(state.draft.getSnapshot().text.trim()),
+        draft,
+        autoSend: !permissionError && Boolean(draft.getSnapshot().text.trim()),
         terminalMode: "auto",
         openingError: permissionError,
         ...(kind === "create" ? { project: active.cwd } : {}),
@@ -221,6 +228,59 @@ export function createCodingSession(
     }
   }
 
+  type HandoffTarget = { provider: string; model: string };
+  async function startHandoff(
+    source: CodingRunState,
+    target: HandoffTarget,
+    transfer: { kind: "brief"; context: string } | { kind: "plan"; plan: NativePlan },
+  ) {
+    const active = state.active;
+    const native = source.native;
+    if (!active || !native || active.id !== native.info.id || state.pending) return false;
+    const reject = (openingError: string) => {
+      update({ openingError });
+      return false;
+    };
+    const blocked = handoffBlockedReason(source, active.cwd !== null);
+    if (blocked) return reject(blocked);
+    const draft = state.draft.getSnapshot();
+    if (draft.text || draft.images.length || draft.reading.length)
+      return reject("Send or clear your current draft before handing off.");
+    if (!target.provider || !target.model ||
+        (target.provider === native.configuration.provider && target.model === native.configuration.model))
+      return reject("Choose a different model for the handoff.");
+
+    let mode = native.configuration.mode;
+    let context: string;
+    let planSource: ReviewedPlanSource | undefined;
+    if (transfer.kind === "plan") {
+      const plan = native.plan;
+      if (!plan || plan.id !== transfer.plan.id || plan.revision !== transfer.plan.revision)
+        return reject("This plan has changed. Review the latest version first.");
+      const reason = codingPlanDecisionReason(source, plan, "implement_fresh");
+      if (reason) return reject(reason);
+      if (plan.clipped || !plan.markdown.trim())
+        return reject("The complete plan is unavailable for handoff.");
+      if (!active.runtime_generation) return reject("Reopen this conversation before handing off its plan.");
+      planSource = { conversation_id: active.id, runtime_generation: active.runtime_generation, plan_id: plan.id, revision: plan.revision };
+      mode = "build";
+      context = "Implement the following reviewed plan.\n\n" + plan.markdown;
+    } else {
+      context = transfer.context;
+    }
+    const contextError = handoffContextError(context);
+    if (contextError) return reject(contextError);
+    if (mode !== "plan" && mode !== "build")
+      return reject("The current coding mode cannot be carried to another conversation.");
+    const permissions = source.terminalPermissions;
+    return open(
+      () => api.createConversation(active.cwd, { ...target, mode }, planSource),
+      "create", null,
+      active.cwd && permissions?.kind === "ready" ? permissions.mode : "auto",
+      context,
+    );
+  }
+
   return {
     getSnapshot: () => state,
     subscribe: (listener: () => void) => {
@@ -239,6 +299,10 @@ export function createCodingSession(
         !state.active && state.project ? state.terminalMode : "auto",
       );
     },
+    handoff: (source: CodingRunState, target: HandoffTarget, context: string) =>
+      startHandoff(source, target, { kind: "brief", context }),
+    implementPlanWithModel: (source: CodingRunState, plan: NativePlan, target: HandoffTarget) =>
+      startHandoff(source, target, { kind: "plan", plan }),
     openConversation: (id: string) =>
       open((signal) => api.openConversation(id, signal), "open", id),
     /** A blank landing at once: a pending open is abandoned, never awaited.

@@ -3,6 +3,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
+import { handoffContext, MAX_HANDOFF_BYTES } from "../src/features/coding/model-handoff.ts";
 import { CodingHttpError } from "../src/features/coding/errors.ts";
 import { createCodingSession } from "../src/features/coding/session.ts";
 import type {
@@ -500,4 +501,146 @@ test("starting a worktree conversation opens the prepared checkout with the sele
   assert.equal(session.getSnapshot().active?.cwd, "/new/worktree");
   assert.notEqual(session.getSnapshot().draft, original);
   assert.equal(session.getSnapshot().autoSend, false);
+});
+
+function handoffSource() {
+  return {
+    connection: "connected",
+    native: {
+      info: { id: "source", cwd: "/saved" },
+      configuration: { provider: "studio-local", model: "original", mode: "plan" },
+      requests: [],
+    },
+    rows: [],
+    terminalPermissions: { kind: "ready", mode: "ask" },
+  } as unknown as import("../src/features/coding/run-session.ts").CodingRunState;
+}
+
+test("handoff carries only reviewed text, target model, plan mode and permissions into a fresh conversation", async () => {
+  const create = deferred<CodingConversation>();
+  const calls: unknown[] = [];
+  const session = createCodingSession(nativeApi({
+    async createConversation(cwd, configuration) {
+      calls.push({ cwd, configuration });
+      return await create.promise;
+    },
+  }), { setTerminalMode: async (conversation, mode) => { calls.push({ id: conversation.id, mode }); } });
+  await session.openConversation("source");
+  const source = handoffSource();
+  const target = { provider: "studio-connection-custom", model: "destination" };
+  const handing = session.handoff(source, target, "My edited plan.");
+  assert.equal(session.getSnapshot().active?.id, "source");
+  assert.equal(await session.handoff(source, target, "Duplicate"), false);
+  create.resolve({ id: "destination", cwd: "/saved" });
+  assert.equal(await handing, true);
+  assert.deepEqual(calls, [
+    { cwd: "/saved", configuration: { ...target, mode: "plan" } },
+    { id: "destination", mode: "ask" },
+  ]);
+  assert.equal(session.getSnapshot().active?.id, "destination");
+  assert.equal(session.getSnapshot().draft.getSnapshot().text, "My edited plan.");
+  assert.equal(session.getSnapshot().autoSend, true);
+  assert.equal(await session.handoff(source, target, "Stale dialog"), false);
+  await session.openConversation("source");
+  assert.equal(session.getSnapshot().autoSend, false);
+});
+
+test("handoff keeps the source draft and declines busy or same-model handoffs", async () => {
+  const session = createCodingSession(nativeApi());
+  await session.openConversation("source");
+  const source = handoffSource();
+  const target = { provider: "external", model: "new" };
+  session.getSnapshot().draft.syncText("Still editing");
+  assert.equal(await session.handoff(source, target, "reviewed"), false);
+  assert.equal(session.getSnapshot().draft.getSnapshot().text, "Still editing");
+  session.getSnapshot().draft.syncText("");
+  assert.equal(await session.handoff(source, { provider: "studio-local", model: "original" }, "reviewed"), false);
+  assert.equal(await session.handoff(source, target, "  /clear"), false);
+  assert.match(session.getSnapshot().openingError!, /leading slash/);
+  source.native!.active_request = "running";
+  assert.equal(await session.handoff(source, target, "reviewed"), false);
+  assert.equal(session.getSnapshot().active?.id, "source");
+});
+
+test("failed permission transfer leaves the reviewed handoff as an unsent target draft", async () => {
+  const session = createCodingSession(nativeApi(), {
+    setTerminalMode: async () => { throw new Error("permission refused"); },
+  });
+  await session.openConversation("source");
+  assert.equal(await session.handoff(handoffSource(), { provider: "other", model: "new" }, "Review this"), true);
+  assert.equal(session.getSnapshot().active?.id, "native-new");
+  assert.equal(session.getSnapshot().draft.getSnapshot().text, "Review this");
+  assert.equal(session.getSnapshot().autoSend, false);
+  assert.match(session.getSnapshot().openingError!, /permission refused/);
+});
+
+test("project handoff waits for confirmed permissions and supports an absent terminal plugin", async () => {
+  const session = createCodingSession(nativeApi());
+  await session.openConversation("source");
+  const source = handoffSource();
+  const target = { provider: "external", model: "destination" };
+  for (const permissions of [undefined, { kind: "unknown" }, { kind: "changing", previous: "ask" }] as const) {
+    source.terminalPermissions = permissions;
+    assert.equal(await session.handoff(source, target, "reviewed"), false);
+    assert.equal(session.getSnapshot().active?.id, "source");
+    assert.match(session.getSnapshot().openingError!, /terminal permissions/i);
+  }
+  source.terminalPermissions = { kind: "unavailable" };
+  assert.equal(await session.handoff(source, target, "reviewed"), true);
+  assert.equal(session.getSnapshot().autoSend, true);
+});
+
+test("handoff preview prioritizes the complete plan and recent public messages within the prompt limit", () => {
+  const source = handoffSource();
+  const plan = "Refactor and test. ".repeat(1200);
+  source.native!.plan = {
+    id: "plan", revision: "1", path: "plan.md", name: "Plan", status: "review_pending", markdown: plan,
+  };
+  source.rows = [
+    { id: "tool", kind: "tool", text: "unreviewed tool output" },
+    { id: "think", kind: "reasoning", text: "reasoning trace" },
+    ...Array.from({ length: 8 }, (_, index) => ({ id: String(index), kind: "user" as const, text: "message " + index })),
+  ];
+  const preview = handoffContext(source);
+  assert.ok(preview.includes(plan));
+  assert.match(preview, /message 2/);
+  assert.match(preview, /message 7/);
+  assert.doesNotMatch(preview, /message [01]|reasoning trace|unreviewed tool output/);
+  source.native!.plan.markdown = "💬".repeat(MAX_HANDOFF_BYTES);
+  const clipped = handoffContext(source);
+  assert.ok(Buffer.byteLength(clipped) <= MAX_HANDOFF_BYTES);
+  assert.ok(clipped.endsWith(" […]"));
+  assert.ok(!clipped.includes("�"));
+});
+
+test("another model implements only the current reviewed plan in a fresh Build conversation", async () => {
+  const calls: unknown[][] = [];
+  const session = createCodingSession(nativeApi({
+    async openConversation(id) { return { id, cwd: "/saved", runtime_generation: 9 }; },
+    async createConversation(...args) {
+      calls.push(args);
+      return { id: "build-session", cwd: "/saved" };
+    },
+  }), { setTerminalMode: async () => {} });
+  await session.openConversation("source");
+  const source = handoffSource();
+  const plan = {
+    id: "plan-id", name: "Parser", revision: "review-a1", path: "/saved/plan.md",
+    markdown: "Add a parser and test it.", status: "review_pending" as const,
+  };
+  source.native!.plan = plan;
+  source.rows = [{ kind: "user", id: "previous", text: "Earlier brainstorming" }];
+  const target = { provider: "other", model: "builder" };
+  assert.equal(await session.implementPlanWithModel(source, { ...plan, revision: "old" }, target), false);
+  source.native!.plan = { ...plan, clipped: true };
+  assert.equal(await session.implementPlanWithModel(source, plan, target), false);
+  assert.equal(calls.length, 0);
+  source.native!.plan = plan;
+  assert.equal(await session.implementPlanWithModel(source, plan, target), true);
+  assert.deepEqual(calls, [["/saved", { ...target, mode: "build" }, {
+    conversation_id: "source", runtime_generation: 9, plan_id: plan.id, revision: plan.revision,
+  }]]);
+  assert.equal(session.getSnapshot().active?.id, "build-session");
+  assert.equal(session.getSnapshot().draft.getSnapshot().text, "Implement the following reviewed plan.\n\nAdd a parser and test it.");
+  assert.equal(session.getSnapshot().autoSend, true);
 });
