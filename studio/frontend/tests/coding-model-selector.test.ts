@@ -678,9 +678,12 @@ test("a pending selected-model status never adopts the first of multiple residen
   const settled = view.render(next); view.flushEffects(); await tick();
   assert.equal(settled.source.selection?.ggufVariant, "Q8");
   assert.equal(changes.length, 1);
-  // Only a confirmed absence permits fallback to the remaining resident.
+  // An open conversation keeps its selected target even if another model is resident.
   local.residency.state = "unloaded";
   local.loadedModels = [{ id: "repo", checkpoint: "repo", quant: "Q4" }];
+  const pinned = { ...next, adoptResident: false };
+  view.render(pinned); view.flushEffects(); await tick();
+  assert.equal(changes.length, 1);
   view.render(next); view.flushEffects(); await tick();
   assert.deepEqual(changes[1], { provider: "studio-local", model: "exact-Q4" });
   cleanup();

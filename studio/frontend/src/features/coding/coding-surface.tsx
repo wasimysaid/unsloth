@@ -448,6 +448,7 @@ export function CodingSurface({
   ) : conversationId ? (
     <CodingModelSelector
       key={conversationId}
+      adoptResident={false}
       readCatalog={(refresh, signal) =>
         refresh
           ? codingModelApi.refresh(conversationId, signal)
