@@ -279,6 +279,7 @@ function loadComposer(
         CompletionList: "completion-list",
         mentionOptionId: () => "",
       },
+      "./inline-mention": { InlineMention: "inline-mention" },
       "./mention-menu": mentionMenu,
       "@/hooks/use-composer-pill-fit": { useComposerPillFit: () => ({}) },
       "./terminal-permission-pill": { TerminalPermissionPill: () => null },

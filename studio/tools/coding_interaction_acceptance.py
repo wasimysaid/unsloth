@@ -19,6 +19,7 @@ import argparse
 import base64
 import hashlib
 import json
+import re
 import os
 
 from pathlib import Path
@@ -503,9 +504,12 @@ class InteractionRun:
         prompt = page.get_by_label("Coding prompt", exact=True)
         prompt.fill("é 😀 @")
         menu = page.get_by_test_id("coding-mention-list")
-        # One flat list (no group headers) offers every native mention kind.
+        categories = page.get_by_role("group", name="Mention categories")
+        categories.get_by_role("button", name=re.compile(r"^Skills ")).click()
         expect(menu.locator(f'[data-mention-kind="skill"][data-mention-name="{SKILL}"]')).to_be_visible()
+        prompt.press("Tab")
         expect(menu.locator('[data-mention-kind="subagent"]')).to_have_count(len(subagents))
+        categories.get_by_role("button", name=re.compile(r"^Files ")).click()
         expect(menu.locator('[data-mention-kind="file"]').first).to_be_visible()
         prompt.fill("é 😀 @notes")
         option = menu.locator(f'[data-mention-kind="file"][data-mention-name="{mention_name(FILE_PATH)}"]')

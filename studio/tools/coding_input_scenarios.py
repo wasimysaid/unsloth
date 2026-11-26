@@ -103,7 +103,7 @@ def input_scenarios(page, context, base, provider, project, report, scenario, sn
     # "@" opens one flat mention listbox; rows carry the native kind and name.
     mention_list = page.get_by_test_id("coding-mention-list")
     option = mention_list.locator(f'[data-mention-kind="skill"][data-mention-name="{SKILL_NAME}"]')
-    selected_mentions = page.get_by_label("Selected mentions", exact = True)
+    selected_mentions = page.get_by_test_id("coding-inline-mentions")
     # Repeated literal text must not inherit a deleted selected occurrence.
     prompt.fill("@project")
     expect(option).to_be_visible()
@@ -255,7 +255,7 @@ def live_input_scenario(page, context, base, project, report, scenario, snapshot
     # The real profile also discovers global skills whose descriptions match
     # 'project'; choose this exact descriptor rather than assuming list order.
     selected.click()
-    expect(page.get_by_label("Selected mentions", exact = True)).to_contain_text(SKILL_NAME)
+    expect(page.get_by_test_id("coding-inline-mentions")).to_contain_text(SKILL_NAME)
     prompt.press("End")
     prompt.type("Visual-evidence request: inspect the attached image and identify its dominant color, without guessing from filename. In this disposable project only, use write_file to create image-skill-evidence.txt as instructed by the selected skill, then read_file to verify it. Make no other changes and report completion briefly.")
     snapshot(page, "live-inputs-ready")

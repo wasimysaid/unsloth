@@ -31,6 +31,9 @@ export interface MentionOption {
   /** Honest reason the native identity cannot be selected now. */
   disabled: string | null;
 }
+export const mentionCategories = ["all", "file", "skill", "subagent"] as const;
+export type MentionCategory = (typeof mentionCategories)[number];
+
 export interface MentionGroup {
   kind: MentionChoice["kind"];
   label: "Skills" | "Subagents" | "Files";
@@ -183,7 +186,7 @@ export function mentionStatus(
   return (
     statuses.find((status) => status.endsWith("Retry.")) ??
     groups.find((group) => group.kind === "file")?.status ??
-    (query ? `No matches for “${query}”` : "No files")
+    (query ? `No matches for “${query}”` : groups.length === 1 ? `No ${groups[0].label.toLowerCase()} available` : "No mentions available")
   );
 }
 
