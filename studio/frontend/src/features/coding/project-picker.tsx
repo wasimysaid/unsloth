@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 import {
   Check,
   ChevronDown,
-  Folder,
+  ChevronRight,
   FolderOpen,
   FolderSearch,
   GitBranch,
@@ -188,32 +188,15 @@ function BranchSearch({
 }
 
 function LocalCheckouts({
-  project,
+  checkouts,
   onSelect,
   onSearch,
 }: {
-  project: string;
+  checkouts: LocalCheckout[] | null;
   onSelect: (cwd: string) => void;
   onSearch: (items: LocalCheckout[]) => void;
 }) {
-  const [checkouts, setCheckouts] = useState<LocalCheckout[]>([]);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    const controller = new AbortController();
-    async function load() {
-      const result = await codingRequest(
-        `/projects/checkouts?${new URLSearchParams({ path: project })}`,
-        { signal: controller.signal },
-      );
-      const rows: LocalCheckout[] = await result.json();
-      if (!controller.signal.aborted) setCheckouts(rows);
-    }
-    void load().catch(() => {
-      if (!controller.signal.aborted) setFailed(true);
-    });
-    return () => controller.abort();
-  }, [project]);
-  if (failed)
+  if (!checkouts)
     return <DropdownMenuLabel>Couldn’t read local checkouts</DropdownMenuLabel>;
   if (!checkouts.length) return null;
   return (
@@ -309,12 +292,33 @@ export function ProjectPicker({
     browsing.current = true;
     if (triggerRef.current) onBrowse(triggerRef.current);
   };
+  const [checkouts, setCheckouts] = useState<LocalCheckout[] | null>([]);
+  const [refresh, setRefresh] = useState(0);
+  useEffect(() => {
+    if (!project) return;
+    const query = new URLSearchParams({ path: project });
+    const controller = new AbortController();
+    async function load() {
+      const result = await codingRequest(`/projects/checkouts?${query}`, {
+        signal: controller.signal,
+      });
+      const rows: LocalCheckout[] = await result.json();
+      if (!controller.signal.aborted) setCheckouts(rows);
+    }
+    void load().catch(() => {
+      if (!controller.signal.aborted) setCheckouts(null);
+    });
+    return () => controller.abort();
+  }, [project, refresh]);
+  const current = checkouts?.find((checkout) => checkout.current);
+  const branch = current?.branch ?? current?.head;
   const name = project ? projectName(project) : null;
   return (
     <>
       <NonModalDropdownMenu
         side="top"
-        align="end"
+        align="start"
+        onOpen={() => setRefresh((n) => n + 1)}
         sideOffset={6}
         aria-label="Project mode"
         className="unsloth-plus-menu w-[calc(17rem*var(--ui-space-scale,1))]"
@@ -335,17 +339,19 @@ export function ProjectPicker({
             title={project ?? "No project selected"}
             aria-label={
               project
-                ? `Project: ${project}. Change project mode`
+                ? `Project: ${project}.${branch ? ` Checkout: ${branch}.` : ""} Change project mode`
                 : "No project. Change project mode"
             }
-            className="flex h-6 min-w-0 max-w-64 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 data-[state=open]:bg-accent data-[state=open]:text-foreground"
+            className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 data-[state=open]:bg-accent data-[state=open]:text-foreground"
           >
-            {project ? (
-              <Folder className="size-3.5 shrink-0" aria-hidden="true" />
-            ) : (
-              <MessageSquare className="size-3.5 shrink-0" aria-hidden="true" />
-            )}
+            {!project && <MessageSquare className="size-3.5 shrink-0" aria-hidden />}
             <span className="truncate">{name ?? "No project"}</span>
+            {branch && (
+              <>
+                <ChevronRight className="size-3 shrink-0 opacity-60" aria-hidden />
+                <span className="truncate font-normal" title={branch}>{branch}</span>
+              </>
+            )}
             <ChevronDown
               className="size-3 shrink-0 opacity-60"
               aria-hidden="true"
@@ -375,8 +381,7 @@ export function ProjectPicker({
         />
         {project && (
           <LocalCheckouts
-            key={project}
-            project={project}
+            checkouts={checkouts}
             onSelect={onSelect}
             onSearch={(items) => {
               browsing.current = true;
