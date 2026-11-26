@@ -540,6 +540,7 @@ for (const ownerGeneration of [1, 2, 100]) {
       "react-dom": { createPortal: () => null },
       "@/features/chat": { ContextUsageBar: "context-usage", useExternalProvidersStore: () => true },
       "./model-selection": modelSelection,
+      "./coding-panels-context": { CodingPanels: { current: { refreshGit: () => {} } } },
       "./coding-layout-context": { CodingLayoutHosts: { current: { contextUsage: null } } },
       "./context-usage": { codingContextUsage: () => ({}) },
       "react/jsx-runtime": stubJsxRuntime(),

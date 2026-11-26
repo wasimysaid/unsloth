@@ -433,3 +433,22 @@ test("unusable remembered values are ignored", () => {
     null,
   );
 });
+
+test("starting a worktree conversation opens the prepared checkout with the selected model and does not send a prompt", async () => {
+  const calls: Array<{ cwd: string | null; configuration: unknown }> = [];
+  const session = createCodingSession(nativeApi({
+    createConversation: async (cwd, configuration) => {
+      calls.push({ cwd, configuration });
+      return { id: "worktree", cwd };
+    },
+  }), { memory: null });
+  session.selectModel({provider: "p", model: "m"});
+  await session.openConversation("source");
+  const original = session.getSnapshot().draft;
+  assert.equal(await session.startConversation("/new/worktree"), true);
+  assert.deepEqual(calls.map(({cwd}) => cwd), ["/new/worktree"]);
+  assert.equal((calls[0].configuration as {model: string}).model, "m");
+  assert.equal(session.getSnapshot().active?.cwd, "/new/worktree");
+  assert.notEqual(session.getSnapshot().draft, original);
+  assert.equal(session.getSnapshot().autoSend, false);
+});

@@ -91,9 +91,9 @@ export function CodingPage() {
     >
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <CodingWorkspace
-          key={workspace ?? "no-project"}
+          key={JSON.stringify([workspace, conversationKey])}
           project={workspace}
-          conversationKey={conversationKey}
+          conversation={state.active}
           view={childView?.key === conversationKey ? childView.view : null}
         >
           <div
@@ -203,10 +203,6 @@ export function CodingPage() {
                           <ProjectPicker
                             triggerRef={projectTrigger}
                             project={project}
-                            projects={recentProjects(
-                              state.conversations,
-                              project,
-                            )}
                             onSelect={session.selectProject}
                             disabled={creating}
                             onBrowse={chooseFolder}

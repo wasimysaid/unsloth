@@ -42,15 +42,17 @@ export function WorkspacePane({
   pane,
   focusFallback,
   testId,
+  visible = true,
 }: {
   children: ReactNode;
   pane: WorkspacePaneContent | null;
+  visible?: boolean;
   focusFallback: string;
   testId: string;
 }) {
   const { isMobile } = useSidebar();
   const [full, setFull] = useState<string | null>(null);
-  const fullView = pane !== null && full === pane.id;
+  const fullView = visible && pane !== null && full === pane.id;
   const panel = useRef<PanelImperativeHandle | null>(null);
   const container = useRef<HTMLDivElement>(null);
   const priorOpen = useRef(false);
@@ -59,7 +61,7 @@ export function WorkspacePane({
     "closed" | "full" | "vertical" | "horizontal" | null
   >(null);
   const invoker = useRef<HTMLElement | null>(null);
-  const open = pane !== null;
+  const open = visible && pane !== null;
   useEffect(() => {
     if (open && !priorOpen.current)
       invoker.current =
@@ -75,11 +77,11 @@ export function WorkspacePane({
     priorOpen.current = open;
   }, [open, focusFallback]);
   useEffect(() => {
-    if (pane?.focusKey)
+    if (open && pane?.focusKey)
       container.current
         ?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
         ?.focus({ preventScroll: true });
-  }, [pane?.focusKey]);
+  }, [open, pane?.focusKey]);
   const applyPanelLayout = () => {
     const mode = !open
       ? "closed"
@@ -161,13 +163,17 @@ export function WorkspacePane({
                 aria-label={pane.label}
                 data-testid={pane.testId}
                 onKeyDown={(event) => {
-                  if (event.key === "Escape") {
+                  if (event.key === "Escape" && event.currentTarget.contains(event.target as Node)) {
                     event.preventDefault();
                     event.stopPropagation();
                     close();
                   }
                 }}
-                className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-muted pt-[var(--studio-content-top-inset,0px)]"
+                className={
+                  open
+                    ? "relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-muted pt-[var(--studio-content-top-inset,0px)]"
+                    : "hidden"
+                }
               >
                 {pane.content}
               </section>
