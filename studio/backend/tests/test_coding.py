@@ -56,6 +56,7 @@ def coding_app(monkeypatch, tmp_path):
     ("GET", "/conversations/known-id/overlap", None),
     ("POST", "/conversations/known-id/prompts", {"submission_key": "exact-key", "text": "work"}),
     ("POST", "/conversations/known-id/configuration", {"provider": "native-provider", "model": "native-model"}),
+    ("POST", "/conversations/known-id/requests/exact-request/withdraw", None),
     ("POST", "/conversations/known-id/requests/exact-request/cancel", None),
     ("POST", "/conversations/known-id/requests/exact-request/questions/exact-question/answers", {
         "subscription": "live-view", "answers": [{"question_id": "choice", "selected_options": ["One"], "freeform_text": None}]}),
@@ -163,7 +164,7 @@ async def test_create_carries_the_first_selection_and_catalog_needs_no_folder(co
     app.state.coding_runtime = RecordingRuntime()
     async with httpx.AsyncClient(transport = httpx.ASGITransport(app = app), base_url = "http://test", headers = headers) as client:
         chosen = await client.post("/api/coding/conversations", json = {
-            "cwd": "/project", "configuration": {"provider": "provider", "model": "model", "reasoning": "high"}})
+            "cwd": "/project", "configuration": {"provider": "provider", "model": "model", "reasoning": "high", "mode": "plan"}})
         assert chosen.status_code == 201
         assert (await client.post("/api/coding/conversations", json = {"cwd": "/project", "configuration": {"model": "model"}})).status_code == 201
         assert (await client.post("/api/coding/conversations", json = {"cwd": "/project"})).status_code == 201
@@ -171,7 +172,7 @@ async def test_create_carries_the_first_selection_and_catalog_needs_no_folder(co
         assert (await client.get("/api/coding/catalog")).status_code == 200
         assert (await client.get("/api/coding/catalog", params = {"cwd": "/project"})).status_code == 200
     assert calls == [
-        ("create", {"cwd": "/project", "configuration": {"provider": "provider", "model": "model", "reasoning": "high"}}),
+        ("create", {"cwd": "/project", "configuration": {"provider": "provider", "model": "model", "reasoning": "high", "mode": "plan"}}),
         ("create", {"cwd": "/project", "configuration": {"model": "model"}}),
         ("create", {"cwd": "/project"}),
         ("catalog", {"cwd": str(Path.home())}),
@@ -297,6 +298,9 @@ async def test_run_stop_and_history_preserve_exact_native_identities(coding_app)
             calls.append((method, params))
             if method == "prompt":
                 return {"request_id": "native-request", "submission_key": params["submission_key"]}
+            if method == "withdraw":
+                assert expected_generation == 1
+                return {"withdrawn": False}
             if method == "cancel":
                 return {"conversation_id": params["conversation_id"], "request_id": params["request_id"], "cancel_requested": True}
             return {"cut": params["cut"], "entries": [], "older": False, "newer": False}
@@ -308,6 +312,9 @@ async def test_run_stop_and_history_preserve_exact_native_identities(coding_app)
         response = await client.post("/api/coding/conversations/exact-conversation/requests/native-request/cancel")
         assert response.status_code == 200
         assert response.json() == {"conversation_id": "exact-conversation", "request_id": "native-request", "cancel_requested": True}, "cancel acceptance must not fabricate terminal settlement"
+        response = await client.post("/api/coding/conversations/exact-conversation/requests/queued-request/withdraw")
+        assert response.status_code == 200
+        assert response.json() == {"withdrawn": False}
         cut = {"journal": "root", "leaf": "captured-leaf"}
         response = await client.post("/api/coding/conversations/exact-conversation/entries", json = {"cut": cut})
         assert response.status_code == 200
@@ -317,6 +324,7 @@ async def test_run_stop_and_history_preserve_exact_native_identities(coding_app)
     assert calls == [
         ("prompt", {"conversation_id": "exact-conversation", "submission_key": "same-key", "text": "Please work", "overlap_confirmed": False}),
         ("cancel", {"conversation_id": "exact-conversation", "request_id": "native-request"}),
+        ("withdraw", {"conversation_id": "exact-conversation", "request_id": "queued-request"}),
         ("read_entries", {"conversation_id": "exact-conversation", "cut": cut, "anchor": "latest", "max_entries": 100, "max_bytes": 262144}),
     ]
 
@@ -964,3 +972,34 @@ async def test_completion_filters_before_limiting_and_preserves_invalid_ancestor
         quoted = (await client.get("/api/coding/projects/browse", params = {"path": f'"{tmp_path / "zz-project"}"', "complete": True})).json()
         assert quoted["path"] == str(tmp_path / "zz-project")
         assert quoted["filter"] == ""
+
+
+@pytest.mark.asyncio
+async def test_plan_handoff_creates_from_the_reviewed_native_revision(coding_app):
+    app, headers = coding_app
+    calls = []
+    state = {"info": {"id": "source", "cwd": "/project"},
+             "plan": {"id": "plan", "revision": "rev", "status": "review_pending"}}
+
+    class PlanRuntime(RuntimeDouble):
+        async def command(self, method, params, *, expected_generation=None):
+            calls.append((method, params, expected_generation))
+            if method == "state":
+                return state
+            assert method == "create"
+            return {"info": {"id": "destination", "cwd": "/project", "runtime_generation": 7}}
+
+    app.state.coding_runtime = PlanRuntime()
+    source = {"conversation_id": "source", "runtime_generation": 7, "plan_id": "plan", "revision": "rev"}
+    target = {"provider": "local", "model": "builder", "mode": "build"}
+    body = {"cwd": "/project", "plan_source": source, "configuration": target}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers) as client:
+        response = await client.post("/api/coding/conversations", json=body)
+        assert response.status_code == 201
+        assert calls == [("state", {"conversation_id": "source"}, 7),
+                         ("create", {"cwd": "/project", "configuration": target}, 7)]
+        calls.clear()
+        for patch in ({"revision": "updated"}, {"clipped": True}, {"status": "implementing"}):
+            state["plan"] = {"id": "plan", "revision": "rev", "status": "review_pending", **patch}
+            assert (await client.post("/api/coding/conversations", json=body)).status_code == 409
+        assert all(method == "state" for method, _, _ in calls)

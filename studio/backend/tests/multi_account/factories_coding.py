@@ -114,7 +114,7 @@ NATIVE_OPERATIONS = {
     "routes.coding:POST:/conversations/{conversation_id}/public-entry": "public_entry",
 }
 GENERATION_METHODS = {
-    "configure", "prompt", "cancel", "answer", "set_mode", "decide_plan", "change_goal", "command", "read_entries",
+    "configure", "prompt", "cancel", "withdraw", "answer", "set_mode", "decide_plan", "change_goal", "command", "read_entries",
 }
 
 for method, suffix, operation, body, params, success in (
@@ -134,6 +134,7 @@ for method, suffix, operation, body, params, success in (
     ("POST", "models/refresh", "models.refresh", None, {}, 200),
     ("POST", "plan-actions", "decide_plan", {"plan_id": "matrix-plan", "revision": "matrix-plan-revision", "decision": "implement"}, {}, 200),
     ("POST", "prompts", "prompt", {"submission_key": "matrix-submission", "text": "matrix prompt"}, {}, 202),
+    ("POST", "requests/{request_id}/withdraw", "withdraw", None, {"request_id": "matrix-request"}, 200),
     ("POST", "requests/{request_id}/cancel", "cancel", None, {"request_id": "matrix-request"}, 200),
     ("POST", "requests/{request_id}/questions/{user_request_id}/answers", "answer", {
         "subscription": "matrix-view", "answers": [{"question_id": "matrix-question", "selected_options": ["One"]}],
