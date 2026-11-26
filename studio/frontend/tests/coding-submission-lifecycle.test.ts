@@ -282,6 +282,7 @@ function loadComposer(
       "@/hooks/use-composer-pill-fit": { useComposerPillFit: () => ({}) },
       "./terminal-permission-pill": { TerminalPermissionPill: () => null },
       "./pending-approval": { PendingApproval: () => null },
+      "./plan-decision": { PlanDecisionPrompt: () => null },
       "./pending-submission": pendingSubmission,
       "./run-runtime": runRuntime,
       "./run-session": runSession,

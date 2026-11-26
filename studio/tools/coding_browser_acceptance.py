@@ -321,14 +321,19 @@ def main() -> None:
             expect(page.get_by_role("button", name = "Send", exact = True)).to_be_disabled()
             chooser = page.get_by_test_id("coding-project-chooser")
             expect(chooser).to_have_text("No project")
-            composer_box = page.locator('[aria-label="Coding composer"]').bounding_box()
+            surface = page.get_by_test_id("coding-composer-surface")
+            composer_box = surface.bounding_box()
             chooser_box = chooser.bounding_box()
-            assert composer_box and chooser_box and chooser_box["y"] + chooser_box["height"] <= composer_box["y"]
+            assert composer_box and chooser_box and composer_box["y"] + composer_box["height"] <= chooser_box["y"]
             snapshot(page, "desktop-unopened")
             prompt(page).fill("A folder is optional.")
             expect(page.get_by_role("button", name = "Send", exact = True)).to_be_enabled()
+            assert surface.bounding_box()["height"] == composer_box["height"]
+            prompt(page).press("Shift+Enter")
+            assert surface.bounding_box()["height"] > composer_box["height"]
             prompt(page).fill("")
-            scenario("A10-layout", "1440x1000: project chip above the landing composer; a draft can be sent without choosing a folder")
+            assert surface.bounding_box()["height"] == composer_box["height"]
+            scenario("A10-layout", "1440x1000: workspace picker below a stable single-line composer, with an optional project")
 
             def browse(path):
                 field = page.get_by_role("combobox", name = "Folder path", exact = True)

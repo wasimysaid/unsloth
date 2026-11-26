@@ -186,6 +186,7 @@ test("main history ignores unrelated run errors and retains paging recovery afte
       "react-dom": { createPortal: () => null },
       "@/features/chat": { ContextUsageBar: "context-usage", useExternalProvidersStore: () => true },
       "./model-selection": modelSelection,
+      "./coding-panels-context": { CodingPanels: { current: { refreshGit: () => {} } } },
       "./coding-layout-context": { CodingLayoutHosts: { current: { contextUsage: null } } },
       "./context-usage": { codingContextUsage: () => ({}) },
       react: {

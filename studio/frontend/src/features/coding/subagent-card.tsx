@@ -37,6 +37,7 @@ export function SubagentCard({
   open: boolean;
 }) {
   const panels = useContext(CodingPanels);
+  const expanded = panels.subagentsOpen && open;
   const running = status === "queued" || status === "running";
   const problem = statusLabel[status];
   const inspectable = Boolean(identity && view);
@@ -50,7 +51,7 @@ export function SubagentCard({
       data-reading-control={
         identity ? `child:${identity.handle}:${identity.attempt}` : undefined
       }
-      aria-expanded={inspectable ? open : undefined}
+      aria-expanded={inspectable ? expanded : undefined}
       aria-label={`Agent ${description}${problem ? ` · ${problem}` : running ? " · running" : ""}`}
       disabled={!inspectable}
       onClick={() => {
@@ -59,7 +60,7 @@ export function SubagentCard({
           void view?.open(identity);
         }
       }}
-      className={`group/agent flex h-8.5 w-full min-w-0 items-center gap-2 rounded-[9px] border px-2 text-left text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default ${problem ? "border-destructive/20 bg-destructive/[0.04]" : "border-border coding-wash-faint enabled:hover:coding-wash"} ${open ? "coding-wash" : ""}`}
+      className={`group/agent flex h-8.5 w-full min-w-0 items-center gap-2 rounded-[9px] border px-2 text-left text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default ${problem ? "border-destructive/20 bg-destructive/[0.04]" : "border-border coding-wash-faint enabled:hover:coding-wash"} ${expanded ? "coding-wash" : ""}`}
     >
       <span className="flex size-4.5 shrink-0 items-center justify-center rounded-[5px] coding-wash-strong">
         <Bot

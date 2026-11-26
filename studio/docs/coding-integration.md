@@ -37,6 +37,16 @@ When a command needs approval, the composer shows the command, reason and workin
 
 The plugin replaces the foreground shell. File tools and other plugins keep their existing execution policies. Sandboxed commands can read and write the checkout and receive no Studio model-cache mounts. Linked worktrees keep Git metadata outside the checkout, so use the Git workspace plugin for their diffs. Commands time out after 120 seconds in every mode.
 
+## Git workspaces and review
+
+Before starting a conversation, select a repository and open its folder menu to see its local checkouts. Studio reads the registered worktree folders from Git on the host. The menu shows up to three checkouts. Search branches searches all local branches and indicates which have a checkout. Choosing an available branch selects its existing folder for the draft. Recent projects are in the full folder dialog.
+
+For a project conversation, the workspace row below the composer can show the current Git branch and changed-file count. Select the branch to open Changes alongside file and subagent tabs. In Changes, open a file to inspect its unified diff, select a line to comment, or Shift-select a range. **Add to chat** adds the reviewed lines and comments to the conversation draft. Send from the composer when ready.
+
+The Git workspace plugin owns the diff and the worktree. Install the [Git workspace plugin](https://github.com/wasimysaid/mimir-plugins/pull/2) into the agent directory used by Studio, then reopen the conversation. Studio discovers its `git-workspace` command on project sessions. The standard Studio frontend package remains independently installable.
+
+**New worktree** starts from the current commit. Local edits remain in the original checkout. In the new worktree, **Since task started** includes changes committed during the task. **Working tree** compares current files with HEAD. Binary files and patches above the plugin's output limit have a status row. Review commands use the native session's existing command receipt budget.
+
 ## Process recovery and whole-runtime maintenance (#249)
 
 Implementation baselines: Studio `5a9e995262be60717f494b0ff7b6e0e2697bc20c`

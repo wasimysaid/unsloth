@@ -231,8 +231,7 @@ export function createCodingSession(
     },
     refreshConversations,
     /** Start with the chosen model, with or without a project. */
-    startConversation() {
-      const cwd = state.project;
+    startConversation(cwd: string | null = state.project) {
       return open(
         () => api.createConversation(cwd, state.selection),
         "create",

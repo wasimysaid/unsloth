@@ -668,10 +668,14 @@ test("wrong ACK identity and late replies after reconnect are not acceptance", a
 
 
 test("the composer presents only a host-confirmed approval with the complete effective command", async () => {
+  const composerDecision = loadWithStubs(
+    new URL("../src/features/coding/composer-decision.tsx", import.meta.url),
+    { react: React, "react/jsx-runtime": jsxRuntime },
+  );
   const { PendingApproval } = loadWithStubs<typeof ApprovalModule>(
     new URL("../src/features/coding/pending-approval.tsx", import.meta.url),
     { react: React, "react/jsx-runtime": jsxRuntime, "@/components/ui/button": { Button: "button" },
-      "lucide-react": { ShieldQuestion: "svg" } },
+      "lucide-react": { ShieldQuestion: "svg" }, "./composer-decision": composerDecision },
   );
   const h = harness();
   const state = waiting();
