@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
+import { followUpControls } from "./fixtures/coding-follow-up-controls.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import type * as Composer from "../src/features/coding/coding-composer.tsx";
@@ -235,6 +236,7 @@ function commandComposer(run: ReturnType<typeof createCodingRun>) {
       "./mention-menu": mentionMenu,
       "@/hooks/use-composer-pill-fit": { useComposerPillFit: () => ({}) },
       "./terminal-permission-pill": { TerminalPermissionPill: () => null },
+      ...followUpControls,
       "./pending-approval": { PendingApproval: () => null },
       "./plan-decision": { PlanDecisionPrompt: () => null },
       "./pending-submission": pendingSubmission,

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
+import { followUpControls } from "./fixtures/coding-follow-up-controls.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import type * as Composer from "../src/features/coding/coding-composer.tsx";
@@ -281,6 +282,7 @@ function loadComposer(
       "./mention-menu": mentionMenu,
       "@/hooks/use-composer-pill-fit": { useComposerPillFit: () => ({}) },
       "./terminal-permission-pill": { TerminalPermissionPill: () => null },
+      ...followUpControls,
       "./pending-approval": { PendingApproval: () => null },
       "./plan-decision": { PlanDecisionPrompt: () => null },
       "./pending-submission": pendingSubmission,
@@ -765,6 +767,59 @@ test("Enter on the landing starts the conversation instead of sending, and only 
   assert.equal(enter({ sendBlocked: null }), true);
   assert.equal(started, 1);
 });
+
+for (const [chord, delivery] of [
+  [{}, "queue"],
+  [{ ctrlKey: true }, "steer"],
+] as const)
+  test(`Enter${"ctrlKey" in chord ? " with Ctrl" : ""} while a request runs sends the draft as a ${delivery} follow-up`, async () => {
+    const runtime = composerRuntime();
+    const sent: unknown[][] = [];
+    const h = await harness();
+    const draft = createInputDraft();
+    draft.syncText("also update the docs");
+    runtime.text = "also update the docs";
+    const busyState = {
+      ...h.run.getSnapshot(),
+      native: { ...h.run.getSnapshot().native!, active_request: "running" },
+    };
+    const run = {
+      ...h.run,
+      send: async (...args: unknown[]) => {
+        sent.push(args);
+        return true;
+      },
+    };
+    const input = find(
+      loadComposer(runtime).CodingComposer({
+        conversationId: "conversation",
+        run,
+        state: busyState,
+        draft,
+        canEdit: true,
+        sendBlocked: null,
+        inputRef: { current: null },
+      } as Parameters<typeof Composer.CodingComposer>[0]),
+      (element) => element.props["aria-label"] === "Coding prompt",
+    );
+    let prevented = false;
+    (input?.props.onKeyDown as (event: unknown) => void)({
+      key: "Enter",
+      shiftKey: false,
+      ...chord,
+      nativeEvent: { isComposing: false },
+      preventDefault() {
+        prevented = true;
+      },
+    });
+    await until(() => sent.length === 1);
+    assert.equal(prevented, true);
+    assert.equal(sent[0][0], "also update the docs");
+    assert.equal(sent[0][2], delivery);
+    assert.equal(runtime.text, "", "the follow-up left the composer");
+    assert.equal(draft.getSnapshot().text, "");
+    h.run.detach();
+  });
 
 test("a slash command typed while a request runs is dispatched natively, not dropped", async () => {
   const runtime = composerRuntime();

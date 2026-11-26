@@ -104,11 +104,13 @@ export async function imageManifest(
 /** The exact text and mention identities of a pending submission, no bytes. */
 export const pendingInput = ({
   text,
+  delivery,
   skill_mentions,
   subagent_mentions,
   file_mentions,
 }: PendingSubmission | CodingInput): CodingInput => ({
   text,
+  ...(delivery ? { delivery } : {}),
   ...(skill_mentions ? { skill_mentions } : {}),
   ...(subagent_mentions ? { subagent_mentions } : {}),
   ...(file_mentions ? { file_mentions } : {}),
@@ -138,6 +140,7 @@ export function pendingSubmissionStore(
         !value.key ||
         typeof value.text !== "string" ||
         !value.text.trim() ||
+        (value.delivery !== undefined && value.delivery !== "queue" && value.delivery !== "steer") ||
         (value.skill_mentions !== undefined &&
           !Array.isArray(value.skill_mentions)) ||
         (value.subagent_mentions !== undefined &&
@@ -153,6 +156,7 @@ export function pendingSubmissionStore(
       return {
         key: value.key,
         text: value.text,
+        ...(value.delivery ? { delivery: value.delivery } : {}),
         ...(value.skill_mentions !== undefined
           ? { skill_mentions: value.skill_mentions }
           : {}),

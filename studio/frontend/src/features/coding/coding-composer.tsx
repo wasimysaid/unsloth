@@ -38,6 +38,7 @@ import {
   type CodingSubagent,
   type DraftImage,
   type DraftMention,
+  type FollowUpDelivery,
   IMAGE_LIMITS,
   IMAGE_TYPES,
 } from "./input";
@@ -55,6 +56,8 @@ import {
 } from "./mention-menu";
 import { useComposerPillFit } from "@/hooks/use-composer-pill-fit";
 import { TerminalPermissionPill } from "./terminal-permission-pill";
+import { FollowUpMenu, PendingFollowUps } from "./follow-ups";
+import { FOLLOW_UP_DELIVERIES, useFollowUpDelivery } from "./use-follow-up-delivery";
 import { PlanDecisionPrompt } from "./plan-decision";
 import { PendingApproval } from "./pending-approval";
 import { pendingImageCount } from "./pending-submission";
@@ -465,6 +468,19 @@ export function CodingComposer({
       .catch((reason: unknown) => run.retainUnsent({ text }, reason));
     return true;
   };
+  // assistant-ui refuses to send while a request runs, so a follow-up takes
+  // the same draft-to-run path as the adapter's onNew, with its delivery.
+  const followUp = (delivery: FollowUpDelivery) => {
+    const text = input.current?.value ?? composer.getState().text;
+    if (!run || !text.trim() || blocked) return;
+    const extras = draft.input(text);
+    draft.clear();
+    commitText("", 0);
+    void run
+      .send(text, extras, delivery)
+      .catch((reason: unknown) => run.retainUnsent({ text, ...extras }, reason));
+  };
+  const followUps = useFollowUpDelivery();
   const attach = (selected: File[]) => {
     setErrors([]);
     void draft.attach(selected);
@@ -510,6 +526,7 @@ export function CodingComposer({
           }
         />
       )}
+      {state && run && <PendingFollowUps state={state} run={run} />}
       <div
         ref={dropRef}
         className={`unsloth-composer-surface min-w-0 ${dragging ? "ring-2 ring-primary/60" : ""}`}
@@ -765,7 +782,14 @@ export function CodingComposer({
               if (event.key === "Enter" && !event.shiftKey) {
                 if (blocked) event.preventDefault();
                 else if (commandWhileBusy()) event.preventDefault();
-                else if (landing) {
+                else if (busy) {
+                  event.preventDefault();
+                  followUp(
+                    event.metaKey || event.ctrlKey
+                      ? followUps.opposite
+                      : followUps.delivery,
+                  );
+                } else if (landing) {
                   event.preventDefault();
                   if (!starting && model.text.trim()) onStart?.();
                 }
@@ -791,6 +815,16 @@ export function CodingComposer({
               <Paperclip className="size-4.5" aria-hidden="true" />
             </button>
             {draftTerminalMenu}
+            {busy && (
+              <FollowUpMenu
+                delivery={followUps.delivery}
+                shortcut={followUps.shortcut}
+                onChoose={(delivery) => {
+                  followUps.choose(delivery);
+                  focus();
+                }}
+              />
+            )}
             {projectTerminal && conversationId && run && state && (
               <TerminalPermissionPill run={run} state={state} conversationId={conversationId} />
             )}
@@ -798,33 +832,50 @@ export function CodingComposer({
           <div className="aui-composer-action-wrapper flex min-w-0 shrink items-center gap-1">
             {modelPicker}
             {busy ? (
-              <Button
-                type="button"
-                size="icon"
-                aria-label={
-                  state?.stopping
-                    ? "Stopping…"
-                    : state?.retryStop
-                      ? "Retry Stop for same request"
-                      : "Stop"
-                }
-                title={state?.stopping ? "Stopping" : "Stop"}
-                disabled={!codingStopTarget(state)}
-                className="aui-composer-cancel ml-1 size-8 shrink-0 rounded-full"
-                onClick={() => void run?.stop()}
-              >
-                {state?.stopping ? (
-                  <LoaderCircle
-                    className="size-4 animate-spin"
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <Square
-                    className="size-2.5 fill-current"
-                    aria-hidden="true"
-                  />
+              <>
+                <Button
+                  type="button"
+                  size="icon"
+                  aria-label={
+                    state?.stopping
+                      ? "Stopping…"
+                      : state?.retryStop
+                        ? "Retry Stop for same request"
+                        : "Stop"
+                  }
+                  title={state?.stopping ? "Stopping" : "Stop"}
+                  disabled={!codingStopTarget(state)}
+                  className="aui-composer-cancel ml-1 size-8 shrink-0 rounded-full"
+                  onClick={() => void run?.stop()}
+                >
+                  {state?.stopping ? (
+                    <LoaderCircle
+                      className="size-4 animate-spin"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Square
+                      className="size-2.5 fill-current"
+                      aria-hidden="true"
+                    />
+                  )}
+                </Button>
+                {model.text.trim() && (
+                  <Button
+                    type="button"
+                    size="icon"
+                    aria-label={FOLLOW_UP_DELIVERIES[followUps.delivery].action}
+                    title={blocked ?? followUps.hint}
+                    disabled={Boolean(blocked)}
+                    aria-describedby="coding-send-explanation"
+                    data-follow-up={followUps.delivery}
+                    className="aui-composer-send size-8 shrink-0 rounded-full"
+                    onClick={() => followUp(followUps.delivery)}
+                  >
+                    <ArrowUp className="size-4" aria-hidden="true" />
+                  </Button>
                 )}
-              </Button>
+              </>
             ) : landing ? (
               <Button
                 type="button"
@@ -883,9 +934,11 @@ export function CodingComposer({
         </p>
         <p id="coding-send-explanation" className="sr-only">
           {blocked ??
-            (conversationId
-              ? "Enter sends. Type / for commands and @ to mention files, skills or agents. Leaving this view does not stop work."
-              : "Enter starts a new conversation.")}
+            (busy
+              ? `${followUps.hint}. Stop ends the running work.`
+              : conversationId
+                ? "Enter sends. Type / for commands and @ to mention files, skills or agents. Leaving this view does not stop work."
+                : "Enter starts a new conversation.")}
         </p>
       </div>
       {footer}

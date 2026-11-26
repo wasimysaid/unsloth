@@ -72,7 +72,10 @@ export interface CodingInputExtras {
   file_mentions?: FileMention[];
   images?: CodingImage[];
 }
+export type FollowUpDelivery = "queue" | "steer";
+
 export interface CodingInput extends CodingInputExtras {
+  delivery?: FollowUpDelivery;
   text: string;
 }
 export type MentionChoice =

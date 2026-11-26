@@ -14,7 +14,7 @@ import type {
   SessionUsage,
 } from "./command-types.ts";
 import type { ToolOutputProfile } from "./file-changes.ts";
-import type { CodingInputExtras } from "./input.ts";
+import type { CodingInput, FollowUpDelivery } from "./input.ts";
 import type {
   CodingConfiguration,
   CodingConfigurationChange,
@@ -32,6 +32,7 @@ export type RequestStatus =
 export interface NativeRequest {
   id: string;
   status: RequestStatus;
+  pending_follow_up?: { delivery: FollowUpDelivery; preview: string } | null;
   submission_key: string | null;
 }
 export type GoalAction = "start" | "edit" | "pause" | "resume" | "clear";
@@ -247,13 +248,14 @@ export interface RunApi {
     id: string,
     submissionKey: string,
     text: string,
-    extras?: CodingInputExtras,
+    extras?: Omit<CodingInput, "text">,
     overlapConfirmed?: boolean,
   ): Promise<{
     conversation_id: string;
     request_id: string;
     submission_key: string;
   }>;
+  withdraw?(id: string, requestId: string): Promise<{ withdrawn: boolean }>;
   cancel(
     id: string,
     requestId: string,

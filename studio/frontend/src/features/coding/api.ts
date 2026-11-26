@@ -355,6 +355,13 @@ export function createCodingRunApi(openingGeneration: number): RunApi {
     );
     return await response.json();
   },
+  async withdraw(id, requestId) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/requests/${encodeURIComponent(requestId)}/withdraw`,
+      { method: "POST", headers: { ...generationHeaders } },
+    );
+    return await response.json();
+  },
     async cancel(id, requestId) {
       const response = await codingRequest(
         `/conversations/${encodeURIComponent(id)}/requests/${encodeURIComponent(requestId)}/cancel`,
