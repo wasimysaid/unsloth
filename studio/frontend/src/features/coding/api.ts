@@ -259,6 +259,19 @@ export function createCodingRunApi(openingGeneration: number): RunApi {
     );
     return await response.json();
   },
+  async terminalPermissions(id, mode) {
+    const response = await codingRequest(
+      `/conversations/${encodeURIComponent(id)}/terminal-permissions`,
+      mode === undefined
+        ? { headers: generationHeaders }
+        : {
+            method: "PUT",
+            headers: { ...generationHeaders, "Content-Type": "application/json" },
+            body: JSON.stringify({ mode }),
+          },
+    );
+    return await response.json();
+  },
   async commands(id) {
     const response = await codingRequest(
       `/conversations/${encodeURIComponent(id)}/commands`,

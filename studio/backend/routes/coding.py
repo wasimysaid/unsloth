@@ -209,6 +209,11 @@ class ModeSelection(BaseModel):
     mode: Literal["build", "plan"]
 
 
+class TerminalPermissionSelection(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    mode: Literal["ask", "auto", "off", "full"]
+
+
 class PlanSelection(BaseModel):
     model_config = ConfigDict(extra = "forbid")
     plan_id: str = Field(min_length = 1, max_length = 128)
@@ -730,6 +735,24 @@ async def cancel_request(conversation_id: str, request_id: str, request: Request
 async def select_mode(conversation_id: str, body: ModeSelection, request: Request,
                       generation: Generation):
     return await _command(request, "set_mode", {"conversation_id": conversation_id, **body.model_dump()}, generation = generation)
+
+
+@router.get("/conversations/{conversation_id}/terminal-permissions")
+async def terminal_permissions(conversation_id: str, request: Request, response: Response,
+                               generation: Generation):
+    response.headers["Cache-Control"] = "no-store"
+    return await _command(request, "terminal_permissions", {"conversation_id": conversation_id},
+                          generation = generation)
+
+
+@router.put("/conversations/{conversation_id}/terminal-permissions")
+async def set_terminal_permissions(conversation_id: str, body: TerminalPermissionSelection,
+                                   request: Request, generation: Generation):
+    from state.tool_policy import require_tool_access
+
+    require_tool_access(body.mode)
+    return await _command(request, "terminal_permissions",
+                          {"conversation_id": conversation_id, "mode": body.mode}, generation = generation)
 
 
 @router.post("/conversations/{conversation_id}/plan-actions")

@@ -143,7 +143,9 @@ authoritative. All admitted decisions return to Build; save-and-stop starts no
 implementation request. Fresh implementation clears model context, not saved public
 history.
 
-The expandable current plan preserves native identity, status, path and Markdown.
+The current plan opens in the transcript with its rendered Markdown and native status.
+The composer asks for a decision with three vertically stacked actions. Saving
+dismisses the question and leaves a collapsed control to resume implementation.
 Saved lifecycle rows use the same renderer as inspection-only historical records,
 without actionable controls. Clipping is disclosed. Controls explain busy/refused
 states, action failures and reconnect uncertainty in text. After a mode/plan command,
@@ -153,7 +155,7 @@ never trigger command replay. Late responses to a detached surface do not reconn
 it. A subsequent choice must address the currently captured native revision;
 native stale validation is still required for races after browser checks.
 
-Stable selectors: `coding-current-plan`, `coding-historical-plan`,
+Stable selectors: `coding-plan-decision`, `coding-current-plan`, `coding-historical-plan`,
 `coding-plan-content`, `coding-plan-mode`, `coding-plan-reconciliation`.
 
 ## Native question cards (#237)

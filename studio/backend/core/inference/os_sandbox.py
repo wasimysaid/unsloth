@@ -208,6 +208,8 @@ class ToolLaunchPlan:
     cancel_event: Any = None
     # Network only through a per-call proxy that refuses metadata and local addresses; unhonoured if unsupported.
     egress_proxy: bool = False
+    # Coding commands need the checkout, whereas inference tools also use model storage.
+    share_model_storage: bool = True
 
 
 @dataclass

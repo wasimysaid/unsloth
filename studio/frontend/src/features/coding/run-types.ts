@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import type { PermissionMode } from "../chat/stores/chat-runtime-store";
 import type {
   ChildAttempt,
   ChildDetail,
@@ -67,7 +68,15 @@ export interface NativeQuestion {
   allow_multiple: boolean;
   options: { label: string; description: string }[];
 }
+export interface ToolApprovalDetails {
+  tool: string;
+  cwd: string;
+  reason: string;
+  input: unknown;
+}
 export interface NativeUserRequest {
+  /** Present only for a pending tool decision confirmed by the Mimir host. */
+  approval?: ToolApprovalDetails;
   id: string;
   questions: NativeQuestion[];
 }
@@ -211,6 +220,10 @@ export interface RunApi {
     target: AnswerTarget,
     answers: NativeAnswer[],
   ): Promise<AnswerTarget & { conversation_id: string; accepted: boolean }>;
+  terminalPermissions?(id: string, mode?: PermissionMode): Promise<{
+    conversation_id: string;
+    mode: PermissionMode | null;
+  }>;
   commands?(id: string): Promise<CommandCatalog>;
   command?(
     id: string,

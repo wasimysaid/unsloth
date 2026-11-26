@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
+import { createTerminalPermissions, isTerminalPermissionCommand, type TerminalPermissions } from "./terminal-permissions.ts";
+import type { PermissionMode } from "../chat/stores/chat-runtime-store";
 import type { ChildAttempt, ChildIdentity } from "./child-types.ts";
 import { createChildView } from "./child-view.ts";
 import {
@@ -111,6 +113,8 @@ export interface CodingRunState {
   goalNotice: string | null;
   answerTarget: AnswerTarget | null;
   answerForms: QuestionAnswerForm[];
+  terminalPermissions?: TerminalPermissions;
+  confirmFullTerminalAccess?: boolean;
   commands: CodingCommand[] | null;
   commandsClipped?: boolean;
   discoveringCommands: boolean;
@@ -143,6 +147,7 @@ export function createCodingRun(
     modeSettleDelay?: number;
     onRuntimeLost?: () => void;
     connectionsEnabled?: () => boolean;
+    projectTerminal?: boolean;
   } = {},
 ) {
   const pendingStore = pendingSubmissionStore(
@@ -249,6 +254,9 @@ export function createCodingRun(
     state = { ...state, ...patch };
     notifications.notify(deferred);
   };
+  const terminal = createTerminalPermissions(id, api, (terminalPermissions) =>
+    update({ terminalPermissions }),
+  );
   const sameQuestion = (left: AnswerTarget, right: AnswerTarget) =>
     left.request_id === right.request_id &&
     left.user_request_id === right.user_request_id;
@@ -294,10 +302,11 @@ export function createCodingRun(
           status: "accepted",
           error: null,
         };
-      if (target && sameQuestion(form.target, target)) {
+      if (target && pending && sameQuestion(form.target, target)) {
         if (freshCapture && ["uncertain", "submitting"].includes(form.status))
           return {
             ...form,
+            question: pending,
             target,
             status: "error",
             error:
@@ -306,12 +315,13 @@ export function createCodingRun(
         if (form.status === "inactive")
           return {
             ...form,
+            question: pending,
             target,
             status: "error",
             error:
               "Native state confirms this exact question is still waiting. Review the retained draft before answering.",
           };
-        return { ...form, target };
+        return { ...form, question: pending, target };
       }
       // Stop disables controls provisionally; it is not question cancellation.
       if (
@@ -1376,6 +1386,15 @@ export function createCodingRun(
       if (current === incarnation) update({ reconcilingCommand: false });
     }
   }
+  async function chooseTerminalMode(mode: PermissionMode) {
+    if (state.native?.active_request || !readyForCommand() || state.uncertainCommand || state.storageError)
+      return;
+    try {
+      await terminal.change(mode);
+    } catch (error) {
+      update({ commandError: errorText(error) });
+    }
+  }
   async function executeCommand(name: string, tail = "") {
     if (!readyForCommand() || state.uncertainCommand || state.storageError)
       throw new Error(
@@ -1386,6 +1405,11 @@ export function createCodingRun(
         commandError:
           "Native command dispatch is unavailable or the command name is empty. No model prompt was submitted.",
       });
+      return;
+    }
+    if (isTerminalPermissionCommand(name) && tail === "full") {
+      if (state.terminalPermissions?.kind === "ready") update({ confirmFullTerminalAccess: true });
+      else update({ commandError: "Open terminal permissions in the composer to enable Full access." });
       return;
     }
     const operation = makeKey();
@@ -1413,6 +1437,7 @@ export function createCodingRun(
       if (lifetime !== attachment) return; // Detached views cannot resurrect a watcher.
       verifyCommandOutcome(result, operation);
       settleCommand(operation, result, null);
+      if (isTerminalPermissionCommand(name)) await terminal.refresh();
     } catch (reason) {
       if (lifetime !== attachment) return;
       const rejected =
@@ -1525,6 +1550,9 @@ export function createCodingRun(
   }
   return {
     discoverCommands,
+    refreshTerminalPermissions: terminal.refresh,
+    chooseTerminalMode,
+    closeFullTerminalAccess: () => update({ confirmFullTerminalAccess: false }),
     executeCommand,
     reconcileCommand,
     dismissCommandOutcome: () =>
@@ -1848,6 +1876,8 @@ export function createCodingRun(
       if (!text.trim()) return false;
       const command = parseCodingCommand(text);
       if (command) return executeCommand(command.name, command.tail);
+      const terminalBlocked = terminalSendBlockedReason(state);
+      if (terminalBlocked) throw new Error(terminalBlocked);
       if (state.commandBusy || state.uncertainCommand)
         throw new Error(
           "Resolve the uncertain native command before sending another action.",
@@ -1879,13 +1909,18 @@ export function createCodingRun(
       update({ submitting: true, error: null, unsentDraft: null });
       let overlap: ProjectOverlap;
       try {
-        overlap = await api.checkOverlap(id);
+        [overlap] = await Promise.all([
+          api.checkOverlap(id).catch((error) => {
+            throw new Error(`Project overlap check failed. ${errorText(error)}`);
+          }),
+          options.projectTerminal === false ? undefined : terminal.verifyBeforeSend(),
+        ]);
       } catch (reason) {
         update({
           submitting: false,
           error:
             current === incarnation
-              ? `Project overlap check failed. No prompt was sent. ${errorText(reason)}`
+              ? `${errorText(reason)} No prompt was sent.`
               : state.error,
           unsentDraft: input.text,
           rejectedSubmission: input,
@@ -2102,6 +2137,12 @@ export function codingCanContinue(state: CodingRunState | null): boolean {
 
 /** Why a new prompt cannot be admitted now; null when native admission may be tried.
  * One rule for the Send button, Enter, the adapter and `send` itself. */
+function terminalSendBlockedReason(state: CodingRunState) {
+  if (state.terminalPermissions?.kind === "changing") return "Updating terminal permissions.";
+  if (state.terminalPermissions?.kind === "unknown") return "Check terminal permissions before sending.";
+  return null;
+}
+
 export function codingSendBlockedReason(
   state: CodingRunState | null,
 ): string | null {
@@ -2129,7 +2170,7 @@ export function codingSendBlockedReason(
     return "Answer the native question first.";
   if (state.native?.execution_preparation?.phase === "cleanup_pending")
     return "Waiting for local model cleanup.";
-  return null;
+  return terminalSendBlockedReason(state);
 }
 
 /** Typing is never native work; only a missing owner or failed storage stops it. */
@@ -2181,6 +2222,8 @@ export function codingPlanDecisionReason(
   plan: NativePlan,
   decision?: PlanDecision,
 ): string | null {
+  if (state?.viewingEarlier)
+    return "Jump to latest to review the current plan before choosing an action.";
   if (plan.status === "saved_stopped" && decision === "save_and_stop")
     return "This plan is already saved and stopped. Choose implementation explicitly when ready.";
   return (

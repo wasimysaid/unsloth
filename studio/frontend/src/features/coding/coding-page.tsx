@@ -24,6 +24,7 @@ import { CodingLayoutHosts } from "./coding-layout-context";
 import { ProjectFolderDialog } from "./project-folder-dialog";
 import { projectName } from "./project-name";
 import { ProjectPicker, recentProjects } from "./project-picker";
+import { TerminalPermissionMenu } from "./terminal-permission-pill";
 import { RuntimeNotice } from "./runtime-notice";
 import {
   codingMaintenance as maintenance,
@@ -199,6 +200,14 @@ export function CodingPage() {
                     ? null
                     : {
                         provider: state.selection?.provider,
+                        terminalPermissions: project && (runtime.status?.terminal_permissions_available || state.terminalMode !== "auto") ? (
+                          <TerminalPermissionMenu
+                            key={project}
+                            mode={state.terminalMode}
+                            disabled={creating}
+                            onChange={session.selectDraftTerminalMode}
+                          />
+                        ) : null,
                         project: (
                           <ProjectPicker
                             triggerRef={projectTrigger}

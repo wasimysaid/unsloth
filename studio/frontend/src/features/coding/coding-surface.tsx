@@ -36,7 +36,6 @@ import {
 import type { CodingInputDraft } from "./input";
 import { CodingModelSelector } from "./coding-model-selector";
 import { type CodingConfiguration, studioConnectionBlockedReason } from "./model-selection";
-import { PlanCard } from "./plan-card";
 import { ProjectOverlapDialog } from "./project-overlap-dialog";
 import { QuestionCard } from "./question-card";
 import { CodingRecoveryControls } from "./recovery-controls";
@@ -163,7 +162,7 @@ function StatusNotices({
             {completion.error}
           </p>
         )}
-      {state.error && (
+      {state.error && state.error !== state.planControlError && (
         <p role="alert" className={`${alert} break-words`}>
           {state.error}
         </p>
@@ -238,6 +237,7 @@ export interface CodingLanding {
   provider?: string;
   /** Folder chip above the composer. */
   project: React.ReactNode;
+  terminalPermissions?: React.ReactNode;
   /** Model chip for the first request. */
   modelPicker: React.ReactNode;
   onStart: () => void;
@@ -286,7 +286,7 @@ export function CodingSurface({
       conversationId,
       createCodingRunApi(conversationGeneration),
       undefined,
-      { onRuntimeLost, connectionsEnabled: () => useExternalProvidersStore.getState().connectionsEnabled },
+      { onRuntimeLost, projectTerminal: Boolean(cwd), connectionsEnabled: () => useExternalProvidersStore.getState().connectionsEnabled },
     );
   });
   useEffect(() => {
@@ -489,9 +489,11 @@ export function CodingSurface({
       sendBlocked={sendBlocked}
       inputRef={promptInput}
       modelPicker={modelPicker}
+      projectTerminal={Boolean(cwd)}
+      draftTerminalMenu={landing?.terminalPermissions}
       onStart={isLanding ? landing?.onStart : undefined}
       starting={Boolean(landing?.starting)}
-      autoSend={autoSend}
+      autoSend={autoSend && (!cwd || Boolean(state?.terminalPermissions))}
       onAutoSent={onAutoSent}
       footer={
         <ComposerFooter cwd={cwd ?? null} picker={landing?.project} state={state} run={run} />
@@ -596,6 +598,7 @@ export function CodingSurface({
                     <AnswerFocus.Provider value={answerFocus}>
                       <TranscriptBlocks
                         blocks={blocks}
+                        currentPlan={state?.viewingEarlier ? null : state?.native?.plan}
                         childView={run?.childView ?? null}
                       />
                       {pendingUser && (
@@ -605,6 +608,7 @@ export function CodingSurface({
                         state?.answerForms
                           .filter(
                             (form) =>
+                              !form.question.approval &&
                               !(
                                 state.viewingEarlier &&
                                 form.status === "accepted"
@@ -737,14 +741,6 @@ export function CodingSurface({
                       canAct={!sendBlocked}
                     />
                   </div>
-                )}
-                {state?.native?.plan && (
-                  <PlanCard
-                    key={state.native.plan.id}
-                    plan={state.native.plan}
-                    state={state}
-                    run={run}
-                  />
                 )}
                 {showGoal && state && run && (
                   <GoalSummary state={state} run={run} />

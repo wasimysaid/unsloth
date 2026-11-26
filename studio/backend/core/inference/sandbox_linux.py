@@ -988,10 +988,10 @@ def prepare(plan: ToolLaunchPlan) -> PreparedSandboxLaunch:
         runtime_paths = tuple(p for p in runtime_paths if not _within(p, _NIXOS_CURRENT_SYSTEM))
     silent_roots = tuple(
         root
-        for root in model_library_roots()
+        for root in (model_library_roots() if plan.share_model_storage else ())
         if not _within(root, workdir) and not any(_within(root, r) for r in system_roots)
     )
-    model_cache = _model_cache_binds(workdir)
+    model_cache = _model_cache_binds(workdir) if plan.share_model_storage else {}
     # A runtime under /tmp has to be restored after the tmpfs replaces it.
     tmp_runtime_paths = tuple(path for path in runtime_paths if _within(path, "/tmp"))
     workdir_runtime_paths = _runtime_paths_under(workdir)

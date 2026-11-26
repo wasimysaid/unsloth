@@ -76,6 +76,22 @@ test("public entry uses one request with exact cut, generation and abort signal 
   ]);
 });
 
+test("terminal permission reads and writes use the session endpoint and its opening generation", async () => {
+  const conversation = "project/id";
+  const c = client(() => Response.json({ conversation_id: conversation, mode: "ask" }));
+  const api = c.api.createCodingRunApi(7);
+  await api.terminalPermissions!(conversation);
+  await api.terminalPermissions!(conversation, "ask");
+  assert.deepEqual(c.requests.map(({ init }) => [init?.method ?? "GET", init?.body]), [
+    ["GET", undefined], ["PUT", JSON.stringify({ mode: "ask" })],
+  ]);
+  for (const { path, init, options } of c.requests) {
+    assert.equal(path, "/api/coding/conversations/project%2Fid/terminal-permissions");
+    assert.equal(new Headers(init?.headers).get("X-Mimir-Runtime-Generation"), "7");
+    assert.deepEqual(options, { retryNetworkErrors: false });
+  }
+});
+
 test("mode and plan decisions are separate authenticated non-replayed commands with exact revision", async () => {
   const c = client(() => Response.json({ conversation_id: "conversation/id" }));
   await c.api.createCodingRunApi(7).setMode("conversation/id", "plan");

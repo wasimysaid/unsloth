@@ -5,6 +5,7 @@ import test from "node:test";
 import * as React from "react";
 import * as jsxRuntime from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
+import type * as ApprovalModule from "../src/features/coding/pending-approval.tsx";
 import type * as QuestionCardModule from "../src/features/coding/question-card.tsx";
 import { loadWithStubs } from "./helpers/module-stubs.ts";
 import { createCodingRun } from "../src/features/coding/run-session.ts";
@@ -663,4 +664,44 @@ test("wrong ACK identity and late replies after reconnect are not acceptance", a
   assert.equal(h.run.getSnapshot().answerForms[0].status, "inactive");
   assert.match(h.run.getSnapshot().answerForms[0].error ?? "", /not confirmed/);
   h.run.detach();
+});
+
+
+test("the composer presents only a host-confirmed approval with the complete effective command", async () => {
+  const composerDecision = loadWithStubs(
+    new URL("../src/features/coding/composer-decision.tsx", import.meta.url),
+    { react: React, "react/jsx-runtime": jsxRuntime },
+  );
+  const { PendingApproval } = loadWithStubs<typeof ApprovalModule>(
+    new URL("../src/features/coding/pending-approval.tsx", import.meta.url),
+    { react: React, "react/jsx-runtime": jsxRuntime, "@/components/ui/button": { Button: "button" },
+      "lucide-react": { ShieldQuestion: "svg" }, "./composer-decision": composerDecision },
+  );
+  const h = harness();
+  const state = waiting();
+  assert.ok(state.user_request);
+  state.user_request.questions = [{ id: "approve_tool_execution", prompt: "Allow shell?",
+    allow_multiple: false, options: [{ label: "Approve", description: "Run the command" },
+    {label: "Deny", description: "Decline the command"}] }];
+  const render = () => renderToStaticMarkup(React.createElement(PendingApproval, { state: h.run.getSnapshot(), run: h.run }));
+  try {
+    await h.start(state);
+    assert.equal(render(), "", "an ordinary question cannot impersonate a tool approval");
+    const command = "printf " + "x".repeat(270) + " distinguish-the-suffix";
+    const approval = { tool: "shell", cwd: "/project/example", reason: "Run the tests", input: {command} };
+    const confirmed = {...state, user_request: {...state.user_request, approval}};
+    await h.event({type: "state", state: confirmed});
+    assert.ok(render().includes(command));
+    assert.equal(h.run.getSnapshot().answerForms[0].question.approval?.tool, "shell");
+    assert.match(render(), /Allow once/);
+    assert.match(render(), /Deny/);
+    h.run.connect();
+    await h.start(confirmed);
+    assert.ok(render().includes(command), "the current capture can restore the approval without replay");
+    assert.equal(h.calls.length, 0);
+    await h.event({type: "state", state: {...state, user_request: null, pending_user_request: false}});
+    assert.equal(render(), "");
+  } finally {
+    h.run.detach();
+  }
 });

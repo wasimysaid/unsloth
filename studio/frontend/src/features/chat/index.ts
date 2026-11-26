@@ -107,6 +107,7 @@ export {
   prefillPercent,
 } from "./lib/generation-progress";
 export type { LiveDecodeProgress } from "./stores/chat-runtime-store";
+export type { PermissionMode } from "./stores/chat-runtime-store";
 export { useThrottledLiveGeneration } from "./hooks/use-throttled-live-generation";
 export {
   preferFullToolOutput,
@@ -121,6 +122,8 @@ export {
 export { useToolAwaitingApproval } from "./tool-approval";
 export {
   FullAccessConfirmDialog,
+  FullAccessConfirmContent,
+  PermissionComposerMenu,
   PermissionModeDropdown,
   useActivePermissionMode,
   usePermissionModeChoice,

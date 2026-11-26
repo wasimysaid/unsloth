@@ -25,11 +25,23 @@ through the same guarded Studio loader. The editor reads the exact resident
 settings. Provider sampling and system prompt presets belong to New Chat;
 Coding's model and effort are controlled by Mimir's session catalog.
 
+## Sandboxed terminal prototype
+
+Install version 0.2.0 or later of the optional `studio.sandbox-terminal` Mimir plugin in the agent directory used by a single-owner Linux Studio instance. Use the paired Mimir host and `studio.frontend` package with approval details support. Open a project conversation and ask the agent to run a shell command.
+
+The project composer defaults to **Approve for me**. Choose a different level before the first message or between turns. Studio checks the installed terminal plugin before showing the draft picker. On Send, Mimir must confirm the selected level before Studio submits the draft. If the plugin is unavailable in that project, the message stays in the composer.
+
+The terminal permission picker offers the same four levels as New Chat. **Ask for approval** prompts before every command. **Approve for me** uses Studio's terminal risk check. **Run automatically** skips prompts and requires OS isolation. **Full access** runs the terminal outside the OS sandbox after the owner confirms the change. The selection belongs to the live Mimir session. Before the first message, Studio uses the installed plugin catalog to show the picker. Once the project opens, Studio reads the live mode with `GET /api/coding/conversations/{id}/terminal-permissions`. A `null` mode means the session has no terminal permission control. To change it, Studio sends `PUT` to the same route with a mode such as `{"mode":"ask"}`. Both operations target the open runtime generation and leave command receipts available for user commands.
+
+When a command needs approval, the composer shows the command, reason and working directory. **Allow once** runs that command. **Deny** returns the decision to Mimir. Refreshing the browser restores a pending decision while its native session is alive. Stop cancels an active command.
+
+The plugin replaces the foreground shell. File tools and other plugins keep their existing execution policies. Sandboxed commands can read and write the checkout and receive no Studio model-cache mounts. Linked worktrees keep Git metadata outside the checkout, so use the Git workspace plugin for their diffs. Commands time out after 120 seconds in every mode.
+
 ## Git workspaces and review
 
 Before starting a conversation, select a repository and open its folder menu to see its local checkouts. Studio reads the registered worktree folders from Git on the host. The menu shows up to three checkouts. Search branches searches all local branches and indicates which have a checkout. Choosing an available branch selects its existing folder for the draft. Recent projects are in the full folder dialog.
 
-For a project conversation, the Coding header can show the current Git branch and changed-file count. Select it to open Changes alongside file and subagent tabs. In Changes, open a file to inspect its unified diff, select a line to comment, or Shift-select a range. **Add to chat** adds the reviewed lines and comments to the conversation draft. Send from the composer when ready.
+For a project conversation, the workspace row below the composer can show the current Git branch and changed-file count. Select the branch to open Changes alongside file and subagent tabs. In Changes, open a file to inspect its unified diff, select a line to comment, or Shift-select a range. **Add to chat** adds the reviewed lines and comments to the conversation draft. Send from the composer when ready.
 
 The Git workspace plugin owns the diff and the worktree. Install the [Git workspace plugin](https://github.com/wasimysaid/mimir-plugins/pull/2) into the agent directory used by Studio, then reopen the conversation. Studio discovers its `git-workspace` command on project sessions. The standard Studio frontend package remains independently installable.
 
@@ -203,6 +215,10 @@ installed product plugin, native tools/goals and the built rendered UI at
 1440×1000 and 390×844. Deterministic provider and independent-review replies remain
 fixture evidence, not real-model acceptance. Completed external-provider/local-model
 workloads and implemented-UI human review remain the separate #255–256 gates.
+
+## Tool approval in the Coding composer
+
+A pending native tool approval shows the proposed command or arguments, worktree path and reason inside the composer. **Allow once** or **Deny** answers the exact live request. Reopening a view reads its pending approval again. Ordinary questions keep their transcript controls.
 
 ## Safe questions slice (#237)
 

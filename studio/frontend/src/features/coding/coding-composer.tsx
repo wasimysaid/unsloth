@@ -53,6 +53,10 @@ import {
   mentionStatus,
   stepMention,
 } from "./mention-menu";
+import { useComposerPillFit } from "@/hooks/use-composer-pill-fit";
+import { TerminalPermissionPill } from "./terminal-permission-pill";
+import { PlanDecisionPrompt } from "./plan-decision";
+import { PendingApproval } from "./pending-approval";
 import { pendingImageCount } from "./pending-submission";
 import { runLocalCommand } from "./run-runtime";
 import {
@@ -125,6 +129,8 @@ export function CodingComposer({
   sendBlocked,
   inputRef,
   modelPicker,
+  projectTerminal,
+  draftTerminalMenu,
   onStart,
   starting = false,
   autoSend = false,
@@ -140,6 +146,8 @@ export function CodingComposer({
   sendBlocked: string | null;
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
   modelPicker?: React.ReactNode;
+  projectTerminal?: boolean;
+  draftTerminalMenu?: React.ReactNode;
   /** New conversation: Send creates the conversation first. */
   onStart?: () => void;
   starting?: boolean;
@@ -149,6 +157,7 @@ export function CodingComposer({
   footer?: React.ReactNode;
 }) {
   const composer = useComposerRuntime();
+  const { pillRowRef, pillCompact } = useComposerPillFit(false);
   const input = inputRef;
   const files = useRef<HTMLInputElement>(null);
   const model = useSyncExternalStore(draft.subscribe, draft.getSnapshot);
@@ -507,6 +516,9 @@ export function CodingComposer({
         data-testid="coding-composer-surface"
         {...dragHandlers}
       >
+        {state && run && (state.native?.user_request?.approval
+          ? <PendingApproval state={state} run={run} />
+          : <PlanDecisionPrompt state={state} run={run} />)}
         {recovery && (
           <div
             className="mx-1 mb-2 space-y-1 rounded-2xl bg-muted/60 p-3 text-xs"
@@ -767,7 +779,7 @@ export function CodingComposer({
               }
             }}
           />
-          <div className="unsloth-composer-left">
+          <div className="unsloth-composer-left" ref={pillRowRef} data-pill-compact={pillCompact}>
             <button
               type="button"
               aria-label="Attach images"
@@ -778,6 +790,10 @@ export function CodingComposer({
             >
               <Paperclip className="size-4.5" aria-hidden="true" />
             </button>
+            {draftTerminalMenu}
+            {projectTerminal && conversationId && run && state && (
+              <TerminalPermissionPill run={run} state={state} conversationId={conversationId} />
+            )}
           </div>
           <div className="aui-composer-action-wrapper flex min-w-0 shrink items-center gap-1">
             {modelPicker}
