@@ -140,20 +140,30 @@ test("the rail remembers which categories are open and survives bad storage", ()
     getItem: (key: string) => store.get(key) ?? null,
     setItem: (key: string, value: string) => void store.set(key, value),
   };
-  assert.deepEqual(loadExpandedCategories(storage), []);
-  saveExpandedCategories(storage, new Set(["coding-agent"]));
-  assert.deepEqual(loadExpandedCategories(storage), ["coding-agent"]);
+  assert.deepEqual(loadExpandedCategories({ localStorage: storage }), []);
+  saveExpandedCategories(new Set(["coding-agent"]), { localStorage: storage });
+  assert.deepEqual(loadExpandedCategories({ localStorage: storage }), ["coding-agent"]);
   store.set("unsloth_settings_nav_expanded", "{not json");
-  assert.deepEqual(loadExpandedCategories(storage), []);
+  assert.deepEqual(loadExpandedCategories({ localStorage: storage }), []);
   store.set("unsloth_settings_nav_expanded", JSON.stringify(["coding-agent", 4]));
-  assert.deepEqual(loadExpandedCategories(storage), ["coding-agent"]);
-  assert.deepEqual(loadExpandedCategories(null), []);
+  assert.deepEqual(loadExpandedCategories({ localStorage: storage }), ["coding-agent"]);
+  assert.deepEqual(loadExpandedCategories(), []);
   const full = {
     setItem: () => {
       throw new Error("QuotaExceededError");
     },
   };
-  assert.doesNotThrow(() => saveExpandedCategories(full, ["coding-agent"]));
+  assert.doesNotThrow(() => saveExpandedCategories(["coding-agent"], { localStorage: full }));
+});
+
+test("category preferences tolerate a browser that denies access to localStorage itself", () => {
+  const blocked = {
+    get localStorage(): never {
+      throw new DOMException("Storage access denied", "SecurityError");
+    },
+  };
+  assert.deepEqual(loadExpandedCategories(blocked), []);
+  assert.doesNotThrow(() => saveExpandedCategories(["coding-agent"], blocked));
 });
 
 test("Coding's pages are owner-only Settings tabs listed under one category", () => {

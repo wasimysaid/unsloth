@@ -618,7 +618,7 @@ export function SettingsDialog() {
   const activeCategory = TABS.find((tab) => tab.id === activeTab)?.category;
   const [expanded, setExpanded] = useState<ReadonlySet<NavCategoryId>>(() => {
     const ids = new Set(
-      loadExpandedCategories(typeof window === "undefined" ? null : window.localStorage).filter(
+      loadExpandedCategories().filter(
         (id): id is NavCategoryId => id in NAV_CATEGORIES,
       ),
     );
@@ -631,7 +631,7 @@ export function SettingsDialog() {
       const next = new Set(current);
       if (open) next.add(id);
       else next.delete(id);
-      saveExpandedCategories(window.localStorage, next);
+      saveExpandedCategories(next);
       return next;
     });
   }, []);

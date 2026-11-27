@@ -31,9 +31,11 @@ export function navItems<Tab extends { id: string; category?: Category }, Catego
 
 const EXPANDED_KEY = "unsloth_settings_nav_expanded";
 
-export function loadExpandedCategories(storage: Pick<Storage, "getItem"> | null): string[] {
+export function loadExpandedCategories(
+  browser: { readonly localStorage: Pick<Storage, "getItem"> } | undefined = globalThis.window,
+): string[] {
   try {
-    const parsed: unknown = JSON.parse(storage?.getItem(EXPANDED_KEY) ?? "[]");
+    const parsed: unknown = JSON.parse(browser?.localStorage.getItem(EXPANDED_KEY) ?? "[]");
     return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : [];
   } catch {
     return [];
@@ -41,11 +43,11 @@ export function loadExpandedCategories(storage: Pick<Storage, "getItem"> | null)
 }
 
 export function saveExpandedCategories(
-  storage: Pick<Storage, "setItem"> | null,
   ids: Iterable<string>,
+  browser: { readonly localStorage: Pick<Storage, "setItem"> } | undefined = globalThis.window,
 ): void {
   try {
-    storage?.setItem(EXPANDED_KEY, JSON.stringify([...ids].sort()));
+    browser?.localStorage.setItem(EXPANDED_KEY, JSON.stringify([...ids].sort()));
   } catch {
     // A full or blocked storage only forgets the rail's shape.
   }
