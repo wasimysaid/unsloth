@@ -1372,9 +1372,36 @@ export const hi = {
       data: "डेटा",
       knowledge: "ज्ञान",
       agents: "एजेंट",
+      codingAgent: "Coding एजेंट",
+      codingSkills: "एजेंट कौशल",
+      codingMcp: "MCP सर्वर",
       debugging: "लॉग",
       voice: "आवाज़",
       keyboardShortcuts: "शॉर्टकट",
+    },
+    codingAgent: {
+      reachLine: "{total} में से {available} नई Coding बातचीत तक पहुँचते हैं",
+      skills: {
+        title: "एजेंट कौशल",
+        keywords: "coding agent skills SKILL.md instructions कोडिंग एजेंट कौशल निर्देश",
+        description: "चैट के साथ साझा। नई Coding बातचीत हर चालू कौशल के साथ प्रोजेक्ट के अपने कौशल भी लोड करती है।",
+        enabledLabel: "चैट और Coding में चालू",
+      },
+      mcp: {
+        title: "MCP सर्वर",
+        keywords: "coding agent MCP servers connections tools HTTP headers कोडिंग एजेंट MCP सर्वर कनेक्शन टूल HTTP हेडर",
+        description: "चैट के साथ साझा। नई Coding बातचीत हर चालू सर्वर को कॉल कर सकती है, सिवाय उनके जिन पर केवल चैट का निशान है।",
+        reach: {
+          localCommand: "केवल चैट: लोकल कमांड",
+          oauth: "केवल चैट: OAuth साइन-इन",
+          studioInternal: "केवल चैट: Studio एंडपॉइंट",
+          other: "केवल चैट",
+        },
+        draft: {
+          localCommand: "केवल चैट। Coding लोकल कमांड शुरू नहीं कर सकता।",
+          oauth: "केवल चैट। Coding OAuth साइन-इन पूरा नहीं कर सकता; स्टैटिक हेडर दोनों में काम करते हैं।",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "कीबोर्ड शॉर्टकट",

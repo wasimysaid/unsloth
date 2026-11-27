@@ -683,7 +683,12 @@ export {
   generateStudioTtsAudio,
   releaseTtsAudioUrl,
 } from "./adapters/studio-speech-synthesis-adapter";
-export { ChatSkillsDialog } from "./components/chat-skills-dialog";
+export { ChatSkillsDialog, SkillsManager } from "./components/chat-skills-dialog";
+export {
+  McpServersManager,
+  type McpServerDraftTransport,
+} from "./chat-mcp-servers-dialog";
+export type { McpServerConfig } from "./api/mcp-servers-api";
 export { ChatAudioUploadMount } from "./components/chat-audio-upload-mount";
 export { useChatAudioUpload } from "./hooks/use-chat-audio-upload";
 export { currentDictationEntryMode } from "./utils/dictation-entry";

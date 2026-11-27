@@ -1499,9 +1499,36 @@ export const vi = {
       apiKeys: "API",
       remoteLan: "Từ xa & LAN",
       agents: "Tác tử",
+      codingAgent: "Tác tử Coding",
+      codingSkills: "Kỹ năng của tác tử",
+      codingMcp: "Máy chủ MCP",
       keyboardShortcuts: "Phím tắt",
       debugging: "Nhật ký",
       about: "Giới thiệu",
+    },
+    codingAgent: {
+      reachLine: "{available} trên {total} áp dụng cho cuộc trò chuyện Coding mới",
+      skills: {
+        title: "Kỹ năng của tác tử",
+        keywords: "coding agent skills SKILL.md instructions tác tử lập trình kỹ năng hướng dẫn",
+        description: "Dùng chung với Trò chuyện. Các cuộc trò chuyện Coding mới tải mọi kỹ năng đang bật, cùng với kỹ năng riêng của dự án.",
+        enabledLabel: "Bật trong Trò chuyện và Coding",
+      },
+      mcp: {
+        title: "Máy chủ MCP",
+        keywords: "coding agent MCP servers connections tools HTTP headers tác tử lập trình máy chủ MCP kết nối công cụ tiêu đề HTTP",
+        description: "Dùng chung với Trò chuyện. Các cuộc trò chuyện Coding mới có thể gọi mọi máy chủ đang bật, trừ những máy chủ được đánh dấu Chỉ Trò chuyện.",
+        reach: {
+          localCommand: "Chỉ Trò chuyện: lệnh cục bộ",
+          oauth: "Chỉ Trò chuyện: đăng nhập OAuth",
+          studioInternal: "Chỉ Trò chuyện: điểm cuối Studio",
+          other: "Chỉ Trò chuyện",
+        },
+        draft: {
+          localCommand: "Chỉ Trò chuyện. Coding không thể khởi chạy lệnh cục bộ.",
+          oauth: "Chỉ Trò chuyện. Coding không thể hoàn tất đăng nhập OAuth; tiêu đề tĩnh hoạt động ở cả hai.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "Phím tắt",

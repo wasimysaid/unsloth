@@ -2,6 +2,7 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 import { create } from "zustand";
+import { leaveSettingsPanel } from "../settings-leave-guard.ts";
 
 /** One list so the type and the persisted-tab check cannot drift. */
 export const SETTINGS_TABS = [
@@ -20,6 +21,8 @@ export const SETTINGS_TABS = [
   "api-keys",
   "remote-lan",
   "agents",
+  "coding-skills",
+  "coding-mcp",
   "keyboard-shortcuts",
   "browser",
   "computer-use",
@@ -259,7 +262,31 @@ export function pendingLogRequestKey(state: {
 }
 
 
-export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
+type StateUpdate =
+  | Partial<SettingsDialogState>
+  | ((state: SettingsDialogState) => Partial<SettingsDialogState>);
+
+export const useSettingsDialogStore = create<SettingsDialogState>((rawSet, get) => {
+  /**
+   * Every way out of the open page (closing, the rail, search, the palette, a menu or a link)
+   * asks that page first, so an unsaved edit or a running write is never dropped unseen.
+   * The update is applied as given once allowed, so it reads the state of that moment.
+   */
+  const set = (update: StateUpdate, onApplied?: () => void) => {
+    const apply = () => {
+      rawSet(update);
+      onApplied?.();
+    };
+    const state = get();
+    const next = typeof update === "function" ? update(state) : update;
+    const leaving =
+      state.open &&
+      (next.open === false ||
+        (next.activeTab !== undefined && next.activeTab !== state.activeTab));
+    if (leaving) leaveSettingsPanel(apply);
+    else apply();
+  };
+  return {
   open: false,
   activeTab: loadInitialTab(),
   scrollTarget: null,
@@ -434,12 +461,16 @@ export const useSettingsDialogStore = create<SettingsDialogState>((set) => ({
       mediaApiRequested: null,
       trainingApiRequested: null,
     }),
-  setActiveTab: (tab) => {
-    try {
-      window.localStorage.setItem(ACTIVE_TAB_KEY, tab);
-    } catch {
-      // ignore storage failures
-    }
-    set((state) => ({ activeTab: tab, ...requestsFor(state, tab) }));
-  },
-}));
+  setActiveTab: (tab) =>
+    set(
+      (state) => ({ activeTab: tab, ...requestsFor(state, tab) }),
+      () => {
+        try {
+          window.localStorage.setItem(ACTIVE_TAB_KEY, tab);
+        } catch {
+          // ignore storage failures
+        }
+      },
+    ),
+  };
+});

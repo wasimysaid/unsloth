@@ -1430,9 +1430,36 @@ export const zhTW = {
       apiKeys: "API",
       remoteLan: "遠端與區域網路",
       agents: "代理程式",
+      codingAgent: "Coding 代理程式",
+      codingSkills: "代理程式技能",
+      codingMcp: "MCP 伺服器",
       keyboardShortcuts: "快速鍵",
       debugging: "記錄檔",
       about: "關於",
+    },
+    codingAgent: {
+      reachLine: "{available} / {total} 會套用到新的 Coding 對話",
+      skills: {
+        title: "代理程式技能",
+        keywords: "coding agent skills SKILL.md instructions 程式設計代理程式 技能 指令",
+        description: "與聊天共用。新的 Coding 對話會載入所有已開啟的技能，以及專案本身的技能。",
+        enabledLabel: "在聊天和 Coding 中開啟",
+      },
+      mcp: {
+        title: "MCP 伺服器",
+        keywords: "coding agent MCP servers connections tools HTTP headers 程式設計代理程式 MCP 伺服器 連線 工具 HTTP 標頭",
+        description: "與聊天共用。新的 Coding 對話可以呼叫所有已開啟的伺服器，標示為「僅限聊天」的除外。",
+        reach: {
+          localCommand: "僅限聊天：本機指令",
+          oauth: "僅限聊天：OAuth 登入",
+          studioInternal: "僅限聊天：Studio 端點",
+          other: "僅限聊天",
+        },
+        draft: {
+          localCommand: "僅限聊天。Coding 無法啟動本機指令。",
+          oauth: "僅限聊天。Coding 無法完成 OAuth 登入；靜態標頭在兩者中皆可使用。",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "鍵盤快速鍵",

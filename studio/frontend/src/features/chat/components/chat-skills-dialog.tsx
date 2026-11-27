@@ -54,8 +54,10 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   type ChangeEvent,
+  Fragment,
   type ReactElement,
   type ReactNode,
+  type RefObject,
   useEffect,
   useId,
   useMemo,
@@ -138,6 +140,45 @@ export function ChatSkillsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }): ReactElement {
+  const closeGuardRef = useRef<SkillsCloseGuard | null>(null);
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (next || !closeGuardRef.current) onOpenChange(next);
+        else closeGuardRef.current(() => onOpenChange(false));
+      }}
+    >
+      <DialogContent className="rounded-3xl shadow-border ring-0 max-sm:flex max-sm:flex-col max-sm:overflow-hidden sm:max-w-2xl">
+        <SkillsManager active={open} layout="dialog" closeGuardRef={closeGuardRef} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Asks to leave: refused while a request runs, confirmed first when an edit is unsaved. */
+export type SkillsCloseGuard = (close: () => void) => void;
+
+export interface SkillsManagerProps {
+  /** Reset to the library each time this turns true; confirmations show only while true. */
+  active: boolean;
+  /** "dialog" renders inside ChatSkillsDialog; "page" inside a page that owns the heading. */
+  layout: "dialog" | "page";
+  closeGuardRef?: RefObject<SkillsCloseGuard | null>;
+  /** Above the library's toolbar. */
+  intro?: ReactNode;
+  /** The open skill's switch label. */
+  enabledLabel?: string;
+}
+
+export function SkillsManager({
+  active,
+  layout,
+  closeGuardRef,
+  intro,
+  enabledLabel,
+}: SkillsManagerProps): ReactElement {
+  const page = layout === "page";
   const t = useT();
   const { skills, loading, error } = useSkillsCatalog();
   const [searchQuery, setSearchQuery] = useState("");
@@ -160,10 +201,10 @@ export function ChatSkillsDialog({
   const [confirmingDiscard, setConfirmingDiscard] = useState<(() => void) | null>(null);
   const [confirmingReset, setConfirmingReset] = useState(false);
   // Reseeded on render so the first frame after opening is already reset.
-  const [seenOpen, setSeenOpen] = useState(open);
-  if (open !== seenOpen) {
-    setSeenOpen(open);
-    if (open) {
+  const [seenActive, setSeenActive] = useState(active);
+  if (active !== seenActive) {
+    setSeenActive(active);
+    if (active) {
       setSearchQuery("");
       setView(LIBRARY);
       setNewDraft(EMPTY_DRAFT);
@@ -175,8 +216,8 @@ export function ChatSkillsDialog({
     }
   }
   useEffect(() => {
-    if (open) void listSkills(true).catch(() => undefined);
-  }, [open]);
+    if (active) void listSkills(true).catch(() => undefined);
+  }, [active]);
 
   const sourceLabel = (source: SkillRecord["source"]) =>
     source === "agents"
@@ -204,7 +245,7 @@ export function ChatSkillsDialog({
 
   const selected =
     view.kind === "skill" ? (skills.find((skill) => keyOf(skill) === view.key) ?? null) : null;
-  if (open && view.kind === "skill" && !loading && selected === null) {
+  if (active && view.kind === "skill" && !loading && selected === null) {
     setView(LIBRARY);
     setDraft(null);
   }
@@ -292,14 +333,17 @@ export function ChatSkillsDialog({
       setView({ kind: "new" });
     });
 
-  function handleOpenChange(next: boolean) {
-    if (!next && busy) return;
-    if (!next && dirty) {
-      setConfirmingDiscard(() => () => onOpenChange(false));
-      return;
-    }
-    onOpenChange(next);
-  }
+  useEffect(() => {
+    if (!closeGuardRef) return;
+    closeGuardRef.current = (close) => {
+      if (busy) return;
+      if (dirty) setConfirmingDiscard(() => close);
+      else close();
+    };
+    return () => {
+      closeGuardRef.current = null;
+    };
+  }, [closeGuardRef, busy, dirty]);
 
   const refresh = () => {
     setManifests(new Map());
@@ -462,18 +506,27 @@ export function ChatSkillsDialog({
     <Badge variant={source === "agents" ? "secondary" : "outline"}>{sourceLabel(source)}</Badge>
   );
 
+  // A page owns its own heading and scroller, so its views are plain blocks in the page's flow.
+  const Header = page ? "div" : DialogHeader;
+  const Title = page ? "h3" : DialogTitle;
+  const Description = page ? "p" : DialogDescription;
+  const Views = page ? PageFrame : Fragment;
+
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="rounded-3xl shadow-border ring-0 max-sm:flex max-sm:flex-col max-sm:overflow-hidden sm:max-w-2xl">
+    <>
+      <Views>
         {view.kind === "library" ? (
           <>
-            <DialogHeader>
-              <div className="flex items-center gap-2">
-                <HugeiconsIcon icon={Scroll01Icon} strokeWidth={1.75} className="size-5 text-primary" />
-                <DialogTitle>{t("skills.title")}</DialogTitle>
-              </div>
-              <DialogDescription>{t("skills.description")}</DialogDescription>
-            </DialogHeader>
+            {page ? null : (
+              <DialogHeader>
+                <div className="flex items-center gap-2">
+                  <HugeiconsIcon icon={Scroll01Icon} strokeWidth={1.75} className="size-5 text-primary" />
+                  <DialogTitle>{t("skills.title")}</DialogTitle>
+                </div>
+                <DialogDescription>{t("skills.description")}</DialogDescription>
+              </DialogHeader>
+            )}
+            {intro}
 
             {/* Phones: search takes its own row, the actions wrap under it. */}
             <div className="flex items-center gap-2 max-sm:flex-wrap max-sm:justify-end">
@@ -572,7 +625,13 @@ export function ChatSkillsDialog({
             </div>
 
             {/* -mr-7 pr-7 spans the dialog's right padding, so the scrollbar sits on its edge. */}
-            <div className="hover-scrollbar min-h-0 max-h-[min(58dvh,520px)] -mr-7 space-y-5 overflow-y-auto pr-7 max-sm:flex-1 max-sm:max-h-none">
+            <div
+              className={cn(
+                "space-y-5",
+                !page &&
+                  "hover-scrollbar min-h-0 max-h-[min(58dvh,520px)] -mr-7 overflow-y-auto pr-7 max-sm:flex-1 max-sm:max-h-none",
+              )}
+            >
               {error ? (
                 <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
                   {error}
@@ -626,7 +685,7 @@ export function ChatSkillsDialog({
           </>
         ) : (
           <>
-            <DialogHeader className="pr-8">
+            <Header className={page ? "flex flex-col gap-1" : "pr-8"}>
               <div className="flex min-w-0 items-center gap-2">
                 <Button
                   type="button"
@@ -639,22 +698,27 @@ export function ChatSkillsDialog({
                 >
                   <HugeiconsIcon icon={ChevronLeftStandardIcon} strokeWidth={2} />
                 </Button>
-                <DialogTitle className="truncate">
+                <Title className={cn("truncate", page && "font-heading text-base font-semibold")}>
                   {view.kind === "new" ? t("skills.newSkill") : (selected?.name ?? "")}
-                </DialogTitle>
+                </Title>
                 {selected ? sourceBadge(selected.source) : null}
                 {dirty && view.kind === "skill" ? (
                   <span className="shrink-0 text-xs text-muted-foreground">{t("skills.unsaved")}</span>
                 ) : null}
               </div>
-              <DialogDescription className="truncate">
+              <Description className={cn("truncate", page && "text-xs text-muted-foreground")}>
                 {view.kind === "new"
                   ? t("skills.createDescription")
                   : (manifest?.path ?? selected?.path ?? sourceLabel(selected?.source ?? "agents"))}
-              </DialogDescription>
-            </DialogHeader>
+              </Description>
+            </Header>
 
-            <div className="hover-scrollbar min-h-0 max-h-[min(62dvh,640px)] -mr-7 overflow-y-auto pr-7 max-sm:flex-1 max-sm:max-h-none">
+            <div
+              className={cn(
+                !page &&
+                  "hover-scrollbar min-h-0 max-h-[min(62dvh,640px)] -mr-7 overflow-y-auto pr-7 max-sm:flex-1 max-sm:max-h-none",
+              )}
+            >
               {view.kind === "new" ? (
                 <Editor
                   formId="skill-new-form"
@@ -752,7 +816,7 @@ export function ChatSkillsDialog({
                     })}
                     onCheckedChange={(checked) => void toggle(selected.name, checked)}
                   />
-                  {t("skills.enabledLabel")}
+                  {enabledLabel ?? t("skills.enabledLabel")}
                 </label>
               ) : null}
               <div className="ml-auto flex items-center gap-2">
@@ -808,10 +872,10 @@ export function ChatSkillsDialog({
             </div>
           </>
         )}
-      </DialogContent>
+      </Views>
 
       <AlertDialog
-        open={open && confirmingDelete !== null}
+        open={active && confirmingDelete !== null}
         onOpenChange={(next) => {
           if (!next) setConfirmingDelete(null);
         }}
@@ -839,7 +903,7 @@ export function ChatSkillsDialog({
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={open && confirmingReset} onOpenChange={setConfirmingReset}>
+      <AlertDialog open={active && confirmingReset} onOpenChange={setConfirmingReset}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t("skills.resetTitle")}</AlertDialogTitle>
@@ -861,7 +925,7 @@ export function ChatSkillsDialog({
       </AlertDialog>
 
       <AlertDialog
-        open={open && confirmingDiscard !== null}
+        open={active && confirmingDiscard !== null}
         onOpenChange={(next) => {
           if (!next) setConfirmingDiscard(null);
         }}
@@ -892,8 +956,12 @@ export function ChatSkillsDialog({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Dialog>
+    </>
   );
+}
+
+function PageFrame({ children }: { children: ReactNode }): ReactElement {
+  return <div className="flex min-w-0 flex-col gap-4">{children}</div>;
 }
 
 function sectionSuffix(source: SkillRecord["source"]): "Agents" | "Claude" | "Bundled" {

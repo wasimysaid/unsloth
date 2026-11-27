@@ -1502,9 +1502,36 @@ export const cs = {
       apiKeys: "API",
       remoteLan: "Vzdálený přístup a LAN",
       agents: "Agenti",
+      codingAgent: "Agent Coding",
+      codingSkills: "Dovednosti agenta",
+      codingMcp: "Servery MCP",
       keyboardShortcuts: "Zkratky",
       debugging: "Protokoly",
       about: "O aplikaci",
+    },
+    codingAgent: {
+      reachLine: "{available} z {total} se dostanou do nových konverzací v Coding",
+      skills: {
+        title: "Dovednosti agenta",
+        keywords: "coding agent skills SKILL.md instructions kódovací agent dovednosti instrukce",
+        description: "Sdíleno s Chatem. Nové konverzace v Coding načtou každou zapnutou dovednost spolu s dovednostmi samotného projektu.",
+        enabledLabel: "Zapnuto v Chatu a Coding",
+      },
+      mcp: {
+        title: "Servery MCP",
+        keywords: "coding agent MCP servers connections tools HTTP headers kódovací agent servery MCP připojení nástroje hlavičky HTTP",
+        description: "Sdíleno s Chatem. Nové konverzace v Coding mohou volat každý zapnutý server, kromě těch označených Jen Chat.",
+        reach: {
+          localCommand: "Jen Chat: místní příkaz",
+          oauth: "Jen Chat: přihlášení přes OAuth",
+          studioInternal: "Jen Chat: koncový bod Studia",
+          other: "Jen Chat",
+        },
+        draft: {
+          localCommand: "Jen Chat. Coding nemůže spouštět místní příkazy.",
+          oauth: "Jen Chat. Coding nemůže dokončit přihlášení přes OAuth; statické hlavičky fungují v obou.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "Klávesové zkratky",

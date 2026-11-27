@@ -87,7 +87,8 @@ function leaves(node: unknown, prefix = ""): [string, string][] {
 
 test("there is no MCP tab; the settings live on Agents", () => {
   assert.ok(!(SETTINGS_TABS as readonly string[]).includes("mcp"));
-  assert.doesNotMatch(DIALOG, /tabs\/mcp-tab|McpServerIcon/);
+  // Coding Agent's "MCP servers" (tabs/coding-mcp-tab) manages saved connections, not these settings.
+  assert.doesNotMatch(DIALOG, /tabs\/mcp-tab/);
   assert.equal(lookup(en, "settings.tabs.mcp"), undefined);
 });
 

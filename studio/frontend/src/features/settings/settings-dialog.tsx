@@ -35,9 +35,13 @@ import {
   HelpCircleIcon,
   HomeWifiIcon,
   LibrariesIcon,
+  McpServerIcon,
+  Scroll01Icon,
   Search01Icon,
+  SourceCodeIcon,
   UserCircleIcon,
 } from "@hugeicons/core-free-icons";
+import { ChevronRightStandardIcon } from "@/lib/chevron-icons";
 import { ShieldCogIcon } from "@/lib/shield-cog-icon";
 import {
   ChipIcon,
@@ -67,6 +71,11 @@ import {
 } from "react";
 import { DIALOG_SETTINGS_SEARCH_INDEX as SETTINGS_SEARCH_INDEX } from "./dialog-search-index";
 import { SETTINGS_SEARCH_KEYWORDS, renderedSearchEntries } from "./settings-search";
+import {
+  loadExpandedCategories,
+  navItems,
+  saveExpandedCategories,
+} from "./settings-nav-items";
 import {
   type SettingsTab,
   useSettingsDialogStore,
@@ -116,6 +125,10 @@ const TAB_LOADERS = {
     import("./tabs/remote-lan-tab").then((m) => ({ default: m.RemoteLanTab })),
   agents: () =>
     import("./tabs/agents-tab").then((m) => ({ default: m.AgentsTab })),
+  "coding-skills": () =>
+    import("./tabs/coding-skills-tab").then((m) => ({ default: m.CodingSkillsTab })),
+  "coding-mcp": () =>
+    import("./tabs/coding-mcp-tab").then((m) => ({ default: m.CodingMcpTab })),
   debugging: () =>
     import("./tabs/debugging-tab").then((m) => ({ default: m.DebuggingTab })),
   about: () =>
@@ -252,7 +265,23 @@ interface TabDef {
   icon?: typeof Settings01Icon;
   iconComponent?: FC<{ className?: string }>;
   badgeKey?: TranslationKey;
+  /** Listed under this expandable rail entry instead of on its own. */
+  category?: NavCategoryId;
 }
+
+type NavCategoryId = "coding-agent";
+
+interface NavCategoryDef {
+  labelKey: TranslationKey;
+  icon: typeof Settings01Icon;
+}
+
+const NAV_CATEGORIES: Record<NavCategoryId, NavCategoryDef> = {
+  "coding-agent": {
+    labelKey: "settings.tabs.codingAgent",
+    icon: SourceCodeIcon,
+  },
+};
 
 const TABS: TabDef[] = [
   { id: "general", labelKey: "settings.tabs.general", icon: Settings01Icon },
@@ -276,6 +305,18 @@ const TABS: TabDef[] = [
     id: "chat",
     labelKey: "settings.tabs.chat",
     icon: MessageCircleIcon,
+  },
+  {
+    id: "coding-skills",
+    labelKey: "settings.tabs.codingSkills",
+    icon: Scroll01Icon,
+    category: "coding-agent",
+  },
+  {
+    id: "coding-mcp",
+    labelKey: "settings.tabs.codingMcp",
+    icon: McpServerIcon,
+    category: "coding-agent",
   },
   {
     id: "sandbox",
@@ -364,6 +405,8 @@ export const SETTINGS_NAV_GROUPS: {
       "appearance",
       "resources",
       "chat",
+      "coding-skills",
+      "coding-mcp",
       "voice",
       "browser",
       "computer-use",
@@ -572,6 +615,35 @@ export function SettingsDialog() {
   const openerFallback = useSettingsDialogStore((s) => s.openerFallback);
   const reduced = useReducedMotion();
   const [query, setQuery] = useState("");
+  const activeCategory = TABS.find((tab) => tab.id === activeTab)?.category;
+  const [expanded, setExpanded] = useState<ReadonlySet<NavCategoryId>>(() => {
+    const ids = new Set(
+      loadExpandedCategories().filter(
+        (id): id is NavCategoryId => id in NAV_CATEGORIES,
+      ),
+    );
+    if (activeCategory) ids.add(activeCategory);
+    return ids;
+  });
+  const setCategoryExpanded = useCallback((id: NavCategoryId, open: boolean) => {
+    setExpanded((current) => {
+      if (current.has(id) === open) return current;
+      const next = new Set(current);
+      if (open) next.add(id);
+      else next.delete(id);
+      saveExpandedCategories(next);
+      return next;
+    });
+  }, []);
+  // Arriving on a tab inside a category (search, a link, the palette) shows where it lives.
+  // Collapsing it afterwards is the user's call, so this follows tab changes only.
+  const [seenCategory, setSeenCategory] = useState(activeCategory);
+  if (activeCategory !== seenCategory) {
+    setSeenCategory(activeCategory);
+    if (activeCategory && !expanded.has(activeCategory)) {
+      setExpanded(new Set(expanded).add(activeCategory));
+    }
+  }
 
   // On idle after startup: prefetch the opening tab and the shortcuts list.
   useEffect(() => {
@@ -615,7 +687,10 @@ export function SettingsDialog() {
       return null;
     }
     return visibleTabs.map((tab) => {
-      const tabLabel = t(tab.labelKey);
+      // A nested tab names its category, so "MCP servers" reads as Coding's and not Chat's.
+      const tabLabel = tab.category
+        ? `${t(NAV_CATEGORIES[tab.category].labelKey)} › ${t(tab.labelKey)}`
+        : t(tab.labelKey);
       const entries = renderedSearchEntries(
         SETTINGS_SEARCH_INDEX,
         tab.id,
@@ -692,6 +767,8 @@ export function SettingsDialog() {
     "api-keys": null,
     "remote-lan": null,
     agents: null,
+    "coding-skills": null,
+    "coding-mcp": null,
     debugging: null,
     about: null,
   });
@@ -723,8 +800,97 @@ export function SettingsDialog() {
     return () => window.cancelAnimationFrame(frame);
   }, [open, activeTab, focusTabButton]);
 
-  const renderNavTab = (tab: TabDef) => {
+  const activePill = (
+    <motion.span
+      layoutId="settings-active-pill"
+      className="absolute inset-0 rounded-full bg-accent"
+      transition={
+        reduced
+          ? { duration: 0 }
+          : {
+              type: "spring",
+              stiffness: 500,
+              damping: 35,
+              mass: 0.5,
+            }
+      }
+    />
+  );
+
+  const renderNavCategory = (id: NavCategoryId, tabs: TabDef[]) => {
+    const category = NAV_CATEGORIES[id];
+    const open = expanded.has(id);
+    const holdsActive = tabs.some((tab) => tab.id === activeTab);
+    const listId = `settings-nav-category-${id}`;
+    return (
+      // Stacked, the rail is one tab row: the heading drops out and the tabs join the row.
+      <div key={id} className="flex flex-col gap-0.5 group-data-stacked/settings:contents">
+        <button
+          type="button"
+          data-testid={`settings-category-${id}`}
+          aria-expanded={open}
+          aria-controls={listId}
+          onClick={() => setCategoryExpanded(id, !open)}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowRight" && !open) {
+              event.preventDefault();
+              setCategoryExpanded(id, true);
+            } else if (event.key === "ArrowLeft" && open) {
+              event.preventDefault();
+              setCategoryExpanded(id, false);
+            }
+          }}
+          className={cn(
+            "relative flex h-[calc(32px*var(--ui-space-scale,1))] shrink-0 items-center gap-2.5 rounded-full pl-3 pr-2.5 text-ui-14p5 leading-ui-19 tracking-nav font-medium transition-colors",
+            "focus-visible:outline-none group-data-stacked/settings:hidden",
+            // Collapsed over the open tab, the heading stands in for it.
+            holdsActive && !open
+              ? "text-accent-foreground"
+              : "text-[#383835] dark:text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-1 focus-visible:ring-ring",
+          )}
+        >
+          {holdsActive && !open ? activePill : null}
+          <HugeiconsIcon
+            icon={category.icon}
+            strokeWidth={1.75}
+            className="relative z-10 size-icon"
+          />
+          <span className="relative z-10 min-w-0 truncate">{t(category.labelKey)}</span>
+          <HugeiconsIcon
+            icon={ChevronRightStandardIcon}
+            strokeWidth={2}
+            aria-hidden="true"
+            className={cn(
+              "relative z-10 ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
+              open && "rotate-90",
+            )}
+          />
+        </button>
+        <div
+          id={listId}
+          // biome-ignore lint/a11y/useSemanticElements: stacked, the list is display: contents; a fieldset's default box would break the tab row.
+          role="group"
+          aria-label={t(category.labelKey)}
+          className={cn(
+            "relative flex flex-col gap-0.5 group-data-stacked/settings:contents",
+            open
+              ? "fade-in slide-in-from-top-1 animate-in duration-150 motion-reduce:animate-none"
+              : "hidden",
+          )}
+        >
+          {tabs.map((tab) => renderNavTab(tab, true))}
+        </div>
+      </div>
+    );
+  };
+
+  const renderNavTab = (tab: TabDef, nested = false) => {
     const active = activeTab === tab.id;
+    // Nested, the label lines up under the heading's; stacked, the tab carries its own icon again.
+    const iconClass = cn(
+      "relative z-10 size-icon",
+      nested && "hidden group-data-stacked/settings:block",
+    );
     return (
       <button
         key={tab.id}
@@ -739,36 +905,19 @@ export function SettingsDialog() {
           "relative flex h-[calc(32px*var(--ui-space-scale,1))] items-center gap-2.5 rounded-full pl-3 pr-2.5 text-ui-14p5 leading-ui-19 tracking-nav font-medium transition-colors",
           // Otherwise the flex item shrinks to its text when the list scrolls.
           "shrink-0",
+          nested &&
+            "pl-[calc(var(--spacing)*5.5_+_var(--icon-size))] group-data-stacked/settings:pl-3",
           "focus-visible:outline-none",
           active
             ? "text-accent-foreground"
             : "text-[#383835] dark:text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-1 focus-visible:ring-ring",
         )}
       >
-        {active && (
-          <motion.span
-            layoutId="settings-active-pill"
-            className="absolute inset-0 rounded-full bg-accent"
-            transition={
-              reduced
-                ? { duration: 0 }
-                : {
-                    type: "spring",
-                    stiffness: 500,
-                    damping: 35,
-                    mass: 0.5,
-                  }
-            }
-          />
-        )}
+        {active ? activePill : null}
         {tab.iconComponent ? (
-          <tab.iconComponent className="relative z-10 size-icon" />
+          <tab.iconComponent className={iconClass} />
         ) : tab.icon ? (
-          <HugeiconsIcon
-            icon={tab.icon}
-            strokeWidth={1.75}
-            className="relative z-10 size-icon"
-          />
+          <HugeiconsIcon icon={tab.icon} strokeWidth={1.75} className={iconClass} />
         ) : null}
         <span className="relative z-10 min-w-0 truncate">
           {t(tab.labelKey)}
@@ -964,7 +1113,11 @@ export function SettingsDialog() {
                         aria-labelledby={headingId}
                         className="flex flex-col gap-0.5 group-data-stacked/settings:contents"
                       >
-                        {group.tabs.map(renderNavTab)}
+                        {navItems<TabDef, NavCategoryId>(group.tabs).map((item) =>
+                          item.kind === "tab"
+                            ? renderNavTab(item.tab)
+                            : renderNavCategory(item.id, item.tabs),
+                        )}
                       </div>
                     </div>
                   );

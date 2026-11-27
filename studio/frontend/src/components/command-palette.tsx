@@ -158,6 +158,8 @@ const SETTINGS_TAB_LABELS: Record<SettingsTab, TranslationKey> = {
   "api-keys": "settings.tabs.apiKeys",
   "remote-lan": "settings.tabs.remoteLan",
   agents: "settings.tabs.agents",
+  "coding-skills": "settings.tabs.codingSkills",
+  "coding-mcp": "settings.tabs.codingMcp",
   "keyboard-shortcuts": "settings.tabs.keyboardShortcuts",
   browser: "browser.settingsTitle",
   "computer-use": "computerUse.settings.title",

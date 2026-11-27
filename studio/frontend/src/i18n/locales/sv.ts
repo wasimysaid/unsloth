@@ -1444,9 +1444,36 @@ export const sv = {
       apiKeys: "API",
       remoteLan: "Fjärråtkomst och LAN",
       agents: "Agenter",
+      codingAgent: "Coding-agent",
+      codingSkills: "Agentfärdigheter",
+      codingMcp: "MCP-servrar",
       keyboardShortcuts: "Genvägar",
       debugging: "Loggar",
       about: "Om",
+    },
+    codingAgent: {
+      reachLine: "{available} av {total} når nya Coding-konversationer",
+      skills: {
+        title: "Agentfärdigheter",
+        keywords: "coding agent skills SKILL.md instructions Coding-agent färdigheter instruktioner",
+        description: "Delas med Chatt. Nya Coding-konversationer läser in varje färdighet som är på, tillsammans med projektets egna färdigheter.",
+        enabledLabel: "På i Chatt och Coding",
+      },
+      mcp: {
+        title: "MCP-servrar",
+        keywords: "coding agent MCP servers connections tools HTTP headers Coding-agent MCP-servrar anslutningar verktyg HTTP-rubriker",
+        description: "Delas med Chatt. Nya Coding-konversationer kan anropa varje server som är på, utom de som är markerade Endast Chatt.",
+        reach: {
+          localCommand: "Endast Chatt: lokalt kommando",
+          oauth: "Endast Chatt: OAuth-inloggning",
+          studioInternal: "Endast Chatt: Studio-slutpunkt",
+          other: "Endast Chatt",
+        },
+        draft: {
+          localCommand: "Endast Chatt. Coding kan inte starta lokala kommandon.",
+          oauth: "Endast Chatt. Coding kan inte slutföra OAuth-inloggning; statiska rubriker fungerar i båda.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "Tangentbordsgenvägar",

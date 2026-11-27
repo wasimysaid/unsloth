@@ -115,10 +115,14 @@ test("save is held back until the draft differs from the file and is complete", 
 });
 
 test("the dialog guards writes and drafts, and reopens on the library", () => {
-  assert.match(DIALOG, /if \(!next && busy\) return;/);
+  // The dialog asks the manager before closing; the manager refuses mid-write and confirms a draft.
   assert.match(
     DIALOG,
-    /if \(!next && dirty\) \{\n\s*setConfirmingDiscard\(\(\) => \(\) => onOpenChange\(false\)\);\n\s*return;/,
+    /if \(next \|\| !closeGuardRef\.current\) onOpenChange\(next\);\n\s*else closeGuardRef\.current\(\(\) => onOpenChange\(false\)\);/,
+  );
+  assert.match(
+    DIALOG,
+    /closeGuardRef\.current = \(close\) => \{\n\s*if \(busy\) return;\n\s*if \(dirty\) setConfirmingDiscard\(\(\) => close\);\n\s*else close\(\);/,
   );
   assert.match(
     DIALOG,
@@ -126,6 +130,7 @@ test("the dialog guards writes and drafts, and reopens on the library", () => {
   );
   assert.match(
     DIALOG,
-    /if \(open !== seenOpen\) \{\n\s*setSeenOpen\(open\);\n\s*if \(open\) \{\n\s*setSearchQuery\(""\);\n\s*setView\(LIBRARY\);/,
+    /if \(active !== seenActive\) \{\n\s*setSeenActive\(active\);\n\s*if \(active\) \{\n\s*setSearchQuery\(""\);\n\s*setView\(LIBRARY\);/,
   );
+  assert.match(DIALOG, /<SkillsManager active=\{open\} layout="dialog" closeGuardRef=\{closeGuardRef\} \/>/);
 });

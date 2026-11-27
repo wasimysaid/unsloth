@@ -29,6 +29,8 @@ export interface McpServerConfig {
   has_oauth_client_secret?: boolean;
   image_input_mappings?: McpImageInputMapping[];
   image_mappings_active?: boolean;
+  /** Why new Coding conversations cannot call this server; null when they can. */
+  coding_limit?: "local-command" | "oauth" | "studio-internal" | null;
   created_at: string;
   updated_at: string;
 }

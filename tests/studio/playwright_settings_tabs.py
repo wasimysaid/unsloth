@@ -37,6 +37,8 @@ TABS = [
     "api-keys",
     "remote-lan",
     "agents",
+    "coding-skills",
+    "coding-mcp",
     "keyboard-shortcuts",
     "browser",
     "computer-use",
@@ -168,8 +170,22 @@ def settle_panel(page, timeout_s: float = SETTLE_TIMEOUT_S) -> dict:
     return latest
 
 
+# Tabs listed under an expandable rail category, which hides them while it is collapsed.
+NESTED_TABS = {"coding-skills": "coding-agent", "coding-mcp": "coding-agent"}
+
+
+def reveal_tab(page, tab: str) -> None:
+    category = NESTED_TABS.get(tab)
+    if category is None:
+        return
+    toggle = page.locator(f'[data-testid="settings-category-{category}"]')
+    if toggle.get_attribute("aria-expanded", timeout = 15000) != "true":
+        click_forced(toggle, timeout = 15000)
+
+
 def click_tab_and_observe(page, tab: str) -> dict:
     """Click a tab; record how long the panel keeps the old content and whether it blanks."""
+    reveal_tab(page, tab)
     before = snapshot(page)
     click_forced(page.locator(f'[data-testid="settings-tab-{tab}"]'), timeout = 15000)
     started = time.time()

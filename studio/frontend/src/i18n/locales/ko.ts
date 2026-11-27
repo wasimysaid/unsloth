@@ -1368,9 +1368,36 @@ export const ko = {
       data: "데이터",
       knowledge: "지식",
       agents: "에이전트",
+      codingAgent: "Coding 에이전트",
+      codingSkills: "에이전트 스킬",
+      codingMcp: "MCP 서버",
       debugging: "로그",
       voice: "음성",
       keyboardShortcuts: "단축키",
+    },
+    codingAgent: {
+      reachLine: "{total}개 중 {available}개가 새 Coding 대화에 적용됩니다",
+      skills: {
+        title: "에이전트 스킬",
+        keywords: "coding agent skills SKILL.md instructions 코딩 에이전트 스킬 지침",
+        description: "채팅과 공유됩니다. 새 Coding 대화는 켜져 있는 모든 스킬과 프로젝트 자체 스킬을 불러옵니다.",
+        enabledLabel: "채팅과 Coding에서 켜짐",
+      },
+      mcp: {
+        title: "MCP 서버",
+        keywords: "coding agent MCP servers connections tools HTTP headers 코딩 에이전트 MCP 서버 연결 도구 HTTP 헤더",
+        description: "채팅과 공유됩니다. 새 Coding 대화는 '채팅 전용'으로 표시된 서버를 제외하고 켜져 있는 모든 서버를 호출할 수 있습니다.",
+        reach: {
+          localCommand: "채팅 전용: 로컬 명령",
+          oauth: "채팅 전용: OAuth 로그인",
+          studioInternal: "채팅 전용: Studio 엔드포인트",
+          other: "채팅 전용",
+        },
+        draft: {
+          localCommand: "채팅 전용. Coding은 로컬 명령을 시작할 수 없습니다.",
+          oauth: "채팅 전용. Coding은 OAuth 로그인을 완료할 수 없습니다. 정적 헤더는 둘 다에서 작동합니다.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "키보드 단축키",

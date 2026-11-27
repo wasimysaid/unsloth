@@ -1367,8 +1367,35 @@ export const zhCN = {
       data: "数据",
       knowledge: "知识",
       agents: "智能体",
+      codingAgent: "Coding 智能体",
+      codingSkills: "智能体技能",
+      codingMcp: "MCP 服务器",
       debugging: "日志",
       keyboardShortcuts: "快捷键",
+    },
+    codingAgent: {
+      reachLine: "{available} / {total} 会应用到新的 Coding 对话",
+      skills: {
+        title: "智能体技能",
+        keywords: "coding agent skills SKILL.md instructions 编程智能体 技能 指令",
+        description: "与聊天共享。新的 Coding 对话会加载所有已开启的技能，以及项目自带的技能。",
+        enabledLabel: "在聊天和 Coding 中开启",
+      },
+      mcp: {
+        title: "MCP 服务器",
+        keywords: "coding agent MCP servers connections tools HTTP headers 编程智能体 MCP 服务器 连接 工具 HTTP 标头",
+        description: "与聊天共享。新的 Coding 对话可以调用所有已开启的服务器，标记为“仅聊天”的除外。",
+        reach: {
+          localCommand: "仅聊天：本地命令",
+          oauth: "仅聊天：OAuth 登录",
+          studioInternal: "仅聊天：Studio 端点",
+          other: "仅聊天",
+        },
+        draft: {
+          localCommand: "仅聊天。Coding 无法启动本地命令。",
+          oauth: "仅聊天。Coding 无法完成 OAuth 登录；静态标头在两者中均可使用。",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "键盘快捷键",

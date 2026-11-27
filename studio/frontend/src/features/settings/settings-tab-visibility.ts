@@ -11,6 +11,9 @@ export const OWNER_ONLY_SETTINGS_TABS: ReadonlySet<SettingsTab> = new Set<Settin
   "resources",
   "remote-lan",
   "agents",
+  // Coding's Studio skills and MCP servers reach only the installation owner's sessions.
+  "coding-skills",
+  "coding-mcp",
   "computer-use",
   "debugging",
 ]);

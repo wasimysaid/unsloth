@@ -1507,9 +1507,36 @@ export const uk = {
       apiKeys: "API",
       remoteLan: "Віддалений доступ і LAN",
       agents: "Агенти",
+      codingAgent: "Агент Coding",
+      codingSkills: "Навички агента",
+      codingMcp: "Сервери MCP",
       keyboardShortcuts: "Сполучення клавіш",
       debugging: "Журнали",
       about: "Про застосунок",
+    },
+    codingAgent: {
+      reachLine: "{available} із {total} потрапляють у нові розмови Coding",
+      skills: {
+        title: "Навички агента",
+        keywords: "coding agent skills SKILL.md instructions агент для програмування навички інструкції",
+        description: "Спільні з Чатом. Нові розмови Coding завантажують кожну ввімкнену навичку разом з навичками самого проєкту.",
+        enabledLabel: "Увімкнено в Чаті та Coding",
+      },
+      mcp: {
+        title: "Сервери MCP",
+        keywords: "coding agent MCP servers connections tools HTTP headers агент для програмування сервери MCP підключення інструменти заголовки HTTP",
+        description: "Спільні з Чатом. Нові розмови Coding можуть викликати кожен ввімкнений сервер, окрім позначених як Лише Чат.",
+        reach: {
+          localCommand: "Лише Чат: локальна команда",
+          oauth: "Лише Чат: вхід через OAuth",
+          studioInternal: "Лише Чат: кінцева точка Studio",
+          other: "Лише Чат",
+        },
+        draft: {
+          localCommand: "Лише Чат. Coding не може запускати локальні команди.",
+          oauth: "Лише Чат. Coding не може завершити вхід через OAuth; статичні заголовки працюють в обох.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "Сполучення клавіш",

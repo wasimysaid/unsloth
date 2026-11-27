@@ -1509,9 +1509,36 @@ export const pl = {
       apiKeys: "API",
       remoteLan: "Zdalnie i LAN",
       agents: "Agenci",
+      codingAgent: "Agent Coding",
+      codingSkills: "Umiejętności agenta",
+      codingMcp: "Serwery MCP",
       keyboardShortcuts: "Skróty",
       debugging: "Dzienniki",
       about: "Informacje",
+    },
+    codingAgent: {
+      reachLine: "{available} z {total} trafiają do nowych rozmów w Coding",
+      skills: {
+        title: "Umiejętności agenta",
+        keywords: "coding agent skills SKILL.md instructions agent programistyczny umiejętności instrukcje",
+        description: "Współdzielone z Czatem. Nowe rozmowy w Coding wczytują każdą włączoną umiejętność oraz umiejętności samego projektu.",
+        enabledLabel: "Włączona w Czacie i Coding",
+      },
+      mcp: {
+        title: "Serwery MCP",
+        keywords: "coding agent MCP servers connections tools HTTP headers agent programistyczny serwery MCP połączenia narzędzia nagłówki HTTP",
+        description: "Współdzielone z Czatem. Nowe rozmowy w Coding mogą wywoływać każdy włączony serwer, z wyjątkiem oznaczonych jako Tylko Czat.",
+        reach: {
+          localCommand: "Tylko Czat: polecenie lokalne",
+          oauth: "Tylko Czat: logowanie OAuth",
+          studioInternal: "Tylko Czat: punkt końcowy Studio",
+          other: "Tylko Czat",
+        },
+        draft: {
+          localCommand: "Tylko Czat. Coding nie może uruchamiać poleceń lokalnych.",
+          oauth: "Tylko Czat. Coding nie może dokończyć logowania OAuth; statyczne nagłówki działają w obu.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "Skróty klawiaturowe",
