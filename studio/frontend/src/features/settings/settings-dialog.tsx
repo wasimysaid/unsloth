@@ -873,8 +873,6 @@ export function SettingsDialog() {
           aria-label={t(category.labelKey)}
           className={cn(
             "relative flex flex-col gap-0.5 group-data-stacked/settings:contents",
-            // A guide under the heading's icon ties the entries to it.
-            "before:pointer-events-none before:absolute before:top-1 before:bottom-1 before:left-[calc(var(--spacing)*3_+_var(--icon-size)/2)] before:w-px before:bg-sidebar-border",
             open
               ? "fade-in slide-in-from-top-1 animate-in duration-150 motion-reduce:animate-none"
               : "hidden",
