@@ -227,3 +227,51 @@ test("only a server Coding cannot use is marked; the switch speaks for the rest"
     assert.doesNotMatch(page, /@\/features\/chat\//);
   }
 });
+
+test("every way out of an open Settings page asks that page first", async () => {
+  const { useSettingsDialogStore } = await import(
+    "../src/features/settings/stores/settings-dialog-store.ts"
+  );
+  const { settingsLeaveGuardRef } = await import("../src/features/settings/settings-leave-guard.ts");
+  const store = useSettingsDialogStore;
+  const asked: (() => void)[] = [];
+  store.getState().openDialog("coding-skills");
+  settingsLeaveGuardRef.current = (leave) => void asked.push(leave);
+  try {
+    // The rail, search, the palette and the desktop menu all land on these store actions.
+    store.getState().setActiveTab("general");
+    store.getState().openDialog("about");
+    store.getState().openLogs("server");
+    store.getState().closeDialog();
+    assert.equal(asked.length, 4);
+    assert.equal(store.getState().open, true);
+    assert.equal(store.getState().activeTab, "coding-skills");
+    // Staying on the page, or opening it again, is not leaving.
+    store.getState().setActiveTab("coding-skills");
+    store.getState().openDialog();
+    assert.equal(asked.length, 4);
+    // Allowed, the request applies as it was asked.
+    asked[1]();
+    assert.equal(store.getState().activeTab, "about");
+  } finally {
+    settingsLeaveGuardRef.current = null;
+  }
+  store.getState().closeDialog();
+  assert.equal(store.getState().open, false);
+});
+
+test("the managers hand Settings the same guard the Chat dialogs use", () => {
+  for (const page of ["coding-skills-tab", "coding-mcp-tab"]) {
+    assert.match(
+      source(`features/settings/tabs/${page}.tsx`),
+      /closeGuardRef=\{settingsLeaveGuardRef\}/,
+    );
+  }
+  const mcp = source("features/chat/chat-mcp-servers-dialog.tsx");
+  // A running write refuses; an unsaved add or edit asks before it is dropped.
+  assert.match(
+    mcp,
+    /busyIdsRef\.current\.size > 0\) return;[\s\S]*if \(formDirty\) setConfirmingDiscard\(\(\) => leave\);\s*else leave\(\);/,
+  );
+  assert.match(mcp, /JSON\.stringify\(form\) !== JSON\.stringify\(pristineForm\)/);
+});

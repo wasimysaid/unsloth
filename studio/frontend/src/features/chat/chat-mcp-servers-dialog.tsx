@@ -440,6 +440,9 @@ export function McpServersManager({
   const [loading, setLoading] = useState(false);
   const [view, setView] = useState<View>({ kind: "list" });
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  // The form as it opened, so leaving can tell an edit from a glance.
+  const [pristineForm, setPristineForm] = useState<FormState>(EMPTY_FORM);
+  const [confirmingDiscard, setConfirmingDiscard] = useState<(() => void) | null>(null);
   const [savedConnection, setSavedConnection] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -551,6 +554,8 @@ export function McpServersManager({
       // Reset to the list on each open, else a stale create/edit view persists.
       setView({ kind: "list" });
       setForm(EMPTY_FORM);
+      setPristineForm(EMPTY_FORM);
+      setConfirmingDiscard(null);
     });
     return () => {
       cancelled = true;
@@ -567,6 +572,7 @@ export function McpServersManager({
     setCodecError(null);
     setView({ kind: "create" });
     setForm(EMPTY_FORM);
+    setPristineForm(EMPTY_FORM);
   }
 
   function oauthSecretPlaceholder(): string {
@@ -606,6 +612,7 @@ export function McpServersManager({
       setCodecPending(false);
       setDecodingCommand(false);
       setForm(baseForm);
+      setPristineForm(baseForm);
       setSavedConnection(connectionKey(baseForm));
       return;
     }
@@ -613,6 +620,7 @@ export function McpServersManager({
     setCodecPending(true);
     setDecodingCommand(true);
     setForm(baseForm);
+    setPristineForm(baseForm);
     setSavedConnection(null);
     try {
       const decoded = await decodeMcpStdioCommand(server.url);
@@ -634,6 +642,7 @@ export function McpServersManager({
         useOauth: false,
       };
       setForm(decodedForm);
+      setPristineForm(decodedForm);
       setSavedConnection(connectionKey(decodedForm));
     } catch (err) {
       if (
@@ -666,21 +675,30 @@ export function McpServersManager({
     setCodecError(null);
     setView({ kind: "list" });
     setForm(EMPTY_FORM);
+    setPristineForm(EMPTY_FORM);
   }
+
+  const formDirty =
+    view.kind !== "list" && JSON.stringify(form) !== JSON.stringify(pristineForm);
 
   function requestClose(close: () => void) {
     // once crud starts, dismissal must wait for the authoritative refresh
     if ((saving && !codecPending) || busyIdsRef.current.size > 0) return;
-    formGenerationRef.current += 1;
-    actionGenerationRef.current += 1;
-    activeEditIdRef.current = null;
-    setSaving(false);
-    setTesting(false);
-    setCodecPending(false);
-    setDecodingCommand(false);
-    setCodecError(null);
-    setConfirmingDelete(null);
-    close();
+    const leave = () => {
+      formGenerationRef.current += 1;
+      actionGenerationRef.current += 1;
+      activeEditIdRef.current = null;
+      setSaving(false);
+      setTesting(false);
+      setCodecPending(false);
+      setDecodingCommand(false);
+      setCodecError(null);
+      setConfirmingDelete(null);
+      close();
+    };
+    // An unsaved add or edit is the user's to drop.
+    if (formDirty) setConfirmingDiscard(() => leave);
+    else leave();
   }
   // Every render: the guard reads this render's saving state.
   useEffect(() => {
@@ -1365,6 +1383,39 @@ export function McpServersManager({
           </div>
         )}
       </Views>
+      <AlertDialog
+        open={open && confirmingDiscard !== null}
+        onOpenChange={(next) => {
+          if (!next) setConfirmingDiscard(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard changes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your changes to{" "}
+              <span className="font-medium text-foreground">
+                {form.displayName.trim() ||
+                  (view.kind === "edit" ? "this server" : "the new server")}
+              </span>{" "}
+              haven't been saved.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep editing</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                const leave = confirmingDiscard;
+                setConfirmingDiscard(null);
+                leave?.();
+              }}
+            >
+              Discard
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog
         open={open && confirmingDelete !== null}
         onOpenChange={(next) => {

@@ -20,6 +20,7 @@ import {
   CodingReachLine,
   SettingsPageHeader,
 } from "../coding-agent/coding-reach-view";
+import { settingsLeaveGuardRef } from "../settings-leave-guard";
 
 const LIMIT_LABEL: Record<McpCodingLimit, TranslationKey> = {
   "local-command": "settings.codingAgent.mcp.reach.localCommand",
@@ -71,6 +72,7 @@ export function CodingMcpTab() {
       <McpServersManager
         active={true}
         layout="page"
+        closeGuardRef={settingsLeaveGuardRef}
         onListChange={setList}
         intro={<CodingReachLine summary={summary} ready={!list.loading} />}
         rowAccessory={(server) => {

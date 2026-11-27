@@ -6,6 +6,7 @@ import { useT } from "@/i18n";
 import { useMemo } from "react";
 import { skillCodingReach, summarizeCodingReach } from "../coding-agent/coding-reach";
 import { CodingReachLine, SettingsPageHeader } from "../coding-agent/coding-reach-view";
+import { settingsLeaveGuardRef } from "../settings-leave-guard";
 
 /**
  * Studio's skill library as Coding sees it. Coding has no switch of its own, so each row's Chat
@@ -25,6 +26,7 @@ export function CodingSkillsTab() {
       <SkillsManager
         active={true}
         layout="page"
+        closeGuardRef={settingsLeaveGuardRef}
         intro={<CodingReachLine summary={summary} ready={initialized} />}
         enabledLabel={t("settings.codingAgent.skills.enabledLabel")}
       />
