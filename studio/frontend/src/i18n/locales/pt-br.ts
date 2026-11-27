@@ -1372,8 +1372,35 @@ export const ptBR = {
       data: "Dados",
       knowledge: "Conhecimento",
       agents: "Agentes",
+      codingAgent: "Agente de Coding",
+      codingSkills: "Habilidades do agente",
+      codingMcp: "Servidores MCP",
       debugging: "Registros",
       keyboardShortcuts: "Atalhos",
+    },
+    codingAgent: {
+      reachLine: "{available} de {total} chegam às novas conversas do Coding",
+      skills: {
+        title: "Habilidades do agente",
+        keywords: "coding agent skills SKILL.md instructions agente de código habilidades instruções",
+        description: "Compartilhadas com o Chat. As novas conversas do Coding carregam todas as habilidades ativadas, junto com as do próprio projeto.",
+        enabledLabel: "Ativada no Chat e no Coding",
+      },
+      mcp: {
+        title: "Servidores MCP",
+        keywords: "coding agent MCP servers connections tools HTTP headers agente de código servidores MCP conexões ferramentas cabeçalhos HTTP",
+        description: "Compartilhados com o Chat. As novas conversas do Coding podem chamar todos os servidores ativados, exceto os marcados como «Somente no Chat».",
+        reach: {
+          localCommand: "Somente no Chat: comando local",
+          oauth: "Somente no Chat: login com OAuth",
+          studioInternal: "Somente no Chat: endpoint do Studio",
+          other: "Somente no Chat",
+        },
+        draft: {
+          localCommand: "Somente no Chat. O Coding não consegue iniciar comandos locais.",
+          oauth: "Somente no Chat. O Coding não consegue concluir o login com OAuth; cabeçalhos estáticos funcionam nos dois.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "Atalhos de teclado",

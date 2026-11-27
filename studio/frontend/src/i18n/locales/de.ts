@@ -1373,9 +1373,36 @@ export const de = {
       data: "Daten",
       knowledge: "Wissen",
       agents: "Agenten",
+      codingAgent: "Coding-Agent",
+      codingSkills: "Agent-Fähigkeiten",
+      codingMcp: "MCP-Server",
       debugging: "Protokolle",
       voice: "Sprachfunktionen",
       keyboardShortcuts: "Kürzel",
+    },
+    codingAgent: {
+      reachLine: "{available} von {total} erreichen neue Coding-Unterhaltungen",
+      skills: {
+        title: "Agent-Fähigkeiten",
+        keywords: "coding agent skills SKILL.md instructions Coding-Agent Fähigkeiten Anweisungen",
+        description: "Geteilt mit Chat. Neue Coding-Unterhaltungen laden jede aktivierte Fähigkeit sowie die Fähigkeiten des Projekts.",
+        enabledLabel: "In Chat und Coding aktiv",
+      },
+      mcp: {
+        title: "MCP-Server",
+        keywords: "coding agent MCP servers connections tools HTTP headers Coding-Agent MCP-Server Verbindungen Tools HTTP-Header",
+        description: "Geteilt mit Chat. Neue Coding-Unterhaltungen können jeden aktiven Server aufrufen, außer den als „Nur Chat“ markierten.",
+        reach: {
+          localCommand: "Nur Chat: lokaler Befehl",
+          oauth: "Nur Chat: OAuth-Anmeldung",
+          studioInternal: "Nur Chat: Studio-Endpunkt",
+          other: "Nur Chat",
+        },
+        draft: {
+          localCommand: "Nur Chat. Coding kann keine lokalen Befehle starten.",
+          oauth: "Nur Chat. Coding kann die OAuth-Anmeldung nicht abschließen; statische Header funktionieren in beiden.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "Tastenkürzel",

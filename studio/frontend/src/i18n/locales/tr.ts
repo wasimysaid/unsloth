@@ -1495,9 +1495,36 @@ export const tr = {
       apiKeys: "API",
       remoteLan: "Uzak ve LAN",
       agents: "Ajanlar",
+      codingAgent: "Coding Ajanı",
+      codingSkills: "Ajan becerileri",
+      codingMcp: "MCP sunucuları",
       keyboardShortcuts: "Kısayollar",
       debugging: "Günlükler",
       about: "Hakkında",
+    },
+    codingAgent: {
+      reachLine: "{available} / {total} yeni Coding sohbetlerine ulaşıyor",
+      skills: {
+        title: "Ajan becerileri",
+        keywords: "coding agent skills SKILL.md instructions kodlama ajanı beceriler yönergeler",
+        description: "Sohbet ile paylaşılır. Yeni Coding sohbetleri açık olan her beceriyi ve projenin kendi becerilerini yükler.",
+        enabledLabel: "Sohbet ve Coding'de açık",
+      },
+      mcp: {
+        title: "MCP sunucuları",
+        keywords: "coding agent MCP servers connections tools HTTP headers kodlama ajanı MCP sunucuları bağlantılar araçlar HTTP üst bilgileri",
+        description: "Sohbet ile paylaşılır. Yeni Coding sohbetleri, Yalnızca Sohbet olarak işaretlenenler dışında açık olan her sunucuyu çağırabilir.",
+        reach: {
+          localCommand: "Yalnızca Sohbet: yerel komut",
+          oauth: "Yalnızca Sohbet: OAuth ile oturum açma",
+          studioInternal: "Yalnızca Sohbet: Studio uç noktası",
+          other: "Yalnızca Sohbet",
+        },
+        draft: {
+          localCommand: "Yalnızca Sohbet. Coding yerel komutları başlatamaz.",
+          oauth: "Yalnızca Sohbet. Coding OAuth ile oturum açmayı tamamlayamaz; statik üst bilgiler her ikisinde de çalışır.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "Klavye kısayolları",

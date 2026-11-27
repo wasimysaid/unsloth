@@ -1497,9 +1497,36 @@ export const id = {
       apiKeys: "API",
       remoteLan: "Jarak jauh & LAN",
       agents: "Agen",
+      codingAgent: "Agen Coding",
+      codingSkills: "Skill agen",
+      codingMcp: "Server MCP",
       keyboardShortcuts: "Pintasan",
       debugging: "Log",
       about: "Tentang",
+    },
+    codingAgent: {
+      reachLine: "{available} dari {total} menjangkau percakapan Coding baru",
+      skills: {
+        title: "Skill agen",
+        keywords: "coding agent skills SKILL.md instructions agen coding skill instruksi",
+        description: "Dibagikan dengan Chat. Percakapan Coding baru memuat setiap skill yang aktif, beserta skill milik proyek itu sendiri.",
+        enabledLabel: "Aktif di Chat dan Coding",
+      },
+      mcp: {
+        title: "Server MCP",
+        keywords: "coding agent MCP servers connections tools HTTP headers agen coding server MCP koneksi alat header HTTP",
+        description: "Dibagikan dengan Chat. Percakapan Coding baru dapat memanggil setiap server yang aktif, kecuali yang ditandai Hanya Chat.",
+        reach: {
+          localCommand: "Hanya Chat: perintah lokal",
+          oauth: "Hanya Chat: login OAuth",
+          studioInternal: "Hanya Chat: endpoint Studio",
+          other: "Hanya Chat",
+        },
+        draft: {
+          localCommand: "Hanya Chat. Coding tidak dapat menjalankan perintah lokal.",
+          oauth: "Hanya Chat. Coding tidak dapat menyelesaikan login OAuth; header statis berfungsi di keduanya.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "Pintasan keyboard",

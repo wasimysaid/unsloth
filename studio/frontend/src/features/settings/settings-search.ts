@@ -300,6 +300,8 @@ export const SETTINGS_SEARCH_INDEX: Record<SettingsTab, TranslationKey[]> = {
     "settings.mcp.title",
     "settings.apiKeys.mcp.title",
   ],
+  "coding-skills": ["settings.codingAgent.skills.title"],
+  "coding-mcp": ["settings.codingAgent.mcp.title"],
   connections: [],
   voice: [
     "settings.voice.dictation.sectionTitle",
@@ -551,4 +553,6 @@ export const SETTINGS_SEARCH_KEYWORDS: Partial<
   "settings.apiKeys.mcp.title": "settings.apiKeys.mcp.keywords",
   // the intro names only some agents; every listed one has to find this page.
   "settings.agents.agent": "settings.agents.agentKeywords",
+  "settings.codingAgent.skills.title": "settings.codingAgent.skills.keywords",
+  "settings.codingAgent.mcp.title": "settings.codingAgent.mcp.keywords",
 };

@@ -1377,9 +1377,36 @@ export const en = {
       apiKeys: "API",
       remoteLan: "Remote & LAN",
       agents: "Agents",
+      codingAgent: "Coding Agent",
+      codingSkills: "Agent skills",
+      codingMcp: "MCP servers",
       keyboardShortcuts: "Shortcuts",
       debugging: "Logs",
       about: "About",
+    },
+    codingAgent: {
+      reachLine: "{available} of {total} reach new Coding conversations",
+      skills: {
+        title: "Agent skills",
+        keywords: "coding agent skills SKILL.md instructions",
+        description: "Shared with Chat. New Coding conversations load every skill that's on, along with the project's own skills.",
+        enabledLabel: "On in Chat and Coding",
+      },
+      mcp: {
+        title: "MCP servers",
+        keywords: "coding agent MCP servers connections tools HTTP headers",
+        description: "Shared with Chat. New Coding conversations can call every server that's on, except those marked Chat only.",
+        reach: {
+          localCommand: "Chat only: local command",
+          oauth: "Chat only: OAuth sign-in",
+          studioInternal: "Chat only: Studio endpoint",
+          other: "Chat only",
+        },
+        draft: {
+          localCommand: "Chat only. Coding can't start local commands.",
+          oauth: "Chat only. Coding can't complete OAuth sign-in; static headers work in both.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "Keyboard shortcuts",

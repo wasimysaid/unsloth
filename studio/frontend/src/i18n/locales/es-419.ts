@@ -1507,9 +1507,36 @@ export const es419 = {
       apiKeys: "API",
       remoteLan: "Remoto y LAN",
       agents: "Agentes",
+      codingAgent: "Agente de Coding",
+      codingSkills: "Skills del agente",
+      codingMcp: "Servidores MCP",
       keyboardShortcuts: "Atajos",
       debugging: "Registros",
       about: "Acerca de",
+    },
+    codingAgent: {
+      reachLine: "{available} de {total} llegan a las nuevas conversaciones de Coding",
+      skills: {
+        title: "Skills del agente",
+        keywords: "coding agent skills SKILL.md instructions agente de programación skills habilidades instrucciones",
+        description: "Compartidos con Chat. Las nuevas conversaciones de Coding cargan todos los skills activados, junto con los del propio proyecto.",
+        enabledLabel: "Activado en Chat y Coding",
+      },
+      mcp: {
+        title: "Servidores MCP",
+        keywords: "coding agent MCP servers connections tools HTTP headers agente de programación servidores MCP conexiones herramientas encabezados HTTP",
+        description: "Compartidos con Chat. Las nuevas conversaciones de Coding pueden llamar a todos los servidores activados, salvo los marcados como «Solo en Chat».",
+        reach: {
+          localCommand: "Solo en Chat: comando local",
+          oauth: "Solo en Chat: inicio de sesión con OAuth",
+          studioInternal: "Solo en Chat: endpoint de Studio",
+          other: "Solo en Chat",
+        },
+        draft: {
+          localCommand: "Solo en Chat. Coding no puede iniciar comandos locales.",
+          oauth: "Solo en Chat. Coding no puede completar el inicio de sesión con OAuth; los encabezados estáticos funcionan en ambos.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "Atajos de teclado",

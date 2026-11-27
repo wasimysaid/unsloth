@@ -1514,9 +1514,36 @@ export const nl = {
       apiKeys: "API",
       remoteLan: "Extern en LAN",
       agents: "Agents",
+      codingAgent: "Coding-agent",
+      codingSkills: "Agent-skills",
+      codingMcp: "MCP-servers",
       keyboardShortcuts: "Sneltoetsen",
       debugging: "Logboeken",
       about: "Over",
+    },
+    codingAgent: {
+      reachLine: "{available} van {total} bereiken nieuwe Coding-gesprekken",
+      skills: {
+        title: "Agent-skills",
+        keywords: "coding agent skills SKILL.md instructions Coding-agent skills instructies",
+        description: "Gedeeld met Chat. Nieuwe Coding-gesprekken laden elke skill die aan staat, samen met de eigen skills van het project.",
+        enabledLabel: "Aan in Chat en Coding",
+      },
+      mcp: {
+        title: "MCP-servers",
+        keywords: "coding agent MCP servers connections tools HTTP headers Coding-agent MCP-servers verbindingen tools HTTP-headers",
+        description: "Gedeeld met Chat. Nieuwe Coding-gesprekken kunnen elke server aanroepen die aan staat, behalve die met de markering Alleen Chat.",
+        reach: {
+          localCommand: "Alleen Chat: lokale opdracht",
+          oauth: "Alleen Chat: OAuth-aanmelding",
+          studioInternal: "Alleen Chat: Studio-eindpunt",
+          other: "Alleen Chat",
+        },
+        draft: {
+          localCommand: "Alleen Chat. Coding kan geen lokale opdrachten starten.",
+          oauth: "Alleen Chat. Coding kan de OAuth-aanmelding niet voltooien; statische headers werken in beide.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "Sneltoetsen",

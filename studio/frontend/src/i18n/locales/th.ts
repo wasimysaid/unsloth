@@ -1435,9 +1435,36 @@ export const th = {
       apiKeys: "API",
       remoteLan: "ระยะไกลและ LAN",
       agents: "เอเจนต์",
+      codingAgent: "เอเจนต์ Coding",
+      codingSkills: "สกิลของเอเจนต์",
+      codingMcp: "เซิร์ฟเวอร์ MCP",
       keyboardShortcuts: "ทางลัด",
       debugging: "บันทึก",
       about: "เกี่ยวกับ",
+    },
+    codingAgent: {
+      reachLine: "{available} จาก {total} ใช้ได้ในการสนทนา Coding ใหม่",
+      skills: {
+        title: "สกิลของเอเจนต์",
+        keywords: "coding agent skills SKILL.md instructions เอเจนต์เขียนโค้ด สกิล คำสั่ง",
+        description: "ใช้ร่วมกับแชท การสนทนา Coding ใหม่จะโหลดทุกสกิลที่เปิดอยู่ พร้อมสกิลของโปรเจกต์เอง",
+        enabledLabel: "เปิดในแชทและ Coding",
+      },
+      mcp: {
+        title: "เซิร์ฟเวอร์ MCP",
+        keywords: "coding agent MCP servers connections tools HTTP headers เอเจนต์เขียนโค้ด เซิร์ฟเวอร์ MCP การเชื่อมต่อ เครื่องมือ เฮดเดอร์ HTTP",
+        description: "ใช้ร่วมกับแชท การสนทนา Coding ใหม่เรียกใช้ได้ทุกเซิร์ฟเวอร์ที่เปิดอยู่ ยกเว้นที่ระบุว่าเฉพาะแชท",
+        reach: {
+          localCommand: "เฉพาะแชท: คำสั่งในเครื่อง",
+          oauth: "เฉพาะแชท: ลงชื่อเข้าใช้ด้วย OAuth",
+          studioInternal: "เฉพาะแชท: เอนด์พอยต์ของ Studio",
+          other: "เฉพาะแชท",
+        },
+        draft: {
+          localCommand: "เฉพาะแชท Coding เริ่มคำสั่งในเครื่องไม่ได้",
+          oauth: "เฉพาะแชท Coding ลงชื่อเข้าใช้ด้วย OAuth ให้เสร็จสิ้นไม่ได้ ส่วนเฮดเดอร์แบบคงที่ใช้ได้ทั้งสองที่",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "แป้นพิมพ์ลัด",

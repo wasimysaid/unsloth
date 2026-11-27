@@ -1249,9 +1249,36 @@ export const it = {
       apiKeys: "API",
       remoteLan: "Remoto e LAN",
       agents: "Agenti",
+      codingAgent: "Agente Coding",
+      codingSkills: "Competenze dell'agente",
+      codingMcp: "Server MCP",
       debugging: "Log",
       about: "Informazioni",
       keyboardShortcuts: "Scorciatoie",
+    },
+    codingAgent: {
+      reachLine: "{available} su {total} raggiungono le nuove conversazioni di Coding",
+      skills: {
+        title: "Competenze dell'agente",
+        keywords: "coding agent skills SKILL.md instructions agente di programmazione competenze istruzioni",
+        description: "Condivise con Chat. Le nuove conversazioni di Coding caricano ogni competenza attiva, insieme a quelle del progetto.",
+        enabledLabel: "Attiva in Chat e Coding",
+      },
+      mcp: {
+        title: "Server MCP",
+        keywords: "coding agent MCP servers connections tools HTTP headers agente di programmazione server MCP connessioni strumenti intestazioni HTTP",
+        description: "Condivisi con Chat. Le nuove conversazioni di Coding possono chiamare ogni server attivo, tranne quelli contrassegnati come «Solo Chat».",
+        reach: {
+          localCommand: "Solo Chat: comando locale",
+          oauth: "Solo Chat: accesso con OAuth",
+          studioInternal: "Solo Chat: endpoint di Studio",
+          other: "Solo Chat",
+        },
+        draft: {
+          localCommand: "Solo Chat. Coding non può avviare comandi locali.",
+          oauth: "Solo Chat. Coding non può completare l'accesso con OAuth; le intestazioni statiche funzionano in entrambi.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "Scorciatoie da tastiera",

@@ -1418,9 +1418,36 @@ export const he = {
       apiKeys: "API",
       remoteLan: "שליטה מרחוק ורשת מקומית",
       agents: "סוכנים",
+      codingAgent: "סוכן Coding",
+      codingSkills: "מיומנויות סוכן",
+      codingMcp: "שרתי MCP",
       keyboardShortcuts: "קיצורי דרך",
       debugging: "יומנים",
       about: "אודות",
+    },
+    codingAgent: {
+      reachLine: "{available} מתוך {total} מגיעות לשיחות Coding חדשות",
+      skills: {
+        title: "מיומנויות סוכן",
+        keywords: "coding agent skills SKILL.md instructions סוכן תכנות מיומנויות הוראות",
+        description: "משותפות עם צ'אט. שיחות Coding חדשות טוענות כל מיומנות שמופעלת, יחד עם המיומנויות של הפרויקט עצמו.",
+        enabledLabel: "מופעלת בצ'אט וב-Coding",
+      },
+      mcp: {
+        title: "שרתי MCP",
+        keywords: "coding agent MCP servers connections tools HTTP headers סוכן תכנות שרתי MCP חיבורים כלים כותרות HTTP",
+        description: "משותפים עם צ'אט. שיחות Coding חדשות יכולות לקרוא לכל שרת שמופעל, מלבד אלה שמסומנים כ«צ'אט בלבד».",
+        reach: {
+          localCommand: "צ'אט בלבד: פקודה מקומית",
+          oauth: "צ'אט בלבד: התחברות עם OAuth",
+          studioInternal: "צ'אט בלבד: נקודת קצה של Studio",
+          other: "צ'אט בלבד",
+        },
+        draft: {
+          localCommand: "צ'אט בלבד. Coding לא יכול להפעיל פקודות מקומיות.",
+          oauth: "צ'אט בלבד. Coding לא יכול להשלים התחברות עם OAuth; כותרות סטטיות פועלות בשניהם.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "קיצורי מקשים",

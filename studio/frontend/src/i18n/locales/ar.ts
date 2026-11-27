@@ -1368,9 +1368,36 @@ export const ar = {
       data: "البيانات",
       knowledge: "المعرفة",
       agents: "الوكلاء",
+      codingAgent: "وكيل Coding",
+      codingSkills: "مهارات الوكيل",
+      codingMcp: "خوادم MCP",
       debugging: "السجلات",
       voice: "الصوت",
       keyboardShortcuts: "الاختصارات",
+    },
+    codingAgent: {
+      reachLine: "{available} من {total} تصل إلى محادثات Coding الجديدة",
+      skills: {
+        title: "مهارات الوكيل",
+        keywords: "coding agent skills SKILL.md instructions وكيل البرمجة المهارات التعليمات",
+        description: "مشتركة مع الدردشة. تحمّل محادثات Coding الجديدة كل مهارة مفعّلة، إلى جانب مهارات المشروع نفسه.",
+        enabledLabel: "مفعّلة في الدردشة وCoding",
+      },
+      mcp: {
+        title: "خوادم MCP",
+        keywords: "coding agent MCP servers connections tools HTTP headers وكيل البرمجة خوادم MCP الاتصالات الأدوات ترويسات HTTP",
+        description: "مشتركة مع الدردشة. يمكن لمحادثات Coding الجديدة استدعاء كل خادم مفعّل، باستثناء الخوادم المعلَّمة بـ «الدردشة فقط».",
+        reach: {
+          localCommand: "الدردشة فقط: أمر محلي",
+          oauth: "الدردشة فقط: تسجيل الدخول عبر OAuth",
+          studioInternal: "الدردشة فقط: نقطة نهاية Studio",
+          other: "الدردشة فقط",
+        },
+        draft: {
+          localCommand: "الدردشة فقط. لا يستطيع Coding تشغيل الأوامر المحلية.",
+          oauth: "الدردشة فقط. لا يستطيع Coding إكمال تسجيل الدخول عبر OAuth؛ الترويسات الثابتة تعمل في كليهما.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "اختصارات لوحة المفاتيح",

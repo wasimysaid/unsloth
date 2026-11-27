@@ -1373,9 +1373,36 @@ export const fr = {
       data: "Données",
       knowledge: "Connaissances",
       agents: "Agents",
+      codingAgent: "Agent Coding",
+      codingSkills: "Compétences de l'agent",
+      codingMcp: "Serveurs MCP",
       debugging: "Journaux",
       voice: "Voix",
       keyboardShortcuts: "Raccourcis",
+    },
+    codingAgent: {
+      reachLine: "{available} sur {total} atteignent les nouvelles conversations Coding",
+      skills: {
+        title: "Compétences de l'agent",
+        keywords: "coding agent skills SKILL.md instructions agent de codage compétences instructions",
+        description: "Partagée avec Chat. Les nouvelles conversations Coding chargent toutes les compétences activées, ainsi que celles du projet.",
+        enabledLabel: "Activée dans Chat et Coding",
+      },
+      mcp: {
+        title: "Serveurs MCP",
+        keywords: "coding agent MCP servers connections tools HTTP headers agent de codage serveurs MCP connexions outils en-têtes HTTP",
+        description: "Partagés avec Chat. Les nouvelles conversations Coding peuvent appeler tous les serveurs activés, sauf ceux marqués « Chat uniquement ».",
+        reach: {
+          localCommand: "Chat uniquement : commande locale",
+          oauth: "Chat uniquement : connexion OAuth",
+          studioInternal: "Chat uniquement : point de terminaison Studio",
+          other: "Chat uniquement",
+        },
+        draft: {
+          localCommand: "Chat uniquement. Coding ne peut pas lancer de commandes locales.",
+          oauth: "Chat uniquement. Coding ne peut pas terminer la connexion OAuth ; les en-têtes statiques fonctionnent dans les deux.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "Raccourcis clavier",

@@ -1371,8 +1371,35 @@ export const ja = {
       data: "データ",
       knowledge: "ナレッジ",
       agents: "エージェント",
+      codingAgent: "Coding エージェント",
+      codingSkills: "エージェントスキル",
+      codingMcp: "MCP サーバー",
       debugging: "ログ",
       keyboardShortcuts: "ショートカット",
+    },
+    codingAgent: {
+      reachLine: "{available} / {total} が新しい Coding の会話に反映されます",
+      skills: {
+        title: "エージェントスキル",
+        keywords: "coding agent skills SKILL.md instructions コーディングエージェント スキル 指示",
+        description: "チャットと共有されます。新しい Coding の会話は、オンのスキルとプロジェクト自身のスキルをすべて読み込みます。",
+        enabledLabel: "チャットと Coding でオン",
+      },
+      mcp: {
+        title: "MCP サーバー",
+        keywords: "coding agent MCP servers connections tools HTTP headers コーディングエージェント MCP サーバー 接続 ツール HTTP ヘッダー",
+        description: "チャットと共有されます。新しい Coding の会話は、「チャットのみ」と表示されたものを除き、オンのサーバーをすべて呼び出せます。",
+        reach: {
+          localCommand: "チャットのみ: ローカルコマンド",
+          oauth: "チャットのみ: OAuth サインイン",
+          studioInternal: "チャットのみ: Studio エンドポイント",
+          other: "チャットのみ",
+        },
+        draft: {
+          localCommand: "チャットのみ。Coding はローカルコマンドを起動できません。",
+          oauth: "チャットのみ。Coding は OAuth サインインを完了できません。静的ヘッダーはどちらでも使えます。",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "キーボードショートカット",

@@ -1490,9 +1490,36 @@ export const fa = {
       apiKeys: "API",
       remoteLan: "دسترسی از راه دور و LAN",
       agents: "عامل‌ها",
+      codingAgent: "عامل Coding",
+      codingSkills: "مهارت‌های عامل",
+      codingMcp: "سرورهای MCP",
       keyboardShortcuts: "میان‌برها",
       debugging: "گزارش‌ها",
       about: "درباره",
+    },
+    codingAgent: {
+      reachLine: "{available} از {total} به گفتگوهای جدید Coding می‌رسند",
+      skills: {
+        title: "مهارت‌های عامل",
+        keywords: "coding agent skills SKILL.md instructions عامل برنامه‌نویسی مهارت‌ها دستورالعمل‌ها",
+        description: "مشترک با گفتگو. گفتگوهای جدید Coding هر مهارت روشن را به‌همراه مهارت‌های خود پروژه بارگذاری می‌کنند.",
+        enabledLabel: "روشن در گفتگو و Coding",
+      },
+      mcp: {
+        title: "سرورهای MCP",
+        keywords: "coding agent MCP servers connections tools HTTP headers عامل برنامه‌نویسی سرورهای MCP اتصال‌ها ابزارها سرآیندهای HTTP",
+        description: "مشترک با گفتگو. گفتگوهای جدید Coding می‌توانند هر سرور روشن را فراخوانی کنند، به‌جز سرورهای علامت‌خورده با «فقط گفتگو».",
+        reach: {
+          localCommand: "فقط گفتگو: فرمان محلی",
+          oauth: "فقط گفتگو: ورود با OAuth",
+          studioInternal: "فقط گفتگو: نقطه پایانی Studio",
+          other: "فقط گفتگو",
+        },
+        draft: {
+          localCommand: "فقط گفتگو. Coding نمی‌تواند فرمان‌های محلی را اجرا کند.",
+          oauth: "فقط گفتگو. Coding نمی‌تواند ورود با OAuth را کامل کند؛ سرآیندهای ثابت در هر دو کار می‌کنند.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "میان‌برهای صفحه‌کلید",

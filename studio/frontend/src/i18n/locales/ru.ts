@@ -1371,9 +1371,36 @@ export const ru = {
       data: "Данные",
       knowledge: "Знания",
       agents: "Агенты",
+      codingAgent: "Агент Coding",
+      codingSkills: "Навыки агента",
+      codingMcp: "Серверы MCP",
       debugging: "Журналы",
       voice: "Голос",
       keyboardShortcuts: "Сочетания",
+    },
+    codingAgent: {
+      reachLine: "{available} из {total} применяются к новым разговорам в Coding",
+      skills: {
+        title: "Навыки агента",
+        keywords: "coding agent skills SKILL.md instructions кодинг-агент навыки инструкции",
+        description: "Общие с Чатом. Новые разговоры в Coding загружают каждый включённый навык, а также навыки самого проекта.",
+        enabledLabel: "Включён в Чате и Coding",
+      },
+      mcp: {
+        title: "Серверы MCP",
+        keywords: "coding agent MCP servers connections tools HTTP headers кодинг-агент серверы MCP подключения инструменты заголовки HTTP",
+        description: "Общие с Чатом. Новые разговоры в Coding могут обращаться к каждому включённому серверу, кроме помеченных как Только Чат.",
+        reach: {
+          localCommand: "Только Чат: локальная команда",
+          oauth: "Только Чат: вход через OAuth",
+          studioInternal: "Только Чат: конечная точка Studio",
+          other: "Только Чат",
+        },
+        draft: {
+          localCommand: "Только Чат. Coding не может запускать локальные команды.",
+          oauth: "Только Чат. Coding не может завершить вход через OAuth; статические заголовки работают в обоих.",
+        },
+      },
     },
     keyboardShortcuts: {
       title: "Сочетания клавиш",
