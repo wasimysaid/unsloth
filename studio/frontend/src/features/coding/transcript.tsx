@@ -17,6 +17,7 @@ import type { ChildView } from "./child-view";
 import { EntryContentStatus } from "./entry-content-status";
 import type { NativePlan } from "./plan-types";
 import { PlanCard } from "./plan-card";
+import { replyProse as prose } from "./reply-prose";
 import type { CodingRow } from "./run-types";
 import { SubagentRow } from "./subagent-card";
 import { ReasoningReport, ToolReport, useDisclosure } from "./tool-report";
@@ -32,8 +33,6 @@ export const AnswerFocus = createContext<{ current: string | null } | null>(
   null,
 );
 
-const prose =
-  "max-h-none overflow-visible rounded-none border-0 bg-transparent p-0 text-[15px] leading-7 text-foreground";
 const isLong = (text: string) =>
   text.length > 4000 || text.split("\n").length > 80;
 // Replies flow with the page; only pathological sizes get their own scroller.
@@ -380,8 +379,7 @@ const BlockView = memo(function BlockView({
     case "plan":
       return block.row.plan ? (
         <div className="min-w-0" data-reading-key={block.key}>
-          <PlanCard plan={block.row.plan} />
-          <PlanActions>{actions}</PlanActions>
+          <PlanCard plan={block.row.plan} actions={actions} />
         </div>
       ) : null;
     case "content_ref":
@@ -439,8 +437,7 @@ export function TranscriptBlocks({
     <>
       {blocks.map((block) => currentPlan && block.key === currentKey ? (
         <div key={block.key} className="min-w-0" data-reading-key={block.key}>
-          <PlanCard plan={currentPlan} current />
-          <PlanActions>{actionsAt(block.key)}</PlanActions>
+          <PlanCard plan={currentPlan} current actions={actionsAt(block.key)} />
         </div>
       ) : (
         <BlockView
@@ -452,16 +449,12 @@ export function TranscriptBlocks({
       ))}
       {tailPlan && (
         <div key={tailPlan.id} className="min-w-0">
-          <PlanCard plan={tailPlan} current />
-          <PlanActions>{turnActions}</PlanActions>
+          <PlanCard plan={tailPlan} current actions={turnActions} />
         </div>
       )}
     </>
   );
 }
-
-const PlanActions = ({ children }: { children: React.ReactNode }) =>
-  children ? <div className="flex items-center gap-0.5">{children}</div> : null;
 
 const elapsed = (ms: number) => {
   const seconds = Math.floor(ms / 1000);

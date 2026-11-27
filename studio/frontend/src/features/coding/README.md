@@ -143,11 +143,15 @@ authoritative. All admitted decisions return to Build; save-and-stop starts no
 implementation request. Fresh implementation clears model context, not saved public
 history.
 
-The current plan opens in the transcript with its rendered Markdown and native status.
-The composer asks for a decision with three vertically stacked actions. Saving
-dismisses the question and leaves a collapsed control to resume implementation.
-Saved lifecycle rows use the same renderer as inspection-only historical records,
-without actionable controls. Clipping is disclosed. Controls explain busy/refused
+The current plan reads as an unboxed document in reply typography under a quiet
+`Plan · status` label. A long plan previews to a viewport-bounded height (fading out
+with an alpha mask) and unfolds with **Show full plan**; its complete Markdown is
+always in the document, and keyboard focus inside the fold unfolds it. Copy and the
+turn's reply actions sit beneath it. The composer asks for a decision with three
+vertically stacked actions. Saving dismisses the question and leaves a collapsed
+control to resume implementation. Earlier plans and saved lifecycle rows are
+inspection-only one-line records (`Plan`, name, lifecycle) that open to the full
+plan, without actionable controls. Clipping is disclosed. Controls explain busy/refused
 states, action failures and reconnect uncertainty in text. After a mode/plan command,
 reconstruct a fresh captured view before permitting another choice (a mode-only
 command settles from ordered state instead, as above). Lost responses
@@ -156,7 +160,9 @@ it. A subsequent choice must address the currently captured native revision;
 native stale validation is still required for races after browser checks.
 
 Stable selectors: `coding-plan-decision`, `coding-current-plan`, `coding-historical-plan`,
-`coding-plan-content`, `coding-plan-mode`, `coding-plan-reconciliation`.
+`coding-plan-content`, `coding-plan-status`, `coding-plan-toggle`, `coding-plan-mode`,
+`coding-plan-reconciliation`. Plan sections expose `data-plan-id`, `data-plan-status` and
+`data-plan-view` (`preview`, `full` or `collapsed`).
 
 ## Native question cards (#237)
 

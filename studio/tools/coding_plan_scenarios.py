@@ -20,13 +20,21 @@ ACTION_LABELS = {
 }
 
 
-def proposed_plan(name: str, marker: str, filename: str) -> str:
-    """A native parseable final-answer proposal, not a prewritten plan artifact."""
+def proposed_plan(name: str, marker: str, filename: str, notes: int = 0) -> str:
+    """A native parseable final-answer proposal, not a prewritten plan artifact.
+
+    `notes` appends review notes so the rendered plan is long enough to fold
+    into its transcript preview at desktop and narrow sizes.
+    """
+    extra = "".join(f"- Review note {index}: keep the change inside `{filename}`.\n"
+                    for index in range(1, notes + 1))
     return (f"<proposed_plan>\n# {name}\n"
             f"## Requirements\n{marker}: create `{filename}` in this disposable project only.\n"
             "## Technical Design\nUse the native write_file and read_file tools; do not modify other files.\n"
             f"## Delivery Plan\n### 1. Implement\nWrite `{filename}` with the specified evidence marker.\n"
-            "### 2. Verify\nRead the file and report completion.\n</proposed_plan>")
+            "### 2. Verify\nRead the file and report completion.\n"
+            + (f"## Review Notes\n{extra}" if extra else "")
+            + "</proposed_plan>")
 
 
 def provider_context(request) -> str:
@@ -150,24 +158,37 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
         evidence.setdefault("terminal_outcomes", []).append({"request_id": current_request, "status": completed["status"]})
 
     def plan_capture(marker, expected_status="review_pending"):
-        expect(card).to_be_visible(timeout=60000)
         native = state()["plan"]
         assert native and native["status"] == expected_status, native
         assert marker in native["markdown"] and native["id"] and native["path"] and native["name"]
         assert isinstance(native["revision"], str) and native["revision"]
         evidence["plans"].append({key: native[key] for key in ("id", "name", "path", "status", "revision")})
-        expect(card).to_have_attribute("data-plan-id", native["id"], timeout=60000)
+        # Reading an earlier page intentionally hides the live plan until the user rejoins.
+        current = card.and_(page.locator('[data-plan-id="' + native["id"] + '"][data-plan-status="' + expected_status + '"]'))
+        latest = page.get_by_role("button", name="Jump to latest", exact=True)
+        expect(current.or_(latest).first).to_be_visible(timeout=60000)
+        if latest.is_visible():
+            latest.click()
+        expect(current).to_be_visible(timeout=60000)
         return native
 
+    def fold_toggle():
+        # The current plan is an unboxed document; only long plans fold, behind
+        # one "Show full plan"/"Show less" disclosure button under the preview.
+        return card.get_by_test_id("coding-plan-toggle")
+
     def expand():
-        summary = card.locator("summary")
-        expect(summary).to_have_count(1)
-        summary.focus()
-        expect(summary).to_be_focused()
-        if card.get_attribute("open") is None:
-            summary.press("Enter")
-        expect(card).to_have_attribute("open", "")
-        return summary
+        """Show the whole current plan by keyboard; short plans are never folded."""
+        expect(card).to_have_attribute("data-plan-view", re.compile("^(preview|full)$"), timeout=60000)
+        if card.get_attribute("data-plan-view") == "preview":
+            toggle = fold_toggle()
+            expect(toggle).to_have_text("Show full plan")
+            toggle.focus()
+            toggle.press("Enter")
+            expect(toggle).to_have_attribute("aria-expanded", "true")
+            expect(toggle).to_be_focused()
+        expect(card).to_have_attribute("data-plan-view", "full")
+        expect(card.locator("details, summary")).to_have_count(0)
 
     def reject(plan, decision, reason):
         response = context.request.post(action_url, data=action_body(plan, decision), headers=headers, timeout=60000)
@@ -260,7 +281,7 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
     refusal = request.tool_result("plan-denied-write")
     assert "Plan mode is read-only" in refusal, refusal
     assert not (first / "plan-must-not-write.txt").exists()
-    request.text(proposed_plan("Keep original context", "PLAN_KEEP_239", "plan-keep.txt"))
+    request.text(proposed_plan("Keep original context", "PLAN_KEEP_239", "plan-keep.txt", notes=24))
     settled()
     original_plan = plan_capture("PLAN_KEEP_239")
     tool_row("plan-denied-write", "write_file", "Plan mode is read-only")
@@ -280,9 +301,22 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
     # Read the rendered plan in the transcript and decide within the composer.
     for width, height, label in ((1440, 1000, "desktop"), (390, 844, "narrow")):
         page.set_viewport_size({"width": width, "height": height})
-        summary = expand()
+        # The long plan opens as a bounded preview whose complete Markdown is
+        # already rendered (folding is visual), then unfolds by keyboard.
+        expect(card).to_have_attribute("data-plan-view", "preview", timeout=60000)
+        expect(card.get_by_test_id("coding-plan-content")).to_contain_text("Review note 24")
+        content_height = card.get_by_test_id("coding-plan-content").evaluate("el => el.clientHeight")
+        assert content_height <= min(380, height * 0.45) + 1, f"Plan preview was not bounded ({content_height}px)"
+        expect(card.get_by_test_id("coding-plan-status")).to_have_text("Ready for review")
+        toggle = fold_toggle()
+        expect(toggle).to_have_count(1)
+        expect(toggle).to_have_attribute("aria-expanded", "false")
+        snapshot(page, "plan-" + label + "-preview")
+        expand()
         expect(card.get_by_role("heading", name="Delivery Plan")).to_be_visible()
+        expect(card.get_by_role("heading", name="Review Notes")).to_be_visible()
         expect(card.get_by_test_id("coding-plan-content")).to_contain_text("PLAN_KEEP_239")
+        expect(card.get_by_role("button", name="Copy plan", exact=True)).to_be_visible()
         expect(card.get_by_role("button", name="Implement", exact=True)).to_have_count(0)
         assert transcript.evaluate("el => el.clientHeight >= 128")
         expect(page.get_by_test_id("coding-composer-surface").get_by_test_id("coding-plan-decision")).to_be_visible()
@@ -297,14 +331,25 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
             assert box["y"] >= previous_bottom
             previous_bottom = box["y"] + box["height"]
             button.press("Tab")
-        summary.focus()
-        summary.press("Space")
-        expect(card).not_to_have_attribute("open", "")
-        expect(summary).to_be_focused()
-        summary.press("Enter")
-        expect(card).to_have_attribute("open", "")
+            if name == ACTION_LABELS["implement_fresh"]:
+                model_picker = decisions.get_by_test_id("coding-plan-fresh-model")
+                expect(model_picker).to_be_focused()
+                model_picker.press("Tab")
+        toggle.focus()
+        expect(toggle).to_have_text("Show less")
+        toggle.press("Space")
+        expect(card).to_have_attribute("data-plan-view", "preview")
+        expect(toggle).to_have_attribute("aria-expanded", "false")
+        expect(toggle).to_be_focused()
+        expect(toggle).to_be_in_viewport(ratio=1)
+        toggle.press("Enter")
+        expect(card).to_have_attribute("data-plan-view", "full")
+        expect(toggle).to_be_focused()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         snapshot(page, "plan-" + label + "-review-keyboard")
+        # Leave the preview folded for the next viewport, by keyboard.
+        toggle.press("Space")
+        expect(card).to_have_attribute("data-plan-view", "preview")
         composer.scroll_into_view_if_needed()
         expect(composer).to_be_in_viewport(ratio=0.9)
         snapshot(page, "plan-" + label + "-composer-reachable")
@@ -315,7 +360,7 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
     assert restored == original_plan
     expand()
     expect(transcript).to_contain_text(initial)
-    scenario("A10-plan-keyboard-focus-layout", "1440x1000 and 390x844: summary expanded/collapsed with Enter/Space and retained focus; each action was keyboard-focusable inside the viewport; native plan content and identity survived deliberate saved-history reopen")
+    scenario("A10-plan-keyboard-focus-layout", "1440x1000 and 390x844: the long current plan rendered unboxed as a viewport-bounded preview with its complete Markdown in the document; Show full plan/Show less unfolded and folded it with Enter/Space while retaining focus; each action was keyboard-focusable inside the viewport; native plan content and identity survived deliberate saved-history reopen")
 
     stale = dict(original_plan, id="definitely-not-the-current-native-plan")
     reject(stale, "implement", "stale-plan-id")
@@ -511,26 +556,45 @@ def run_plan_scenarios(page, context, base, provider, first, second_id, report,
     assert final_plan["id"] == lost_plan["id"]
     expand()
     expect(card).to_contain_text("PLAN_LOST_ACK_239")
+    expect(card).to_have_attribute("data-plan-status", "completed")
+    expect(card.get_by_test_id("coding-plan-status")).to_have_text("Implemented")
     for name in ACTION_LABELS.values():
         expect(page.get_by_role("button", name=name, exact=True)).to_have_count(0)
-    card.locator("summary").press("Space")
-    expect(card).not_to_have_attribute("open", "")
-    for old_plan, marker, lifecycle_label in ((original_plan, "PLAN_KEEP_239", "Implemented"),
-                                               (save_plan, "PLAN_SAVE_239", "Saved")):
+    for old_plan, marker, lifecycle, lifecycle_label in ((original_plan, "PLAN_KEEP_239", "completed", "Implemented"),
+                                                          (save_plan, "PLAN_SAVE_239", "saved_stopped", "Saved")):
         history = page.get_by_test_id("coding-historical-plan").and_(page.locator('[data-plan-id="' + old_plan["id"] + '"]')).last
         expect(history).to_be_visible(timeout=60000)
-        summary = history.locator("summary")
-        summary.focus()
-        if history.get_attribute("open") is None:
-            summary.press("Enter")
+        # A historical record is one line: identity and lifecycle, plan text on request.
+        expect(history).to_have_attribute("data-plan-status", lifecycle)
+        expect(history.get_by_test_id("coding-plan-status")).to_have_text(lifecycle_label)
+        toggle = history.get_by_test_id("coding-plan-toggle")
+        expect(toggle).to_have_count(1)
+        expect(toggle).to_contain_text(old_plan["name"])
+        toggle.focus()
+        if toggle.get_attribute("aria-expanded") != "true":
+            expect(history).to_have_attribute("data-plan-view", "collapsed")
+            expect(history.get_by_test_id("coding-plan-content")).to_have_count(0)
+            toggle.press("Enter")
+        expect(toggle).to_have_attribute("aria-expanded", "true")
+        expect(toggle).to_be_focused()
+        expect(history).to_have_attribute("data-plan-view", "full")
         expect(history.get_by_test_id("coding-plan-content")).to_contain_text(marker)
-        expect(summary.locator("span").last).to_have_text(lifecycle_label)
-        expect(history.get_by_role("button")).to_have_count(0)
-        summary.scroll_into_view_if_needed()
-        expect(summary).to_be_in_viewport(ratio=1)
+        # Inspection only: the disclosure and Copy, never a plan decision.
+        for name in ACTION_LABELS.values():
+            expect(history.get_by_role("button", name=name, exact=True)).to_have_count(0)
+        expect(history.get_by_role("button")).to_have_count(2)
+        expect(history.get_by_role("button", name="Copy plan", exact=True)).to_be_visible()
+        toggle.scroll_into_view_if_needed()
+        expect(toggle).to_be_in_viewport(ratio=1)
         expect(history.get_by_test_id("coding-plan-content")).to_be_in_viewport()
         snapshot(page, "plan-history-" + marker.lower())
+        toggle.press("Space")
+        expect(toggle).to_have_attribute("aria-expanded", "false")
+        expect(toggle).to_be_focused()
+        expect(history.get_by_test_id("coding-plan-content")).to_have_count(0)
+        toggle.press("Enter")
+        expect(history.get_by_test_id("coding-plan-content")).to_contain_text(marker)
     snapshot(page, "plan-historical-content-reopened")
-    scenario("A2-historical-plan-lifecycle", "After reload/reopen and newer plan implementation, historical cards preserved original native plan identities, content and completed/saved-stopped lifecycles; historical records exposed no action buttons")
+    scenario("A2-historical-plan-lifecycle", "After reload/reopen and newer plan implementation, historical one-line records preserved original native plan identities, names and completed/saved-stopped lifecycles, opened and closed by keyboard to their full content with focus retained, and exposed only disclosure and Copy, never plan actions")
     provider.assert_no_request()
     evidence["status"] = "passed"
