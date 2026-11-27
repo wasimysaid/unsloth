@@ -10,6 +10,9 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   type ChangeEvent,
+  type ComponentProps,
+  type ReactNode,
+  type RefObject,
   useCallback,
   useEffect,
   useRef,
@@ -375,15 +378,64 @@ export interface ChatMcpServersDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+export function ChatMcpServersDialog({
+  open,
+  onOpenChange,
+}: ChatMcpServersDialogProps) {
+  const closeGuardRef = useRef<McpServersCloseGuard | null>(null);
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (next || !closeGuardRef.current) onOpenChange(next);
+        else closeGuardRef.current(() => onOpenChange(false));
+      }}
+    >
+      <McpServersManager active={open} layout="dialog" closeGuardRef={closeGuardRef} />
+    </Dialog>
+  );
+}
+
+/** Asks to leave; refused while a save or a row action is still settling. */
+export type McpServersCloseGuard = (close: () => void) => void;
+
+/** What the open form would save, for callers that describe where it can be used. */
+export interface McpServerDraftTransport {
+  transport: "unknown" | "http" | "stdio";
+  useOauth: boolean;
+}
+
+export interface McpServersManagerProps {
+  /** Reset to the list each time this turns true; requests settle only while true. */
+  active: boolean;
+  /** "dialog" renders the dialog's surface; "page" sits in a page that owns the heading. */
+  layout: "dialog" | "page";
+  closeGuardRef?: RefObject<McpServersCloseGuard | null>;
+  /** Beside the list's actions. */
+  intro?: ReactNode;
+  /** Under a row's address. */
+  rowAccessory?: (server: McpServerConfig) => ReactNode;
+  /** Above the form's actions, given what the form would save. */
+  formAccessory?: (draft: McpServerDraftTransport) => ReactNode;
+  /** Each time the list or its loading state changes, with built-ins already left out. */
+  onListChange?: (list: { servers: McpServerConfig[]; loading: boolean }) => void;
+}
+
 type View =
   | { kind: "list" }
   | { kind: "create" }
   | { kind: "edit"; id: string };
 
-export function ChatMcpServersDialog({
-  open,
-  onOpenChange,
-}: ChatMcpServersDialogProps) {
+export function McpServersManager({
+  active: open,
+  layout,
+  closeGuardRef,
+  intro,
+  rowAccessory,
+  formAccessory,
+  onListChange,
+}: McpServersManagerProps) {
+  const page = layout === "page";
   const [servers, setServers] = useState<McpServerConfig[]>([]);
   const [loading, setLoading] = useState(false);
   const [view, setView] = useState<View>({ kind: "list" });
@@ -616,23 +668,28 @@ export function ChatMcpServersDialog({
     setForm(EMPTY_FORM);
   }
 
-  function handleOpenChange(next: boolean) {
+  function requestClose(close: () => void) {
     // once crud starts, dismissal must wait for the authoritative refresh
-    if (!next && ((saving && !codecPending) || busyIdsRef.current.size > 0))
-      return;
-    if (!next) {
-      formGenerationRef.current += 1;
-      actionGenerationRef.current += 1;
-      activeEditIdRef.current = null;
-      setSaving(false);
-      setTesting(false);
-      setCodecPending(false);
-      setDecodingCommand(false);
-      setCodecError(null);
-      setConfirmingDelete(null);
-    }
-    onOpenChange(next);
+    if ((saving && !codecPending) || busyIdsRef.current.size > 0) return;
+    formGenerationRef.current += 1;
+    actionGenerationRef.current += 1;
+    activeEditIdRef.current = null;
+    setSaving(false);
+    setTesting(false);
+    setCodecPending(false);
+    setDecodingCommand(false);
+    setCodecError(null);
+    setConfirmingDelete(null);
+    close();
   }
+  // Every render: the guard reads this render's saving state.
+  useEffect(() => {
+    if (!closeGuardRef) return;
+    closeGuardRef.current = requestClose;
+    return () => {
+      closeGuardRef.current = null;
+    };
+  });
 
   async function encodeStdioForGeneration(
     generation: number,
@@ -931,19 +988,30 @@ export function ChatMcpServersDialog({
   // A local stdio command uses env vars, not headers or OAuth.
   const addressIsCommand = form.transport === "stdio";
 
+  useEffect(() => {
+    onListChange?.({
+      servers: servers.filter((server) => !server.builtin_id),
+      loading,
+    });
+  }, [onListChange, servers, loading]);
+
+
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent
+    <>
+      <Views
         className="max-w-2xl max-h-[85dvh] overflow-y-auto"
         showCloseButton={!(saving && !codecPending) && busyIds.size === 0}
         aria-busy={decodingCommand}
+        page={page}
       >
-        <DialogHeader>
-          <DialogTitle>MCP Servers</DialogTitle>
-          <DialogDescription>
-            Register remote (HTTP) or local (stdio command) MCP servers.
-          </DialogDescription>
-        </DialogHeader>
+        {page ? null : (
+          <DialogHeader>
+            <DialogTitle>MCP Servers</DialogTitle>
+            <DialogDescription>
+              Register remote (HTTP) or local (stdio command) MCP servers.
+            </DialogDescription>
+          </DialogHeader>
+        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -1161,6 +1229,11 @@ export function ChatMcpServersDialog({
               />
             )}
 
+            {formAccessory?.({
+              transport: form.transport,
+              useOauth: form.transport === "http" && form.useOauth,
+            })}
+
             <div className="flex items-center justify-between gap-2 pt-2">
               <Button
                 type="button"
@@ -1201,7 +1274,8 @@ export function ChatMcpServersDialog({
           </div>
         ) : (
           <div className="flex min-w-0 flex-col gap-3">
-            <div className="flex justify-end gap-2">
+            <div className="flex items-center justify-end gap-2">
+              {intro ? <div className="mr-auto min-w-0">{intro}</div> : null}
               <Button
                 size="sm"
                 variant="outline"
@@ -1239,6 +1313,7 @@ export function ChatMcpServersDialog({
                       <div className="truncate text-xs text-muted-foreground">
                         {server.url}
                       </div>
+                      {rowAccessory?.(server)}
                     </div>
                     <div className="flex items-center gap-1">
                       <Switch
@@ -1289,7 +1364,7 @@ export function ChatMcpServersDialog({
             )}
           </div>
         )}
-      </DialogContent>
+      </Views>
       <AlertDialog
         open={open && confirmingDelete !== null}
         onOpenChange={(next) => {
@@ -1322,6 +1397,22 @@ export function ChatMcpServersDialog({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Dialog>
+    </>
   );
+}
+
+/** The dialog's surface, or a plain block in a page that already scrolls. */
+function Views({
+  page,
+  children,
+  ...dialog
+}: ComponentProps<typeof DialogContent> & { page: boolean }) {
+  if (page) {
+    return (
+      <div className="flex min-w-0 flex-col gap-4" aria-busy={dialog["aria-busy"]}>
+        {children}
+      </div>
+    );
+  }
+  return <DialogContent {...dialog}>{children}</DialogContent>;
 }

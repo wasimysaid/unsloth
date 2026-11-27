@@ -132,7 +132,7 @@ test("the dialog wires backend codec calls, stale guards, and a stdio-only edito
   );
   assert.match(
     CHAT_MCP_SERVERS_DIALOG,
-    /function handleOpenChange[\s\S]*formGenerationRef\.current \+= 1;[\s\S]*onOpenChange\(next\)/,
+    /function requestClose[\s\S]*formGenerationRef\.current \+= 1;[\s\S]*close\(\);/,
   );
   assert.match(
     CHAT_MCP_SERVERS_DIALOG,
@@ -322,18 +322,24 @@ test("pending MCP actions remain keyed to their own server", () => {
 test("dialog closure is blocked while a CRUD mutation is in flight", () => {
   const closeHandler = sourceBetween(
     CHAT_MCP_SERVERS_DIALOG,
-    "function handleOpenChange",
+    "function requestClose",
     "async function encodeStdioForGeneration",
   );
 
   assert.match(
     closeHandler,
-    /if \(!next && \(\(saving && !codecPending\) \|\| busyIdsRef\.current\.size > 0\)\)[\s\S]*return;[\s\S]*if \(!next\) \{[\s\S]*formGenerationRef\.current \+= 1;/,
+    /if \(\(saving && !codecPending\) \|\| busyIdsRef\.current\.size > 0\) return;[\s\S]*formGenerationRef\.current \+= 1;[\s\S]*close\(\);/,
     "the in-flight mutation guard must run before close invalidates the form generation",
   );
+  // The dialog asks the manager before closing; a Settings page has nothing to close.
   assert.match(
     CHAT_MCP_SERVERS_DIALOG,
-    /<DialogContent[\s\S]*?showCloseButton=\{!\(saving && !codecPending\) && busyIds\.size === 0\}[\s\S]*?>/,
+    /if \(next \|\| !closeGuardRef\.current\) onOpenChange\(next\);\s*else closeGuardRef\.current\(\(\) => onOpenChange\(false\)\);/,
+  );
+  // Views renders the dialog's DialogContent with these props.
+  assert.match(
+    CHAT_MCP_SERVERS_DIALOG,
+    /<Views[\s\S]*?showCloseButton=\{!\(saving && !codecPending\) && busyIds\.size === 0\}[\s\S]*?>/,
     "the built-in close control must disappear during the same mutation window",
   );
   assert.match(
