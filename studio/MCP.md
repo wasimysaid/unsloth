@@ -466,7 +466,9 @@ New owner Coding conversations use the enabled HTTP MCP connections from Studio.
 New Chat and Coding share the saved URL, static headers and enabled setting. Local
 commands, OAuth sign-ins and Studio's built-in tools stay in Chat. A hosted Mimir
 conversation gets a private stdio bridge per connection. The bridge opens the
-saved HTTP transport through Studio and rejects further calls if the saved
+saved HTTP transport through Studio. It shares model-visible tools and listed
+model-visible resources, including their MIME types. MCP app widgets stay in
+Chat. The bridge rejects further calls if the saved
 connection changes or is disabled. Open a new conversation to use updated settings.
 
 Coding also discovers enabled Studio skills from their original directories, so

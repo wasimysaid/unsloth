@@ -38,6 +38,7 @@ async def test_saved_http_tool_round_trip_and_revocation(tmp_path, monkeypatch):
     from fastmcp import Client, FastMCP
     from fastmcp.client.transports import StdioTransport
     from fastmcp.server.dependencies import get_http_headers
+    from mcp.shared.exceptions import McpError
 
     monkeypatch.setenv("UNSLOTH_STUDIO_HOME", str(tmp_path))
     monkeypatch.setattr(skills, "_owner_home", lambda: tmp_path)
@@ -51,6 +52,14 @@ async def test_saved_http_tool_round_trip_and_revocation(tmp_path, monkeypatch):
     @remote.tool(meta = {"ui": {"visibility": ["app"]}})
     def app_only() -> str:
         return "for the MCP app"
+
+    @remote.resource("demo://fixture/readme")
+    def readme() -> str:
+        return "Shared information"
+
+    @remote.resource("ui://fixture/widget")
+    def widget() -> str:
+        return "App-only content"
 
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -74,6 +83,11 @@ async def test_saved_http_tool_round_trip_and_revocation(tmp_path, monkeypatch):
                 async with Client(StdioTransport(**definition, keep_alive = False)) as client:
                     assert [tool.name for tool in await client.list_tools()] == ["twice"]
                     assert (await client.call_tool_mcp("app_only", {})).isError
+                    assert [str(resource.uri) for resource in await client.list_resources()] == ["demo://fixture/readme"]
+                    resource = await client.read_resource("demo://fixture/readme")
+                    assert resource[0].text == "Shared information"
+                    with pytest.raises(McpError):
+                        await client.read_resource("ui://fixture/widget")
                     result = await client.call_tool_mcp("twice", {"n": 21})
                     assert not result.isError and result.content[0].text == "42"
                     mcp_servers_db.update_server("fixture", {"is_enabled": False})

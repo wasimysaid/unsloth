@@ -8,8 +8,10 @@ from pathlib import Path
 
 
 async def serve(server_id, revision):
+    from mcp import types
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
+    from mcp.shared.exceptions import McpError
 
     from core.coding_capabilities import shared_http_server
     from core.inference import mcp_client
@@ -34,8 +36,14 @@ async def serve(server_id, revision):
     async def list_tools():
         connection()
         client = server.request_context.lifespan_context
+        try:
+            remote_tools = await client.list_tools()
+        except McpError as exc:
+            if exc.error.code != types.METHOD_NOT_FOUND:
+                raise
+            remote_tools = []
         tools = [
-            tool for tool in await client.list_tools()
+            tool for tool in remote_tools
             if mcp_client.tool_visible_to(tool.model_dump(by_alias = True), "model")
         ]
         visible.clear()
@@ -52,6 +60,23 @@ async def serve(server_id, revision):
             return await client.call_tool_mcp(name, arguments)
         except Exception:
             raise ValueError("Studio could not call this MCP tool.") from None
+
+    @server.list_resources()
+    async def list_resources():
+        connection()
+        client = server.request_context.lifespan_context
+        records = await mcp_client.list_model_resources(client)
+        return [types.Resource.model_validate(record) for record in records or []]
+
+    async def read_resource(request):
+        # New Chat exposes only listed, model-visible resources and excludes app widgets.
+        if not any(record.uri == request.params.uri for record in await list_resources()):
+            raise ValueError("This resource is unavailable.")
+        connection()
+        result = await server.request_context.lifespan_context.read_resource_mcp(request.params.uri)
+        return types.ServerResult(result)
+
+    server.request_handlers[types.ReadResourceRequest] = read_resource
 
     async with stdio_server() as (reader, writer):
         await server.run(reader, writer, server.create_initialization_options())

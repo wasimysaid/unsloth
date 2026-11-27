@@ -1728,7 +1728,7 @@ def _capabilities(client) -> Any:
     return getattr(client, "server_capabilities", None)
 
 
-async def _list_resources(client) -> Optional[list[dict]]:
+async def list_model_resources(client) -> Optional[list[dict]]:
     capabilities = _capabilities(client)
     if capabilities is not None and getattr(capabilities, "resources", None) is None:
         return None
@@ -1792,7 +1792,7 @@ async def list_tools_async(
                 raw_tools = []
             tools = McpToolList(t.model_dump(exclude_none = True) for t in raw_tools)
             listed.append(tools)
-            tools.resources = await _list_resources(client)
+            tools.resources = await list_model_resources(client)
         return tools
 
     try:
