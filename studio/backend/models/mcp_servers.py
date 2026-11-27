@@ -49,6 +49,7 @@ class McpServerUpdate(BaseModel):
 
 
 class McpServerResponse(BaseModel):
+    coding_limit: Literal["local-command", "oauth", "studio-internal"] | None = None
     id: str
     builtin_id: Optional[str] = None
     display_name: str

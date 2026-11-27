@@ -694,6 +694,15 @@ def _discover(home: Optional[Path]) -> list[tuple[dict, Optional[Path], Optional
     return found
 
 
+def enabled_skill_directories() -> list[Path]:
+    """Original directories of effective skills, including their supporting files."""
+    roots = dict(_skill_roots())
+    return [
+        (roots[record["source"]] / record["name"]).absolute()
+        for record, directory, _ in _discover(None) if directory and record["enabled"]
+    ]
+
+
 def list_skills(*, home: Optional[Path] = None) -> list[dict]:
     with _LOCK:
         return [record for record, _, _ in _discover(home)]

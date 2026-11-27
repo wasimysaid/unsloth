@@ -159,6 +159,8 @@ class CodingRuntime:
         self._connection_token: str | None = None
         self._connection_snapshot: list | None = []
         self._connection_lock = asyncio.Lock()
+        self._capability_directory: tempfile.TemporaryDirectory | None = None
+        self._capability_lock = asyncio.Lock()
 
     def prewarm(self) -> None:
         # A cold Wasm compile of the package takes up to a minute; do it before
@@ -185,6 +187,7 @@ class CodingRuntime:
 
     def _environment(self) -> dict[str, str]:
         environment = dict(os.environ)
+        environment.pop("MIMIR_HOST_CONFIG", None)
         # Neither installer nor native guests inherit an old incarnation's descriptor.
         environment.pop("MIMIR_STUDIO_LOCAL_FD", None)
         for key in ("UNSLOTH_CODING_SANDBOX_PYTHON", "UNSLOTH_CODING_SANDBOX_RUNNER"):
@@ -416,6 +419,11 @@ class CodingRuntime:
                     self._preinstalled = False
                 elif self.package:
                     await self._install(environment)
+                if self._owner_session:
+                    self._capability_directory = tempfile.TemporaryDirectory(prefix = "studio-coding-")
+                    catalog = Path(self._capability_directory.name) / "capabilities.json"
+                    catalog.write_text('{"mcpServers":{},"agentSkillDirectories":[]}', encoding = "utf-8")
+                    environment["MIMIR_HOST_CONFIG"] = str(catalog)
                 read_fd = write_fd = None
                 try:
                     if self.local_serving is not None:
@@ -450,6 +458,9 @@ class CodingRuntime:
                         if descriptor is not None:
                             os.close(descriptor)
             except OSError as exc:
+                if self._capability_directory is not None:
+                    self._capability_directory.cleanup()
+                    self._capability_directory = None
                 raise CodingRuntimeError(
                     "unavailable",
                     "Coding could not start Mimir. Check that Mimir is installed on the Studio host "
@@ -599,6 +610,18 @@ class CodingRuntime:
             if expected_generation is None:
                 expected_generation = self._generation
             await self._sync_connections(expected_generation)
+        if method in {"create", "open"} and self._capability_directory is not None:
+            from core.coding_capabilities import write_catalog
+
+            if expected_generation is None:
+                expected_generation = self._generation
+            async with self._capability_lock:
+                directory = self._capability_directory
+                if directory is not None and expected_generation == self._generation:
+                    try:
+                        await anyio.to_thread.run_sync(write_catalog, Path(directory.name) / "capabilities.json")
+                    except OSError as exc:
+                        raise CodingRuntimeError("unavailable", "Studio could not prepare the Coding capabilities.") from exc
         return await self._request(method, params, expected_generation = expected_generation)
 
     async def _sync_connections(self, generation: int) -> None:
@@ -811,6 +834,10 @@ class CodingRuntime:
                         task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await task
+        async with self._capability_lock:
+            if self._capability_directory is not None:
+                self._capability_directory.cleanup()
+                self._capability_directory = None
         exit_code = process.returncode if process else None
         local_confirmed = await self._finish_local_cleanup(clean = native_confirmed and not forced and exit_code == 0)
         if not local_confirmed:
