@@ -9,6 +9,7 @@ import * as jsxRuntime from "react/jsx-runtime";
 import * as answerFocus from "../src/features/coding/answer-focus.ts";
 import * as boundedContent from "../src/features/coding/bounded-content.ts";
 import * as childTypes from "../src/features/coding/child-types.ts";
+import * as replyProse from "../src/features/coding/reply-prose.ts";
 import type * as Transcript from "../src/features/coding/transcript.tsx";
 import type * as ToolReport from "../src/features/coding/tool-report.tsx";
 import type { CodingRow } from "../src/features/coding/run-types.ts";
@@ -48,6 +49,7 @@ const stubs: Record<string, unknown> = {
   },
   "./file-change-report": { FileChangeReport: () => null },
   "./plan-card": { PlanCard: () => null },
+  "./reply-prose": replyProse,
 };
 const toolReport = loadWithStubs<typeof ToolReport>(
   new URL("../src/features/coding/tool-report.tsx", import.meta.url),
