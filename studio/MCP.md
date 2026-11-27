@@ -459,3 +459,19 @@ for the job.
   an account. Anyone with a key who knows the id can read that job's status.
 - Models can be unloaded between calls when an idle timeout is set. Tools then
   say to load the model again.
+
+### Using Studio connections in Coding
+
+New owner Coding conversations use the enabled HTTP MCP connections from Studio.
+New Chat and Coding share the saved URL, static headers and enabled setting. Local
+commands, OAuth sign-ins and Studio's built-in tools stay in Chat. A hosted Mimir
+conversation gets a private stdio bridge per connection. The bridge opens the
+saved HTTP transport through Studio. It shares model-visible tools and listed
+model-visible resources, including their MIME types. MCP app widgets stay in
+Chat. The bridge rejects further calls if the saved
+connection changes or is disabled. Open a new conversation to use updated settings.
+
+Coding also discovers enabled Studio skills from their original directories, so
+relative references work. Mimir resolves name collisions with its built-in,
+project and other native skill sources. Managed-account and API-key runtimes do
+not receive the installation owner's Studio catalog.

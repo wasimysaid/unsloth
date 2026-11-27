@@ -206,7 +206,10 @@ def _oauth_client(
 
 
 def _row_to_response(row: dict, *, include_headers: bool = True) -> McpServerResponse:
+    from core.coding_capabilities import mcp_coding_limit
+
     return McpServerResponse(
+        coding_limit = mcp_coding_limit(row),
         id = row["id"],
         builtin_id = row.get("builtin_id"),
         display_name = row["display_name"],
